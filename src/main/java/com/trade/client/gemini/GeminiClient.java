@@ -26,18 +26,27 @@ public class GeminiClient {
     private final String baseUrl;
     private final String model;
 
+    /**
+     * 使用环境变量 GEMINI_API_KEY 初始化客户端，baseUrl 和 model 使用默认值。
+     */
     public GeminiClient() {
         this(
                 System.getenv("GEMINI_API_KEY"),
-                getEnvOrDefault("GEMINI_BASE_URL", DEFAULT_BASE_URL),
-                getEnvOrDefault("GEMINI_MODEL", DEFAULT_MODEL)
+                DEFAULT_BASE_URL,
+                DEFAULT_MODEL
         );
     }
 
+    /**
+     * 使用传入的 API Key 初始化客户端，其他参数使用默认值。
+     */
     public GeminiClient(String apiKey) {
         this(apiKey, DEFAULT_BASE_URL, DEFAULT_MODEL);
     }
 
+    /**
+     * 完整初始化 Gemini 客户端，适合需要自定义地址或模型时使用。
+     */
     public GeminiClient(String apiKey, String baseUrl, String model) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(30))
@@ -49,6 +58,9 @@ public class GeminiClient {
         this.model = requireText(model, "Gemini model is required");
     }
 
+    /**
+     * 发送普通文本提示词，并返回 Gemini 生成的文本内容。
+     */
     public String generateText(String prompt) {
         GeminiGenerateReq req = new GeminiGenerateReq()
                 .setContents(List.of(
@@ -59,6 +71,9 @@ public class GeminiClient {
         return generateText(req);
     }
 
+    /**
+     * 发送提示词并要求 Gemini 按 JSON MIME 类型返回结果。
+     */
     public String generateJson(String prompt) {
         GeminiGenerateReq req = new GeminiGenerateReq()
                 .setContents(List.of(
@@ -71,11 +86,17 @@ public class GeminiClient {
         return generateText(req);
     }
 
+    /**
+     * 发送已组装好的 Gemini 请求，并从响应对象中提取文本。
+     */
     public String generateText(GeminiGenerateReq req) {
         GeminiGenerateResp resp = generateContent(req);
         return extractText(resp);
     }
 
+    /**
+     * 调用 Gemini generateContent 接口，并把原始 JSON 响应反序列化为响应对象。
+     */
     public GeminiGenerateResp generateContent(GeminiGenerateReq req) {
         String body = postRaw(req);
         try {
@@ -85,6 +106,9 @@ public class GeminiClient {
         }
     }
 
+    /**
+     * 执行实际 HTTP POST 请求，返回 Gemini 的原始响应字符串。
+     */
     public String postRaw(GeminiGenerateReq req) {
         try {
             String body = objectMapper.writeValueAsString(req);
@@ -116,10 +140,16 @@ public class GeminiClient {
         }
     }
 
+    /**
+     * 拼接当前模型的 generateContent 接口地址。
+     */
     private String buildGenerateContentUrl() {
         return baseUrl + "/v1beta/models/" + model + ":generateContent";
     }
 
+    /**
+     * 从 Gemini 响应候选结果中合并所有 text part，异常响应会直接报错。
+     */
     private String extractText(GeminiGenerateResp resp) {
         if (resp == null || resp.getCandidates() == null || resp.getCandidates().isEmpty()) {
             throw new RuntimeException("Gemini response has no candidates");
@@ -149,11 +179,9 @@ public class GeminiClient {
         return text.toString();
     }
 
-    private static String getEnvOrDefault(String name, String defaultValue) {
-        String value = System.getenv(name);
-        return value == null || value.isBlank() ? defaultValue : value;
-    }
-
+    /**
+     * 校验必填字符串，避免配置为空时继续发送请求。
+     */
     private static String requireText(String value, String message) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(message);
@@ -161,6 +189,9 @@ public class GeminiClient {
         return value;
     }
 
+    /**
+     * 去掉 baseUrl 末尾多余的斜杠，避免拼接接口地址时出现双斜杠。
+     */
     private static String trimRightSlash(String value) {
         while (value.endsWith("/")) {
             value = value.substring(0, value.length() - 1);

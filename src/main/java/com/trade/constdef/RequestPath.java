@@ -31,21 +31,4 @@ public class RequestPath {
     public static String getOkAccessPassphrase() {
         return System.getenv("OKX-ACCESS-PASSPHRASE");
     }
-
-    public static String getInstrumentInfoPath() {
-        return DOMAIN + INSTRUMENT_INFO;
-    }
-
-    private static String requireEnv(String primaryName, String fallbackName) {
-        String value = System.getenv(primaryName);
-        if (value == null || value.isBlank()) {
-            value = System.getenv(fallbackName);
-        }
-        if (value == null || value.isBlank()) {
-            throw new IllegalStateException(
-                    "Missing environment variable: " + primaryName + " or " + fallbackName
-            );
-        }
-        return value;
-    }
 }
