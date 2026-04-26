@@ -3,16 +3,14 @@ package com.trade.client.okx;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trade.constdef.RequestPath;
-import com.trade.dto.ws.OkxWsArg;
-import com.trade.dto.ws.OkxWsEvent;
-import com.trade.dto.ws.OkxWsListener;
-import com.trade.dto.ws.OkxWsSubscription;
-import com.trade.utils.Encryption;
+import com.trade.client.okx.ws.OkxWsArg;
+import com.trade.client.okx.ws.OkxWsEvent;
+import com.trade.client.okx.ws.OkxWsListener;
+import com.trade.client.okx.ws.OkxWsSubscription;
 
-import java.net.URI;
 import java.net.InetSocketAddress;
 import java.net.ProxySelector;
+import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.time.Duration;
@@ -31,17 +29,22 @@ public class OkxWebSocketClient {
     private static final String PRIVATE_VERIFY_PATH = "/users/self/verify";
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
+    private final OkxClientProperties properties;
+    private final OkxSigner signer;
 
     /**
      * Builds the WebSocket transport and JSON mapper used by OKX WS subscriptions.
      */
     public OkxWebSocketClient() {
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(30))
-                .proxy(ProxySelector.of(new InetSocketAddress("127.0.0.1", 7890)))
-                .build();
+        this(new OkxClientProperties());
+    }
+
+    public OkxWebSocketClient(OkxClientProperties properties) {
+        this.properties = properties;
+        this.httpClient = buildHttpClient(properties);
         this.objectMapper = new ObjectMapper()
                 .setSerializationInclusion(JsonInclude.Include.NON_NULL);
+        this.signer = new OkxSigner(properties);
     }
 
     /**
@@ -52,7 +55,7 @@ public class OkxWebSocketClient {
             Class<T> dataClass,
             OkxWsListener<T> listener
     ) {
-        return subscribe(RequestPath.WS_PUBLIC_URL, arg, dataClass, listener, false);
+        return subscribe(properties.getWsPublicUrl(), arg, dataClass, listener, false);
     }
 
     /**
@@ -63,7 +66,7 @@ public class OkxWebSocketClient {
             Class<T> dataClass,
             OkxWsListener<T> listener
     ) {
-        return subscribe(RequestPath.WS_PRIVATE_URL, arg, dataClass, listener, true);
+        return subscribe(properties.getWsPrivateUrl(), arg, dataClass, listener, true);
     }
 
     /**
@@ -254,13 +257,10 @@ public class OkxWebSocketClient {
         private void sendLogin(WebSocket webSocket) {
             try {
                 String timestamp = String.valueOf(System.currentTimeMillis() / 1000);
-                String sign = Encryption.hmacSha256Base64(
-                        timestamp + "GET" + PRIVATE_VERIFY_PATH,
-                        RequestPath.getOkSecretKey()
-                );
+                String sign = signer.signWebSocket(timestamp, "GET", PRIVATE_VERIFY_PATH);
                 Map<String, Object> loginArg = Map.of(
-                        "apiKey", RequestPath.getOkAccessKey(),
-                        "passphrase", RequestPath.getOkAccessPassphrase(),
+                        "apiKey", properties.requiredAccessKey(),
+                        "passphrase", properties.requiredPassphrase(),
                         "timestamp", timestamp,
                         "sign", sign
                 );
@@ -316,5 +316,15 @@ public class OkxWebSocketClient {
                 heartbeatFuture.cancel(true);
             }
         }
+    }
+
+    private static HttpClient buildHttpClient(OkxClientProperties properties) {
+        HttpClient.Builder builder = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(30));
+        OkxClientProperties.ProxyProperties proxy = properties.getProxy();
+        if (proxy != null && proxy.isEnabled()) {
+            builder.proxy(ProxySelector.of(new InetSocketAddress(proxy.getHost(), proxy.getPort())));
+        }
+        return builder.build();
     }
 }

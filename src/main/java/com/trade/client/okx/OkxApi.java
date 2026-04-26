@@ -1,45 +1,44 @@
 package com.trade.client.okx;
 
-import com.trade.common.CommonResponse;
-import com.trade.constdef.RequestPath;
-import com.trade.dto.AccountBalanceReq;
-import com.trade.dto.AccountBalanceResp;
-import com.trade.dto.CancelAllAfterReq;
-import com.trade.dto.CancelOrderReq;
-import com.trade.dto.CandleResp;
-import com.trade.dto.CandlesReq;
-import com.trade.dto.FillResp;
-import com.trade.dto.FillsReq;
-import com.trade.dto.InstrumentInfoReq;
-import com.trade.dto.InstrumentInfoResp;
-import com.trade.dto.OrderActionResp;
-import com.trade.dto.OrderBookReq;
-import com.trade.dto.OrderBookResp;
-import com.trade.dto.OrderHistoryReq;
-import com.trade.dto.OrderInfoResp;
-import com.trade.dto.OrderQueryReq;
-import com.trade.dto.PendingOrdersReq;
-import com.trade.dto.PlaceOrderReq;
-import com.trade.dto.SystemTimeResp;
-import com.trade.dto.TickerReq;
-import com.trade.dto.TickerResp;
-import com.trade.dto.ws.AccountChannelReq;
-import com.trade.dto.ws.CandleChannelReq;
-import com.trade.dto.ws.OrderBookChannelReq;
-import com.trade.dto.ws.OrdersChannelReq;
-import com.trade.dto.ws.TickerChannelReq;
-import com.trade.dto.ws.OkxWsListener;
-import com.trade.dto.ws.OkxWsSubscription;
+import com.trade.client.okx.dto.OkxResponse;
+import com.trade.client.okx.dto.AccountBalanceReq;
+import com.trade.client.okx.dto.AccountBalanceResp;
+import com.trade.client.okx.dto.CancelAllAfterReq;
+import com.trade.client.okx.dto.CancelOrderReq;
+import com.trade.client.okx.dto.CandleResp;
+import com.trade.client.okx.dto.CandlesReq;
+import com.trade.client.okx.dto.FillResp;
+import com.trade.client.okx.dto.FillsReq;
+import com.trade.client.okx.dto.InstrumentInfoReq;
+import com.trade.client.okx.dto.InstrumentInfoResp;
+import com.trade.client.okx.dto.OrderActionResp;
+import com.trade.client.okx.dto.OrderBookReq;
+import com.trade.client.okx.dto.OrderBookResp;
+import com.trade.client.okx.dto.OrderHistoryReq;
+import com.trade.client.okx.dto.OrderInfoResp;
+import com.trade.client.okx.dto.OrderQueryReq;
+import com.trade.client.okx.dto.PendingOrdersReq;
+import com.trade.client.okx.dto.PlaceOrderReq;
+import com.trade.client.okx.dto.SystemTimeResp;
+import com.trade.client.okx.dto.TickerReq;
+import com.trade.client.okx.dto.TickerResp;
+import com.trade.client.okx.ws.AccountChannelReq;
+import com.trade.client.okx.ws.CandleChannelReq;
+import com.trade.client.okx.ws.OrderBookChannelReq;
+import com.trade.client.okx.ws.OrdersChannelReq;
+import com.trade.client.okx.ws.TickerChannelReq;
+import com.trade.client.okx.ws.OkxWsListener;
+import com.trade.client.okx.ws.OkxWsSubscription;
 
 public class OkxApi {
 
-    private final OkxClient okxClient;
+    private final OkxRestClient okxClient;
     private final OkxWebSocketClient okxWebSocketClient;
 
     /**
      * Creates the OKX API facade with the default REST and WebSocket clients.
      */
-    public OkxApi(OkxClient okxClient) {
+    public OkxApi(OkxRestClient okxClient) {
         this.okxClient = okxClient;
         this.okxWebSocketClient = new OkxWebSocketClient();
     }
@@ -47,7 +46,7 @@ public class OkxApi {
     /**
      * Creates the OKX API facade with explicit clients, mainly for tests or custom transport setup.
      */
-    public OkxApi(OkxClient okxClient, OkxWebSocketClient okxWebSocketClient) {
+    public OkxApi(OkxRestClient okxClient, OkxWebSocketClient okxWebSocketClient) {
         this.okxClient = okxClient;
         this.okxWebSocketClient = okxWebSocketClient;
     }
@@ -55,9 +54,9 @@ public class OkxApi {
     /**
      * Gets OKX server time. Useful for checking local clock drift before signed requests.
      */
-    public CommonResponse<SystemTimeResp> getSystemTime() {
+    public OkxResponse<SystemTimeResp> getSystemTime() {
         return okxClient.get(
-                RequestPath.SYSTEM_TIME,
+                OkxEndpoints.SYSTEM_TIME,
                 null,
                 false,
                 SystemTimeResp.class
@@ -67,9 +66,9 @@ public class OkxApi {
     /**
      * Gets instrument metadata such as min order size, lot size, tick size, and trading state.
      */
-    public CommonResponse<InstrumentInfoResp> getInstrumentInfo(InstrumentInfoReq req) {
+    public OkxResponse<InstrumentInfoResp> getInstrumentInfo(InstrumentInfoReq req) {
         return okxClient.get(
-                RequestPath.INSTRUMENT_INFO,
+                OkxEndpoints.INSTRUMENT_INFO,
                 req,
                 true,
                 InstrumentInfoResp.class
@@ -79,9 +78,9 @@ public class OkxApi {
     /**
      * Gets account balances. Pass ccy to narrow the result to one or more currencies.
      */
-    public CommonResponse<AccountBalanceResp> getAccountBalance(AccountBalanceReq req) {
+    public OkxResponse<AccountBalanceResp> getAccountBalance(AccountBalanceReq req) {
         return okxClient.get(
-                RequestPath.ACCOUNT_BALANCE,
+                OkxEndpoints.ACCOUNT_BALANCE,
                 req,
                 true,
                 AccountBalanceResp.class
@@ -91,9 +90,9 @@ public class OkxApi {
     /**
      * Gets the latest ticker snapshot for one instrument, including best bid/ask and 24h stats.
      */
-    public CommonResponse<TickerResp> getTicker(TickerReq req) {
+    public OkxResponse<TickerResp> getTicker(TickerReq req) {
         return okxClient.get(
-                RequestPath.MARKET_TICKER,
+                OkxEndpoints.MARKET_TICKER,
                 req,
                 false,
                 TickerResp.class
@@ -103,9 +102,9 @@ public class OkxApi {
     /**
      * Gets the current order book snapshot for one instrument.
      */
-    public CommonResponse<OrderBookResp> getOrderBook(OrderBookReq req) {
+    public OkxResponse<OrderBookResp> getOrderBook(OrderBookReq req) {
         return okxClient.get(
-                RequestPath.MARKET_BOOKS,
+                OkxEndpoints.MARKET_BOOKS,
                 req,
                 false,
                 OrderBookResp.class
@@ -115,21 +114,9 @@ public class OkxApi {
     /**
      * Gets recent candlesticks. OKX returns newest rows first.
      */
-    public CommonResponse<CandleResp> getCandles(CandlesReq req) {
+    public OkxResponse<CandleResp> getCandles(CandlesReq req) {
         return okxClient.get(
-                RequestPath.MARKET_CANDLES,
-                req,
-                false,
-                CandleResp.class
-        );
-    }
-
-    /**
-     * Gets historical candlesticks for backfill or strategy warm-up.
-     */
-    public CommonResponse<CandleResp> getHistoryCandles(CandlesReq req) {
-        return okxClient.get(
-                RequestPath.MARKET_HISTORY_CANDLES,
+                OkxEndpoints.MARKET_CANDLES,
                 req,
                 false,
                 CandleResp.class
@@ -139,9 +126,9 @@ public class OkxApi {
     /**
      * Places an order. The response only confirms request acceptance; query order state afterward.
      */
-    public CommonResponse<OrderActionResp> placeOrder(PlaceOrderReq req) {
+    public OkxResponse<OrderActionResp> placeOrder(PlaceOrderReq req) {
         return okxClient.post(
-                RequestPath.TRADE_ORDER,
+                OkxEndpoints.TRADE_ORDER,
                 req,
                 true,
                 OrderActionResp.class
@@ -151,9 +138,9 @@ public class OkxApi {
     /**
      * Cancels one order by ordId or clOrdId.
      */
-    public CommonResponse<OrderActionResp> cancelOrder(CancelOrderReq req) {
+    public OkxResponse<OrderActionResp> cancelOrder(CancelOrderReq req) {
         return okxClient.post(
-                RequestPath.TRADE_CANCEL_ORDER,
+                OkxEndpoints.TRADE_CANCEL_ORDER,
                 req,
                 true,
                 OrderActionResp.class
@@ -163,9 +150,9 @@ public class OkxApi {
     /**
      * Gets one order's current details by ordId or clOrdId.
      */
-    public CommonResponse<OrderInfoResp> getOrder(OrderQueryReq req) {
+    public OkxResponse<OrderInfoResp> getOrder(OrderQueryReq req) {
         return okxClient.get(
-                RequestPath.TRADE_ORDER,
+                OkxEndpoints.TRADE_ORDER,
                 req,
                 true,
                 OrderInfoResp.class
@@ -175,9 +162,9 @@ public class OkxApi {
     /**
      * Gets live, unfinished orders.
      */
-    public CommonResponse<OrderInfoResp> getPendingOrders(PendingOrdersReq req) {
+    public OkxResponse<OrderInfoResp> getPendingOrders(PendingOrdersReq req) {
         return okxClient.get(
-                RequestPath.TRADE_PENDING_ORDERS,
+                OkxEndpoints.TRADE_PENDING_ORDERS,
                 req,
                 true,
                 OrderInfoResp.class
@@ -187,9 +174,9 @@ public class OkxApi {
     /**
      * Gets recent historical orders, including filled and canceled orders.
      */
-    public CommonResponse<OrderInfoResp> getOrderHistory(OrderHistoryReq req) {
+    public OkxResponse<OrderInfoResp> getOrderHistory(OrderHistoryReq req) {
         return okxClient.get(
-                RequestPath.TRADE_ORDER_HISTORY,
+                OkxEndpoints.TRADE_ORDER_HISTORY,
                 req,
                 true,
                 OrderInfoResp.class
@@ -199,9 +186,9 @@ public class OkxApi {
     /**
      * Gets trade fills for reconciliation, fee calculation, and execution tracking.
      */
-    public CommonResponse<FillResp> getFills(FillsReq req) {
+    public OkxResponse<FillResp> getFills(FillsReq req) {
         return okxClient.get(
-                RequestPath.TRADE_FILLS,
+                OkxEndpoints.TRADE_FILLS,
                 req,
                 true,
                 FillResp.class
@@ -211,9 +198,9 @@ public class OkxApi {
     /**
      * Arms or cancels OKX's dead-man switch that cancels all orders after the timeout expires.
      */
-    public CommonResponse<OrderActionResp> cancelAllAfter(CancelAllAfterReq req) {
+    public OkxResponse<OrderActionResp> cancelAllAfter(CancelAllAfterReq req) {
         return okxClient.post(
-                RequestPath.TRADE_CANCEL_ALL_AFTER,
+                OkxEndpoints.TRADE_CANCEL_ALL_AFTER,
                 req,
                 true,
                 OrderActionResp.class

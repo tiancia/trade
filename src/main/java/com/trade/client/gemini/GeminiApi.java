@@ -1,7 +1,7 @@
 package com.trade.client.gemini;
 
-import com.trade.dto.ai.GeminiGenerateReq;
-import com.trade.dto.ai.GeminiGenerateResp;
+import com.trade.client.gemini.dto.GeminiGenerateReq;
+import com.trade.client.gemini.dto.GeminiGenerateResp;
 
 public class GeminiApi {
 

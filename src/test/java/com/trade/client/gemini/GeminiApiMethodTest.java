@@ -1,7 +1,7 @@
 package com.trade.client.gemini;
 
-import com.trade.dto.ai.GeminiGenerateReq;
-import com.trade.dto.ai.GeminiGenerateResp;
+import com.trade.client.gemini.dto.GeminiGenerateReq;
+import com.trade.client.gemini.dto.GeminiGenerateResp;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -35,6 +35,47 @@ class GeminiApiMethodTest {
         assertEquals(req, client.request);
     }
 
+    @Test
+    void parsesGemini3ResponseWithExtraMetadata() {
+        RawGeminiClient client = new RawGeminiClient("""
+                {
+                  "candidates": [
+                    {
+                      "content": {
+                        "parts": [
+                          {
+                            "text": "{\\"action\\":\\"HOLD\\",\\"reason\\":\\"smoke test\\"}",
+                            "thoughtSignature": "signature",
+                            "unexpectedPartField": "ignored"
+                          }
+                        ],
+                        "role": "model"
+                      },
+                      "finishReason": "STOP",
+                      "index": 0,
+                      "unexpectedCandidateField": "ignored"
+                    }
+                  ],
+                  "usageMetadata": {
+                    "promptTokenCount": 19,
+                    "candidatesTokenCount": 10,
+                    "totalTokenCount": 245,
+                    "promptTokensDetails": [
+                      {"modality": "TEXT", "tokenCount": 19}
+                    ],
+                    "thoughtsTokenCount": 216
+                  },
+                  "modelVersion": "gemini-3-flash-preview",
+                  "responseId": "test-response-id"
+                }
+                """);
+
+        assertEquals(
+                "{\"action\":\"HOLD\",\"reason\":\"smoke test\"}",
+                client.generateJson("return json")
+        );
+    }
+
     private static class FakeGeminiClient extends GeminiClient {
         private final GeminiGenerateResp response = new GeminiGenerateResp();
         private String method;
@@ -64,6 +105,20 @@ class GeminiApiMethodTest {
             this.method = "generateContent";
             this.request = req;
             return response;
+        }
+    }
+
+    private static class RawGeminiClient extends GeminiClient {
+        private final String rawResponse;
+
+        private RawGeminiClient(String rawResponse) {
+            super("test-api-key");
+            this.rawResponse = rawResponse;
+        }
+
+        @Override
+        public String postRaw(GeminiGenerateReq req) {
+            return rawResponse;
         }
     }
 }
