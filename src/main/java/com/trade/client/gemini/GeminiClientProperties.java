@@ -7,16 +7,26 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "trade.gemini")
 public class GeminiClientProperties {
     private String apiKey;
+    private String apiKeyEnvName = "GEMINI_API_KEY";
     private String baseUrl = "https://generativelanguage.googleapis.com";
     private String model = "gemini-3-flash-preview";
     private ProxyProperties proxy = new ProxyProperties();
 
     String requiredApiKey() {
-        String resolved = hasText(apiKey) ? apiKey : System.getenv("GEMINI_API_KEY");
-        if (!hasText(resolved)) {
-            throw new IllegalArgumentException("Gemini API key is required");
+        if (hasText(apiKey)) {
+            return apiKey.trim();
         }
-        return resolved;
+        String envName = requireText(
+                apiKeyEnvName,
+                "trade.gemini.api-key-env-name is required when trade.gemini.api-key is not set"
+        );
+        String resolved = System.getenv(envName);
+        if (!hasText(resolved)) {
+            throw new IllegalArgumentException(
+                    "Gemini API key is required. Set trade.gemini.api-key or environment variable " + envName
+            );
+        }
+        return resolved.trim();
     }
 
     String normalizedBaseUrl() {

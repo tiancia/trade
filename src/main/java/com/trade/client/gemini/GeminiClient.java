@@ -2,6 +2,7 @@ package com.trade.client.gemini;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trade.client.ai.AiClientProperties;
 import com.trade.client.gemini.dto.GeminiContent;
 import com.trade.client.gemini.dto.GeminiGenerateReq;
 import com.trade.client.gemini.dto.GeminiGenerateResp;
@@ -37,6 +38,15 @@ public class GeminiClient {
     }
 
     public GeminiClient(GeminiClientProperties properties) {
+        this.httpClient = buildHttpClient(properties);
+        this.objectMapper = new ObjectMapper()
+                .setDefaultPropertyInclusion(JsonInclude.Include.NON_NULL);
+        this.apiKey = properties.requiredApiKey();
+        this.baseUrl = properties.normalizedBaseUrl();
+        this.model = properties.requiredModel();
+    }
+
+    public GeminiClient(AiClientProperties properties) {
         this.httpClient = buildHttpClient(properties);
         this.objectMapper = new ObjectMapper()
                 .setDefaultPropertyInclusion(JsonInclude.Include.NON_NULL);
@@ -141,6 +151,16 @@ public class GeminiClient {
         HttpClient.Builder builder = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(30));
         GeminiClientProperties.ProxyProperties proxy = properties.getProxy();
+        if (proxy != null && proxy.isEnabled()) {
+            builder.proxy(ProxySelector.of(new InetSocketAddress(proxy.getHost(), proxy.getPort())));
+        }
+        return builder.build();
+    }
+
+    static HttpClient buildHttpClient(AiClientProperties properties) {
+        HttpClient.Builder builder = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(30));
+        AiClientProperties.ProxyProperties proxy = properties.getProxy();
         if (proxy != null && proxy.isEnabled()) {
             builder.proxy(ProxySelector.of(new InetSocketAddress(proxy.getHost(), proxy.getPort())));
         }

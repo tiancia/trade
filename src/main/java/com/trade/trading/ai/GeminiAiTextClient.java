@@ -1,19 +1,36 @@
 package com.trade.trading.ai;
 
 import com.trade.client.gemini.GeminiApi;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.stereotype.Component;
 
-@Component
+import java.util.function.Supplier;
+
 public class GeminiAiTextClient implements AiTextClient {
-    private final ObjectProvider<GeminiApi> geminiApiProvider;
+    private final Supplier<GeminiApi> geminiApiSupplier;
+    private volatile GeminiApi geminiApi;
 
-    public GeminiAiTextClient(ObjectProvider<GeminiApi> geminiApiProvider) {
-        this.geminiApiProvider = geminiApiProvider;
+    public GeminiAiTextClient(GeminiApi geminiApi) {
+        this(() -> geminiApi);
+    }
+
+    public GeminiAiTextClient(Supplier<GeminiApi> geminiApiSupplier) {
+        this.geminiApiSupplier = geminiApiSupplier;
     }
 
     @Override
     public String generateJson(String prompt) {
-        return geminiApiProvider.getObject().generateJson(prompt);
+        return geminiApi().generateJson(prompt);
+    }
+
+    private GeminiApi geminiApi() {
+        GeminiApi current = geminiApi;
+        if (current != null) {
+            return current;
+        }
+        synchronized (this) {
+            if (geminiApi == null) {
+                geminiApi = geminiApiSupplier.get();
+            }
+            return geminiApi;
+        }
     }
 }
