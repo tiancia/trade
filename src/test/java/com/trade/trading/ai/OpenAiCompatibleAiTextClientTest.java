@@ -6,6 +6,8 @@ import com.trade.client.ai.AiClientProperties;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OpenAiCompatibleAiTextClientTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -43,6 +45,67 @@ class OpenAiCompatibleAiTextClientTest {
         assertEquals("json_object", request.path("response_format").path("type").asText());
         assertEquals(0, Double.compare(0.1, request.path("temperature").asDouble()));
         assertEquals(512, request.path("max_tokens").asInt());
+    }
+
+    @Test
+    void extractsAssistantContentFromContentPartsArray() {
+        AiClientProperties properties = new AiClientProperties();
+        properties.setProvider(AiClientProperties.Provider.OPENAI_COMPATIBLE);
+        properties.setBaseUrl("https://api.example.com");
+        properties.setModel("example-model");
+        properties.setApiKey("test-key");
+
+        CapturingClient client = new CapturingClient(properties, """
+                {
+                  "choices": [
+                    {
+                      "message": {
+                        "role": "assistant",
+                        "content": [
+                          {"type": "text", "text": "{\\"action\\":\\"HOLD\\","},
+                          {"type": "text", "text": "\\"reason\\":\\"array content\\"}"}
+                        ]
+                      },
+                      "finish_reason": "stop"
+                    }
+                  ]
+                }
+                """);
+
+        String result = client.generateJson("return decision json");
+
+        assertEquals("{\"action\":\"HOLD\",\"reason\":\"array content\"}", result);
+    }
+
+    @Test
+    void responseWithoutAssistantContentKeepsSpecificFailureReason() {
+        AiClientProperties properties = new AiClientProperties();
+        properties.setProvider(AiClientProperties.Provider.OPENAI_COMPATIBLE);
+        properties.setBaseUrl("https://api.example.com");
+        properties.setModel("example-model");
+        properties.setApiKey("test-key");
+
+        CapturingClient client = new CapturingClient(properties, """
+                {
+                  "choices": [
+                    {
+                      "message": {
+                        "role": "assistant",
+                        "content": ""
+                      },
+                      "finish_reason": "stop"
+                    }
+                  ]
+                }
+                """);
+
+        RuntimeException error = assertThrows(
+                RuntimeException.class,
+                () -> client.generateJson("return decision json")
+        );
+
+        assertTrue(error.getMessage().contains("OpenAI-compatible response has no content, finishReason=stop"));
+        assertTrue(error.getMessage().contains("contentNodeType=STRING"));
     }
 
     private static class CapturingClient extends OpenAiCompatibleAiTextClient {

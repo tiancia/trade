@@ -14,13 +14,14 @@ public class AiTradingProperties {
     private String baseCcy = "BTC";
     private String quoteCcy = "USDT";
     private String tdMode = "cash";
-    private BigDecimal maxBuyQuoteAmount = new BigDecimal("100");
+    private BigDecimal maxBuyQuoteAmount = new BigDecimal("10");
     private BigDecimal maxSellPositionRatio = BigDecimal.ONE;
     private long decisionFixedDelayMs = 1_800_000L;
     private long eventScanFixedDelayMs = 60_000L;
     private long initialDelayMs = 30_000L;
     private long eventInitialDelayMs = 30_000L;
     private long eventCooldownMs = 600_000L;
+    private WebSocketProperties websocket = new WebSocketProperties();
     private BigDecimal priceMoveTriggerPercent = new BigDecimal("0.02");
     private BigDecimal volumeSpikeMultiplier = new BigDecimal("3");
     private BigDecimal floatingLossTriggerPercent = new BigDecimal("0.10");
@@ -33,4 +34,11 @@ public class AiTradingProperties {
     private int orderFillQueryAttempts = 5;
     private long orderFillQueryDelayMs = 1_000L;
     private int quoteAmountScale = 2;
+
+    @Data
+    public static class WebSocketProperties {
+        private boolean enabled = true;
+        private long staleTimeoutMs = 120_000L;
+        private int candleCacheLimit = 100;
+    }
 }

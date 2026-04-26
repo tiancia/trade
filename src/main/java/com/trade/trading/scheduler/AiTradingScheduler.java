@@ -8,6 +8,7 @@ import com.trade.trading.model.TradingTrigger;
 import com.trade.trading.persistence.TradingStateRepository;
 import com.trade.trading.service.AiTradingService;
 import com.trade.trading.service.MarketContextCollector;
+import com.trade.trading.service.OkxMarketDataWebSocketFeed;
 import com.trade.trading.service.TradingEventDetector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +27,7 @@ public class AiTradingScheduler {
 
     private final AiTradingService tradingService;
     private final MarketContextCollector marketContextCollector;
+    private final OkxMarketDataWebSocketFeed marketDataWebSocketFeed;
     private final TradingEventDetector eventDetector;
     private final TradingStateRepository stateRepository;
     private final AiTradingProperties properties;
@@ -34,12 +36,14 @@ public class AiTradingScheduler {
     public AiTradingScheduler(
             AiTradingService tradingService,
             MarketContextCollector marketContextCollector,
+            OkxMarketDataWebSocketFeed marketDataWebSocketFeed,
             TradingEventDetector eventDetector,
             TradingStateRepository stateRepository,
             AiTradingProperties properties
     ) {
         this.tradingService = tradingService;
         this.marketContextCollector = marketContextCollector;
+        this.marketDataWebSocketFeed = marketDataWebSocketFeed;
         this.eventDetector = eventDetector;
         this.stateRepository = stateRepository;
         this.properties = properties;
@@ -63,8 +67,8 @@ public class AiTradingScheduler {
         }
 
         try {
-            List<CandleResp> candles = marketContextCollector.getOneMinuteCandles();
-            TickerResp ticker = marketContextCollector.getTicker();
+            List<CandleResp> candles = eventCandles();
+            TickerResp ticker = eventTicker();
             List<TradingEvent> events = eventDetector.detect(ticker, candles, stateRepository.getState());
             if (events.isEmpty()) {
                 return;
@@ -86,5 +90,24 @@ public class AiTradingScheduler {
         } catch (Exception e) {
             log.error("AI trading event scan failed", e);
         }
+    }
+
+    private List<CandleResp> eventCandles() {
+        List<CandleResp> candles = marketDataWebSocketFeed.recentOneMinuteCandles(properties.getOneMinuteCandleLimit());
+        if (hasEnoughCandlesForEventDetection(candles)) {
+            return candles;
+        }
+        return marketContextCollector.getOneMinuteCandles();
+    }
+
+    private TickerResp eventTicker() {
+        return marketDataWebSocketFeed.latestTicker()
+                .orElseGet(marketContextCollector::getTicker);
+    }
+
+    private static boolean hasEnoughCandlesForEventDetection(List<CandleResp> candles) {
+        return candles != null && candles.stream()
+                .filter(candle -> "1".equals(candle.getConfirm()))
+                .count() >= 21;
     }
 }

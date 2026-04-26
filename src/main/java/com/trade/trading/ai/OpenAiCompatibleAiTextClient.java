@@ -3,7 +3,10 @@ package com.trade.trading.ai;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.client.ai.AiClientProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.ProxySelector;
 import java.net.URI;
@@ -16,6 +19,8 @@ import java.util.List;
 import java.util.Map;
 
 public class OpenAiCompatibleAiTextClient implements AiTextClient {
+    private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleAiTextClient.class);
+
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final AiClientProperties properties;
@@ -27,36 +32,53 @@ public class OpenAiCompatibleAiTextClient implements AiTextClient {
 
     @Override
     public String generateJson(String prompt) {
+        String requestBody;
         try {
-            String rawResponse = postRaw(buildRequestBody(prompt));
-            return extractAssistantContent(rawResponse);
+            requestBody = buildRequestBody(prompt);
         } catch (Exception e) {
-            throw new RuntimeException("Send OpenAI-compatible request error", e);
+            throw new RuntimeException("Build OpenAI-compatible request body error", e);
+        }
+
+        String rawResponse = postRaw(requestBody);
+        log.info("OpenAI-compatible raw response: {}", rawResponse);
+
+        try {
+            return extractAssistantContent(rawResponse);
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("Parse OpenAI-compatible response error", e);
         }
     }
 
     String postRaw(String body) {
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(endpointUrl()))
-                    .timeout(Duration.ofSeconds(300))
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "application/json")
-                    .header("Authorization", "Bearer " + properties.requiredApiKey())
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .build();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(endpointUrl()))
+                .timeout(Duration.ofSeconds(300))
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .header("Authorization", "Bearer " + properties.requiredApiKey())
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            int statusCode = response.statusCode();
-            if (statusCode < 200 || statusCode >= 300) {
-                throw new RuntimeException(
-                        "OpenAI-compatible HTTP error, status=" + statusCode + ", body=" + response.body()
-                );
-            }
-            return response.body();
-        } catch (Exception e) {
+        HttpResponse<String> response;
+        try {
+            response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Send OpenAI-compatible HTTP request error", e);
+        } catch (IOException e) {
             throw new RuntimeException("Send OpenAI-compatible HTTP request error", e);
         }
+
+        int statusCode = response.statusCode();
+        if (statusCode < 200 || statusCode >= 300) {
+            log.warn("OpenAI-compatible HTTP error response: status={}, body={}", statusCode, response.body());
+            throw new RuntimeException(
+                    "OpenAI-compatible HTTP error, status=" + statusCode + ", body=" + response.body()
+            );
+        }
+        return response.body();
     }
 
     private String buildRequestBody(String prompt) throws Exception {
@@ -90,14 +112,70 @@ public class OpenAiCompatibleAiTextClient implements AiTextClient {
         }
 
         JsonNode choice = choices.get(0);
-        String content = choice.path("message").path("content").asText(null);
+        String content = extractText(choice.path("message").path("content"));
+        if (content == null || content.isBlank()) {
+            content = extractText(choice.path("text"));
+        }
         if (content == null || content.isBlank()) {
             throw new RuntimeException(
                     "OpenAI-compatible response has no content, finishReason="
                             + choice.path("finish_reason").asText(null)
+                            + ", contentNodeType="
+                            + nodeType(choice.path("message").path("content"))
             );
         }
         return content;
+    }
+
+    private static String extractText(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        if (node.isTextual()) {
+            return node.asText();
+        }
+        if (node.isArray()) {
+            StringBuilder text = new StringBuilder();
+            for (JsonNode part : node) {
+                String partText = extractContentPartText(part);
+                if (partText != null) {
+                    text.append(partText);
+                }
+            }
+            return text.length() == 0 ? null : text.toString();
+        }
+        if (node.isObject()) {
+            String text = extractText(node.get("text"));
+            if (text != null) {
+                return text;
+            }
+            return extractText(node.get("value"));
+        }
+        return node.asText(null);
+    }
+
+    private static String extractContentPartText(JsonNode part) {
+        if (part == null || part.isMissingNode() || part.isNull()) {
+            return null;
+        }
+        if (part.isTextual()) {
+            return part.asText();
+        }
+        if (part.isObject()) {
+            String text = extractText(part.get("text"));
+            if (text != null) {
+                return text;
+            }
+            return extractText(part.get("content"));
+        }
+        return null;
+    }
+
+    private static String nodeType(JsonNode node) {
+        if (node == null || node.isMissingNode()) {
+            return "missing";
+        }
+        return node.getNodeType().name();
     }
 
     static HttpClient buildHttpClient(AiClientProperties properties) {

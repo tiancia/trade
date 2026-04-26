@@ -1,0 +1,116 @@
+# Spring Boot 应用基础配置。
+spring:
+  application:
+    # 应用名称，会用于 Spring 上下文、日志和服务标识。
+    name: trade
+
+# 项目自定义配置。
+trade:
+  # OKX 交易所客户端配置，用于 REST 和 WebSocket 请求。
+  okx:
+    # OKX REST API 基础地址。
+    base-url: "https://www.okx.com"
+    # OKX 公共 WebSocket 地址，用于行情等公开频道。
+    ws-public-url: "wss://ws.okx.com:8443/ws/v5/public"
+    # OKX 私有 WebSocket 地址，用于账户、订单等需要登录的频道。
+    ws-private-url: "wss://ws.okx.com:8443/ws/v5/private"
+    # OKX Access Key；不建议写入配置文件，默认也会从 OKX_ACCESS_KEY 等环境变量读取。
+    # access-key:
+    # OKX Secret Key；不建议写入配置文件，默认也会从 OKX_SECRET_KEY 等环境变量读取。
+    # secret-key:
+    # OKX API Passphrase；不建议写入配置文件，默认也会从 OKX_ACCESS_PASSPHRASE 等环境变量读取。
+    # passphrase:
+    proxy:
+      # 是否给 OKX HTTP/WebSocket 请求启用代理。
+      enabled: true
+      # OKX 代理主机地址。
+      host: "127.0.0.1"
+      # OKX 代理端口。
+      port: 7890
+
+  # AI 自动交易配置。
+  ai:
+    client:
+      # AI 服务提供商；可选值：gemini、openai-compatible、deepseek、kimi。
+      provider: deepseek
+      # 使用的 AI 模型名称；未配置时会使用 provider 对应的默认模型。
+      model: deepseek-v4-pro
+      # 保存 AI API Key 的环境变量名；实际密钥建议放在环境变量里。
+      api-key-env-name: DEEPSEEK_API_KEY
+      # AI API Key；不建议写入配置文件，优先使用 api-key-env-name 指定的环境变量。
+      # api-key:
+      # AI 服务基础地址；未配置时会使用 provider 对应的默认地址。
+      # base-url:
+      # OpenAI 兼容接口的 chat completions 路径；未配置时会使用 provider 对应的默认路径。
+      # chat-completions-path:
+      # 是否要求 OpenAI 兼容接口返回 JSON object 格式。
+      # json-response-format-enabled: true
+      # AI 采样温度；值越低越稳定，未配置时由服务端默认值决定。
+      # temperature:
+      # 单次 AI 输出的最大 token 数；未配置时由服务端默认值决定。
+      # max-output-tokens:
+      proxy:
+        # 是否给 AI 请求启用代理。
+        enabled: true
+        # AI 请求代理主机地址。
+        host: "127.0.0.1"
+        # AI 请求代理端口。
+        port: 7890
+
+    # 是否启用 AI 自动交易；false 时调度任务会跳过实际决策和下单。
+    enabled: true
+    # 交易标的 ID，例如 BTC-USDT。
+    inst-id: BTC-USDT
+    # OKX 产品类型，例如 SPOT 表示现货。
+    inst-type: SPOT
+    # 基础币种，用于读取余额和计算卖出数量。
+    base-ccy: BTC
+    # 计价币种，用于读取余额和限制买入金额。
+    quote-ccy: USDT
+    # OKX 交易模式；现货通常使用 cash。
+    td-mode: cash
+    # 单次买入最多使用多少计价币种金额。
+    max-buy-quote-amount: 10
+    # 单次卖出最多占可用基础币种持仓的比例，1 表示最多全部卖出。
+    max-sell-position-ratio: 1
+    # 常规定时 AI 决策的执行间隔，单位毫秒。
+    decision-fixed-delay-ms: 1800000
+    # 市场事件扫描的执行间隔，单位毫秒。
+    event-scan-fixed-delay-ms: 60000
+    # 应用启动后首次执行常规 AI 决策前的延迟，单位毫秒。
+    initial-delay-ms: 30000
+    # 应用启动后首次执行市场事件扫描前的延迟，单位毫秒。
+    event-initial-delay-ms: 30000
+    # 市场事件触发 AI 决策后的冷却时间，单位毫秒。
+    event-cooldown-ms: 6000
+    websocket:
+      # 是否启用 OKX 行情 WebSocket 订阅；启用后事件扫描优先使用 WebSocket 缓存。
+      enabled: true
+      # WebSocket 行情缓存超过该时间未更新时视为过期，事件扫描会回退到 REST 查询，单位毫秒。
+      stale-timeout-ms: 120000
+      # 本地保留的 1 分钟 K 线缓存数量，用于事件检测。
+      candle-cache-limit: 100
+    # 5 分钟价格变化触发 AI 决策的阈值比例，0.02 表示 2%。
+    price-move-trigger-percent: "0.02"
+    # 1 分钟成交量相对前 20 分钟均量的放大倍数阈值。
+    volume-spike-multiplier: 3
+    # 本地追踪持仓浮亏触发 AI 决策的阈值比例，0.10 表示 10%。
+    floating-loss-trigger-percent: "0.10"
+    # 本地交易状态文件路径，用于记录 AI 买入后的持仓成本等信息。
+    state-file: "data/trading-state.json"
+    # 下单前采集的盘口深度档位数。
+    # order-book-depth: 5
+    # 下单前采集的 1 分钟 K 线数量。
+    # one-minute-candle-limit: 25
+    # 下单前采集的 5 分钟 K 线数量。
+    # five-minute-candle-limit: 24
+    # 下单前采集的近期订单数量。
+    # recent-order-limit: 10
+    # 下单前采集的近期成交数量。
+    # recent-fill-limit: 10
+    # 下单后查询成交结果的重试次数。
+    # order-fill-query-attempts: 5
+    # 下单后两次查询成交结果之间的等待时间，单位毫秒。
+    # order-fill-query-delay-ms: 1000
+    # 买入金额保留的小数位数。
+    # quote-amount-scale: 2
