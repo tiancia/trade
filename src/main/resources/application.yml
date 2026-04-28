@@ -82,7 +82,7 @@ trade:
     # 应用启动后首次执行市场事件扫描前的延迟，单位毫秒。
     event-initial-delay-ms: 30000
     # 市场事件触发 AI 决策后的冷却时间，单位毫秒。
-    event-cooldown-ms: 6000
+    event-cooldown-ms: 600000
     websocket:
       # 是否启用 OKX 行情 WebSocket 订阅；启用后事件扫描优先使用 WebSocket 缓存。
       enabled: true
@@ -96,21 +96,27 @@ trade:
     volume-spike-multiplier: 3
     # 本地追踪持仓浮亏触发 AI 决策的阈值比例，0.10 表示 10%。
     floating-loss-trigger-percent: "0.10"
+    # Estimated taker fee rate used in AI trading-cost context. 0.001 means 0.1%.
+    taker-fee-rate: "0.001"
+    # Required expected net edge after fee and spread. 0.001 means 0.1%.
+    min-expected-net-edge-percent: "0.001"
     # 本地交易状态文件路径，用于记录 AI 买入后的持仓成本等信息。
     state-file: "data/trading-state.json"
-    # 下单前采集的盘口深度档位数。
-    # order-book-depth: 5
-    # 下单前采集的 1 分钟 K 线数量。
-    # one-minute-candle-limit: 25
-    # 下单前采集的 5 分钟 K 线数量。
-    # five-minute-candle-limit: 24
-    # 下单前采集的近期订单数量。
-    # recent-order-limit: 10
-    # 下单前采集的近期成交数量。
-    # recent-fill-limit: 10
-    # 下单后查询成交结果的重试次数。
-    # order-fill-query-attempts: 5
-    # 下单后两次查询成交结果之间的等待时间，单位毫秒。
-    # order-fill-query-delay-ms: 1000
-    # 买入金额保留的小数位数。
-    # quote-amount-scale: 2
+    # Number of recent AI decisions persisted and sent into each new AI request.
+    recent-decision-memory-limit: 20
+#     下单前采集的盘口深度档位数。
+#    order-book-depth: 5
+#     下单前采集的 1 分钟 K 线数量。
+#    one-minute-candle-limit: 25
+#     下单前采集的 5 分钟 K 线数量。
+#    five-minute-candle-limit: 24
+#     下单前采集的近期订单数量。
+#    recent-order-limit: 10
+#     下单前采集的近期成交数量。
+#    recent-fill-limit: 10
+#     下单后查询成交结果的重试次数。
+#    order-fill-query-attempts: 5
+#     下单后两次查询成交结果之间的等待时间，单位毫秒。
+#    order-fill-query-delay-ms: 1000
+#     买入金额保留的小数位数。
+#     quote-amount-scale: 2

@@ -3,6 +3,7 @@ package com.trade.trading.persistence;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.model.TradingDecisionRecord;
 import com.trade.trading.model.TradingState;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -11,6 +12,8 @@ import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 @Component
 public class TradingStateRepository {
@@ -51,7 +54,8 @@ public class TradingStateRepository {
         state = new TradingState()
                 .setTrackedBaseAmount(newBase)
                 .setAverageCost(newCost)
-                .setUpdatedAt(Instant.now().toString());
+                .setUpdatedAt(Instant.now().toString())
+                .setRecentDecisions(copyRecentDecisions(current.getRecentDecisions()));
         writeState(state);
     }
 
@@ -73,7 +77,29 @@ public class TradingStateRepository {
         state = new TradingState()
                 .setTrackedBaseAmount(remaining)
                 .setAverageCost(averageCost)
-                .setUpdatedAt(Instant.now().toString());
+                .setUpdatedAt(Instant.now().toString())
+                .setRecentDecisions(copyRecentDecisions(current.getRecentDecisions()));
+        writeState(state);
+    }
+
+    public synchronized void recordDecision(TradingDecisionRecord record, int limit) {
+        if (record == null || limit <= 0) {
+            return;
+        }
+
+        TradingState current = state == null ? readState() : state;
+        List<TradingDecisionRecord> recent = new ArrayList<>();
+        recent.add(copyDecision(record));
+        recent.addAll(copyRecentDecisions(current.getRecentDecisions()));
+        if (recent.size() > limit) {
+            recent = new ArrayList<>(recent.subList(0, limit));
+        }
+
+        state = new TradingState()
+                .setTrackedBaseAmount(nullToZero(current.getTrackedBaseAmount()))
+                .setAverageCost(nullToZero(current.getAverageCost()))
+                .setUpdatedAt(current.getUpdatedAt())
+                .setRecentDecisions(recent);
         writeState(state);
     }
 
@@ -89,6 +115,9 @@ public class TradingStateRepository {
             }
             if (loaded.getAverageCost() == null) {
                 loaded.setAverageCost(BigDecimal.ZERO);
+            }
+            if (loaded.getRecentDecisions() == null) {
+                loaded.setRecentDecisions(new ArrayList<>());
             }
             return loaded;
         } catch (Exception e) {
@@ -112,10 +141,50 @@ public class TradingStateRepository {
         return new TradingState()
                 .setTrackedBaseAmount(nullToZero(source.getTrackedBaseAmount()))
                 .setAverageCost(nullToZero(source.getAverageCost()))
-                .setUpdatedAt(source.getUpdatedAt());
+                .setUpdatedAt(source.getUpdatedAt())
+                .setRecentDecisions(copyRecentDecisions(source.getRecentDecisions()));
     }
 
     private static BigDecimal nullToZero(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private static List<TradingDecisionRecord> copyRecentDecisions(List<TradingDecisionRecord> source) {
+        if (source == null || source.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<TradingDecisionRecord> copy = new ArrayList<>(source.size());
+        for (TradingDecisionRecord record : source) {
+            copy.add(copyDecision(record));
+        }
+        return copy;
+    }
+
+    private static TradingDecisionRecord copyDecision(TradingDecisionRecord source) {
+        if (source == null) {
+            return null;
+        }
+        return new TradingDecisionRecord()
+                .setTimestamp(source.getTimestamp())
+                .setTriggerType(source.getTriggerType())
+                .setTriggerReason(source.getTriggerReason())
+                .setAction(source.getAction())
+                .setReason(source.getReason())
+                .setBuyQuoteAmountUsdt(source.getBuyQuoteAmountUsdt())
+                .setSellBaseAmountBtc(source.getSellBaseAmountBtc())
+                .setLastPrice(source.getLastPrice())
+                .setAvailableBase(source.getAvailableBase())
+                .setAvailableQuote(source.getAvailableQuote())
+                .setExecutionStatus(source.getExecutionStatus())
+                .setSkipReason(source.getSkipReason())
+                .setOrderId(source.getOrderId())
+                .setClientOrderId(source.getClientOrderId())
+                .setOrderSize(source.getOrderSize())
+                .setFilledBaseAmount(source.getFilledBaseAmount())
+                .setAverageFillPrice(source.getAverageFillPrice())
+                .setFee(source.getFee())
+                .setFeeCcy(source.getFeeCcy())
+                .setError(source.getError());
     }
 }

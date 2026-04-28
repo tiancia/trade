@@ -21,6 +21,7 @@ class OrderSizingServiceTest {
     @Test
     void buySizeIsCappedBySystemAndAvailableQuote() {
         AiTradingProperties properties = new AiTradingProperties();
+        properties.setMaxBuyQuoteAmount(new BigDecimal("100"));
         OrderSizingService sizingService = new OrderSizingService(properties);
 
         AiTradingDecision decision = new AiTradingDecision()

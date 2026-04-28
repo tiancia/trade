@@ -20,6 +20,8 @@ import com.trade.trading.persistence.TradingStateRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +36,7 @@ class AiTradingServiceTest {
     @Test
     void buyPlacesCappedSpotMarketQuoteOrder() {
         AiTradingProperties properties = properties();
+        properties.setMaxBuyQuoteAmount(new BigDecimal("100"));
         FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
         AiTradingService service = service(
                 properties,
@@ -93,6 +96,36 @@ class AiTradingServiceTest {
         assertEquals("buy", okxApi.orderReq.getSide());
     }
 
+    @Test
+    void buyTracksBaseFeeAdjustedCostAndDecisionRecord() {
+        AiTradingProperties properties = properties();
+        properties.setMaxBuyQuoteAmount(new BigDecimal("100"));
+        FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000", "-0.000001", "BTC"));
+        TradingStateRepository stateRepository = new TradingStateRepository(tempDir.resolve("fee-state.json"));
+        AiTradingService service = new AiTradingService(
+                okxApi,
+                prompt -> "{\"action\":\"BUY\",\"reason\":\"test buy\",\"buyQuoteAmountUsdt\":100}",
+                new AiTradingDecisionParser(),
+                new FakeMarketContextCollector(context("0", "1000")),
+                new AiPromptBuilder(),
+                new OrderSizingService(properties),
+                stateRepository,
+                properties
+        );
+
+        service.runDecision(TradingTrigger.scheduled());
+
+        TradingState state = stateRepository.getState();
+        assertDecimal("0.001999", state.getTrackedBaseAmount());
+        BigDecimal expectedAverageCost = new BigDecimal("100")
+                .divide(new BigDecimal("0.001999"), 18, RoundingMode.HALF_UP);
+        assertDecimal(expectedAverageCost.toPlainString(), state.getAverageCost());
+        assertEquals(1, state.getRecentDecisions().size());
+        assertEquals("FILLED", state.getRecentDecisions().getFirst().getExecutionStatus());
+        assertDecimal("-0.000001", state.getRecentDecisions().getFirst().getFee());
+        assertEquals("BTC", state.getRecentDecisions().getFirst().getFeeCcy());
+    }
+
     private AiTradingService service(
             AiTradingProperties properties,
             FakeOkxApi okxApi,
@@ -116,6 +149,10 @@ class AiTradingServiceTest {
         AiTradingProperties properties = new AiTradingProperties();
         properties.setOrderFillQueryDelayMs(0);
         return properties;
+    }
+
+    private static void assertDecimal(String expected, BigDecimal actual) {
+        assertEquals(0, new BigDecimal(expected).compareTo(actual));
     }
 
     private static TradingDecisionContext context(String baseAvail, String quoteAvail) {
@@ -147,11 +184,23 @@ class AiTradingServiceTest {
     }
 
     private static OrderInfoResp filledOrder(String side, String fillSize, String avgPrice) {
+        return filledOrder(side, fillSize, avgPrice, null, null);
+    }
+
+    private static OrderInfoResp filledOrder(
+            String side,
+            String fillSize,
+            String avgPrice,
+            String fee,
+            String feeCcy
+    ) {
         OrderInfoResp order = new OrderInfoResp();
         order.setSide(side);
         order.setAccFillSz(fillSize);
         order.setAvgPx(avgPrice);
         order.setState("filled");
+        order.setFee(fee);
+        order.setFeeCcy(feeCcy);
         return order;
     }
 

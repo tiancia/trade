@@ -25,7 +25,10 @@ public class AiTradingProperties {
     private BigDecimal priceMoveTriggerPercent = new BigDecimal("0.02");
     private BigDecimal volumeSpikeMultiplier = new BigDecimal("3");
     private BigDecimal floatingLossTriggerPercent = new BigDecimal("0.10");
+    private BigDecimal takerFeeRate = new BigDecimal("0.001");
+    private BigDecimal minExpectedNetEdgePercent = new BigDecimal("0.001");
     private String stateFile = "data/trading-state.json";
+    private int recentDecisionMemoryLimit = 20;
     private int orderBookDepth = 5;
     private int oneMinuteCandleLimit = 25;
     private int fiveMinuteCandleLimit = 24;
