@@ -3,6 +3,135 @@
   "averageCost" : 78110.278811372373719436,
   "updatedAt" : "2026-04-27T13:10:51.028560500Z",
   "recentDecisions" : [ {
+    "decisionId" : "710fda6c-12ec-490e-999f-514ea0347ece",
+    "timestamp" : "2026-05-01T08:16:59.113271200Z",
+    "triggerType" : "EVENT",
+    "triggerReason" : "Market event trigger",
+    "action" : "HOLD",
+    "reason" : "Volume spike but 5-min price change 0.239% below 0.3% cost+edge threshold. Unrealized loss -1.07% after fees; buying small amount doesn't significantly lower avg cost; selling locks loss. No reversal signal. HOLD.",
+    "lastPrice" : 77355.3,
+    "availableBase" : 0.00137949359,
+    "availableQuote" : 122.55280533801,
+    "executionStatus" : "HELD"
+  }, {
+    "decisionId" : "d93c03e0-14f5-4d61-9e4a-f977750c1d36",
+    "timestamp" : "2026-05-01T08:05:04.074569800Z",
+    "triggerType" : "SCHEDULED",
+    "triggerReason" : "30 minute scheduled decision",
+    "action" : "HOLD",
+    "reason" : "Current price $77081 far below avg cost $78110, unrealized loss ~1.4% after fees. 5-min change negligible. Buying small amount doesn't significantly lower avg cost; selling locks loss. No reversal signal. HOLD.",
+    "lastPrice" : 77081.2,
+    "availableBase" : 0.00137949359,
+    "availableQuote" : 122.55280533801,
+    "executionStatus" : "HELD"
+  }, {
+    "decisionId" : "f94979b7-c4a9-46ea-ac06-bc84a33536cc",
+    "timestamp" : "2026-05-01T07:47:12.416168400Z",
+    "triggerType" : "EVENT",
+    "triggerReason" : "Market event trigger",
+    "action" : "HOLD",
+    "reason" : "Price 77039.8 below avg cost 78110, unrealized loss ~1.4% after fees. Volume spike but 5-min change 0.006% below 0.3% cost+edge threshold. No reversal signal. HOLD.",
+    "lastPrice" : 77039.8,
+    "availableBase" : 0.00137949359,
+    "availableQuote" : 122.55280533801,
+    "executionStatus" : "HELD"
+  }, {
+    "decisionId" : "1cfdd4ed-e523-4481-9118-5b5130c1241f",
+    "timestamp" : "2026-05-01T07:34:09.639460100Z",
+    "triggerType" : "SCHEDULED",
+    "triggerReason" : "30 minute scheduled decision",
+    "action" : "HOLD",
+    "reason" : "Price 77013.7 still below tracked average cost 78110.28, unrealized loss ~1.5% after fees. No strong reversal signal; 5-min change 0.007% far below 0.3% cost+edge threshold. Buying doesn't significantly improve average cost; selling locks in loss. Recent HOLDs. Continue HOLD.",
+    "lastPrice" : 77013.7,
+    "availableBase" : 0.00137949359,
+    "availableQuote" : 122.55280533801,
+    "executionStatus" : "HELD"
+  }, {
+    "decisionId" : "18088703-0906-48d5-8575-f66a3267a8ce",
+    "timestamp" : "2026-04-28T15:48:36.366979600Z",
+    "triggerType" : "SCHEDULED",
+    "triggerReason" : "30 minute scheduled decision",
+    "action" : "HOLD",
+    "reason" : "Price 75923.5 far below average cost 78110.28, unrealized loss ~2.9% after fees. 5-min change -0.025% far below 0.3% cost+edge threshold. Buying negligibly lowers avg cost; selling locks loss. No reversal signal. HOLD.",
+    "lastPrice" : 75923.5,
+    "availableBase" : 0.00269576359,
+    "availableQuote" : 22.652877571704,
+    "executionStatus" : "HELD"
+  }, {
+    "decisionId" : "64ced377-c659-4640-a6f9-facce3aa07e8",
+    "timestamp" : "2026-04-28T15:23:40.699977200Z",
+    "triggerType" : "EVENT",
+    "triggerReason" : "Market event trigger",
+    "action" : "HOLD",
+    "reason" : "Price 76039.7 far below avg cost 78110.28, unrealized loss -2.75% after fees. 5-min change 0.0004% far below 0.30% threshold. Buying negligibly lowers avg cost; selling locks loss. Volume spike without reversal. HOLD.",
+    "lastPrice" : 76039.7,
+    "availableBase" : 0.00269576359,
+    "availableQuote" : 22.652877571704,
+    "executionStatus" : "HELD"
+  }, {
+    "decisionId" : "69d1d505-72d7-4ec4-b253-4008040b4ff4",
+    "timestamp" : "2026-04-28T15:17:40.119217800Z",
+    "triggerType" : "SCHEDULED",
+    "triggerReason" : "30 minute scheduled decision",
+    "action" : "HOLD",
+    "reason" : "Price 75999.6 far below avg cost 78110.28, unrealized loss ~2.80% after fees. 5-min change 0.0036% negligible. No reversal. Buying 10 USDT negligibly lowers avg cost. Selling locks loss. HOLD.",
+    "lastPrice" : 75999.6,
+    "availableBase" : 0.00269576359,
+    "availableQuote" : 22.652877571704,
+    "executionStatus" : "HELD"
+  }, {
+    "decisionId" : "01306950-e158-473c-8635-9b0e8a4b1c89",
+    "timestamp" : "2026-04-28T14:54:11.985661200Z",
+    "triggerType" : "SCHEDULED",
+    "triggerReason" : "30 minute scheduled decision",
+    "action" : "HOLD",
+    "reason" : "Price 75766.1 far below avg cost 78110.28, unrealized loss -3.1% after fees. 5-min change 0.064% below 0.3% threshold. No reversal. HOLD.",
+    "lastPrice" : 75766.1,
+    "availableBase" : 0.00269576359,
+    "availableQuote" : 22.652877571704,
+    "executionStatus" : "HELD"
+  }, {
+    "decisionId" : "e45edd7a-4ad2-467d-ad25-373411ffdf23",
+    "timestamp" : "2026-04-28T14:23:12.811018Z",
+    "triggerType" : "SCHEDULED",
+    "triggerReason" : "30 minute scheduled decision",
+    "action" : "HOLD",
+    "reason" : "Price 75883.3 far below avg cost 78110.28, unrealized loss -2.95% after fees. 5-min change -0.14% negative, no reversal. Buying 10 USDT negligibly lowers avg cost. Selling locks loss. HOLD.",
+    "lastPrice" : 75883.3,
+    "availableBase" : 0.00269576359,
+    "availableQuote" : 22.652877571704,
+    "executionStatus" : "HELD"
+  }, {
+    "timestamp" : "2026-04-28T14:18:19.385105200Z",
+    "triggerType" : "SCHEDULED",
+    "triggerReason" : "30 minute scheduled decision",
+    "action" : "HOLD",
+    "reason" : "Price 76047.3 far below avg cost 78110.28, unrealized loss -2.74% after fees. 5-min change -0.02% below 0.30% required edge. Volume spike, no reversal. Buying 10 USDT negligibly lowers avg cost. Selling locks loss. HOLD.",
+    "lastPrice" : 76047.3,
+    "availableBase" : 0.00269576359,
+    "availableQuote" : 22.652877571704,
+    "executionStatus" : "HELD"
+  }, {
+    "timestamp" : "2026-04-28T14:16:39.422242300Z",
+    "triggerType" : "EVENT",
+    "triggerReason" : "Market event trigger",
+    "action" : "HOLD",
+    "reason" : "Price 75990.1 far below avg cost 78110.28, unrealized loss -2.81% after fees. 5-min change -0.165% below 0.3% cost+edge threshold. Volume spike with downward move. Buying 10 USDT negligibly lowers avg cost. Selling locks loss. No reversal signal. HOLD.",
+    "lastPrice" : 75990.1,
+    "availableBase" : 0.00269576359,
+    "availableQuote" : 22.652877571704,
+    "executionStatus" : "HELD"
+  }, {
+    "timestamp" : "2026-04-28T13:47:33.729025200Z",
+    "triggerType" : "SCHEDULED",
+    "triggerReason" : "30 minute scheduled decision",
+    "action" : "HOLD",
+    "reason" : "Price 76409.9 far below avg cost 78110.28, unrealized loss ~2.27% after fees. 5-min change +0.166% below 0.3% cost+edge threshold. Buying 10 USDT negligibly lowers avg cost. Selling locks loss. No reversal signal. Recent HOLDs. HOLD.",
+    "lastPrice" : 76409.9,
+    "availableBase" : 0.00269576359,
+    "availableQuote" : 22.652877571704,
+    "executionStatus" : "HELD"
+  }, {
     "timestamp" : "2026-04-28T13:16:53.732564400Z",
     "triggerType" : "SCHEDULED",
     "triggerReason" : "30 minute scheduled decision",
@@ -79,126 +208,6 @@
     "action" : "HOLD",
     "reason" : "Price 76140.7 far below avg cost 78110.28, unrealized loss -2.6% after fees; volume spike with slight downward move; 5-min change -0.024% far below 0.3% threshold; buying 10 USDT negligibly lowers avg cost; selling locks loss; recent HOLDs; no reversal signal; HOLD.",
     "lastPrice" : 76140.7,
-    "availableBase" : 0.00269576359,
-    "availableQuote" : 22.652877571704,
-    "executionStatus" : "HELD"
-  }, {
-    "timestamp" : "2026-04-28T11:45:15.547089700Z",
-    "triggerType" : "SCHEDULED",
-    "triggerReason" : "30 minute scheduled decision",
-    "action" : "HOLD",
-    "reason" : "Current price 76272.1 far below avg cost 78110.28; unrealized loss ~2.45% after fees; 5-min change 0.035% below 0.3% threshold; buying 10 USDT negligibly lowers avg cost; selling locks loss; no reversal signal; recent HOLDs; HOLD.",
-    "lastPrice" : 76272.1,
-    "availableBase" : 0.00269576359,
-    "availableQuote" : 22.652877571704,
-    "executionStatus" : "HELD"
-  }, {
-    "timestamp" : "2026-04-28T11:14:53.118192800Z",
-    "triggerType" : "SCHEDULED",
-    "triggerReason" : "30 minute scheduled decision",
-    "action" : "HOLD",
-    "reason" : "Price 76458.9 far below avg cost 78110.28, unrealized loss -2.21% after fees; 5-min change -0.02% negligible; buying 10 USDT negligibly lowers avg cost; selling locks loss; recent HOLDs; no reversal signal; HOLD.",
-    "lastPrice" : 76458.9,
-    "availableBase" : 0.00269576359,
-    "availableQuote" : 22.652877571704,
-    "executionStatus" : "HELD"
-  }, {
-    "timestamp" : "2026-04-28T11:11:33.876308700Z",
-    "triggerType" : "EVENT",
-    "triggerReason" : "Market event trigger",
-    "action" : "HOLD",
-    "reason" : "Price 76467.1 far below avg cost 78110.28, unrealized loss -2.20% after fees; volume spike with downward move; 5-min change -0.06% far below 0.3% threshold; buying 10 USDT negligibly lowers avg cost; selling locks loss; recent HOLDs; no reversal signal; HOLD.",
-    "lastPrice" : 76467.1,
-    "availableBase" : 0.00269576359,
-    "availableQuote" : 22.652877571704,
-    "executionStatus" : "HELD"
-  }, {
-    "timestamp" : "2026-04-28T11:01:08.754527500Z",
-    "triggerType" : "EVENT",
-    "triggerReason" : "Market event trigger",
-    "action" : "HOLD",
-    "reason" : "Price 76638.4 far below avg cost 78110.28, unrealized loss -1.98% after fees; 5-min change 0.08% tiny; volume spike without reversal above cost; buying 10 USDT negligibly lowers avg cost; selling locks loss; recent HOLDs; no reversal signal; HOLD.",
-    "lastPrice" : 76638.4,
-    "availableBase" : 0.00269576359,
-    "availableQuote" : 22.652877571704,
-    "executionStatus" : "HELD"
-  }, {
-    "timestamp" : "2026-04-28T10:44:35.452086900Z",
-    "triggerType" : "SCHEDULED",
-    "triggerReason" : "30 minute scheduled decision",
-    "action" : "HOLD",
-    "reason" : "Price 76605.8 far below avg cost 78110.28, unrealized loss -1.9% after fees; 5-min change 0.07% tiny; buying negligibly lowers avg cost; selling locks loss; no reversal signal; HOLD.",
-    "lastPrice" : 76605.8,
-    "availableBase" : 0.00269576359,
-    "availableQuote" : 22.652877571704,
-    "executionStatus" : "HELD"
-  }, {
-    "timestamp" : "2026-04-28T10:35:40.032347800Z",
-    "triggerType" : "EVENT",
-    "triggerReason" : "Market event trigger",
-    "action" : "HOLD",
-    "reason" : "Price 76590.7 far below avg cost 78110.28, unrealized loss -2.04% after fees; volume spike without strong directional move; 5-min change 0.03% far below 0.30% threshold; buying negligibly lowers avg cost; selling locks loss; recent HOLDs; no reversal signal; HOLD.",
-    "lastPrice" : 76590.7,
-    "availableBase" : 0.00269576359,
-    "availableQuote" : 22.652877571704,
-    "executionStatus" : "HELD"
-  }, {
-    "timestamp" : "2026-04-28T10:13:13.213530600Z",
-    "triggerType" : "SCHEDULED",
-    "triggerReason" : "30 minute scheduled decision",
-    "action" : "HOLD",
-    "reason" : "Price 76532.2 far below avg cost 78110.28, unrealized loss -2.12% after fees; 5-min change -0.00001% negligible; buying 10 USDT negligibly lowers avg cost; selling locks loss; recent HOLDs; no reversal signal.",
-    "lastPrice" : 76532.2,
-    "availableBase" : 0.00269576359,
-    "availableQuote" : 22.652877571704,
-    "executionStatus" : "HELD"
-  }, {
-    "timestamp" : "2026-04-28T09:52:41.236402900Z",
-    "triggerType" : "EVENT",
-    "triggerReason" : "Market event trigger",
-    "action" : "HOLD",
-    "reason" : "Price 76506.9 far below avg cost 78110.28, unrealized loss -2.15% after fees; 5-min change -0.07% negligible; volume spike without reversal above cost; buying 10 USDT negligibly lowers avg cost; selling locks loss; recent HOLDs; no reversal signal.",
-    "lastPrice" : 76506.9,
-    "availableBase" : 0.00269576359,
-    "availableQuote" : 22.652877571704,
-    "executionStatus" : "HELD"
-  }, {
-    "timestamp" : "2026-04-28T09:42:58.321422300Z",
-    "triggerType" : "SCHEDULED",
-    "triggerReason" : "30 minute scheduled decision",
-    "action" : "HOLD",
-    "reason" : "Price 76694.2 far below avg cost 78110.28, unrealized loss -1.91% after fees; 5-min change -0.00007% negligible; buying 10 USDT minimally lowers avg cost; selling locks loss; recent HOLDs; no reversal signal.",
-    "lastPrice" : 76694.2,
-    "availableBase" : 0.00269576359,
-    "availableQuote" : 22.652877571704,
-    "executionStatus" : "HELD"
-  }, {
-    "timestamp" : "2026-04-28T09:36:08.117310700Z",
-    "triggerType" : "EVENT",
-    "triggerReason" : "Market event trigger",
-    "action" : "HOLD",
-    "reason" : "Price 76672.2 far below avg cost 78110.28; volume spike with downward move; 5-min change -0.10% below 0.30% cost+edge threshold; buying 10 USDT negligibly lowers avg cost; selling locks -1.94% loss after fees; HOLD.",
-    "lastPrice" : 76672.2,
-    "availableBase" : 0.00269576359,
-    "availableQuote" : 22.652877571704,
-    "executionStatus" : "HELD"
-  }, {
-    "timestamp" : "2026-04-28T09:19:47.698091800Z",
-    "triggerType" : "EVENT",
-    "triggerReason" : "Market event trigger",
-    "action" : "HOLD",
-    "reason" : "Price 76827.2 far below avg cost 78110.28, unrealized loss -1.74% after fees; 5-min change +0.028% below 0.3% cost+edge threshold; volume spike without reversal above cost; buying 10 USDT negligibly lowers avg cost; selling locks loss; recent HOLDs; prefer HOLD.",
-    "lastPrice" : 76827.2,
-    "availableBase" : 0.00269576359,
-    "availableQuote" : 22.652877571704,
-    "executionStatus" : "HELD"
-  }, {
-    "timestamp" : "2026-04-28T09:12:39.986196700Z",
-    "triggerType" : "SCHEDULED",
-    "triggerReason" : "30 minute scheduled decision",
-    "action" : "HOLD",
-    "reason" : "Price 76814.2 well below avg cost 78110.28; unrealized loss -1.76% after fees; 5-min change -0.00047% negligible; buying 10 USDT negligibly lowers avg cost; selling locks loss; recent HOLDs; no reversal signal.",
-    "lastPrice" : 76814.2,
     "availableBase" : 0.00269576359,
     "availableQuote" : 22.652877571704,
     "executionStatus" : "HELD"

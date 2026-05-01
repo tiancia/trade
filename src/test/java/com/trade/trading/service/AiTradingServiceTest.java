@@ -13,9 +13,11 @@ import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.ai.AiPromptBuilder;
 import com.trade.trading.ai.AiTradingDecisionParser;
 import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.model.AiDecisionAuditRecord;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingState;
 import com.trade.trading.model.TradingTrigger;
+import com.trade.trading.persistence.AiDecisionAuditSink;
 import com.trade.trading.persistence.TradingStateRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -28,8 +30,12 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 class AiTradingServiceTest {
+    private static final AiDecisionAuditSink NOOP_AUDIT_SINK = record -> {
+    };
+
     @TempDir
     Path tempDir;
 
@@ -110,6 +116,7 @@ class AiTradingServiceTest {
                 new AiPromptBuilder(),
                 new OrderSizingService(properties),
                 stateRepository,
+                NOOP_AUDIT_SINK,
                 properties
         );
 
@@ -124,6 +131,41 @@ class AiTradingServiceTest {
         assertEquals("FILLED", state.getRecentDecisions().getFirst().getExecutionStatus());
         assertDecimal("-0.000001", state.getRecentDecisions().getFirst().getFee());
         assertEquals("BTC", state.getRecentDecisions().getFirst().getFeeCcy());
+    }
+
+    @Test
+    void sendsAuditRecordWithPromptResponseTriggerAndExecutionStatus() {
+        AiTradingProperties properties = properties();
+        FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        TradingStateRepository stateRepository = new TradingStateRepository(tempDir.resolve("audit-state.json"));
+        CapturingAuditSink auditSink = new CapturingAuditSink();
+        String aiResponse = "{\"action\":\"BUY\",\"reason\":\"audit buy\",\"buyQuoteAmountUsdt\":5}";
+        TradingTrigger trigger = TradingTrigger.event("price moved", Map.of("priceMovePercent", "0.03"));
+        TradingDecisionContext context = context("0", "1000")
+                .setAiParametersJson("{\"instrumentId\":\"BTC-USDT\"}");
+        AiTradingService service = new AiTradingService(
+                okxApi,
+                prompt -> aiResponse,
+                new AiTradingDecisionParser(),
+                new FakeMarketContextCollector(context),
+                new AiPromptBuilder(),
+                new OrderSizingService(properties),
+                stateRepository,
+                auditSink,
+                properties
+        );
+
+        service.runDecision(trigger);
+
+        AiDecisionAuditRecord audit = auditSink.record;
+        assertNotNull(audit);
+        assertNotNull(audit.getDecisionId());
+        assertEquals(trigger, audit.getTrigger());
+        assertEquals("{\"instrumentId\":\"BTC-USDT\"}", audit.getContext().getAiParametersJson());
+        assertEquals(aiResponse, audit.getRawAiResponse());
+        assertEquals("FILLED", audit.getDecisionRecord().getExecutionStatus());
+        assertEquals(audit.getDecisionId(), audit.getDecisionRecord().getDecisionId());
+        assertNotNull(audit.getPrompt());
     }
 
     private AiTradingService service(
@@ -141,6 +183,7 @@ class AiTradingServiceTest {
                 new AiPromptBuilder(),
                 new OrderSizingService(properties),
                 stateRepository,
+                NOOP_AUDIT_SINK,
                 properties
         );
     }
@@ -273,6 +316,15 @@ class AiTradingServiceTest {
         @Override
         public <T> OkxResponse<T> post(String path, Object req, boolean needAuth, Class<T> dataClass) {
             return OkxResponse.success(List.of());
+        }
+    }
+
+    private static class CapturingAuditSink implements AiDecisionAuditSink {
+        private AiDecisionAuditRecord record;
+
+        @Override
+        public void save(AiDecisionAuditRecord record) {
+            this.record = record;
         }
     }
 }

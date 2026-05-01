@@ -4,10 +4,12 @@ import lombok.Data;
 import lombok.experimental.Accessors;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 
 @Data
 @Accessors(chain = true)
 public class TradingDecisionRecord {
+    private UUID decisionId;
     private String timestamp;
     private String triggerType;
     private String triggerReason;

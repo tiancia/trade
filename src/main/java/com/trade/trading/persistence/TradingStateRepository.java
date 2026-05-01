@@ -166,6 +166,7 @@ public class TradingStateRepository {
             return null;
         }
         return new TradingDecisionRecord()
+                .setDecisionId(source.getDecisionId())
                 .setTimestamp(source.getTimestamp())
                 .setTriggerType(source.getTriggerType())
                 .setTriggerReason(source.getTriggerReason())

@@ -12,12 +12,14 @@ import com.trade.trading.ai.AiPromptBuilder;
 import com.trade.trading.ai.AiTextClient;
 import com.trade.trading.ai.AiTradingDecisionParser;
 import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.model.AiDecisionAuditRecord;
 import com.trade.trading.model.AiTradingDecision;
 import com.trade.trading.model.OrderSizing;
 import com.trade.trading.model.TradingAction;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingDecisionRecord;
 import com.trade.trading.model.TradingTrigger;
+import com.trade.trading.persistence.AiDecisionAuditSink;
 import com.trade.trading.persistence.TradingStateRepository;
 import com.trade.trading.support.TradingMath;
 import org.slf4j.Logger;
@@ -42,6 +44,7 @@ public class AiTradingService {
     private final AiPromptBuilder promptBuilder;
     private final OrderSizingService orderSizingService;
     private final TradingStateRepository stateRepository;
+    private final AiDecisionAuditSink auditSink;
     private final AiTradingProperties properties;
     private final ReentrantLock decisionLock = new ReentrantLock();
 
@@ -53,6 +56,7 @@ public class AiTradingService {
             AiPromptBuilder promptBuilder,
             OrderSizingService orderSizingService,
             TradingStateRepository stateRepository,
+            AiDecisionAuditSink auditSink,
             AiTradingProperties properties
     ) {
         this.okxApi = okxApi;
@@ -62,6 +66,7 @@ public class AiTradingService {
         this.promptBuilder = promptBuilder;
         this.orderSizingService = orderSizingService;
         this.stateRepository = stateRepository;
+        this.auditSink = auditSink;
         this.properties = properties;
     }
 
@@ -75,16 +80,25 @@ public class AiTradingService {
             return false;
         }
 
+        UUID decisionId = UUID.randomUUID();
+        Instant startedAt = Instant.now();
+        TradingDecisionContext context = null;
+        String prompt = null;
+        String rawAiResponse = null;
+        AiTradingDecision decision = null;
+        TradingDecisionRecord decisionRecord = null;
+        Exception failure = null;
+
         try {
-            TradingDecisionContext context = contextCollector.collect(trigger);
+            context = contextCollector.collect(trigger);
             log.info("AI decision parameters:\n {}", context.getAiParametersJson());
 
-            String prompt = promptBuilder.buildPrompt(context.getAiParametersJson());
+            prompt = promptBuilder.buildPrompt(context.getAiParametersJson());
 
-            String rawAiResponse = aiTextClient.generateJson(prompt);
+            rawAiResponse = aiTextClient.generateJson(prompt);
             log.info("AI raw decision response:\n {}", rawAiResponse);
 
-            AiTradingDecision decision = decisionParser.parse(rawAiResponse);
+            decision = decisionParser.parse(rawAiResponse);
             log.info(
                     "AI parsed decision: action={}, reason={}, buyQuoteAmountUsdt={}, sellBaseAmountBtc={}",
                     decision.getAction(),
@@ -93,7 +107,7 @@ public class AiTradingService {
                     decision.getSellBaseAmountBtc()
             );
 
-            TradingDecisionRecord decisionRecord = decisionRecord(trigger, decision, context);
+            decisionRecord = decisionRecord(decisionId, startedAt, trigger, decision, context);
             try {
                 executeDecision(decision, context, decisionRecord);
                 persistDecisionRecord(decisionRecord);
@@ -105,9 +119,22 @@ public class AiTradingService {
             }
             return true;
         } catch (Exception e) {
+            failure = e;
             log.error("AI trading decision failed, trigger={}, err={}", trigger, e.getMessage(), e);
             return false;
         } finally {
+            persistAuditRecord(
+                    decisionId,
+                    startedAt,
+                    Instant.now(),
+                    trigger,
+                    context,
+                    prompt,
+                    rawAiResponse,
+                    decision,
+                    decisionRecord,
+                    failure
+            );
             decisionLock.unlock();
         }
     }
@@ -346,12 +373,15 @@ public class AiTradingService {
     }
 
     private TradingDecisionRecord decisionRecord(
+            UUID decisionId,
+            Instant timestamp,
             TradingTrigger trigger,
             AiTradingDecision decision,
             TradingDecisionContext context
     ) {
         return new TradingDecisionRecord()
-                .setTimestamp(Instant.now().toString())
+                .setDecisionId(decisionId)
+                .setTimestamp(timestamp.toString())
                 .setTriggerType(trigger == null ? null : trigger.type())
                 .setTriggerReason(trigger == null ? null : trigger.reason())
                 .setAction(decision.getAction())
@@ -369,6 +399,35 @@ public class AiTradingService {
             stateRepository.recordDecision(decisionRecord, properties.getRecentDecisionMemoryLimit());
         } catch (Exception e) {
             log.warn("Persist AI decision record failed: {}", e.getMessage(), e);
+        }
+    }
+
+    private void persistAuditRecord(
+            UUID decisionId,
+            Instant startedAt,
+            Instant completedAt,
+            TradingTrigger trigger,
+            TradingDecisionContext context,
+            String prompt,
+            String rawAiResponse,
+            AiTradingDecision decision,
+            TradingDecisionRecord decisionRecord,
+            Exception failure
+    ) {
+        try {
+            auditSink.save(new AiDecisionAuditRecord()
+                    .setDecisionId(decisionId)
+                    .setStartedAt(startedAt)
+                    .setCompletedAt(completedAt)
+                    .setTrigger(trigger)
+                    .setContext(context)
+                    .setPrompt(prompt)
+                    .setRawAiResponse(rawAiResponse)
+                    .setAiDecision(decision)
+                    .setDecisionRecord(decisionRecord)
+                    .setError(failure == null ? null : failure.getMessage()));
+        } catch (Exception e) {
+            log.warn("Persist AI decision audit record failed: {}", e.getMessage(), e);
         }
     }
 
