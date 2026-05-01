@@ -3,6 +3,20 @@ spring:
   application:
     # 应用名称，会用于 Spring 上下文、日志和服务标识。
     name: trade
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://127.0.0.1:3306/ai_trade?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:Aa259189.}
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/ai_trade_mysql_schema.sql
+
+mybatis:
+  mapper-locations: classpath*:mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
 
 # 项目自定义配置。
 trade:
@@ -104,14 +118,6 @@ trade:
     state-file: "data/trading-state.json"
     # Number of recent AI decisions persisted and sent into each new AI request.
     recent-decision-memory-limit: 20
-    # Optional MySQL audit storage for every AI decision run.
-    database:
-      enabled: true
-      jdbc-url: ${AI_TRADE_DB_JDBC_URL:jdbc:mysql://127.0.0.1:3306/?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
-      username: ${AI_TRADE_DB_USERNAME:root}
-      password: ${AI_TRADE_DB_PASSWORD:Aa259189.}
-      schema: ai_trade
-      initialize-schema: true
 #     下单前采集的盘口深度档位数。
 #    order-book-depth: 5
 #     下单前采集的 1 分钟 K 线数量。

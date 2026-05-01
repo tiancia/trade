@@ -8,7 +8,6 @@ import java.math.BigDecimal;
 @Data
 @Accessors(chain = true)
 public class OrderExecutionRow {
-    private String tableName;
     private String decisionId;
     private String instId;
     private String side;

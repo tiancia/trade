@@ -3,7 +3,6 @@ package com.trade.trading.persistence;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.client.okx.dto.BalanceDetail;
-import com.trade.trading.config.AiTradeDatabaseProperties;
 import com.trade.trading.config.AiTradingProperties;
 import com.trade.trading.model.AiDecisionAuditRecord;
 import com.trade.trading.model.AiTradingDecision;
@@ -12,52 +11,34 @@ import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingDecisionRecord;
 import com.trade.trading.model.TradingTrigger;
 import com.trade.trading.support.TradingMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
 public class MyBatisAiDecisionAuditRepository implements AiDecisionAuditSink {
-    private static final Logger log = LoggerFactory.getLogger(MyBatisAiDecisionAuditRepository.class);
-
-    private final ObjectProvider<AiDecisionAuditMapper> mapperProvider;
-    private final AiTradeDatabaseProperties databaseProperties;
+    private final AiDecisionAuditMapper mapper;
     private final AiTradingProperties tradingProperties;
     private final ObjectMapper objectMapper = new ObjectMapper()
             .setSerializationInclusion(JsonInclude.Include.NON_NULL);
-    private final AtomicBoolean initialized = new AtomicBoolean(false);
-    private final Object initializationMonitor = new Object();
 
     public MyBatisAiDecisionAuditRepository(
-            ObjectProvider<AiDecisionAuditMapper> mapperProvider,
-            AiTradeDatabaseProperties databaseProperties,
+            AiDecisionAuditMapper mapper,
             AiTradingProperties tradingProperties
     ) {
-        this.mapperProvider = mapperProvider;
-        this.databaseProperties = databaseProperties;
+        this.mapper = mapper;
         this.tradingProperties = tradingProperties;
     }
 
     @Override
     public void save(AiDecisionAuditRecord record) {
-        if (!isEnabled() || record == null) {
-            return;
-        }
-
-        AiDecisionAuditMapper mapper = mapperProvider.getIfAvailable();
-        if (mapper == null) {
-            log.debug("AI trade audit MyBatis mapper is not available, skip record persistence");
+        if (record == null) {
             return;
         }
 
         try {
-            initializeIfNeeded(mapper);
             upsertDecisionRun(mapper, record);
             upsertAiRequest(mapper, record);
             upsertAiResponse(mapper, record);
@@ -67,58 +48,12 @@ public class MyBatisAiDecisionAuditRepository implements AiDecisionAuditSink {
         }
     }
 
-    public void initializeSchema() {
-        if (!isEnabled()) {
-            log.info("AI trade audit database is not configured, skip schema initialization");
-            return;
-        }
-
-        AiDecisionAuditMapper mapper = mapperProvider.getIfAvailable();
-        if (mapper == null) {
-            log.warn("AI trade audit MyBatis mapper is not available, skip schema initialization");
-            return;
-        }
-
-        try {
-            initializeIfNeeded(mapper);
-        } catch (Exception e) {
-            throw new IllegalStateException("Initialize AI trade audit schema failed", e);
-        }
-    }
-
-    private boolean isEnabled() {
-        return databaseProperties.isEnabled()
-                && databaseProperties.getJdbcUrl() != null
-                && !databaseProperties.getJdbcUrl().isBlank();
-    }
-
-    private void initializeIfNeeded(AiDecisionAuditMapper mapper) {
-        if (!databaseProperties.isInitializeSchema() || initialized.get()) {
-            return;
-        }
-
-        synchronized (initializationMonitor) {
-            if (initialized.get()) {
-                return;
-            }
-
-            mapper.createSchema(quoteIdentifier(schema()));
-            mapper.createDecisionRunsTable(table("decision_runs"));
-            mapper.createAiRequestsTable(table("ai_requests"), table("decision_runs"));
-            mapper.createAiResponsesTable(table("ai_responses"), table("decision_runs"));
-            mapper.createOrderExecutionsTable(table("order_executions"), table("decision_runs"));
-            initialized.set(true);
-            log.info("AI trade audit schema initialized by MyBatis: {}", schema());
-        }
-    }
-
     private void upsertDecisionRun(AiDecisionAuditMapper mapper, AiDecisionAuditRecord audit) {
         TradingDecisionRecord record = audit.getDecisionRecord();
         AiTradingDecision decision = audit.getAiDecision();
         TradingTrigger trigger = audit.getTrigger();
 
         mapper.upsertDecisionRun(new AiDecisionRunRow()
-                .setTableName(table("decision_runs"))
                 .setDecisionId(uuid(audit.getDecisionId()))
                 .setStartedAt(timestamp(audit.getStartedAt()))
                 .setCompletedAt(timestamp(audit.getCompletedAt()))
@@ -150,7 +85,6 @@ public class MyBatisAiDecisionAuditRepository implements AiDecisionAuditSink {
         }
 
         mapper.upsertAiRequest(new AiRequestRow()
-                .setTableName(table("ai_requests"))
                 .setDecisionId(uuid(audit.getDecisionId()))
                 .setPromptText(audit.getPrompt())
                 .setAiParametersJson(parametersJson));
@@ -163,7 +97,6 @@ public class MyBatisAiDecisionAuditRepository implements AiDecisionAuditSink {
         }
 
         mapper.upsertAiResponse(new AiResponseRow()
-                .setTableName(table("ai_responses"))
                 .setDecisionId(uuid(audit.getDecisionId()))
                 .setReceivedAt(timestamp(audit.getCompletedAt()))
                 .setRawResponse(audit.getRawAiResponse())
@@ -180,7 +113,6 @@ public class MyBatisAiDecisionAuditRepository implements AiDecisionAuditSink {
         }
 
         mapper.upsertOrderExecution(new OrderExecutionRow()
-                .setTableName(table("order_executions"))
                 .setDecisionId(uuid(audit.getDecisionId()))
                 .setInstId(tradingProperties.getInstId())
                 .setSide(orderSide(record))
@@ -212,28 +144,6 @@ public class MyBatisAiDecisionAuditRepository implements AiDecisionAuditSink {
                 || "FAILED".equals(record.getExecutionStatus())
                 || "FILLED".equals(record.getExecutionStatus())
                 || "FILL_UNCONFIRMED".equals(record.getExecutionStatus());
-    }
-
-    private String schema() {
-        String schema = databaseProperties.getSchema();
-        if (schema == null || schema.isBlank()) {
-            schema = "ai_trade";
-        }
-        if (!schema.matches("[A-Za-z_][A-Za-z0-9_]*")) {
-            throw new IllegalArgumentException("Invalid AI trade database schema: " + schema);
-        }
-        return schema;
-    }
-
-    private String table(String tableName) {
-        return quoteIdentifier(schema()) + "." + quoteIdentifier(tableName);
-    }
-
-    private static String quoteIdentifier(String identifier) {
-        if (identifier == null || !identifier.matches("[A-Za-z_][A-Za-z0-9_]*")) {
-            throw new IllegalArgumentException("Invalid MySQL identifier: " + identifier);
-        }
-        return "`" + identifier + "`";
     }
 
     private static String uuid(UUID value) {

@@ -20,7 +20,6 @@ import org.springframework.context.annotation.Lazy;
 @Configuration
 @EnableConfigurationProperties({
         AiTradingProperties.class,
-        AiTradeDatabaseProperties.class,
         AiClientProperties.class,
         OkxClientProperties.class,
         GeminiClientProperties.class

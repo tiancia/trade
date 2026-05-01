@@ -9,7 +9,6 @@ import java.sql.Timestamp;
 @Data
 @Accessors(chain = true)
 public class AiResponseRow {
-    private String tableName;
     private String decisionId;
     private Timestamp receivedAt;
     private String rawResponse;

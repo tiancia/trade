@@ -1,8 +1,4 @@
-CREATE DATABASE IF NOT EXISTS `ai_trade`
-    DEFAULT CHARACTER SET utf8mb4
-    COLLATE utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `ai_trade`.`decision_runs` (
+CREATE TABLE IF NOT EXISTS `decision_runs` (
     `decision_id` char(36) PRIMARY KEY,
     `started_at` datetime(6) NOT NULL,
     `completed_at` datetime(6),
@@ -29,17 +25,17 @@ CREATE TABLE IF NOT EXISTS `ai_trade`.`decision_runs` (
     KEY `idx_decision_runs_inst_action` (`inst_id`, `action`, `started_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS `ai_trade`.`ai_requests` (
+CREATE TABLE IF NOT EXISTS `ai_requests` (
     `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `decision_id` char(36) NOT NULL UNIQUE,
     `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     `prompt_text` text,
     `ai_parameters_json` json,
     CONSTRAINT `fk_ai_requests_decision`
-        FOREIGN KEY (`decision_id`) REFERENCES `ai_trade`.`decision_runs` (`decision_id`) ON DELETE CASCADE
+        FOREIGN KEY (`decision_id`) REFERENCES `decision_runs` (`decision_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS `ai_trade`.`ai_responses` (
+CREATE TABLE IF NOT EXISTS `ai_responses` (
     `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `decision_id` char(36) NOT NULL UNIQUE,
     `received_at` datetime(6) NOT NULL,
@@ -49,10 +45,10 @@ CREATE TABLE IF NOT EXISTS `ai_trade`.`ai_responses` (
     `parsed_buy_quote_amount` decimal(38,18),
     `parsed_sell_base_amount` decimal(38,18),
     CONSTRAINT `fk_ai_responses_decision`
-        FOREIGN KEY (`decision_id`) REFERENCES `ai_trade`.`decision_runs` (`decision_id`) ON DELETE CASCADE
+        FOREIGN KEY (`decision_id`) REFERENCES `decision_runs` (`decision_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS `ai_trade`.`order_executions` (
+CREATE TABLE IF NOT EXISTS `order_executions` (
     `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `decision_id` char(36) NOT NULL UNIQUE,
     `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -73,5 +69,5 @@ CREATE TABLE IF NOT EXISTS `ai_trade`.`order_executions` (
     `error` text,
     KEY `idx_order_executions_order_id` (`order_id`),
     CONSTRAINT `fk_order_executions_decision`
-        FOREIGN KEY (`decision_id`) REFERENCES `ai_trade`.`decision_runs` (`decision_id`) ON DELETE CASCADE
+        FOREIGN KEY (`decision_id`) REFERENCES `decision_runs` (`decision_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
