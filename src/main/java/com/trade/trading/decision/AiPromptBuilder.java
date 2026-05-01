@@ -1,4 +1,4 @@
-package com.trade.trading.ai;
+package com.trade.trading.decision;
 
 import org.springframework.stereotype.Component;
 

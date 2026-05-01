@@ -1,4 +1,4 @@
-package com.trade.trading.service;
+package com.trade.trading.market;
 
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;

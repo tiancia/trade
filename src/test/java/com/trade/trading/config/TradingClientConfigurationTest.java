@@ -1,9 +1,9 @@
 package com.trade.trading.config;
 
 import com.trade.client.ai.AiClientProperties;
-import com.trade.trading.ai.AiTextClient;
-import com.trade.trading.ai.GeminiAiTextClient;
-import com.trade.trading.ai.OpenAiCompatibleAiTextClient;
+import com.trade.client.ai.AiTextClient;
+import com.trade.client.ai.GeminiAiTextClient;
+import com.trade.client.ai.OpenAiCompatibleAiTextClient;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;

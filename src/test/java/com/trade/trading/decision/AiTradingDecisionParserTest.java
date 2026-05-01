@@ -1,4 +1,4 @@
-package com.trade.trading.ai;
+package com.trade.trading.decision;
 
 import com.trade.trading.model.AiTradingDecision;
 import com.trade.trading.model.TradingAction;

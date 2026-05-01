@@ -3,6 +3,17 @@
   "averageCost" : 78110.278811372373719436,
   "updatedAt" : "2026-04-27T13:10:51.028560500Z",
   "recentDecisions" : [ {
+    "decisionId" : "daa74bd7-445d-4b49-aa77-2e7442d1a298",
+    "timestamp" : "2026-05-01T09:28:14.508780800Z",
+    "triggerType" : "SCHEDULED",
+    "triggerReason" : "30 minute scheduled decision",
+    "action" : "HOLD",
+    "reason" : "Price 77351.4 far below avg cost 78110.28, unrealized loss -1.07% after fees. 5-min change -0.03% below 0.30% cost+edge threshold. No reversal signal. HOLD.",
+    "lastPrice" : 77351.4,
+    "availableBase" : 0.00137949359,
+    "availableQuote" : 122.55280533801,
+    "executionStatus" : "HELD"
+  }, {
     "decisionId" : "a678ec80-f1e6-4737-994e-251a7cbd212d",
     "timestamp" : "2026-05-01T08:43:56.249207200Z",
     "triggerType" : "SCHEDULED",
@@ -199,16 +210,6 @@
     "action" : "HOLD",
     "reason" : "Current price 76305.8 far below average cost 78110.28, unrealized loss -2.31% (-2.41% after fees). Volume spike with slight upward move but 5-min change 0.059% below 0.30% cost+edge threshold. Buying 10 USDT negligibly lowers average cost. Selling locks loss. No strong reversal signal. HOLD.",
     "lastPrice" : 76305.8,
-    "availableBase" : 0.00269576359,
-    "availableQuote" : 22.652877571704,
-    "executionStatus" : "HELD"
-  }, {
-    "timestamp" : "2026-04-28T12:16:11.468434400Z",
-    "triggerType" : "SCHEDULED",
-    "triggerReason" : "30 minute scheduled decision",
-    "action" : "HOLD",
-    "reason" : "Current price 76288.9 far below average cost 78110.28, unrealized loss -2.43% after fees. Small 5-min change 0.013% and no reversal signal. Buying 10 USDT negligibly lowers average cost. Selling locks loss. Prefer HOLD.",
-    "lastPrice" : 76288.9,
     "availableBase" : 0.00269576359,
     "availableQuote" : 22.652877571704,
     "executionStatus" : "HELD"

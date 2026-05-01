@@ -1,4 +1,4 @@
-package com.trade.trading.ai;
+package com.trade.client.ai;
 
 import com.trade.client.gemini.GeminiApi;
 

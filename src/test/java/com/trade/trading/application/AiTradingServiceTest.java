@@ -1,4 +1,4 @@
-package com.trade.trading.service;
+package com.trade.trading.application;
 
 import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.OkxRestClient;
@@ -10,9 +10,12 @@ import com.trade.client.okx.dto.OrderInfoResp;
 import com.trade.client.okx.dto.OrderQueryReq;
 import com.trade.client.okx.dto.PlaceOrderReq;
 import com.trade.client.okx.dto.TickerResp;
-import com.trade.trading.ai.AiPromptBuilder;
-import com.trade.trading.ai.AiTradingDecisionParser;
+import com.trade.trading.decision.AiPromptBuilder;
+import com.trade.trading.decision.AiTradingDecisionParser;
 import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.execution.OrderSizingService;
+import com.trade.trading.execution.TradingOrderExecutor;
+import com.trade.trading.market.MarketContextCollector;
 import com.trade.trading.model.AiDecisionAuditRecord;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingState;
@@ -109,12 +112,11 @@ class AiTradingServiceTest {
         FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000", "-0.000001", "BTC"));
         TradingStateRepository stateRepository = new TradingStateRepository(tempDir.resolve("fee-state.json"));
         AiTradingService service = new AiTradingService(
-                okxApi,
                 prompt -> "{\"action\":\"BUY\",\"reason\":\"test buy\",\"buyQuoteAmountUsdt\":100}",
                 new AiTradingDecisionParser(),
                 new FakeMarketContextCollector(context("0", "1000")),
                 new AiPromptBuilder(),
-                new OrderSizingService(properties),
+                orderExecutor(okxApi, stateRepository, properties),
                 stateRepository,
                 NOOP_AUDIT_SINK,
                 properties
@@ -144,12 +146,11 @@ class AiTradingServiceTest {
         TradingDecisionContext context = context("0", "1000")
                 .setAiParametersJson("{\"instrumentId\":\"BTC-USDT\"}");
         AiTradingService service = new AiTradingService(
-                okxApi,
                 prompt -> aiResponse,
                 new AiTradingDecisionParser(),
                 new FakeMarketContextCollector(context),
                 new AiPromptBuilder(),
-                new OrderSizingService(properties),
+                orderExecutor(okxApi, stateRepository, properties),
                 stateRepository,
                 auditSink,
                 properties
@@ -176,16 +177,23 @@ class AiTradingServiceTest {
     ) {
         TradingStateRepository stateRepository = new TradingStateRepository(tempDir.resolve("state.json"));
         return new AiTradingService(
-                okxApi,
                 prompt -> aiResponse,
                 new AiTradingDecisionParser(),
                 new FakeMarketContextCollector(context),
                 new AiPromptBuilder(),
-                new OrderSizingService(properties),
+                orderExecutor(okxApi, stateRepository, properties),
                 stateRepository,
                 NOOP_AUDIT_SINK,
                 properties
         );
+    }
+
+    private static TradingOrderExecutor orderExecutor(
+            OkxApi okxApi,
+            TradingStateRepository stateRepository,
+            AiTradingProperties properties
+    ) {
+        return new TradingOrderExecutor(okxApi, new OrderSizingService(properties), stateRepository, properties);
     }
 
     private static AiTradingProperties properties() {

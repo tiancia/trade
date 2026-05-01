@@ -1,4 +1,4 @@
-package com.trade.trading.ai;
+package com.trade.client.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
