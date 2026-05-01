@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.trading.persistence.AiDecisionAuditMapper">
+    <update id="createSchema">
+        CREATE DATABASE IF NOT EXISTS ${schemaName}
+            DEFAULT CHARACTER SET utf8mb4
+            COLLATE utf8mb4_unicode_ci
+    </update>
+
+    <update id="createDecisionRunsTable">
+        CREATE TABLE IF NOT EXISTS ${decisionRunsTable} (
+            decision_id char(36) PRIMARY KEY,
+            started_at datetime(6) NOT NULL,
+            completed_at datetime(6),
+            created_at datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            inst_id varchar(64) NOT NULL,
+            inst_type varchar(32),
+            base_ccy varchar(32),
+            quote_ccy varchar(32),
+            td_mode varchar(32),
+            trigger_type varchar(64),
+            trigger_reason text,
+            trigger_details_json json,
+            action varchar(16),
+            decision_reason text,
+            buy_quote_amount decimal(38,18),
+            sell_base_amount decimal(38,18),
+            last_price decimal(38,18),
+            available_base decimal(38,18),
+            available_quote decimal(38,18),
+            execution_status varchar(64),
+            skip_reason text,
+            error text,
+            KEY idx_decision_runs_started_at (started_at),
+            KEY idx_decision_runs_inst_action (inst_id, action, started_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    </update>
+
+    <update id="createAiRequestsTable">
+        CREATE TABLE IF NOT EXISTS ${aiRequestsTable} (
+            id bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            decision_id char(36) NOT NULL UNIQUE,
+            created_at datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            prompt_text text,
+            ai_parameters_json json,
+            CONSTRAINT fk_ai_requests_decision
+                FOREIGN KEY (decision_id) REFERENCES ${decisionRunsTable} (decision_id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    </update>
+
+    <update id="createAiResponsesTable">
+        CREATE TABLE IF NOT EXISTS ${aiResponsesTable} (
+            id bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            decision_id char(36) NOT NULL UNIQUE,
+            received_at datetime(6) NOT NULL,
+            raw_response text,
+            parsed_action varchar(16),
+            parsed_reason text,
+            parsed_buy_quote_amount decimal(38,18),
+            parsed_sell_base_amount decimal(38,18),
+            CONSTRAINT fk_ai_responses_decision
+                FOREIGN KEY (decision_id) REFERENCES ${decisionRunsTable} (decision_id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    </update>
+
+    <update id="createOrderExecutionsTable">
+        CREATE TABLE IF NOT EXISTS ${orderExecutionsTable} (
+            id bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            decision_id char(36) NOT NULL UNIQUE,
+            created_at datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            inst_id varchar(64) NOT NULL,
+            side varchar(16),
+            td_mode varchar(32),
+            order_type varchar(32),
+            target_currency varchar(32),
+            order_size decimal(38,18),
+            order_id varchar(128),
+            client_order_id varchar(128),
+            execution_status varchar(64),
+            skip_reason text,
+            filled_base_amount decimal(38,18),
+            average_fill_price decimal(38,18),
+            fee decimal(38,18),
+            fee_ccy varchar(32),
+            error text,
+            KEY idx_order_executions_order_id (order_id),
+            CONSTRAINT fk_order_executions_decision
+                FOREIGN KEY (decision_id) REFERENCES ${decisionRunsTable} (decision_id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    </update>
+
+    <insert id="upsertDecisionRun" parameterType="com.trade.trading.persistence.AiDecisionRunRow">
+        INSERT INTO ${tableName} (
+            decision_id,
+            started_at,
+            completed_at,
+            inst_id,
+            inst_type,
+            base_ccy,
+            quote_ccy,
+            td_mode,
+            trigger_type,
+            trigger_reason,
+            trigger_details_json,
+            action,
+            decision_reason,
+            buy_quote_amount,
+            sell_base_amount,
+            last_price,
+            available_base,
+            available_quote,
+            execution_status,
+            skip_reason,
+            error
+        ) VALUES (
+            #{decisionId},
+            #{startedAt},
+            #{completedAt},
+            #{instId},
+            #{instType},
+            #{baseCcy},
+            #{quoteCcy},
+            #{tdMode},
+            #{triggerType},
+            #{triggerReason},
+            #{triggerDetailsJson},
+            #{action},
+            #{decisionReason},
+            #{buyQuoteAmount},
+            #{sellBaseAmount},
+            #{lastPrice},
+            #{availableBase},
+            #{availableQuote},
+            #{executionStatus},
+            #{skipReason},
+            #{error}
+        )
+        ON DUPLICATE KEY UPDATE
+            completed_at = VALUES(completed_at),
+            action = VALUES(action),
+            decision_reason = VALUES(decision_reason),
+            buy_quote_amount = VALUES(buy_quote_amount),
+            sell_base_amount = VALUES(sell_base_amount),
+            last_price = VALUES(last_price),
+            available_base = VALUES(available_base),
+            available_quote = VALUES(available_quote),
+            execution_status = VALUES(execution_status),
+            skip_reason = VALUES(skip_reason),
+            error = VALUES(error)
+    </insert>
+
+    <insert id="upsertAiRequest" parameterType="com.trade.trading.persistence.AiRequestRow">
+        INSERT INTO ${tableName} (
+            decision_id,
+            prompt_text,
+            ai_parameters_json
+        ) VALUES (
+            #{decisionId},
+            #{promptText},
+            #{aiParametersJson}
+        )
+        ON DUPLICATE KEY UPDATE
+            prompt_text = VALUES(prompt_text),
+            ai_parameters_json = VALUES(ai_parameters_json)
+    </insert>
+
+    <insert id="upsertAiResponse" parameterType="com.trade.trading.persistence.AiResponseRow">
+        INSERT INTO ${tableName} (
+            decision_id,
+            received_at,
+            raw_response,
+            parsed_action,
+            parsed_reason,
+            parsed_buy_quote_amount,
+            parsed_sell_base_amount
+        ) VALUES (
+            #{decisionId},
+            #{receivedAt},
+            #{rawResponse},
+            #{parsedAction},
+            #{parsedReason},
+            #{parsedBuyQuoteAmount},
+            #{parsedSellBaseAmount}
+        )
+        ON DUPLICATE KEY UPDATE
+            received_at = VALUES(received_at),
+            raw_response = VALUES(raw_response),
+            parsed_action = VALUES(parsed_action),
+            parsed_reason = VALUES(parsed_reason),
+            parsed_buy_quote_amount = VALUES(parsed_buy_quote_amount),
+            parsed_sell_base_amount = VALUES(parsed_sell_base_amount)
+    </insert>
+
+    <insert id="upsertOrderExecution" parameterType="com.trade.trading.persistence.OrderExecutionRow">
+        INSERT INTO ${tableName} (
+            decision_id,
+            inst_id,
+            side,
+            td_mode,
+            order_type,
+            target_currency,
+            order_size,
+            order_id,
+            client_order_id,
+            execution_status,
+            skip_reason,
+            filled_base_amount,
+            average_fill_price,
+            fee,
+            fee_ccy,
+            error
+        ) VALUES (
+            #{decisionId},
+            #{instId},
+            #{side},
+            #{tdMode},
+            #{orderType},
+            #{targetCurrency},
+            #{orderSize},
+            #{orderId},
+            #{clientOrderId},
+            #{executionStatus},
+            #{skipReason},
+            #{filledBaseAmount},
+            #{averageFillPrice},
+            #{fee},
+            #{feeCcy},
+            #{error}
+        )
+        ON DUPLICATE KEY UPDATE
+            order_size = VALUES(order_size),
+            order_id = VALUES(order_id),
+            client_order_id = VALUES(client_order_id),
+            execution_status = VALUES(execution_status),
+            skip_reason = VALUES(skip_reason),
+            filled_base_amount = VALUES(filled_base_amount),
+            average_fill_price = VALUES(average_fill_price),
+            fee = VALUES(fee),
+            fee_ccy = VALUES(fee_ccy),
+            error = VALUES(error)
+    </insert>
+</mapper>
