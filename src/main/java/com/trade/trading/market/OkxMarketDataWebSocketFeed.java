@@ -8,7 +8,7 @@ import com.trade.client.okx.ws.OkxWsEvent;
 import com.trade.client.okx.ws.OkxWsListener;
 import com.trade.client.okx.ws.OkxWsSubscription;
 import com.trade.client.okx.ws.TickerChannelReq;
-import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.config.TradingProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
@@ -33,7 +33,7 @@ public class OkxMarketDataWebSocketFeed implements ApplicationRunner, Disposable
     private static final Logger log = LoggerFactory.getLogger(OkxMarketDataWebSocketFeed.class);
 
     private final OkxApi okxApi;
-    private final AiTradingProperties properties;
+    private final TradingProperties properties;
     private final AtomicBoolean started = new AtomicBoolean(false);
     private final AtomicReference<TickerResp> latestTicker = new AtomicReference<>();
     private final AtomicReference<Instant> latestTickerAt = new AtomicReference<>();
@@ -41,7 +41,7 @@ public class OkxMarketDataWebSocketFeed implements ApplicationRunner, Disposable
     private final List<OkxWsSubscription> subscriptions = new CopyOnWriteArrayList<>();
     private final Map<String, CandleResp> oneMinuteCandles = new LinkedHashMap<>();
 
-    public OkxMarketDataWebSocketFeed(OkxApi okxApi, AiTradingProperties properties) {
+    public OkxMarketDataWebSocketFeed(OkxApi okxApi, TradingProperties properties) {
         this.okxApi = okxApi;
         this.properties = properties;
     }

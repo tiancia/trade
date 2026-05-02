@@ -2,7 +2,7 @@ package com.trade.trading.market;
 
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
-import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.TradingEvent;
 import com.trade.trading.model.TradingState;
 import org.junit.jupiter.api.Test;
@@ -17,7 +17,7 @@ class TradingEventDetectorTest {
 
     @Test
     void detectsPriceMoveVolumeSpikeAndFloatingLoss() {
-        AiTradingProperties properties = new AiTradingProperties();
+        TradingProperties properties = new TradingProperties();
         TradingEventDetector detector = new TradingEventDetector(properties);
         TickerResp ticker = new TickerResp();
         ticker.setLast("89");

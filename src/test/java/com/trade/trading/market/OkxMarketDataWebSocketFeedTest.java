@@ -10,7 +10,7 @@ import com.trade.client.okx.ws.OkxWsEvent;
 import com.trade.client.okx.ws.OkxWsListener;
 import com.trade.client.okx.ws.OkxWsSubscription;
 import com.trade.client.okx.ws.TickerChannelReq;
-import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.config.TradingProperties;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -23,7 +23,7 @@ class OkxMarketDataWebSocketFeedTest {
     @Test
     void startSubscribesTickerAndOneMinuteCandles() {
         FakeOkxApi okxApi = new FakeOkxApi();
-        AiTradingProperties properties = new AiTradingProperties();
+        TradingProperties properties = new TradingProperties();
         properties.setInstId("ETH-USDT");
 
         OkxMarketDataWebSocketFeed feed = new OkxMarketDataWebSocketFeed(okxApi, properties);
@@ -38,7 +38,7 @@ class OkxMarketDataWebSocketFeedTest {
 
     @Test
     void cachesLatestTickerAndRecentCandles() {
-        AiTradingProperties properties = new AiTradingProperties();
+        TradingProperties properties = new TradingProperties();
         properties.getWebsocket().setCandleCacheLimit(2);
         OkxMarketDataWebSocketFeed feed = new OkxMarketDataWebSocketFeed(new FakeOkxApi(), properties);
 

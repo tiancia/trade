@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PolymarketOrderExecutorTest {
     @Test
-    void dryRunBuildsCappedOrderWithoutCallingRunner() {
+    void dryRunBuildsCappedBuyOrderWithoutCallingRunner() {
         AiPolymarketProperties properties = new AiPolymarketProperties();
         properties.setMaxOrderUsdc(new BigDecimal("5"));
         properties.setMinOrderSize(new BigDecimal("1"));
@@ -30,6 +30,7 @@ class PolymarketOrderExecutorTest {
 
         assertTrue(result.isDryRun());
         assertFalse(runner.called);
+        assertTrue(result.getResponseBody().contains("side=BUY"));
         assertTrue(result.getResponseBody().contains("spendUsdc=5"));
     }
 
@@ -77,7 +78,7 @@ class PolymarketOrderExecutorTest {
         private boolean called;
 
         @Override
-        public String placeLimitBuy(PolymarketOrderRequest request) {
+        public String placeOrder(PolymarketOrderRequest request) {
             called = true;
             return "{}";
         }

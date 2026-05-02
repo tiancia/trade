@@ -2,7 +2,7 @@ package com.trade.trading.application;
 
 import com.trade.client.ai.AiTextClient;
 import com.trade.client.okx.dto.BalanceDetail;
-import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.config.TradingProperties;
 import com.trade.trading.decision.AiPromptBuilder;
 import com.trade.trading.decision.AiTradingDecisionParser;
 import com.trade.trading.execution.TradingOrderExecutor;
@@ -35,7 +35,7 @@ public class AiTradingService {
     private final TradingOrderExecutor orderExecutor;
     private final TradingStateRepository stateRepository;
     private final AiDecisionAuditSink auditSink;
-    private final AiTradingProperties properties;
+    private final TradingProperties properties;
     private final ReentrantLock decisionLock = new ReentrantLock();
 
     public AiTradingService(
@@ -46,7 +46,7 @@ public class AiTradingService {
             TradingOrderExecutor orderExecutor,
             TradingStateRepository stateRepository,
             AiDecisionAuditSink auditSink,
-            AiTradingProperties properties
+            TradingProperties properties
     ) {
         this.aiTextClient = aiTextClient;
         this.decisionParser = decisionParser;

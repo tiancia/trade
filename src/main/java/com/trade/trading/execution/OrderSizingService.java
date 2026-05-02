@@ -3,7 +3,7 @@ package com.trade.trading.execution;
 import com.trade.client.okx.dto.BalanceDetail;
 import com.trade.client.okx.dto.InstrumentInfoResp;
 import com.trade.client.okx.dto.TickerResp;
-import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.AiTradingDecision;
 import com.trade.trading.model.OrderSizing;
 import com.trade.trading.model.TradingDecisionContext;
@@ -15,9 +15,9 @@ import java.math.RoundingMode;
 
 @Component
 public class OrderSizingService {
-    private final AiTradingProperties properties;
+    private final TradingProperties properties;
 
-    public OrderSizingService(AiTradingProperties properties) {
+    public OrderSizingService(TradingProperties properties) {
         this.properties = properties;
     }
 

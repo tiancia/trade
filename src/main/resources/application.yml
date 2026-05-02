@@ -16,7 +16,7 @@ mybatis:
   configuration:
     map-underscore-to-camel-case: true
 
-# 项目自定义配置。
+# 项目自定义配置
 trade:
   # OKX 交易所客户端配置，用于 REST 和 WebSocket 请求。
   okx:
@@ -103,10 +103,10 @@ trade:
       geoblock-check-enabled: true
       geoblock-url: "https://polymarket.com/api/geoblock"
 
-  # AI 自动交易配置。
+  # 通用 AI 客户端配置，供 OKX 交易和 Polymarket 决策复用。
   ai:
     client:
-      # AI 服务提供商；可选值：gemini、openai-compatible、deepseek、kimi。
+      # AI 服务提供商；可选值：gemini、openai-compatible、deepseek、kimi。。。
       provider: deepseek
       # 使用的 AI 模型名称；未配置时会使用 provider 对应的默认模型。
       model: deepseek-v4-pro
@@ -129,7 +129,9 @@ trade:
         # AI 请求代理端口。
         port: 7890
 
-    # 是否启用 AI 自动交易；false 时调度任务会跳过实际决策和下单。
+  # OKX 自动交易模块配置。
+  trading:
+    # 是否启用 OKX AI 自动交易；false 时调度任务会跳过实际决策和下单。
     enabled: true
     # 交易标的 ID，例如 BTC-USDT。
     inst-id: BTC-USDT
@@ -176,19 +178,19 @@ trade:
     state-file: "data/trading-state.json"
     # Number of recent AI decisions persisted and sent into each new AI request.
     recent-decision-memory-limit: 20
-#     下单前采集的盘口深度档位数。
-#    order-book-depth: 5
-#     下单前采集的 1 分钟 K 线数量。
-#    one-minute-candle-limit: 25
-#     下单前采集的 5 分钟 K 线数量。
-#    five-minute-candle-limit: 24
-#     下单前采集的近期订单数量。
-#    recent-order-limit: 10
-#     下单前采集的近期成交数量。
-#    recent-fill-limit: 10
-#     下单后查询成交结果的重试次数。
-#    order-fill-query-attempts: 5
-#     下单后两次查询成交结果之间的等待时间，单位毫秒。
-#    order-fill-query-delay-ms: 1000
-#     买入金额保留的小数位数。
-#     quote-amount-scale: 2
+    # 下单前采集的盘口深度档位数。
+    # order-book-depth: 5
+    # 下单前采集的 1 分钟 K 线数量。
+    # one-minute-candle-limit: 25
+    # 下单前采集的 5 分钟 K 线数量。
+    # five-minute-candle-limit: 24
+    # 下单前采集的近期订单数量。
+    # recent-order-limit: 10
+    # 下单前采集的近期成交数量。
+    # recent-fill-limit: 10
+    # 下单后查询成交结果的重试次数。
+    # order-fill-query-attempts: 5
+    # 下单后两次查询成交结果之间的等待时间，单位毫秒。
+    # order-fill-query-delay-ms: 1000
+    # 买入金额保留的小数位数。
+    # quote-amount-scale: 2

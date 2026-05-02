@@ -1,6 +1,7 @@
 package com.trade.polymarket.execution;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trade.client.polymarket.PolymarketClientProperties;
 import com.trade.polymarket.config.AiPolymarketProperties;
 import com.trade.polymarket.model.PolymarketOrderRequest;
 import com.trade.trading.support.TradingMath;
@@ -18,14 +19,19 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
     private final AiPolymarketProperties properties;
+    private final PolymarketClientProperties clientProperties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public PolymarketPythonOrderRunner(AiPolymarketProperties properties) {
+    public PolymarketPythonOrderRunner(
+            AiPolymarketProperties properties,
+            PolymarketClientProperties clientProperties
+    ) {
         this.properties = properties;
+        this.clientProperties = clientProperties;
     }
 
     @Override
-    public String placeLimitBuy(PolymarketOrderRequest request) {
+    public String placeOrder(PolymarketOrderRequest request) {
         AiPolymarketProperties.ExecutionProperties execution = properties.getExecution();
         Path scriptPath = resolvedScriptPath(execution.getScriptPath());
         ProcessBuilder builder = new ProcessBuilder(execution.getPythonCommand(), scriptPath.toString());
@@ -65,7 +71,7 @@ public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
     private String buildPayload(PolymarketOrderRequest request) throws Exception {
         AiPolymarketProperties.ExecutionProperties execution = properties.getExecution();
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("host", "https://clob.polymarket.com");
+        payload.put("host", clientProperties.normalizedClobBaseUrl());
         payload.put("chainId", execution.getChainId());
         payload.put("signatureType", execution.getSignatureType());
         payload.put("orderType", execution.getOrderType());
@@ -75,7 +81,7 @@ public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
         payload.put("apiPassphraseEnvName", execution.getApiPassphraseEnvName());
         payload.put("funderAddressEnvName", execution.getFunderAddressEnvName());
         payload.put("tokenId", request.getTokenId());
-        payload.put("side", "BUY");
+        payload.put("side", firstText(request.getSide(), "BUY").toUpperCase());
         payload.put("price", plain(request.getPrice()));
         payload.put("size", plain(request.getSize()));
         payload.put("spendUsdc", plain(request.getSpendUsdc()));
@@ -102,5 +108,14 @@ public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
 
     private static String plain(BigDecimal value) {
         return TradingMath.plain(value);
+    }
+
+    private static String firstText(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 }

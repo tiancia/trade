@@ -3,7 +3,7 @@ package com.trade.trading.execution;
 import com.trade.client.okx.dto.BalanceDetail;
 import com.trade.client.okx.dto.InstrumentInfoResp;
 import com.trade.client.okx.dto.TickerResp;
-import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.AiTradingDecision;
 import com.trade.trading.model.OrderSizing;
 import com.trade.trading.model.TradingAction;
@@ -20,7 +20,7 @@ class OrderSizingServiceTest {
 
     @Test
     void buySizeIsCappedBySystemAndAvailableQuote() {
-        AiTradingProperties properties = new AiTradingProperties();
+        TradingProperties properties = new TradingProperties();
         properties.setMaxBuyQuoteAmount(new BigDecimal("100"));
         OrderSizingService sizingService = new OrderSizingService(properties);
 
@@ -37,7 +37,7 @@ class OrderSizingServiceTest {
 
     @Test
     void buySizeSkipsWhenEstimatedBaseIsBelowMinSize() {
-        AiTradingProperties properties = new AiTradingProperties();
+        TradingProperties properties = new TradingProperties();
         OrderSizingService sizingService = new OrderSizingService(properties);
 
         AiTradingDecision decision = new AiTradingDecision()
@@ -53,7 +53,7 @@ class OrderSizingServiceTest {
 
     @Test
     void sellSizeIsCappedByAvailableBaseAndRoundedToLotSize() {
-        AiTradingProperties properties = new AiTradingProperties();
+        TradingProperties properties = new TradingProperties();
         OrderSizingService sizingService = new OrderSizingService(properties);
 
         AiTradingDecision decision = new AiTradingDecision()

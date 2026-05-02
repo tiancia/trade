@@ -3,7 +3,7 @@ package com.trade.trading.persistence;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.client.okx.dto.BalanceDetail;
-import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.AiDecisionAuditRecord;
 import com.trade.trading.model.AiTradingDecision;
 import com.trade.trading.model.TradingAction;
@@ -20,13 +20,13 @@ import java.util.UUID;
 @Component
 public class MyBatisAiDecisionAuditRepository implements AiDecisionAuditSink {
     private final AiDecisionAuditMapper mapper;
-    private final AiTradingProperties tradingProperties;
+    private final TradingProperties tradingProperties;
     private final ObjectMapper objectMapper = new ObjectMapper()
             .setSerializationInclusion(JsonInclude.Include.NON_NULL);
 
     public MyBatisAiDecisionAuditRepository(
             AiDecisionAuditMapper mapper,
-            AiTradingProperties tradingProperties
+            TradingProperties tradingProperties
     ) {
         this.mapper = mapper;
         this.tradingProperties = tradingProperties;

@@ -7,7 +7,7 @@ import com.trade.client.okx.dto.OrderActionResp;
 import com.trade.client.okx.dto.OrderInfoResp;
 import com.trade.client.okx.dto.OrderQueryReq;
 import com.trade.client.okx.dto.PlaceOrderReq;
-import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.AiTradingDecision;
 import com.trade.trading.model.OrderSizing;
 import com.trade.trading.model.TradingAction;
@@ -31,13 +31,13 @@ public class TradingOrderExecutor {
     private final OkxApi okxApi;
     private final OrderSizingService orderSizingService;
     private final TradingStateRepository stateRepository;
-    private final AiTradingProperties properties;
+    private final TradingProperties properties;
 
     public TradingOrderExecutor(
             OkxApi okxApi,
             OrderSizingService orderSizingService,
             TradingStateRepository stateRepository,
-            AiTradingProperties properties
+            TradingProperties properties
     ) {
         this.okxApi = okxApi;
         this.orderSizingService = orderSizingService;

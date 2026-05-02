@@ -12,7 +12,7 @@ import com.trade.client.okx.dto.PlaceOrderReq;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.decision.AiPromptBuilder;
 import com.trade.trading.decision.AiTradingDecisionParser;
-import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.config.TradingProperties;
 import com.trade.trading.execution.OrderSizingService;
 import com.trade.trading.execution.TradingOrderExecutor;
 import com.trade.trading.market.MarketContextCollector;
@@ -44,7 +44,7 @@ class AiTradingServiceTest {
 
     @Test
     void buyPlacesCappedSpotMarketQuoteOrder() {
-        AiTradingProperties properties = properties();
+        TradingProperties properties = properties();
         properties.setMaxBuyQuoteAmount(new BigDecimal("100"));
         FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
         AiTradingService service = service(
@@ -66,7 +66,7 @@ class AiTradingServiceTest {
 
     @Test
     void sellPlacesAvailableSpotMarketBaseOrder() {
-        AiTradingProperties properties = properties();
+        TradingProperties properties = properties();
         FakeOkxApi okxApi = new FakeOkxApi(filledOrder("sell", "0.1234", "50000"));
         AiTradingService service = service(
                 properties,
@@ -87,7 +87,7 @@ class AiTradingServiceTest {
 
     @Test
     void buyRejectedByOkxReturnsFalseAfterParsingOrderFailureDetails() {
-        AiTradingProperties properties = properties();
+        TradingProperties properties = properties();
         FakeOkxApi okxApi = new FakeOkxApi(
                 filledOrder("buy", "0.002", "50000"),
                 rejectedOrder("51008", "Order failed. Insufficient balance.")
@@ -107,7 +107,7 @@ class AiTradingServiceTest {
 
     @Test
     void buyTracksBaseFeeAdjustedCostAndDecisionRecord() {
-        AiTradingProperties properties = properties();
+        TradingProperties properties = properties();
         properties.setMaxBuyQuoteAmount(new BigDecimal("100"));
         FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000", "-0.000001", "BTC"));
         TradingStateRepository stateRepository = new TradingStateRepository(tempDir.resolve("fee-state.json"));
@@ -137,7 +137,7 @@ class AiTradingServiceTest {
 
     @Test
     void sendsAuditRecordWithPromptResponseTriggerAndExecutionStatus() {
-        AiTradingProperties properties = properties();
+        TradingProperties properties = properties();
         FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
         TradingStateRepository stateRepository = new TradingStateRepository(tempDir.resolve("audit-state.json"));
         CapturingAuditSink auditSink = new CapturingAuditSink();
@@ -170,7 +170,7 @@ class AiTradingServiceTest {
     }
 
     private AiTradingService service(
-            AiTradingProperties properties,
+            TradingProperties properties,
             FakeOkxApi okxApi,
             String aiResponse,
             TradingDecisionContext context
@@ -191,13 +191,13 @@ class AiTradingServiceTest {
     private static TradingOrderExecutor orderExecutor(
             OkxApi okxApi,
             TradingStateRepository stateRepository,
-            AiTradingProperties properties
+            TradingProperties properties
     ) {
         return new TradingOrderExecutor(okxApi, new OrderSizingService(properties), stateRepository, properties);
     }
 
-    private static AiTradingProperties properties() {
-        AiTradingProperties properties = new AiTradingProperties();
+    private static TradingProperties properties() {
+        TradingProperties properties = new TradingProperties();
         properties.setOrderFillQueryDelayMs(0);
         return properties;
     }

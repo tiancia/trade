@@ -14,18 +14,21 @@ def load_client_symbols():
             Side,
         )
 
-        return ApiCreds, ClobClient, OrderArgs, OrderType, PartialCreateOrderOptions, Side.BUY, True
+        return ApiCreds, ClobClient, OrderArgs, OrderType, PartialCreateOrderOptions, Side, True
     except ImportError:
         from py_clob_client.client import ClobClient  # type: ignore
         from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType  # type: ignore
-        from py_clob_client.order_builder.constants import BUY  # type: ignore
+        from py_clob_client.order_builder.constants import BUY, SELL  # type: ignore
 
         try:
             from py_clob_client.clob_types import PartialCreateOrderOptions  # type: ignore
         except ImportError:
             PartialCreateOrderOptions = None
 
-        return ApiCreds, ClobClient, OrderArgs, OrderType, PartialCreateOrderOptions, BUY, False
+        return ApiCreds, ClobClient, OrderArgs, OrderType, PartialCreateOrderOptions, {
+            "BUY": BUY,
+            "SELL": SELL,
+        }, False
 
 
 def env_value(payload, name_key, required=False):
@@ -91,6 +94,18 @@ def order_type(OrderType, payload):
         raise RuntimeError(f"Unsupported Polymarket orderType {name}") from exc
 
 
+def order_side(side_symbols, payload):
+    name = (payload.get("side") or "BUY").upper()
+    if isinstance(side_symbols, dict):
+        if name in side_symbols:
+            return side_symbols[name]
+        raise RuntimeError(f"Unsupported Polymarket side {name}")
+    try:
+        return getattr(side_symbols, name)
+    except AttributeError as exc:
+        raise RuntimeError(f"Unsupported Polymarket side {name}") from exc
+
+
 def partial_options(PartialCreateOrderOptions, payload):
     if PartialCreateOrderOptions is None:
         return None
@@ -121,7 +136,7 @@ def post_order(client, OrderArgs, order_args, order_type_value, options):
 
 def main():
     payload = json.loads(sys.stdin.read())
-    ApiCreds, ClobClient, OrderArgs, OrderType, PartialCreateOrderOptions, buy_side, _ = load_client_symbols()
+    ApiCreds, ClobClient, OrderArgs, OrderType, PartialCreateOrderOptions, side_symbols, _ = load_client_symbols()
 
     host = payload.get("host") or "https://clob.polymarket.com"
     chain_id = int(payload.get("chainId") or 137)
@@ -143,7 +158,7 @@ def main():
             token_id=str(payload["tokenId"]),
             price=float(payload["price"]),
             size=float(payload["size"]),
-            side=buy_side,
+            side=order_side(side_symbols, payload),
         ),
         order_type_value=order_type(OrderType, payload),
         options=partial_options(PartialCreateOrderOptions, payload),

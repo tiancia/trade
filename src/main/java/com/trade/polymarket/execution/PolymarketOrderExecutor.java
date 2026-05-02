@@ -61,6 +61,7 @@ public class PolymarketOrderExecutor {
                 .setQuestion(market.getQuestion())
                 .setOutcome(outcome.getOutcome())
                 .setTokenId(outcome.getTokenId())
+                .setSide("BUY")
                 .setPrice(price)
                 .setSpendUsdc(spendUsdc)
                 .setSize(size)
@@ -74,7 +75,7 @@ public class PolymarketOrderExecutor {
         }
 
         geoblockService.assertAllowed();
-        String response = orderRunner.placeLimitBuy(request);
+        String response = orderRunner.placeOrder(request);
         log.info("Polymarket order placed: marketSlug={}, outcome={}, tokenId={}, price={}, size={}, response={}",
                 request.getMarketSlug(),
                 request.getOutcome(),

@@ -20,7 +20,7 @@ import com.trade.client.okx.dto.OrderInfoResp;
 import com.trade.client.okx.dto.PendingOrdersReq;
 import com.trade.client.okx.dto.TickerReq;
 import com.trade.client.okx.dto.TickerResp;
-import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingState;
 import com.trade.trading.model.TradingTrigger;
@@ -37,14 +37,14 @@ import java.util.Map;
 @Component
 public class MarketContextCollector {
     private final OkxApi okxApi;
-    private final AiTradingProperties properties;
+    private final TradingProperties properties;
     private final TradingStateRepository stateRepository;
     private final ObjectMapper objectMapper;
     private volatile InstrumentInfoResp cachedInstrument;
 
     public MarketContextCollector(
             OkxApi okxApi,
-            AiTradingProperties properties,
+            TradingProperties properties,
             TradingStateRepository stateRepository
     ) {
         this.okxApi = okxApi;

@@ -10,11 +10,11 @@ public class PolymarketClientProperties {
     private String clobBaseUrl = PolymarketEndpoints.DEFAULT_CLOB_BASE_URL;
     private ProxyProperties proxy = new ProxyProperties();
 
-    String normalizedGammaBaseUrl() {
+    public String normalizedGammaBaseUrl() {
         return trimRightSlash(requiredText(gammaBaseUrl, "trade.polymarket.client.gamma-base-url is required"));
     }
 
-    String normalizedClobBaseUrl() {
+    public String normalizedClobBaseUrl() {
         return trimRightSlash(requiredText(clobBaseUrl, "trade.polymarket.client.clob-base-url is required"));
     }
 

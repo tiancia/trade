@@ -6,8 +6,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import java.math.BigDecimal;
 
 @Data
-@ConfigurationProperties(prefix = "trade.ai")
-public class AiTradingProperties {
+@ConfigurationProperties(prefix = "trade.trading")
+public class TradingProperties {
     private boolean enabled = true;
     private String instId = "BTC-USDT";
     private String instType = "SPOT";

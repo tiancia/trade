@@ -2,7 +2,7 @@ package com.trade.trading.persistence;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.TradingDecisionRecord;
 import com.trade.trading.model.TradingState;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,7 +23,7 @@ public class TradingStateRepository {
     private TradingState state;
 
     @Autowired
-    public TradingStateRepository(AiTradingProperties properties) {
+    public TradingStateRepository(TradingProperties properties) {
         this(Path.of(properties.getStateFile()));
     }
 

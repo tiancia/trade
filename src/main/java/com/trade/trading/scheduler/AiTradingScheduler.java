@@ -2,7 +2,7 @@ package com.trade.trading.scheduler;
 
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
-import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.TradingEvent;
 import com.trade.trading.model.TradingTrigger;
 import com.trade.trading.persistence.TradingStateRepository;
@@ -30,7 +30,7 @@ public class AiTradingScheduler {
     private final OkxMarketDataWebSocketFeed marketDataWebSocketFeed;
     private final TradingEventDetector eventDetector;
     private final TradingStateRepository stateRepository;
-    private final AiTradingProperties properties;
+    private final TradingProperties properties;
     private Instant lastEventDecisionAt = Instant.EPOCH;
 
     public AiTradingScheduler(
@@ -39,7 +39,7 @@ public class AiTradingScheduler {
             OkxMarketDataWebSocketFeed marketDataWebSocketFeed,
             TradingEventDetector eventDetector,
             TradingStateRepository stateRepository,
-            AiTradingProperties properties
+            TradingProperties properties
     ) {
         this.tradingService = tradingService;
         this.marketContextCollector = marketContextCollector;
@@ -50,16 +50,16 @@ public class AiTradingScheduler {
     }
 
     @Scheduled(
-            fixedDelayString = "${trade.ai.decision-fixed-delay-ms:1800000}",
-            initialDelayString = "${trade.ai.initial-delay-ms:30000}"
+            fixedDelayString = "${trade.trading.decision-fixed-delay-ms:1800000}",
+            initialDelayString = "${trade.trading.initial-delay-ms:30000}"
     )
     public void runScheduledDecision() {
         tradingService.runDecision(TradingTrigger.scheduled());
     }
 
     @Scheduled(
-            fixedDelayString = "${trade.ai.event-scan-fixed-delay-ms:60000}",
-            initialDelayString = "${trade.ai.event-initial-delay-ms:30000}"
+            fixedDelayString = "${trade.trading.event-scan-fixed-delay-ms:60000}",
+            initialDelayString = "${trade.trading.event-initial-delay-ms:30000}"
     )
     public void scanEventTriggers() {
         if (!properties.isEnabled()) {

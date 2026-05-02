@@ -2,7 +2,7 @@ package com.trade.trading.market;
 
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
-import com.trade.trading.config.AiTradingProperties;
+import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.TradingEvent;
 import com.trade.trading.model.TradingState;
 import com.trade.trading.support.TradingMath;
@@ -16,9 +16,9 @@ import java.util.Map;
 
 @Component
 public class TradingEventDetector {
-    private final AiTradingProperties properties;
+    private final TradingProperties properties;
 
-    public TradingEventDetector(AiTradingProperties properties) {
+    public TradingEventDetector(TradingProperties properties) {
         this.properties = properties;
     }
 
