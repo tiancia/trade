@@ -1,7 +1,5 @@
-# Spring Boot 应用基础配置。
 spring:
   application:
-    # 应用名称，会用于 Spring 上下文、日志和服务标识。
     name: trade
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -42,6 +40,69 @@ trade:
       # OKX 代理端口。
       port: 7890
 
+  # Polymarket 独立 AI 决策模块；默认关闭，避免启动后直接读取市场并下注。
+  polymarket:
+    # 是否启用 Polymarket AI 决策调度。
+    enabled: false
+    # 单次 AI 决策最多分析多少个市场。
+    market-limit: 5
+    # 指定 Gamma market slug；留空时按 24h 成交量拉取开放市场。
+    market-slugs: []
+    # 指定 Gamma market id；可与 market-slugs 搭配使用。
+    market-ids: []
+    # 指定 CLOB token id；配置后只分析这些 outcome token。
+    clob-token-ids: []
+    # 是否要求市场处于接受订单状态。
+    require-accepting-orders: true
+    # 传给 AI 的每边盘口档位数。
+    order-book-depth: 5
+    # 单笔最多下注 USDC。
+    max-order-usdc: 5
+    # AI 做 BUY 决策需要达到的最低置信度，0.65 表示 65%。
+    min-confidence: "0.65"
+    # AI 估计概率减去限价后的最低边际，0.03 表示 3 个百分点。
+    min-expected-edge: "0.03"
+    # 限价下限/上限，单位为每股 outcome 的 USDC。
+    min-limit-price: "0.01"
+    max-limit-price: "0.95"
+    # 默认最小 shares 数；市场返回 min_order_size 时优先使用市场值。
+    min-order-size: 5
+    # Polymarket 常规定时 AI 决策的执行间隔，单位毫秒。
+    decision-fixed-delay-ms: 1800000
+    # 应用启动后首次执行 Polymarket AI 决策前的延迟，单位毫秒。
+    initial-delay-ms: 60000
+    client:
+      # Gamma API 基础地址，用于市场发现。
+      gamma-base-url: "https://gamma-api.polymarket.com"
+      # CLOB API 基础地址，用于订单簿和交易。
+      clob-base-url: "https://clob.polymarket.com"
+      proxy:
+        # 是否给 Polymarket HTTP 请求启用代理。
+        enabled: true
+        host: "127.0.0.1"
+        port: 7890
+    execution:
+      # 是否启用真实下单；false 时只记录 dry-run。
+      enabled: false
+      # Python SDK 下单桥接脚本。
+      python-command: "python"
+      script-path: "scripts/polymarket_place_order.py"
+      timeout-ms: 60000
+      chain-id: 137
+      # EOA 通常为 0；使用 Polymarket proxy/funder 钱包时按官方 SDK 要求调整。
+      signature-type: 0
+      # 默认使用 fill-and-kill 限价单，避免长期挂单。
+      order-type: FAK
+      # 密钥
+      private-key-env-name: POLYMARKET_PRIVATE_KEY
+      api-key-env-name: POLYMARKET_API_KEY
+      api-secret-env-name: POLYMARKET_API_SECRET
+      api-passphrase-env-name: POLYMARKET_API_PASSPHRASE
+      funder-address-env-name: POLYMARKET_FUNDER_ADDRESS
+      # 真实下单前调用 Polymarket geoblock API；失败或受限时拒绝下单。
+      geoblock-check-enabled: true
+      geoblock-url: "https://polymarket.com/api/geoblock"
+
   # AI 自动交易配置。
   ai:
     client:
@@ -51,9 +112,6 @@ trade:
       model: deepseek-v4-pro
       # 保存 AI API Key 的环境变量名；实际密钥建议放在环境变量里。
       api-key-env-name: DEEPSEEK_API_KEY
-      # AI API Key；不建议写入配置文件，优先使用 api-key-env-name 指定的环境变量。
-      # api-key:
-      # AI 服务基础地址；未配置时会使用 provider 对应的默认地址。
       # base-url:
       # OpenAI 兼容接口的 chat completions 路径；未配置时会使用 provider 对应的默认路径。
       # chat-completions-path:
