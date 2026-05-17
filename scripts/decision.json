@@ -1,0 +1,14 @@
+{
+  "action": "BUY",
+  "reason": "AL-03 is a safe Republican seat, win probability ~0.99, edge 0.06",
+  "marketId": "0x4fff596cf2ee595e8c70838943d70275c7c724ce0b3cf2ef4ea986b88a6c2c00",
+  "marketSlug": "will-the-republican-party-win-the-al-03-house-seat",
+  "marketQuestion": "Will the Republican Party win the AL-03 House seat?",
+  "outcome": "Yes",
+  "tokenId": "69944000405057355497343972061914269596481459431953471217189377963336927362514",
+  "limitPrice": 0.93,
+  "maxSpendUsdc": 5.0,
+  "winProbability": 0.99,
+  "confidence": 0.95,
+  "estimatedEdge": 0.06
+}
