@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.polymarket.persistence.PolymarketDecisionAuditMapper">
+    <insert id="insertDecisionRun"
+            parameterType="com.trade.polymarket.persistence.PolymarketDecisionAuditRow"
+            useGeneratedKeys="true"
+            keyProperty="id"
+            keyColumn="id">
+        INSERT INTO polymarket_decision_runs (
+            started_at,
+            completed_at,
+            execution_enabled,
+            market_count,
+            outcome_count,
+            action,
+            decision_reason,
+            market_id,
+            market_slug,
+            market_question,
+            outcome,
+            token_id,
+            limit_price,
+            max_spend_usdc,
+            win_probability,
+            confidence,
+            estimated_probability,
+            estimated_edge,
+            execution_status,
+            skip_reason,
+            error
+        ) VALUES (
+            #{startedAt},
+            #{completedAt},
+            #{executionEnabled},
+            #{marketCount},
+            #{outcomeCount},
+            #{action},
+            #{decisionReason},
+            #{marketId},
+            #{marketSlug},
+            #{marketQuestion},
+            #{outcome},
+            #{tokenId},
+            #{limitPrice},
+            #{maxSpendUsdc},
+            #{winProbability},
+            #{confidence},
+            #{estimatedProbability},
+            #{estimatedEdge},
+            #{executionStatus},
+            #{skipReason},
+            #{error}
+        )
+    </insert>
+
+    <update id="updateDecisionRun" parameterType="com.trade.polymarket.persistence.PolymarketDecisionAuditRow">
+        UPDATE polymarket_decision_runs
+        SET
+            started_at = #{startedAt},
+            completed_at = #{completedAt},
+            execution_enabled = #{executionEnabled},
+            market_count = #{marketCount},
+            outcome_count = #{outcomeCount},
+            action = #{action},
+            decision_reason = #{decisionReason},
+            market_id = #{marketId},
+            market_slug = #{marketSlug},
+            market_question = #{marketQuestion},
+            outcome = #{outcome},
+            token_id = #{tokenId},
+            limit_price = #{limitPrice},
+            max_spend_usdc = #{maxSpendUsdc},
+            win_probability = #{winProbability},
+            confidence = #{confidence},
+            estimated_probability = #{estimatedProbability},
+            estimated_edge = #{estimatedEdge},
+            execution_status = #{executionStatus},
+            skip_reason = #{skipReason},
+            error = #{error}
+        WHERE id = #{id}
+    </update>
+
+    <insert id="upsertAiRequest" parameterType="com.trade.polymarket.persistence.PolymarketDecisionAuditRow">
+        INSERT INTO polymarket_ai_requests (
+            decision_run_id,
+            prompt_text,
+            ai_parameters_json
+        ) VALUES (
+            #{decisionRunId},
+            #{promptText},
+            #{aiParametersJson}
+        )
+        ON DUPLICATE KEY UPDATE
+            prompt_text = VALUES(prompt_text),
+            ai_parameters_json = VALUES(ai_parameters_json)
+    </insert>
+
+    <insert id="upsertAiResponse" parameterType="com.trade.polymarket.persistence.PolymarketDecisionAuditRow">
+        INSERT INTO polymarket_ai_responses (
+            decision_run_id,
+            received_at,
+            raw_response,
+            parsed_action,
+            parsed_reason,
+            parsed_market_id,
+            parsed_market_slug,
+            parsed_market_question,
+            parsed_outcome,
+            parsed_token_id,
+            parsed_limit_price,
+            parsed_max_spend_usdc,
+            parsed_win_probability,
+            parsed_confidence,
+            parsed_estimated_probability,
+            parsed_estimated_edge
+        ) VALUES (
+            #{decisionRunId},
+            #{completedAt},
+            #{rawResponse},
+            #{action},
+            #{decisionReason},
+            #{marketId},
+            #{marketSlug},
+            #{marketQuestion},
+            #{outcome},
+            #{tokenId},
+            #{limitPrice},
+            #{maxSpendUsdc},
+            #{winProbability},
+            #{confidence},
+            #{estimatedProbability},
+            #{estimatedEdge}
+        )
+        ON DUPLICATE KEY UPDATE
+            received_at = VALUES(received_at),
+            raw_response = VALUES(raw_response),
+            parsed_action = VALUES(parsed_action),
+            parsed_reason = VALUES(parsed_reason),
+            parsed_market_id = VALUES(parsed_market_id),
+            parsed_market_slug = VALUES(parsed_market_slug),
+            parsed_market_question = VALUES(parsed_market_question),
+            parsed_outcome = VALUES(parsed_outcome),
+            parsed_token_id = VALUES(parsed_token_id),
+            parsed_limit_price = VALUES(parsed_limit_price),
+            parsed_max_spend_usdc = VALUES(parsed_max_spend_usdc),
+            parsed_win_probability = VALUES(parsed_win_probability),
+            parsed_confidence = VALUES(parsed_confidence),
+            parsed_estimated_probability = VALUES(parsed_estimated_probability),
+            parsed_estimated_edge = VALUES(parsed_estimated_edge)
+    </insert>
+
+    <insert id="upsertOrderExecution" parameterType="com.trade.polymarket.persistence.PolymarketDecisionAuditRow">
+        INSERT INTO polymarket_order_executions (
+            decision_run_id,
+            execution_status,
+            skip_reason,
+            order_response,
+            error
+        ) VALUES (
+            #{decisionRunId},
+            #{executionStatus},
+            #{skipReason},
+            #{orderResponse},
+            #{error}
+        )
+        ON DUPLICATE KEY UPDATE
+            execution_status = VALUES(execution_status),
+            skip_reason = VALUES(skip_reason),
+            order_response = VALUES(order_response),
+            error = VALUES(error)
+    </insert>
+</mapper>

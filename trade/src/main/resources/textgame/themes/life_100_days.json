@@ -1,0 +1,132 @@
+{
+  "id": "life_100_days",
+  "name": "人生模拟器：100天翻身",
+  "description": "从负债、健康透支和人脉断裂中起步，在100天内通过20次关键选择改写处境。",
+  "premise": "主角刚被裁员，账户透支，房租和欠款同时到期。玩家要在现金、身体、技能、人脉、名声和风险之间做取舍，用100天争取一次真正的翻身机会。",
+  "protagonistSetup": "27岁普通城市打工人，租住在老小区，手里只有旧手机、欠款清单和几段快要断掉的人际关系。没有系统外挂，没有突然暴富，只能靠选择、行动和承担代价推进。",
+  "tone": "现实压力、短句推进、具体账目、清晰因果。允许有逆转和爽感，但每一次收益都要对应风险、成本或关系变化。",
+  "initialStats": {
+    "money": -3200,
+    "health": 58,
+    "skill": 22,
+    "network": 16,
+    "reputation": 12,
+    "risk": 34
+  },
+  "statLabels": {
+    "money": "现金",
+    "health": "健康",
+    "skill": "技能",
+    "network": "人脉",
+    "reputation": "名声",
+    "risk": "风险"
+  },
+  "statRules": [
+    "money 代表净现金和短期负债压力，可以为负数。",
+    "health、skill、network、reputation、risk 范围由后端限制在0到100。",
+    "高 risk 会让机会更激烈，但也更容易触发坏结局。",
+    "翻身不只看 money，健康透支、名声崩坏或人脉断裂都会影响结局评价。"
+  ],
+  "openingHooks": [
+    "房东催缴房租，前公司拖欠报销，信用卡最低还款就在今晚。",
+    "外卖站、短训班、旧同学和一个灰色高薪兼职同时出现在主角眼前。",
+    "每5天一个决策点，早期选择会在后期以账单、身体状态或关系回声的形式回来。"
+  ],
+  "interludeActions": [
+    {
+      "id": "short_shift",
+      "label": "接短工",
+      "hint": "现金增加，但消耗健康并略增风险",
+      "statsDelta": {"money": 260, "health": -4, "skill": 1, "network": 0, "reputation": 0, "risk": 2},
+      "feedbackTemplates": [
+        "你接下一单临时活，晚上数钱时手腕还在发酸。",
+        "一天被拆成几段零工，现金压力松了一点，身体却更沉。"
+      ],
+      "maxStats": {"risk": 92}
+    },
+    {
+      "id": "train_skill",
+      "label": "训练技能",
+      "hint": "技能提升，短期没有收入",
+      "statsDelta": {"money": -60, "health": -2, "skill": 5, "network": 0, "reputation": 1, "risk": 0},
+      "feedbackTemplates": [
+        "你把一整天投进练习和复盘，成果还小，但手感开始稳定。",
+        "课程、笔记和实操挤满了桌面，技能进度终于往前挪了一格。"
+      ]
+    },
+    {
+      "id": "repair_relationship",
+      "label": "经营关系",
+      "hint": "人脉和名声提升，需要时间和一点花费",
+      "statsDelta": {"money": -90, "health": -1, "skill": 0, "network": 5, "reputation": 2, "risk": -1},
+      "feedbackTemplates": [
+        "你认真回了几条拖很久的消息，也请人喝了一杯便宜咖啡。",
+        "一次迟到的道歉换来重新开口的机会，关系没有立刻变好，但裂缝小了。"
+      ]
+    },
+    {
+      "id": "rest_and_reset",
+      "label": "休整",
+      "hint": "恢复健康并降低风险，但没有收入",
+      "statsDelta": {"money": -40, "health": 7, "skill": 0, "network": 0, "reputation": 0, "risk": -4},
+      "feedbackTemplates": [
+        "你把手机扣在桌上，补觉、吃热饭，身体终于不再一直报警。",
+        "这一天没有冲刺，只有洗衣、睡眠和把呼吸调匀。"
+      ],
+      "maxStats": {"health": 94}
+    },
+    {
+      "id": "organize_accounts",
+      "label": "整理账目",
+      "hint": "风险下降，现金没有立刻改善",
+      "statsDelta": {"money": 0, "health": 0, "skill": 1, "network": 0, "reputation": 0, "risk": -5},
+      "feedbackTemplates": [
+        "你把欠款、租金和还款日写成清单，最坏的窟窿终于有了边界。",
+        "账单被重新排序，压力还在，但不再像一团雾。"
+      ]
+    },
+    {
+      "id": "public_showcase",
+      "label": "公开展示",
+      "hint": "名声提升，也可能带来更多风险",
+      "statsDelta": {"money": 0, "health": -2, "skill": 1, "network": 2, "reputation": 5, "risk": 3},
+      "feedbackTemplates": [
+        "你把成果公开发出去，有人点赞，也有人开始盯着你的下一步。",
+        "一次小范围展示换来几个新联系人，压力也随之变得可见。"
+      ],
+      "minStats": {"skill": 20}
+    }
+  ],
+  "settlingActions": [
+    {
+      "id": "sort_notes",
+      "label": "整理状态",
+      "hint": "复盘这几天，不推进天数或属性",
+      "statsDelta": {},
+      "feedbackTemplates": [
+        "你把这几天的收据、聊天记录和待办放在一起，等待局势明朗。",
+        "你没有再压榨自己，只是把手头信息排成能看懂的顺序。"
+      ]
+    },
+    {
+      "id": "check_messages",
+      "label": "查看消息",
+      "hint": "轻量等待，不推进天数或属性",
+      "statsDelta": {},
+      "feedbackTemplates": [
+        "你刷新消息，把重要回复单独标出来，暂时不做新的承诺。",
+        "几条未读消息被清理干净，下一步仍在等待结果。"
+      ]
+    },
+    {
+      "id": "take_breath",
+      "label": "缓一口气",
+      "hint": "轻量等待，不推进天数或属性",
+      "statsDelta": {},
+      "feedbackTemplates": [
+        "你离开屏幕几分钟，喝水，站直，再回到桌前。",
+        "等待还在继续，但你至少没有让焦虑接管这一天。"
+      ]
+    }
+  ]
+}

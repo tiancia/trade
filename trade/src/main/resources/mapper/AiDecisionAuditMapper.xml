@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.trading.persistence.AiDecisionAuditMapper">
+    <insert id="insertDecisionRun"
+            parameterType="com.trade.trading.persistence.AiDecisionRunRow"
+            useGeneratedKeys="true"
+            keyProperty="id"
+            keyColumn="id">
+        INSERT INTO okx_decision_runs (
+            started_at,
+            completed_at,
+            inst_id,
+            inst_type,
+            base_ccy,
+            quote_ccy,
+            td_mode,
+            trigger_type,
+            trigger_reason,
+            trigger_details_json,
+            action,
+            decision_reason,
+            buy_quote_amount,
+            sell_base_amount,
+            requested_order_size,
+            win_probability,
+            confidence,
+            strategy_bias,
+            strategy_thesis,
+            strategy_invalidation,
+            strategy_horizon,
+            last_price,
+            available_base,
+            available_quote,
+            execution_status,
+            skip_reason,
+            error
+        ) VALUES (
+            #{startedAt},
+            #{completedAt},
+            #{instId},
+            #{instType},
+            #{baseCcy},
+            #{quoteCcy},
+            #{tdMode},
+            #{triggerType},
+            #{triggerReason},
+            #{triggerDetailsJson},
+            #{action},
+            #{decisionReason},
+            #{buyQuoteAmount},
+            #{sellBaseAmount},
+            #{requestedOrderSize},
+            #{winProbability},
+            #{confidence},
+            #{strategyBias},
+            #{strategyThesis},
+            #{strategyInvalidation},
+            #{strategyHorizon},
+            #{lastPrice},
+            #{availableBase},
+            #{availableQuote},
+            #{executionStatus},
+            #{skipReason},
+            #{error}
+        )
+    </insert>
+
+    <update id="updateDecisionRun" parameterType="com.trade.trading.persistence.AiDecisionRunRow">
+        UPDATE okx_decision_runs
+        SET
+            started_at = #{startedAt},
+            completed_at = #{completedAt},
+            inst_id = #{instId},
+            inst_type = #{instType},
+            base_ccy = #{baseCcy},
+            quote_ccy = #{quoteCcy},
+            td_mode = #{tdMode},
+            trigger_type = #{triggerType},
+            trigger_reason = #{triggerReason},
+            trigger_details_json = #{triggerDetailsJson},
+            action = #{action},
+            decision_reason = #{decisionReason},
+            buy_quote_amount = #{buyQuoteAmount},
+            sell_base_amount = #{sellBaseAmount},
+            requested_order_size = #{requestedOrderSize},
+            win_probability = #{winProbability},
+            confidence = #{confidence},
+            strategy_bias = #{strategyBias},
+            strategy_thesis = #{strategyThesis},
+            strategy_invalidation = #{strategyInvalidation},
+            strategy_horizon = #{strategyHorizon},
+            last_price = #{lastPrice},
+            available_base = #{availableBase},
+            available_quote = #{availableQuote},
+            execution_status = #{executionStatus},
+            skip_reason = #{skipReason},
+            error = #{error}
+        WHERE id = #{id}
+    </update>
+
+    <insert id="upsertAiRequest" parameterType="com.trade.trading.persistence.AiRequestRow">
+        INSERT INTO okx_ai_requests (
+            decision_run_id,
+            prompt_text,
+            ai_parameters_json
+        ) VALUES (
+            #{decisionRunId},
+            #{promptText},
+            #{aiParametersJson}
+        )
+        ON DUPLICATE KEY UPDATE
+            prompt_text = VALUES(prompt_text),
+            ai_parameters_json = VALUES(ai_parameters_json)
+    </insert>
+
+    <insert id="upsertAiResponse" parameterType="com.trade.trading.persistence.AiResponseRow">
+        INSERT INTO okx_ai_responses (
+            decision_run_id,
+            received_at,
+            raw_response,
+            parsed_action,
+            parsed_reason,
+            parsed_buy_quote_amount,
+            parsed_sell_base_amount,
+            parsed_order_size,
+            parsed_win_probability,
+            parsed_confidence,
+            parsed_strategy_bias,
+            parsed_strategy_thesis,
+            parsed_strategy_invalidation,
+            parsed_strategy_horizon
+        ) VALUES (
+            #{decisionRunId},
+            #{receivedAt},
+            #{rawResponse},
+            #{parsedAction},
+            #{parsedReason},
+            #{parsedBuyQuoteAmount},
+            #{parsedSellBaseAmount},
+            #{parsedOrderSize},
+            #{parsedWinProbability},
+            #{parsedConfidence},
+            #{parsedStrategyBias},
+            #{parsedStrategyThesis},
+            #{parsedStrategyInvalidation},
+            #{parsedStrategyHorizon}
+        )
+        ON DUPLICATE KEY UPDATE
+            received_at = VALUES(received_at),
+            raw_response = VALUES(raw_response),
+            parsed_action = VALUES(parsed_action),
+            parsed_reason = VALUES(parsed_reason),
+            parsed_buy_quote_amount = VALUES(parsed_buy_quote_amount),
+            parsed_sell_base_amount = VALUES(parsed_sell_base_amount),
+            parsed_order_size = VALUES(parsed_order_size),
+            parsed_win_probability = VALUES(parsed_win_probability),
+            parsed_confidence = VALUES(parsed_confidence),
+            parsed_strategy_bias = VALUES(parsed_strategy_bias),
+            parsed_strategy_thesis = VALUES(parsed_strategy_thesis),
+            parsed_strategy_invalidation = VALUES(parsed_strategy_invalidation),
+            parsed_strategy_horizon = VALUES(parsed_strategy_horizon)
+    </insert>
+
+    <insert id="upsertOrderExecution" parameterType="com.trade.trading.persistence.OrderExecutionRow">
+        INSERT INTO okx_order_executions (
+            decision_run_id,
+            inst_id,
+            side,
+            td_mode,
+            order_type,
+            target_currency,
+            order_size,
+            order_id,
+            client_order_id,
+            execution_status,
+            skip_reason,
+            filled_base_amount,
+            average_fill_price,
+            fee,
+            fee_ccy,
+            error
+        ) VALUES (
+            #{decisionRunId},
+            #{instId},
+            #{side},
+            #{tdMode},
+            #{orderType},
+            #{targetCurrency},
+            #{orderSize},
+            #{orderId},
+            #{clientOrderId},
+            #{executionStatus},
+            #{skipReason},
+            #{filledBaseAmount},
+            #{averageFillPrice},
+            #{fee},
+            #{feeCcy},
+            #{error}
+        )
+        ON DUPLICATE KEY UPDATE
+            inst_id = VALUES(inst_id),
+            side = VALUES(side),
+            td_mode = VALUES(td_mode),
+            order_type = VALUES(order_type),
+            target_currency = VALUES(target_currency),
+            order_size = VALUES(order_size),
+            order_id = VALUES(order_id),
+            client_order_id = VALUES(client_order_id),
+            execution_status = VALUES(execution_status),
+            skip_reason = VALUES(skip_reason),
+            filled_base_amount = VALUES(filled_base_amount),
+            average_fill_price = VALUES(average_fill_price),
+            fee = VALUES(fee),
+            fee_ccy = VALUES(fee_ccy),
+            error = VALUES(error)
+    </insert>
+</mapper>

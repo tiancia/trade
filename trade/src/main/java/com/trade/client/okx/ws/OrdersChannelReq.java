@@ -1,0 +1,22 @@
+package com.trade.client.okx.ws;
+
+import lombok.Data;
+import lombok.experimental.Accessors;
+
+@Data
+@Accessors(chain = true)
+public class OrdersChannelReq {
+    private String channel = "orders";
+    private String instType;
+    private String instId;
+
+    /**
+     * Converts this typed request to the generic OKX WebSocket channel argument.
+     */
+    public OkxWsArg toArg() {
+        return new OkxWsArg()
+                .setChannel(channel)
+                .setInstType(instType)
+                .setInstId(instId);
+    }
+}
