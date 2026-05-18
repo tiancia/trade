@@ -249,6 +249,7 @@ public class MarketContextCollector {
         riskLimits.put("priceMoveTriggerPercent", properties.getPriceMoveTriggerPercent());
         riskLimits.put("volumeSpikeMultiplier", properties.getVolumeSpikeMultiplier());
         riskLimits.put("floatingLossTriggerPercent", properties.getFloatingLossTriggerPercent());
+        riskLimits.put("riskControl", properties.getRisk());
         if (strategy != null) {
             riskLimits.put("maxDrawdownRatio", strategy.getMaxDrawdownRatio());
             riskLimits.put("minRiskRewardRatio", strategy.getMinRiskRewardRatio());
@@ -304,6 +305,7 @@ public class MarketContextCollector {
         state.put("updatedAt", tradingState.getUpdatedAt());
         state.put("hasTrackedPosition", tradingState.hasTrackedPosition());
         state.put("strategyState", tradingState.getStrategyState());
+        state.put("riskState", tradingState.getRiskState());
         return state;
     }
 

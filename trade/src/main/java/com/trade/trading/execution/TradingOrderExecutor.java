@@ -14,6 +14,8 @@ import com.trade.trading.model.TradingAction;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingDecisionRecord;
 import com.trade.trading.persistence.TradingStateRepository;
+import com.trade.trading.risk.RiskAssessment;
+import com.trade.trading.risk.RiskControlService;
 import com.trade.trading.support.TradingMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,17 +35,20 @@ public class TradingOrderExecutor {
     private final OrderSizingService orderSizingService;
     private final TradingStateRepository stateRepository;
     private final TradingProperties properties;
+    private final RiskControlService riskControlService;
 
     public TradingOrderExecutor(
             OkxApi okxApi,
             OrderSizingService orderSizingService,
             TradingStateRepository stateRepository,
-            TradingProperties properties
+            TradingProperties properties,
+            RiskControlService riskControlService
     ) {
         this.okxApi = okxApi;
         this.orderSizingService = orderSizingService;
         this.stateRepository = stateRepository;
         this.properties = properties;
+        this.riskControlService = riskControlService;
     }
 
     public void execute(
@@ -51,11 +56,11 @@ public class TradingOrderExecutor {
             TradingDecisionContext context,
             TradingDecisionRecord decisionRecord
     ) {
-        String riskGateFailure = nonHoldRiskGateFailure(decision);
-        if (riskGateFailure != null) {
+        RiskAssessment riskAssessment = riskControlService.evaluate(decision, context);
+        if (!riskAssessment.isAllowed()) {
             decisionRecord.setExecutionStatus("SKIPPED")
-                    .setSkipReason(riskGateFailure);
-            log.info("{}", riskGateFailure);
+                    .setSkipReason(riskAssessment.skipReason());
+            log.info("{}", riskAssessment.skipReason());
             return;
         }
 
@@ -69,63 +74,6 @@ public class TradingOrderExecutor {
             decisionRecord.setExecutionStatus("HELD");
             log.info("AI decision HOLD, no order placed. reason={}", decision.getReason());
         }
-    }
-
-    private String nonHoldRiskGateFailure(AiTradingDecision decision) {
-        if (decision == null || decision.getAction() == null || decision.getAction() == TradingAction.HOLD) {
-            return null;
-        }
-
-        TradingProperties.StrategyProperties strategy = properties.getStrategy();
-        if (strategy == null) {
-            return null;
-        }
-
-        if (!"PASS".equalsIgnoreCase(decision.getObjectiveAlignment())) {
-            return decision.getAction() + " skipped: objectiveAlignment must be PASS for non-HOLD actions";
-        }
-        if (!hasText(decision.getStrategyThesis())) {
-            return decision.getAction() + " skipped: strategyThesis is required for non-HOLD actions";
-        }
-        if (!hasText(decision.getStrategyInvalidation())) {
-            return decision.getAction() + " skipped: strategyInvalidation is required for non-HOLD actions";
-        }
-        if (!hasText(decision.getStrategyHorizon())) {
-            return decision.getAction() + " skipped: strategyHorizon is required for non-HOLD actions";
-        }
-        if (!hasText(decision.getThesisChangeEvidence())) {
-            return decision.getAction() + " skipped: thesisChangeEvidence is required for non-HOLD actions";
-        }
-        if (below(decision.getWinProbability(), strategy.getMinWinProbability())) {
-            return decision.getAction() + " skipped: winProbability "
-                    + plain(decision.getWinProbability()) + " is below strategy minimum "
-                    + plain(strategy.getMinWinProbability());
-        }
-        if (below(decision.getConfidence(), strategy.getMinConfidence())) {
-            return decision.getAction() + " skipped: confidence "
-                    + plain(decision.getConfidence()) + " is below strategy minimum "
-                    + plain(strategy.getMinConfidence());
-        }
-
-        BigDecimal winConfidenceScore = decision.getWinProbability() == null || decision.getConfidence() == null
-                ? null
-                : decision.getWinProbability().multiply(decision.getConfidence());
-        if (below(winConfidenceScore, strategy.getMinWinConfidenceScore())) {
-            return decision.getAction() + " skipped: winProbability * confidence "
-                    + plain(winConfidenceScore) + " is below strategy minimum "
-                    + plain(strategy.getMinWinConfidenceScore());
-        }
-        if (below(decision.getRiskRewardRatio(), strategy.getMinRiskRewardRatio())) {
-            return decision.getAction() + " skipped: riskRewardRatio "
-                    + plain(decision.getRiskRewardRatio()) + " is below strategy minimum "
-                    + plain(strategy.getMinRiskRewardRatio());
-        }
-        if (below(decision.getExpectedNetEdgePercent(), properties.getMinExpectedNetEdgePercent())) {
-            return decision.getAction() + " skipped: expectedNetEdgePercent "
-                    + plain(decision.getExpectedNetEdgePercent()) + " is below configured minimum "
-                    + plain(properties.getMinExpectedNetEdgePercent());
-        }
-        return null;
     }
 
     private void executeBuy(
@@ -160,6 +108,7 @@ public class TradingOrderExecutor {
 
         log.info("Place BUY order request: {}", req);
         OrderActionResp actionResp = placeOrder(req);
+        riskControlService.recordExecutedAction(decision, context);
         decisionRecord.setOrderId(actionResp.getOrdId())
                 .setClientOrderId(actionResp.getClOrdId());
         Optional<FillSummary> fillSummary = updateStateFromFilledOrder(actionResp, "buy");
@@ -212,6 +161,7 @@ public class TradingOrderExecutor {
 
         log.info("Place derivative order request: action={}, request={}", decision.getAction(), req);
         OrderActionResp actionResp = placeOrder(req);
+        riskControlService.recordExecutedAction(decision, context);
         decisionRecord.setOrderId(actionResp.getOrdId())
                 .setClientOrderId(actionResp.getClOrdId());
         Optional<FillSummary> fillSummary = readFillSummary(actionResp);
@@ -250,6 +200,7 @@ public class TradingOrderExecutor {
 
         log.info("Place SELL order request: {}", req);
         OrderActionResp actionResp = placeOrder(req);
+        riskControlService.recordExecutedAction(decision, context);
         decisionRecord.setOrderId(actionResp.getOrdId())
                 .setClientOrderId(actionResp.getClOrdId());
         Optional<FillSummary> fillSummary = updateStateFromFilledOrder(actionResp, "sell");
@@ -453,20 +404,6 @@ public class TradingOrderExecutor {
                 + Long.toString(CLIENT_ORDER_SEQUENCE.incrementAndGet(), 36);
         String clientOrderId = "ai" + side + suffix;
         return clientOrderId.length() <= 32 ? clientOrderId : clientOrderId.substring(0, 32);
-    }
-
-    private static boolean below(BigDecimal value, BigDecimal minimum) {
-        return minimum != null
-                && minimum.signum() > 0
-                && (value == null || value.compareTo(minimum) < 0);
-    }
-
-    private static boolean hasText(String value) {
-        return value != null && !value.isBlank();
-    }
-
-    private static String plain(BigDecimal value) {
-        return value == null ? "null" : TradingMath.plain(value);
     }
 
     private static DerivativeOrder derivativeOrder(TradingAction action) {

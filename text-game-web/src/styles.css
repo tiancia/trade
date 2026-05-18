@@ -302,6 +302,29 @@ h1 {
   line-height: 1.7;
 }
 
+.advance-notice {
+  margin-top: 14px;
+  padding: 13px 16px;
+  border: 1px solid rgba(47, 111, 95, 0.24);
+  border-left: 4px solid var(--green);
+  border-radius: 8px;
+  background: #f3faf6;
+  color: #234d42;
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 10px;
+}
+
+.advance-notice strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.advance-notice p {
+  margin-bottom: 9px;
+  line-height: 1.6;
+}
+
 .scene-text {
   margin-top: 24px;
   color: #27312d;
@@ -384,6 +407,12 @@ h1 {
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
+}
+
+.interlude-wait-note {
+  margin: -10px 0 0;
+  color: #52615a;
+  line-height: 1.65;
 }
 
 .resolution-badge {
@@ -492,19 +521,27 @@ h1 {
 
 .delta-line span {
   min-height: 24px;
-  padding: 2px 8px;
+  padding: 2px 9px;
   border-radius: 999px;
   background: #eef2f0;
   display: inline-flex;
   align-items: center;
+  font-weight: 900;
 }
 
 .delta-line .positive {
   color: #2b6f48;
+  background: #e4f4e9;
 }
 
 .delta-line .negative {
   color: #a03c35;
+  background: #fff0ed;
+}
+
+.delta-line.empty {
+  color: var(--muted);
+  font-weight: 800;
 }
 
 .resolution-error {
@@ -551,19 +588,31 @@ h1 {
 
 .log-row {
   display: grid;
-  grid-template-columns: 74px 1fr;
+  grid-template-columns: 104px 1fr;
   gap: 10px;
   padding: 10px 0;
   border-top: 1px solid var(--line);
 }
 
-.log-row span {
+.log-meta {
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
 }
 
-.log-row p {
+.log-meta strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--green-dark);
+  line-height: 1.35;
+}
+
+.log-content {
+  display: grid;
+  gap: 8px;
+}
+
+.log-content p {
   margin-bottom: 0;
   color: #27312d;
   line-height: 1.55;
@@ -614,6 +663,17 @@ h1 {
 .stat-row {
   display: grid;
   gap: 8px;
+  padding: 8px;
+  margin: -8px;
+  border-radius: 8px;
+  transition:
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.stat-row.changed {
+  background: #fff9e8;
+  box-shadow: inset 0 0 0 1px rgba(212, 154, 39, 0.28);
 }
 
 .stat-head {
@@ -634,6 +694,29 @@ h1 {
 
 .stat-head strong {
   font-size: 15px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.stat-head em {
+  min-height: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.stat-head em.positive {
+  background: #e4f4e9;
+  color: #2b6f48;
+}
+
+.stat-head em.negative {
+  background: #fff0ed;
+  color: #a03c35;
 }
 
 .stat-bar {

@@ -7,6 +7,7 @@ import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.AiTradingDecision;
 import com.trade.trading.model.OrderSizing;
 import com.trade.trading.model.TradingDecisionContext;
+import com.trade.trading.risk.RiskContext;
 import com.trade.trading.support.TradingMath;
 import org.springframework.stereotype.Component;
 
@@ -25,6 +26,7 @@ public class OrderSizingService {
         BigDecimal aiAmount = decision.getBuyQuoteAmountUsdt();
         BigDecimal availableQuote = available(context.getQuoteBalance());
         BigDecimal maxAmount = properties.getMaxBuyQuoteAmount();
+        maxAmount = TradingMath.clamp(maxAmount, maxSingleOpenQuoteAmount(context));
         BigDecimal amount = TradingMath.clamp(TradingMath.clamp(aiAmount, maxAmount), availableQuote);
         amount = amount.setScale(properties.getQuoteAmountScale(), RoundingMode.DOWN);
 
@@ -111,5 +113,19 @@ public class OrderSizingService {
             return BigDecimal.ZERO;
         }
         return TradingMath.decimal(ticker.getLast());
+    }
+
+    private BigDecimal maxSingleOpenQuoteAmount(TradingDecisionContext context) {
+        TradingProperties.RiskProperties riskProperties = properties.getRisk();
+        if (riskProperties == null || !riskProperties.isEnabled()) {
+            return BigDecimal.ZERO;
+        }
+
+        BigDecimal ratio = riskProperties.getMaxSingleOpenEquityRatio();
+        BigDecimal equity = RiskContext.estimateEquity(context);
+        if (ratio == null || ratio.signum() <= 0 || equity.signum() <= 0) {
+            return BigDecimal.ZERO;
+        }
+        return equity.multiply(ratio);
     }
 }

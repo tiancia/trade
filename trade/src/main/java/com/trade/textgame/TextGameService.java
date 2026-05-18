@@ -276,9 +276,7 @@ public class TextGameService {
                 return toResponse(session);
             }
 
-            List<TextGameActionDefinition> actions = settling
-                    ? availableActions(settlingActions(session.theme), session.stats)
-                    : availableActions(interludeActions(session.theme), session.stats);
+            List<TextGameActionDefinition> actions = candidateActions(session, settling);
             TextGameActionDefinition action = requireAction(actions, request.actionId());
             Map<String, Integer> statsDelta = settling ? Map.of() : copyMutableStats(action.statsDelta());
             if (!settling) {
@@ -507,9 +505,7 @@ public class TextGameService {
         }
         List<TextGameActionDefinition> actions = List.of();
         if (pendingResolution.status != ResolutionStatus.ERROR) {
-            actions = session.interludeStep >= INTERLUDE_STEPS_REQUIRED
-                    ? availableActions(settlingActions(session.theme), session.stats)
-                    : availableActions(interludeActions(session.theme), session.stats);
+            actions = candidateActions(session, session.interludeStep >= INTERLUDE_STEPS_REQUIRED);
         }
         String recentFeedback = session.interludeLog.isEmpty()
                 ? null
@@ -593,13 +589,49 @@ public class TextGameService {
         return theme.settlingActions();
     }
 
+    private static List<TextGameActionDefinition> candidateActions(TextGameSession session, boolean settling) {
+        List<TextGameActionDefinition> actions = settling
+                ? settlingActions(session.theme)
+                : interludeActions(session.theme);
+        int turn = session.pendingResolution == null ? session.turn : session.pendingResolution.nextTurn;
+        String lastActionId = session.interludeLog.isEmpty()
+                ? null
+                : session.interludeLog.getLast().actionId();
+        return availableActions(actions, session.stats, turn, session.interludeLog.size(), lastActionId);
+    }
+
     private static List<TextGameActionDefinition> availableActions(
             List<TextGameActionDefinition> actions,
-            Map<String, Integer> stats
+            Map<String, Integer> stats,
+            int turn,
+            int interludeLogSize,
+            String lastActionId
     ) {
-        return actions.stream()
+        List<TextGameActionDefinition> filtered = actions.stream()
                 .filter(action -> hasText(action.id()))
                 .filter(action -> isAllowedByStats(action, stats))
+                .toList();
+        if (filtered.isEmpty()) {
+            return List.of();
+        }
+
+        int start = Math.floorMod(turn + interludeLogSize, filtered.size());
+        List<TextGameActionDefinition> rotated = new ArrayList<>(filtered.size());
+        for (int i = 0; i < filtered.size(); i++) {
+            rotated.add(filtered.get((start + i) % filtered.size()));
+        }
+
+        if (rotated.size() > 3 && hasText(lastActionId)) {
+            for (int i = 0; i < rotated.size(); i++) {
+                if (lastActionId.equals(rotated.get(i).id())) {
+                    TextGameActionDefinition recent = rotated.remove(i);
+                    rotated.add(recent);
+                    break;
+                }
+            }
+        }
+
+        return rotated.stream()
                 .limit(3)
                 .toList();
     }

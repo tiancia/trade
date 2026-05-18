@@ -41,6 +41,7 @@ public class TradingProperties {
     private long orderFillQueryDelayMs = 1_000L;
     private int quoteAmountScale = 2;
     private StrategyProperties strategy = new StrategyProperties();
+    private RiskProperties risk = new RiskProperties();
 
     public boolean isSpotInstrument() {
         return "SPOT".equalsIgnoreCase(instType);
@@ -86,5 +87,19 @@ public class TradingProperties {
                 "Open or add exposure only when expected net edge, risk-reward, win probability, and confidence all clear their configured thresholds.",
                 "Reduce exposure when the thesis is invalidated or drawdown pressure threatens the objective."
         );
+    }
+
+    @Data
+    public static class RiskProperties {
+        private boolean enabled = true;
+        private int maxConsecutiveLosses = 3;
+        private long lossCooldownMs = 3_600_000L;
+        private BigDecimal maxDrawdownRatio = new BigDecimal("0.20");
+        private BigDecimal maxDailyLossRatio = new BigDecimal("0.05");
+        private String dailyZone = "Asia/Shanghai";
+        private long minOpenIntervalMs = 600_000L;
+        private int maxConsecutiveOpenActions = 2;
+        private BigDecimal maxSingleOpenEquityRatio = new BigDecimal("0.10");
+        private BigDecimal equityNoiseRatio = new BigDecimal("0.0001");
     }
 }

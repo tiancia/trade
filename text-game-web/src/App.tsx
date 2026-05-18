@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -49,6 +49,11 @@ type RetryAction =
   | { type: 'choice'; choiceId: string; turn: number }
   | { type: 'resolution' };
 
+type ActionResultNotice = {
+  feedback: string;
+  statsDelta: Stats;
+};
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body) {
@@ -86,10 +91,17 @@ export default function App() {
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
+  const [advanceNotice, setAdvanceNotice] = useState<ActionResultNotice | null>(null);
+  const sessionRef = useRef<TextGameSession | null>(null);
+  const lastInterludeResultRef = useRef<ActionResultNotice | null>(null);
 
   useEffect(() => {
     void bootstrap();
   }, []);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
   useEffect(() => {
     if (!session || session.completed || session.resolution?.status !== 'pending') {
@@ -103,6 +115,16 @@ export default function App() {
         if (cancelled) {
           return;
         }
+        rememberInterludeLog(latest);
+        const currentSession = sessionRef.current;
+        if (currentSession && latest.turn > currentSession.turn) {
+          setAdvanceNotice({
+            feedback: lastInterludeResultRef.current?.feedback ?? '主线已推进，等待期行动和主线结果已经结算。',
+            statsDelta: diffStats(currentSession.stats, latest.stats),
+          });
+          lastInterludeResultRef.current = null;
+        }
+        sessionRef.current = latest;
         setSession(latest);
         if (latest.phase === 'error' && latest.resolution?.error) {
           setError(latest.resolution.error);
@@ -177,6 +199,8 @@ export default function App() {
         }),
       });
       setSession(nextSession);
+      setAdvanceNotice(null);
+      lastInterludeResultRef.current = null;
       localStorage.setItem(STORAGE_KEY, nextSession.sessionId);
       setRetryAction(null);
     } catch (caught) {
@@ -197,6 +221,8 @@ export default function App() {
       }
       localStorage.removeItem(STORAGE_KEY);
       setSession(null);
+      setAdvanceNotice(null);
+      lastInterludeResultRef.current = null;
       await startNewGame();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -212,6 +238,8 @@ export default function App() {
     setBusy('choice');
     setPendingChoiceId(choice.id);
     setError(null);
+    setAdvanceNotice(null);
+    lastInterludeResultRef.current = null;
     try {
       const nextSession = await api<TextGameSession>(`/sessions/${session.sessionId}/choices`, {
         method: 'POST',
@@ -245,6 +273,14 @@ export default function App() {
           step: session.interlude.nextStep,
         }),
       });
+      rememberInterludeLog(nextSession);
+      if (nextSession.turn > session.turn) {
+        setAdvanceNotice({
+          feedback: `主线已推进，「${action.label}」的影响已经并入新的局面。`,
+          statsDelta: diffStats(session.stats, nextSession.stats),
+        });
+        lastInterludeResultRef.current = null;
+      }
       setSession(nextSession);
       setRetryAction(null);
     } catch (caught) {
@@ -295,6 +331,17 @@ export default function App() {
     if (choice) {
       void submitChoice(choice, retryAction.turn);
     }
+  }
+
+  function rememberInterludeLog(nextSession: TextGameSession) {
+    const entry = latestInterludeLog(nextSession.interlude);
+    if (!entry) {
+      return;
+    }
+    lastInterludeResultRef.current = {
+      feedback: entry.feedback,
+      statsDelta: entry.statsDelta,
+    };
   }
 
   const progressPercent = session ? Math.round((session.turn / session.maxTurns) * 100) : 0;
@@ -366,6 +413,7 @@ export default function App() {
             </div>
 
             {session.lastResult && <div className="result-strip">{session.lastResult}</div>}
+            {advanceNotice && <AdvanceNotice notice={advanceNotice} />}
 
             {session.completed && session.ending ? (
               <EndingView session={session} onRestart={() => void restartGame()} disabled={isBusy} />
@@ -482,6 +530,7 @@ function InterludePanel({
           {interlude.completedSteps}/{interlude.totalSteps} 插曲日
         </span>
       </div>
+      <p className="interlude-wait-note">{interludeStatusText(session, interlude)}</p>
 
       <div className="interlude-progress" aria-label={`插曲进度 ${interlude.completedSteps}/${interlude.totalSteps}`}>
         {Array.from({ length: interlude.totalSteps }, (_, index) => (
@@ -536,8 +585,14 @@ function InterludePanel({
           <h3>插曲日志</h3>
           {interlude.log.slice(-4).map((entry) => (
             <div className="log-row" key={`${entry.step}-${entry.actionId}`}>
-              <span>第 {entry.day} 天</span>
-              <p>{entry.feedback}</p>
+              <span className="log-meta">
+                第 {entry.day} 天
+                <strong>{entry.actionLabel}</strong>
+              </span>
+              <div className="log-content">
+                <p>{entry.feedback}</p>
+                <DeltaLine statsDelta={entry.statsDelta} />
+              </div>
             </div>
           ))}
         </div>
@@ -546,10 +601,23 @@ function InterludePanel({
   );
 }
 
+function AdvanceNotice({ notice }: { notice: ActionResultNotice }) {
+  return (
+    <div className="advance-notice">
+      <CheckCircle2 size={18} />
+      <div>
+        <strong>主线已推进</strong>
+        <p>{notice.feedback}</p>
+        <DeltaLine statsDelta={notice.statsDelta} />
+      </div>
+    </div>
+  );
+}
+
 function DeltaLine({ statsDelta }: { statsDelta: Stats }) {
   const entries = Object.entries(statsDelta).filter(([, value]) => value !== 0);
   if (entries.length === 0) {
-    return <small className="delta-line">不改变属性</small>;
+    return <small className="delta-line empty">不改变属性</small>;
   }
 
   return (
@@ -663,6 +731,27 @@ function EndingView({
 }
 
 function StatsPanel({ stats }: { stats: Stats }) {
+  const previousStatsRef = useRef<Stats | null>(null);
+  const [recentDeltas, setRecentDeltas] = useState<Stats>({});
+
+  useEffect(() => {
+    const previousStats = previousStatsRef.current;
+    previousStatsRef.current = stats;
+
+    if (!previousStats) {
+      return;
+    }
+
+    const nextDeltas = diffStats(previousStats, stats);
+    if (!hasStatsDelta(nextDeltas)) {
+      return;
+    }
+
+    setRecentDeltas(nextDeltas);
+    const timer = window.setTimeout(() => setRecentDeltas({}), 1800);
+    return () => window.clearTimeout(timer);
+  }, [stats]);
+
   const keys = [...STAT_ORDER, ...Object.keys(stats).filter((key) => !STAT_ORDER.includes(key))];
 
   return (
@@ -673,14 +762,20 @@ function StatsPanel({ stats }: { stats: Stats }) {
         const meta = STAT_META[key] ?? { label: key, Icon: Star, tone: 'default' };
         const Icon = meta.Icon;
         const width = statWidth(key, value);
+        const delta = recentDeltas[key] ?? 0;
         return (
-          <div className={`stat-row ${meta.tone}`} key={key}>
+          <div className={`stat-row ${meta.tone} ${delta !== 0 ? 'changed' : ''}`} key={key}>
             <div className="stat-head">
               <span>
                 <Icon size={16} />
                 {meta.label}
               </span>
-              <strong>{formatStat(key, value)}</strong>
+              <strong>
+                {formatStat(key, value)}
+                {delta !== 0 && (
+                  <em className={delta > 0 ? 'positive' : 'negative'}>{formatDelta(key, delta)}</em>
+                )}
+              </strong>
             </div>
             <div className="stat-bar">
               <div style={{ width: `${width}%` }} />
@@ -702,6 +797,22 @@ function interludeTitle(session: TextGameSession) {
   return `第 ${session.day} 天插曲行动`;
 }
 
+function interludeStatusText(session: TextGameSession, interlude: TextGameInterlude) {
+  if (session.phase === 'error' || session.resolution.status === 'error') {
+    return '主线推演中断，重试成功后可以继续当前等待期。';
+  }
+  if (session.phase === 'settling') {
+    return session.resolution.status === 'pending'
+      ? '插曲日已完成，正在整理状态；这些轻量行动不会继续改变属性。'
+      : '主线已就绪，整理完成后会进入新的局面。';
+  }
+  if (session.resolution.status === 'ready') {
+    const remaining = Math.max(0, interlude.totalSteps - interlude.completedSteps);
+    return `主线已就绪，再完成 ${remaining} 个插曲日就会推进。`;
+  }
+  return 'AI 正在推演主线，你可以用插曲行动调整真实属性。';
+}
+
 function resolutionLabel(status: string) {
   if (status === 'pending') {
     return '主线生成中';
@@ -713,6 +824,29 @@ function resolutionLabel(status: string) {
     return '生成失败';
   }
   return '未生成';
+}
+
+function latestInterludeLog(interlude?: TextGameInterlude | null) {
+  if (!interlude?.log.length) {
+    return null;
+  }
+  return interlude.log[interlude.log.length - 1];
+}
+
+function diffStats(previous: Stats, next: Stats) {
+  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
+  const delta: Stats = {};
+  keys.forEach((key) => {
+    const value = (next[key] ?? 0) - (previous[key] ?? 0);
+    if (value !== 0) {
+      delta[key] = value;
+    }
+  });
+  return delta;
+}
+
+function hasStatsDelta(statsDelta: Stats) {
+  return Object.values(statsDelta).some((value) => value !== 0);
 }
 
 function statWidth(key: string, value: number) {

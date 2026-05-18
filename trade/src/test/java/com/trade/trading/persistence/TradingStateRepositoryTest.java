@@ -3,14 +3,17 @@ package com.trade.trading.persistence;
 import com.trade.trading.model.TradingAction;
 import com.trade.trading.model.AiTradingDecision;
 import com.trade.trading.model.TradingDecisionRecord;
+import com.trade.trading.model.TradingRiskState;
 import com.trade.trading.model.TradingState;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.math.BigDecimal;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 class TradingStateRepositoryTest {
     @TempDir
@@ -76,6 +79,57 @@ class TradingStateRepositoryTest {
         assertEquals(decisionId, loaded.getStrategyState().getSourceDecisionId());
     }
 
+    @Test
+    void readsOldStateJsonWithoutRiskState() throws Exception {
+        Path stateFile = tempDir.resolve("old-trading-state.json");
+        Files.writeString(stateFile, """
+                {
+                  "trackedBaseAmount": 0.1,
+                  "averageCost": 50000,
+                  "updatedAt": "2026-05-17T00:00:00Z",
+                  "recentDecisions": []
+                }
+                """);
+
+        TradingState loaded = new TradingStateRepository(stateFile).getState();
+
+        assertDecimal("0.1", loaded.getTrackedBaseAmount());
+        assertDecimal("50000", loaded.getAverageCost());
+        assertNotNull(loaded.getRiskState());
+        assertDecimal("0", loaded.getRiskState().getCurrentEquity());
+    }
+
+    @Test
+    void preservesRiskStateAcrossRepositoryMutations() {
+        Path stateFile = tempDir.resolve("risk-state-preserved.json");
+        TradingStateRepository repository = new TradingStateRepository(stateFile);
+        TradingRiskState riskState = new TradingRiskState()
+                .setCurrentEquity(new BigDecimal("1000"))
+                .setEquityHighWatermark(new BigDecimal("1200"))
+                .setDayStartEquity(new BigDecimal("1100"))
+                .setDayStartDate("2026-05-17")
+                .setConsecutiveLosses(2)
+                .setLossCooldownUntil("2026-05-17T03:00:00Z")
+                .setLastTradeTime("2026-05-17T02:00:00Z")
+                .setConsecutiveOpenActions(1)
+                .setLastRiskReason("RISK_TEST");
+
+        repository.recordRiskState(riskState);
+        repository.recordBuy(new BigDecimal("0.1"), new BigDecimal("50000"));
+        assertRiskStatePreserved(new TradingStateRepository(stateFile).getState().getRiskState());
+
+        repository.recordSell(new BigDecimal("0.05"));
+        assertRiskStatePreserved(new TradingStateRepository(stateFile).getState().getRiskState());
+
+        repository.recordDecision(decision("1", TradingAction.HOLD), 2);
+        assertRiskStatePreserved(new TradingStateRepository(stateFile).getState().getRiskState());
+
+        repository.recordStrategyState("2", new AiTradingDecision()
+                .setStrategyBias("LONG")
+                .setStrategyThesis("trend continuation"));
+        assertRiskStatePreserved(new TradingStateRepository(stateFile).getState().getRiskState());
+    }
+
     private static void assertDecimal(String expected, BigDecimal actual) {
         assertEquals(0, new BigDecimal(expected).compareTo(actual));
     }
@@ -86,5 +140,18 @@ class TradingStateRepositoryTest {
                 .setAction(action)
                 .setReason("test")
                 .setExecutionStatus("FILLED");
+    }
+
+    private static void assertRiskStatePreserved(TradingRiskState riskState) {
+        assertNotNull(riskState);
+        assertDecimal("1000", riskState.getCurrentEquity());
+        assertDecimal("1200", riskState.getEquityHighWatermark());
+        assertDecimal("1100", riskState.getDayStartEquity());
+        assertEquals("2026-05-17", riskState.getDayStartDate());
+        assertEquals(2, riskState.getConsecutiveLosses());
+        assertEquals("2026-05-17T03:00:00Z", riskState.getLossCooldownUntil());
+        assertEquals("2026-05-17T02:00:00Z", riskState.getLastTradeTime());
+        assertEquals(1, riskState.getConsecutiveOpenActions());
+        assertEquals("RISK_TEST", riskState.getLastRiskReason());
     }
 }

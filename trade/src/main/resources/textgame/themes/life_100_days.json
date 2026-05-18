@@ -95,6 +95,62 @@
         "一次小范围展示换来几个新联系人，压力也随之变得可见。"
       ],
       "minStats": {"skill": 20}
+    },
+    {
+      "id": "negotiate_bills",
+      "label": "协商账单",
+      "hint": "缓解现金和风险压力，但名声会受一点影响",
+      "statsDelta": {"money": 180, "health": -1, "skill": 0, "network": 1, "reputation": -1, "risk": -3},
+      "feedbackTemplates": [
+        "你给房东和账单联系人逐个打电话，语气放低，把最急的一笔往后推了几天。",
+        "第 {day} 天，你用一上午解释现状，现金压力降了一截，脸面也薄了一层。",
+        "几次协商没有解决全部问题，但至少把失控的截止日拉回了日历上。"
+      ]
+    },
+    {
+      "id": "send_applications",
+      "label": "主动投递",
+      "hint": "扩大机会和名声，需要花费时间、精力和一点现金",
+      "statsDelta": {"money": -30, "health": -2, "skill": 1, "network": 3, "reputation": 2, "risk": 1},
+      "feedbackTemplates": [
+        "你改了简历和作品说明，把消息投向几个靠谱联系人，等待回音开始变得具体。",
+        "第 {day} 天的主要工作是主动开口，花掉一点交通和资料费，也换来新的入口。",
+        "你不再只等机会出现，而是把几封认真写过的投递送到可能的人手里。"
+      ]
+    },
+    {
+      "id": "small_gig",
+      "label": "做小单",
+      "hint": "现金和技能一起增加，但会明显消耗健康并略增风险",
+      "statsDelta": {"money": 160, "health": -3, "skill": 2, "network": 1, "reputation": 1, "risk": 2},
+      "feedbackTemplates": [
+        "你接了一个边界清楚的小单，钱不多，但交付过程让手艺更稳。",
+        "第 {day} 天，你把零碎需求压进一个可交付结果，收款时肩颈已经发硬。",
+        "这单没有改变命运，却留下了一个能拿给别人看的完成品。"
+      ]
+    },
+    {
+      "id": "high_risk_job",
+      "label": "接高风险活",
+      "hint": "现金大幅增加，但健康、名声和风险代价很重",
+      "statsDelta": {"money": 520, "health": -6, "skill": 1, "network": 0, "reputation": -2, "risk": 9},
+      "feedbackTemplates": [
+        "你接下一份来钱快但边界模糊的活，到账很快，心里也更不踏实。",
+        "第 {day} 天的高价任务压得很满，现金窟窿小了，风险却被推高一截。",
+        "这不是能常用的办法，你清楚地记下了它带来的疲惫和后患。"
+      ],
+      "maxStats": {"risk": 78}
+    },
+    {
+      "id": "review_route",
+      "label": "复盘路线",
+      "hint": "提升技能并降低风险，收益较慢但更稳",
+      "statsDelta": {"money": 0, "health": 1, "skill": 2, "network": 0, "reputation": 0, "risk": -3},
+      "feedbackTemplates": [
+        "你停下来复盘最近的选择，把能重复的办法和不能再碰的坑分开写下。",
+        "第 {day} 天没有新收入，但路线更清楚，下一次出手会少绕一点弯。",
+        "你把失败记录成检查清单，风险没有消失，却变得可以管理。"
+      ]
     }
   ],
   "settlingActions": [
@@ -126,6 +182,26 @@
       "feedbackTemplates": [
         "你离开屏幕几分钟，喝水，站直，再回到桌前。",
         "等待还在继续，但你至少没有让焦虑接管这一天。"
+      ]
+    },
+    {
+      "id": "scan_opportunities",
+      "label": "扫一眼机会",
+      "hint": "轻量等待，不推进天数或属性",
+      "statsDelta": {},
+      "feedbackTemplates": [
+        "你快速扫过几个机会入口，只做标记，不在结果出来前追加承诺。",
+        "页面被整理成稍后再看的列表，真正的下一步仍然等主线结果落地。"
+      ]
+    },
+    {
+      "id": "stretch_shoulders",
+      "label": "拉伸肩颈",
+      "hint": "轻量等待，不推进天数或属性",
+      "statsDelta": {},
+      "feedbackTemplates": [
+        "你站起来拉伸肩颈，让身体从紧绷里退出来一点。",
+        "几分钟的活动没有改变账面数字，只让等待变得不那么僵硬。"
       ]
     }
   ]

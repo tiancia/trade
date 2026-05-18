@@ -70,6 +70,24 @@ class TextGameServiceTest {
     }
 
     @Test
+    void interludeActionCandidatesRotateAndAvoidImmediateRepeatWithFiveActions() {
+        FakeAiTextClient aiTextClient = new FakeAiTextClient(openingResponse(), turnResponse(1));
+        ManualExecutor executor = new ManualExecutor();
+        TextGameService service = service(aiTextClient, executor, fiveActionTheme());
+        TextGameSessionResponse created = service.createSession(request());
+
+        TextGameSessionResponse pending = submitChoice(service, created);
+
+        assertEquals(List.of("b", "c", "d"), actionIds(pending));
+
+        TextGameSessionResponse afterAction = submitInterlude(service, pending, "d");
+
+        assertEquals(List.of("c", "e", "a"), actionIds(afterAction));
+        assertFalse(actionIds(afterAction).contains("d"));
+        assertEquals(3, afterAction.interlude().actions().size());
+    }
+
+    @Test
     void interludeActionUpdatesStatsWithoutAdvancingMainTurn() {
         FakeAiTextClient aiTextClient = new FakeAiTextClient(openingResponse(), turnResponse(1));
         ManualExecutor executor = new ManualExecutor();
@@ -277,11 +295,19 @@ class TextGameServiceTest {
     }
 
     private static TextGameService service(FakeAiTextClient aiTextClient, ManualExecutor executor) {
+        return service(aiTextClient, executor, theme());
+    }
+
+    private static TextGameService service(
+            FakeAiTextClient aiTextClient,
+            ManualExecutor executor,
+            TextGameThemeDefinition theme
+    ) {
         return new TextGameService(
                 aiTextClient,
                 new TextGamePromptBuilder(),
                 new TextGameResponseParser(),
-                new TextGameDefinitionRegistry(List.of(theme()), List.of(mode())),
+                new TextGameDefinitionRegistry(List.of(theme), List.of(mode())),
                 executor
         );
     }
@@ -341,6 +367,64 @@ class TextGameServiceTest {
                         )
                 )
         );
+    }
+
+    private static TextGameThemeDefinition fiveActionTheme() {
+        return new TextGameThemeDefinition(
+                "life_100_days",
+                "Life",
+                "100 days",
+                "Turn around a bad start.",
+                "A worker with debt.",
+                "grounded",
+                Map.of(
+                        "money", -100,
+                        "health", 50,
+                        "skill", 20,
+                        "network", 10,
+                        "reputation", 10,
+                        "risk", 30
+                ),
+                Map.of(),
+                List.of("Bound stats."),
+                List.of("Rent is due."),
+                List.of(
+                        testAction("a"),
+                        testAction("b"),
+                        testAction("c"),
+                        testAction("d"),
+                        testAction("e")
+                ),
+                List.of(
+                        new TextGameActionDefinition(
+                                "settle",
+                                "Settle",
+                                "No stat change while waiting.",
+                                Map.of(),
+                                List.of("Settled."),
+                                Map.of(),
+                                Map.of()
+                        )
+                )
+        );
+    }
+
+    private static TextGameActionDefinition testAction(String id) {
+        return new TextGameActionDefinition(
+                id,
+                id.toUpperCase(),
+                "Test action " + id,
+                Map.of("money", 1),
+                List.of("Action " + id + " on day {day}."),
+                Map.of(),
+                Map.of()
+        );
+    }
+
+    private static List<String> actionIds(TextGameSessionResponse response) {
+        return response.interlude().actions().stream()
+                .map(TextGameActionDefinition::id)
+                .toList();
     }
 
     private static TextGameModeDefinition mode() {

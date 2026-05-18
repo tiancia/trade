@@ -22,10 +22,12 @@ import com.trade.trading.model.AiDecisionAuditRecord;
 import com.trade.trading.model.TradingAction;
 import com.trade.trading.model.TradingDecisionRecord;
 import com.trade.trading.model.TradingDecisionContext;
+import com.trade.trading.model.TradingRiskState;
 import com.trade.trading.model.TradingState;
 import com.trade.trading.model.TradingTrigger;
 import com.trade.trading.persistence.AiDecisionAuditSink;
 import com.trade.trading.persistence.TradingStateRepository;
+import com.trade.trading.risk.RiskControlService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -153,6 +155,39 @@ class AiTradingServiceTest {
         assertEquals(TradingAction.BUY, record.getAction());
         assertEquals("SKIPPED", record.getExecutionStatus());
         assertEquals("BUY skipped: objectiveAlignment must be PASS for non-HOLD actions", record.getSkipReason());
+    }
+
+    @Test
+    void riskBlockedBuyIsSkippedBeforeOrderAndRecorded() {
+        TradingProperties properties = properties();
+        FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        TradingStateRepository stateRepository = new TradingStateRepository(tempDir.resolve("risk-block-state.json"));
+        stateRepository.recordRiskState(new TradingRiskState()
+                .setCurrentEquity(new BigDecimal("1000"))
+                .setEquityHighWatermark(new BigDecimal("1000"))
+                .setDayStartEquity(new BigDecimal("1000"))
+                .setDayStartDate("2026-05-17")
+                .setConsecutiveOpenActions(2));
+        AiTradingService service = new AiTradingService(
+                prompt -> "{\"action\":\"BUY\",\"reason\":\"valid but too many opens\",\"buyQuoteAmountUsdt\":100,\"winProbability\":0.62,\"confidence\":0.74"
+                        + contractFieldsJson() + "}",
+                new AiTradingDecisionParser(),
+                new FakeMarketContextCollector(context("0", "1000")),
+                new AiPromptBuilder(properties),
+                orderExecutor(okxApi, stateRepository, properties),
+                stateRepository,
+                NOOP_AUDIT_SINK,
+                properties
+        );
+
+        service.runDecision(TradingTrigger.scheduled());
+
+        assertNull(okxApi.orderReq);
+        TradingDecisionRecord record = stateRepository.getState().getRecentDecisions().getFirst();
+        assertEquals(TradingAction.BUY, record.getAction());
+        assertEquals("valid but too many opens", record.getReason());
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertTrue(record.getSkipReason().startsWith("RISK_CONSECUTIVE_OPEN_ACTIONS:"));
     }
 
     @Test
@@ -424,7 +459,13 @@ class AiTradingServiceTest {
             TradingStateRepository stateRepository,
             TradingProperties properties
     ) {
-        return new TradingOrderExecutor(okxApi, new OrderSizingService(properties), stateRepository, properties);
+        return new TradingOrderExecutor(
+                okxApi,
+                new OrderSizingService(properties),
+                stateRepository,
+                properties,
+                new RiskControlService(properties, stateRepository)
+        );
     }
 
     private static TradingProperties properties() {

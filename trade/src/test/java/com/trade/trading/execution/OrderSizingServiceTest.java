@@ -21,6 +21,7 @@ class OrderSizingServiceTest {
     @Test
     void buySizeIsCappedBySystemAndAvailableQuote() {
         TradingProperties properties = new TradingProperties();
+        properties.getRisk().setEnabled(false);
         properties.setMaxBuyQuoteAmount(new BigDecimal("100"));
         OrderSizingService sizingService = new OrderSizingService(properties);
 
@@ -38,6 +39,7 @@ class OrderSizingServiceTest {
     @Test
     void buySizeSkipsWhenEstimatedBaseIsBelowMinSize() {
         TradingProperties properties = new TradingProperties();
+        properties.getRisk().setEnabled(false);
         OrderSizingService sizingService = new OrderSizingService(properties);
 
         AiTradingDecision decision = new AiTradingDecision()
@@ -54,6 +56,7 @@ class OrderSizingServiceTest {
     @Test
     void sellSizeIsCappedByAvailableBaseAndRoundedToLotSize() {
         TradingProperties properties = new TradingProperties();
+        properties.getRisk().setEnabled(false);
         OrderSizingService sizingService = new OrderSizingService(properties);
 
         AiTradingDecision decision = new AiTradingDecision()
@@ -70,6 +73,7 @@ class OrderSizingServiceTest {
     @Test
     void derivativeSizeIsCappedAndRoundedToLotSize() {
         TradingProperties properties = new TradingProperties();
+        properties.getRisk().setEnabled(false);
         properties.setMaxDerivativeOrderSize(new BigDecimal("3.7"));
         OrderSizingService sizingService = new OrderSizingService(properties);
 
@@ -82,6 +86,24 @@ class OrderSizingServiceTest {
 
         assertTrue(sizing.isExecutable());
         assertEquals("3.5", sizing.getSize());
+    }
+
+    @Test
+    void buySizeIsCappedBySingleOpenEquityRatio() {
+        TradingProperties properties = new TradingProperties();
+        properties.setMaxBuyQuoteAmount(new BigDecimal("1000"));
+        properties.getRisk().setMaxSingleOpenEquityRatio(new BigDecimal("0.10"));
+        OrderSizingService sizingService = new OrderSizingService(properties);
+
+        AiTradingDecision decision = new AiTradingDecision()
+                .setAction(TradingAction.BUY)
+                .setBuyQuoteAmountUsdt(new BigDecimal("500"));
+        TradingDecisionContext context = context("50000", "0", "800", "0.00001", "0.00000001");
+
+        OrderSizing sizing = sizingService.buySize(decision, context);
+
+        assertTrue(sizing.isExecutable());
+        assertEquals("80", sizing.getSize());
     }
 
     private static TradingDecisionContext context(

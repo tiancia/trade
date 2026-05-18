@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.AiTradingDecision;
 import com.trade.trading.model.TradingDecisionRecord;
+import com.trade.trading.model.TradingRiskState;
 import com.trade.trading.model.TradingState;
 import com.trade.trading.model.TradingStrategyState;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -58,6 +59,7 @@ public class TradingStateRepository {
                 .setAverageCost(newCost)
                 .setUpdatedAt(Instant.now().toString())
                 .setStrategyState(copyStrategyState(current.getStrategyState()))
+                .setRiskState(copyRiskState(current.getRiskState()))
                 .setRecentDecisions(copyRecentDecisions(current.getRecentDecisions()));
         writeState(state);
     }
@@ -82,6 +84,7 @@ public class TradingStateRepository {
                 .setAverageCost(averageCost)
                 .setUpdatedAt(Instant.now().toString())
                 .setStrategyState(copyStrategyState(current.getStrategyState()))
+                .setRiskState(copyRiskState(current.getRiskState()))
                 .setRecentDecisions(copyRecentDecisions(current.getRecentDecisions()));
         writeState(state);
     }
@@ -104,6 +107,7 @@ public class TradingStateRepository {
                 .setAverageCost(nullToZero(current.getAverageCost()))
                 .setUpdatedAt(current.getUpdatedAt())
                 .setStrategyState(copyStrategyState(current.getStrategyState()))
+                .setRiskState(copyRiskState(current.getRiskState()))
                 .setRecentDecisions(recent);
         writeState(state);
     }
@@ -128,6 +132,23 @@ public class TradingStateRepository {
                 .setAverageCost(nullToZero(current.getAverageCost()))
                 .setUpdatedAt(current.getUpdatedAt())
                 .setStrategyState(nextStrategyState)
+                .setRiskState(copyRiskState(current.getRiskState()))
+                .setRecentDecisions(copyRecentDecisions(current.getRecentDecisions()));
+        writeState(state);
+    }
+
+    public synchronized void recordRiskState(TradingRiskState riskState) {
+        if (riskState == null) {
+            return;
+        }
+
+        TradingState current = state == null ? readState() : state;
+        state = new TradingState()
+                .setTrackedBaseAmount(nullToZero(current.getTrackedBaseAmount()))
+                .setAverageCost(nullToZero(current.getAverageCost()))
+                .setUpdatedAt(current.getUpdatedAt())
+                .setStrategyState(copyStrategyState(current.getStrategyState()))
+                .setRiskState(copyRiskState(riskState))
                 .setRecentDecisions(copyRecentDecisions(current.getRecentDecisions()));
         writeState(state);
     }
@@ -150,6 +171,9 @@ public class TradingStateRepository {
             }
             if (loaded.getStrategyState() == null) {
                 loaded.setStrategyState(new TradingStrategyState());
+            }
+            if (loaded.getRiskState() == null) {
+                loaded.setRiskState(new TradingRiskState());
             }
             return loaded;
         } catch (Exception e) {
@@ -175,6 +199,7 @@ public class TradingStateRepository {
                 .setAverageCost(nullToZero(source.getAverageCost()))
                 .setUpdatedAt(source.getUpdatedAt())
                 .setStrategyState(copyStrategyState(source.getStrategyState()))
+                .setRiskState(copyRiskState(source.getRiskState()))
                 .setRecentDecisions(copyRecentDecisions(source.getRecentDecisions()));
     }
 
@@ -244,6 +269,22 @@ public class TradingStateRepository {
                 .setHorizon(source.getHorizon())
                 .setUpdatedAt(source.getUpdatedAt())
                 .setSourceDecisionId(source.getSourceDecisionId());
+    }
+
+    private static TradingRiskState copyRiskState(TradingRiskState source) {
+        if (source == null) {
+            return new TradingRiskState();
+        }
+        return new TradingRiskState()
+                .setCurrentEquity(nullToZero(source.getCurrentEquity()))
+                .setEquityHighWatermark(nullToZero(source.getEquityHighWatermark()))
+                .setDayStartEquity(nullToZero(source.getDayStartEquity()))
+                .setDayStartDate(source.getDayStartDate())
+                .setConsecutiveLosses(source.getConsecutiveLosses())
+                .setLossCooldownUntil(source.getLossCooldownUntil())
+                .setLastTradeTime(source.getLastTradeTime())
+                .setConsecutiveOpenActions(source.getConsecutiveOpenActions())
+                .setLastRiskReason(source.getLastRiskReason());
     }
 
     private static boolean hasStrategyUpdate(AiTradingDecision decision) {
