@@ -62,6 +62,7 @@ export interface TextGameResolution {
   status: TextGameResolutionStatus;
   turn?: number | null;
   error?: string | null;
+  canAdvance: boolean;
 }
 
 export interface TextGameInterludeLogEntry {

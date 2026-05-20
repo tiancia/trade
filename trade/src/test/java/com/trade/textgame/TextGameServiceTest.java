@@ -61,6 +61,7 @@ class TextGameServiceTest {
         assertEquals(1, executor.pendingTasks());
         assertEquals("interlude", response.phase());
         assertEquals("pending", response.resolution().status());
+        assertFalse(response.resolution().canAdvance());
         assertEquals(1, response.resolution().turn());
         assertEquals(0, response.turn());
         assertEquals(1, response.day());
@@ -88,6 +89,23 @@ class TextGameServiceTest {
     }
 
     @Test
+    void interludeActionCandidatesPreferDiverseImpactsAndCoolRecentActions() {
+        FakeAiTextClient aiTextClient = new FakeAiTextClient(openingResponse(), turnResponse(1));
+        ManualExecutor executor = new ManualExecutor();
+        TextGameService service = service(aiTextClient, executor, mixedActionTheme());
+        TextGameSessionResponse created = service.createSession(request());
+
+        TextGameSessionResponse pending = submitChoice(service, created);
+
+        assertEquals(List.of("cash_a", "social", "rest"), actionIds(pending));
+
+        TextGameSessionResponse afterAction = submitInterlude(service, pending, "cash_a");
+
+        assertFalse(actionIds(afterAction).contains("cash_a"));
+        assertEquals(3, afterAction.interlude().actions().size());
+    }
+
+    @Test
     void interludeActionUpdatesStatsWithoutAdvancingMainTurn() {
         FakeAiTextClient aiTextClient = new FakeAiTextClient(openingResponse(), turnResponse(1));
         ManualExecutor executor = new ManualExecutor();
@@ -111,7 +129,7 @@ class TextGameServiceTest {
     }
 
     @Test
-    void readyResolutionWaitsForFourInterludeActionsBeforeCommitting() {
+    void readyResolutionCanAdvanceBeforeFourInterludes() {
         FakeAiTextClient aiTextClient = new FakeAiTextClient(openingResponse(), turnResponse(1));
         ManualExecutor executor = new ManualExecutor();
         TextGameService service = service(aiTextClient, executor);
@@ -122,25 +140,47 @@ class TextGameServiceTest {
         TextGameSessionResponse ready = service.getSession(pending.sessionId().toString());
         assertEquals("interlude", ready.phase());
         assertEquals("ready", ready.resolution().status());
+        assertTrue(ready.resolution().canAdvance());
         assertEquals(0, ready.turn());
 
-        TextGameSessionResponse response = ready;
-        for (int i = 0; i < 3; i++) {
-            response = submitInterlude(service, response, "work");
-            assertEquals(0, response.turn());
-            assertEquals("interlude", response.phase());
-        }
-
-        response = submitInterlude(service, response, "work");
+        TextGameSessionResponse response = service.advanceResolution(ready.sessionId().toString());
 
         assertEquals("decision", response.phase());
         assertEquals(1, response.turn());
         assertEquals(5, response.day());
         assertEquals("Turn 1", response.scene().title());
-        assertEquals(40, response.stats().get("money"));
-        assertEquals(45, response.stats().get("health"));
-        assertEquals(35, response.stats().get("risk"));
+        assertEquals(0, response.stats().get("money"));
+        assertEquals(49, response.stats().get("health"));
+        assertEquals(31, response.stats().get("risk"));
         assertEquals("Result 1", response.lastResult());
+    }
+
+    @Test
+    void readyResolutionWaitsForPlayerAdvanceAfterFourInterludes() {
+        FakeAiTextClient aiTextClient = new FakeAiTextClient(openingResponse(), turnResponse(1));
+        ManualExecutor executor = new ManualExecutor();
+        TextGameService service = service(aiTextClient, executor);
+        TextGameSessionResponse response = submitChoice(service, service.createSession(request()));
+
+        executor.runNext();
+        for (int i = 0; i < 4; i++) {
+            response = submitInterlude(service, response, "work");
+        }
+
+        assertEquals("settling", response.phase());
+        assertEquals("ready", response.resolution().status());
+        assertTrue(response.resolution().canAdvance());
+        assertEquals(0, response.turn());
+
+        TextGameSessionResponse refreshed = service.getSession(response.sessionId().toString());
+        assertEquals("settling", refreshed.phase());
+        assertEquals(0, refreshed.turn());
+
+        TextGameSessionResponse advanced = service.advanceResolution(response.sessionId().toString());
+        assertEquals("decision", advanced.phase());
+        assertEquals(1, advanced.turn());
+        assertEquals(5, advanced.day());
+        assertEquals(40, advanced.stats().get("money"));
     }
 
     @Test
@@ -170,6 +210,12 @@ class TextGameServiceTest {
 
         executor.runNext();
         TextGameSessionResponse committed = service.getSession(response.sessionId().toString());
+        assertEquals("settling", committed.phase());
+        assertEquals("ready", committed.resolution().status());
+        assertTrue(committed.resolution().canAdvance());
+        assertEquals(0, committed.turn());
+
+        committed = service.advanceResolution(response.sessionId().toString());
         assertEquals("decision", committed.phase());
         assertEquals(1, committed.turn());
         assertEquals(5, committed.day());
@@ -206,6 +252,7 @@ class TextGameServiceTest {
             response = submitInterlude(service, response, "work");
         }
 
+        response = service.advanceResolution(response.sessionId().toString());
         assertEquals("decision", response.phase());
         assertEquals(1, response.turn());
         assertEquals(40, response.stats().get("money"));
@@ -231,6 +278,28 @@ class TextGameServiceTest {
     }
 
     @Test
+    void pendingResolutionCannotAdvanceAndKeepsInterludeState() {
+        FakeAiTextClient aiTextClient = new FakeAiTextClient(openingResponse(), turnResponse(1));
+        ManualExecutor executor = new ManualExecutor();
+        TextGameService service = service(aiTextClient, executor);
+        TextGameSessionResponse response = submitChoice(service, service.createSession(request()));
+        response = submitInterlude(service, response, "work");
+
+        TextGameSessionResponse pending = response;
+        assertThrows(
+                TextGameConflictException.class,
+                () -> service.advanceResolution(pending.sessionId().toString())
+        );
+
+        TextGameSessionResponse refreshed = service.getSession(response.sessionId().toString());
+        assertEquals("interlude", refreshed.phase());
+        assertEquals("pending", refreshed.resolution().status());
+        assertFalse(refreshed.resolution().canAdvance());
+        assertEquals(1, refreshed.interlude().completedSteps());
+        assertEquals(-90, refreshed.stats().get("money"));
+    }
+
+    @Test
     void twentiethChoiceCompletesSessionAfterInterludes() {
         List<Object> responses = new ArrayList<>();
         responses.add(openingResponse());
@@ -249,6 +318,7 @@ class TextGameServiceTest {
             for (int step = 0; step < 4; step++) {
                 response = submitInterlude(service, response, "work");
             }
+            response = service.advanceResolution(response.sessionId().toString());
         }
 
         assertTrue(response.completed());
@@ -394,6 +464,86 @@ class TextGameServiceTest {
                         testAction("c"),
                         testAction("d"),
                         testAction("e")
+                ),
+                List.of(
+                        new TextGameActionDefinition(
+                                "settle",
+                                "Settle",
+                                "No stat change while waiting.",
+                                Map.of(),
+                                List.of("Settled."),
+                                Map.of(),
+                                Map.of()
+                        )
+                )
+        );
+    }
+
+    private static TextGameThemeDefinition mixedActionTheme() {
+        return new TextGameThemeDefinition(
+                "life_100_days",
+                "Life",
+                "100 days",
+                "Turn around a bad start.",
+                "A worker with debt.",
+                "grounded",
+                Map.of(
+                        "money", -3200,
+                        "health", 50,
+                        "skill", 20,
+                        "network", 10,
+                        "reputation", 10,
+                        "risk", 30
+                ),
+                Map.of(),
+                List.of("Bound stats."),
+                List.of("Rent is due."),
+                List.of(
+                        new TextGameActionDefinition(
+                                "cash_a",
+                                "Cash A",
+                                "Earn more cash.",
+                                Map.of("money", 120),
+                                List.of("Cash A."),
+                                Map.of(),
+                                Map.of()
+                        ),
+                        new TextGameActionDefinition(
+                                "cash_b",
+                                "Cash B",
+                                "Earn cash.",
+                                Map.of("money", 90),
+                                List.of("Cash B."),
+                                Map.of(),
+                                Map.of()
+                        ),
+                        new TextGameActionDefinition(
+                                "rest",
+                                "Rest",
+                                "Recover stability.",
+                                Map.of("health", 6, "risk", -4),
+                                List.of("Rested."),
+                                Map.of(),
+                                Map.of()
+                        ),
+                        new TextGameActionDefinition(
+                                "study",
+                                "Study",
+                                "Build skill.",
+                                Map.of("skill", 5),
+                                List.of("Studied."),
+                                Map.of(),
+                                Map.of()
+                        ),
+                        new TextGameActionDefinition(
+                                "social",
+                                "Social",
+                                "Build reputation and network.",
+                                Map.of("network", 5, "reputation", 2),
+                                List.of("Social."),
+                                Map.of(),
+                                Map.of()
+                        )
                 ),
                 List.of(
                         new TextGameActionDefinition(

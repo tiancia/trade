@@ -41,7 +41,7 @@ const STAT_META: Record<string, { label: string; Icon: LucideIcon; tone: string 
   risk: { label: '风险', Icon: ShieldAlert, tone: 'risk' },
 };
 
-type BusyState = 'boot' | 'start' | 'choice' | 'interlude' | 'resolution' | 'restart' | null;
+type BusyState = 'boot' | 'start' | 'choice' | 'interlude' | 'resolution' | 'advance' | 'restart' | null;
 
 type RetryAction =
   | { type: 'boot' }
@@ -140,7 +140,7 @@ export default function App() {
       }
     };
 
-    const timer = window.setInterval(refresh, 1600);
+    const timer = window.setInterval(refresh, 1000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -311,6 +311,30 @@ export default function App() {
     }
   }
 
+  async function advanceResolution() {
+    if (!session || busy || !session.resolution?.canAdvance) {
+      return;
+    }
+    setBusy('advance');
+    setError(null);
+    try {
+      const nextSession = await api<TextGameSession>(`/sessions/${session.sessionId}/resolution/advance`, {
+        method: 'POST',
+      });
+      setAdvanceNotice({
+        feedback: nextSession.lastResult ?? '主线结果已经结算，新的局面已经展开。',
+        statsDelta: diffStats(session.stats, nextSession.stats),
+      });
+      lastInterludeResultRef.current = null;
+      setSession(nextSession);
+      setRetryAction(null);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function retry() {
     if (!retryAction) {
       return;
@@ -425,6 +449,7 @@ export default function App() {
                 pendingActionId={pendingActionId}
                 onAction={(action) => void submitInterludeAction(action)}
                 onRetryResolution={() => void retryResolution()}
+                onAdvanceResolution={() => void advanceResolution()}
               />
             ) : (
               <DecisionPanel
@@ -504,6 +529,7 @@ function InterludePanel({
   pendingActionId,
   onAction,
   onRetryResolution,
+  onAdvanceResolution,
 }: {
   session: TextGameSession;
   interlude: TextGameInterlude;
@@ -511,6 +537,7 @@ function InterludePanel({
   pendingActionId: string | null;
   onAction: (action: TextGameActionDefinition) => void;
   onRetryResolution: () => void;
+  onAdvanceResolution: () => void;
 }) {
   const resolution = session.resolution;
   const isError = session.phase === 'error' || resolution.status === 'error';
@@ -539,6 +566,18 @@ function InterludePanel({
       </div>
 
       {interlude.recentFeedback && <div className="feedback-strip">{interlude.recentFeedback}</div>}
+      {resolution.canAdvance && !isError && (
+        <div className="advance-ready">
+          <div>
+            <strong>主线已就绪</strong>
+            <span>可以进入下一幕，也可以继续做插曲行动。</span>
+          </div>
+          <button type="button" onClick={onAdvanceResolution} disabled={busy !== null}>
+            {busy === 'advance' ? <Loader2 className="spin" size={17} /> : <Play size={17} />}
+            进入下一幕
+          </button>
+        </div>
+      )}
 
       {isError ? (
         <div className="resolution-error">
@@ -808,7 +847,9 @@ function interludeStatusText(session: TextGameSession, interlude: TextGameInterl
   }
   if (session.resolution.status === 'ready') {
     const remaining = Math.max(0, interlude.totalSteps - interlude.completedSteps);
-    return `主线已就绪，再完成 ${remaining} 个插曲日就会推进。`;
+    return remaining > 0
+      ? `主线已就绪，可以立即进入下一幕；也可以再完成 ${remaining} 个插曲日调整属性。`
+      : '主线已就绪，可以进入下一幕；继续等待只会做轻量整理，不再改变属性。';
   }
   return 'AI 正在推演主线，你可以用插曲行动调整真实属性。';
 }

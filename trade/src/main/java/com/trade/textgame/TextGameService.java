@@ -29,6 +29,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -170,7 +171,6 @@ public class TextGameService {
         session.lock.lock();
         try {
             session.touch();
-            tryCommitResolution(session);
             return toResponse(session);
         } finally {
             session.lock.unlock();
@@ -249,7 +249,6 @@ public class TextGameService {
         session.lock.lock();
         try {
             session.touch();
-            tryCommitResolution(session);
             if (session.completed || session.pendingResolution == null) {
                 return toResponse(session);
             }
@@ -271,11 +270,6 @@ public class TextGameService {
             }
 
             boolean settling = session.interludeStep >= INTERLUDE_STEPS_REQUIRED;
-            if (settling && pendingResolution.status != ResolutionStatus.PENDING) {
-                tryCommitResolution(session);
-                return toResponse(session);
-            }
-
             List<TextGameActionDefinition> actions = candidateActions(session, settling);
             TextGameActionDefinition action = requireAction(actions, request.actionId());
             Map<String, Integer> statsDelta = settling ? Map.of() : copyMutableStats(action.statsDelta());
@@ -298,7 +292,6 @@ public class TextGameService {
                     settling
             ));
 
-            tryCommitResolution(session);
             return toResponse(session);
         } finally {
             session.lock.unlock();
@@ -329,6 +322,29 @@ public class TextGameService {
         }
         scheduleResolution(session.sessionId, resolutionId);
         return response;
+    }
+
+    public TextGameSessionResponse advanceResolution(String sessionId) {
+        cleanupExpiredSessions();
+        TextGameSession session = requireSession(sessionId);
+        session.lock.lock();
+        try {
+            session.touch();
+            PendingResolution pendingResolution = session.pendingResolution;
+            if (pendingResolution == null) {
+                throw new TextGameConflictException("Text game session has no pending resolution to advance");
+            }
+            if (pendingResolution.status == ResolutionStatus.ERROR) {
+                throw new TextGameConflictException("Text game resolution failed; retry before advancing");
+            }
+            if (pendingResolution.status != ResolutionStatus.READY) {
+                throw new TextGameConflictException("Text game resolution is still generating");
+            }
+            commitResolution(session);
+            return toResponse(session);
+        } finally {
+            session.lock.unlock();
+        }
     }
 
     public void deleteSession(String sessionId) {
@@ -394,20 +410,13 @@ public class TextGameService {
                 current.errorMessage = errorMessage;
                 current.completedAt = Instant.now();
             }
-            tryCommitResolution(session);
         } finally {
             session.lock.unlock();
         }
     }
 
-    private boolean tryCommitResolution(TextGameSession session) {
+    private void commitResolution(TextGameSession session) {
         PendingResolution pendingResolution = session.pendingResolution;
-        if (pendingResolution == null
-                || pendingResolution.status != ResolutionStatus.READY
-                || session.interludeStep < INTERLUDE_STEPS_REQUIRED) {
-            return false;
-        }
-
         TextGameTurnOutcome outcome = pendingResolution.outcome;
         Map<String, Integer> nextStats = applyStatsDelta(session.stats, outcome.statsDelta());
         session.turn = pendingResolution.nextTurn;
@@ -441,7 +450,6 @@ public class TextGameService {
                 session.completed,
                 session.stats
         );
-        return true;
     }
 
     private TextGameScene generateOpening(String prompt, UUID sessionId) {
@@ -489,12 +497,13 @@ public class TextGameService {
 
     private TextGameResolutionView resolutionView(PendingResolution pendingResolution) {
         if (pendingResolution == null) {
-            return new TextGameResolutionView(RESOLUTION_NONE, null, null);
+            return new TextGameResolutionView(RESOLUTION_NONE, null, null, false);
         }
         return new TextGameResolutionView(
                 resolutionStatus(pendingResolution.status),
                 pendingResolution.nextTurn,
-                pendingResolution.errorMessage
+                pendingResolution.errorMessage,
+                pendingResolution.status == ResolutionStatus.READY
         );
     }
 
@@ -594,10 +603,17 @@ public class TextGameService {
                 ? settlingActions(session.theme)
                 : interludeActions(session.theme);
         int turn = session.pendingResolution == null ? session.turn : session.pendingResolution.nextTurn;
-        String lastActionId = session.interludeLog.isEmpty()
-                ? null
-                : session.interludeLog.getLast().actionId();
-        return availableActions(actions, session.stats, turn, session.interludeLog.size(), lastActionId);
+        String stageId = session.pendingResolution == null
+                ? session.mode.stageForTurn(session.turn).id()
+                : session.pendingResolution.nextStage.id();
+        return availableActions(
+                actions,
+                session.stats,
+                turn,
+                session.interludeLog.size(),
+                stageId,
+                recentActionIds(session, settling)
+        );
     }
 
     private static List<TextGameActionDefinition> availableActions(
@@ -605,7 +621,8 @@ public class TextGameService {
             Map<String, Integer> stats,
             int turn,
             int interludeLogSize,
-            String lastActionId
+            String stageId,
+            List<String> recentActionIds
     ) {
         List<TextGameActionDefinition> filtered = actions.stream()
                 .filter(action -> hasText(action.id()))
@@ -615,25 +632,171 @@ public class TextGameService {
             return List.of();
         }
 
-        int start = Math.floorMod(turn + interludeLogSize, filtered.size());
-        List<TextGameActionDefinition> rotated = new ArrayList<>(filtered.size());
-        for (int i = 0; i < filtered.size(); i++) {
-            rotated.add(filtered.get((start + i) % filtered.size()));
+        int desiredCount = Math.min(3, filtered.size());
+        List<TextGameActionDefinition> cooled = withoutRecentActions(filtered, recentActionIds);
+        if (cooled.size() < desiredCount && !recentActionIds.isEmpty()) {
+            cooled = withoutRecentActions(filtered, recentActionIds.subList(0, 1));
+        }
+        if (cooled.size() < desiredCount) {
+            cooled = filtered;
         }
 
-        if (rotated.size() > 3 && hasText(lastActionId)) {
-            for (int i = 0; i < rotated.size(); i++) {
-                if (lastActionId.equals(rotated.get(i).id())) {
-                    TextGameActionDefinition recent = rotated.remove(i);
-                    rotated.add(recent);
-                    break;
-                }
+        int start = Math.floorMod(turn + interludeLogSize, cooled.size());
+        List<TextGameActionDefinition> rotated = new ArrayList<>(cooled.size());
+        for (int i = 0; i < cooled.size(); i++) {
+            rotated.add(cooled.get((start + i) % cooled.size()));
+        }
+
+        rotated.sort(Comparator.comparingInt(
+                (TextGameActionDefinition action) -> actionScore(action, stats, stageId)
+        ).reversed());
+        return diversifyActions(rotated, desiredCount);
+    }
+
+    private static List<String> recentActionIds(TextGameSession session, boolean settling) {
+        List<String> recentIds = new ArrayList<>(2);
+        for (int i = session.interludeLog.size() - 1; i >= 0 && recentIds.size() < 2; i--) {
+            TextGameInterludeActionLogEntry entry = session.interludeLog.get(i);
+            if (entry.settling() == settling && !recentIds.contains(entry.actionId())) {
+                recentIds.add(entry.actionId());
             }
         }
+        return recentIds;
+    }
 
-        return rotated.stream()
-                .limit(3)
+    private static List<TextGameActionDefinition> withoutRecentActions(
+            List<TextGameActionDefinition> actions,
+            List<String> recentActionIds
+    ) {
+        if (recentActionIds.isEmpty()) {
+            return actions;
+        }
+        return actions.stream()
+                .filter(action -> !recentActionIds.contains(action.id()))
                 .toList();
+    }
+
+    private static List<TextGameActionDefinition> diversifyActions(
+            List<TextGameActionDefinition> actions,
+            int desiredCount
+    ) {
+        List<TextGameActionDefinition> selected = new ArrayList<>(desiredCount);
+        List<String> selectedCategories = new ArrayList<>(desiredCount);
+        for (TextGameActionDefinition action : actions) {
+            String category = primaryImpact(action);
+            if (!selectedCategories.contains(category)) {
+                selected.add(action);
+                selectedCategories.add(category);
+            }
+            if (selected.size() == desiredCount) {
+                return selected;
+            }
+        }
+        for (TextGameActionDefinition action : actions) {
+            if (!selected.contains(action)) {
+                selected.add(action);
+            }
+            if (selected.size() == desiredCount) {
+                return selected;
+            }
+        }
+        return selected;
+    }
+
+    private static int actionScore(
+            TextGameActionDefinition action,
+            Map<String, Integer> stats,
+            String stageId
+    ) {
+        Map<String, Integer> delta = action.statsDelta();
+        int score = 0;
+        int money = stats.getOrDefault("money", 0);
+        int health = stats.getOrDefault("health", 0);
+        int skill = stats.getOrDefault("skill", 0);
+        int network = stats.getOrDefault("network", 0);
+        int reputation = stats.getOrDefault("reputation", 0);
+        int risk = stats.getOrDefault("risk", 0);
+
+        if (money <= -2500 && deltaValue(delta, "money") > 0) {
+            score += 36;
+        } else if (money <= -1000 && deltaValue(delta, "money") > 0) {
+            score += 24;
+        }
+        if (health <= 35 && deltaValue(delta, "health") > 0) {
+            score += 30;
+        }
+        if (health <= 35 && deltaValue(delta, "health") < 0) {
+            score -= 14;
+        }
+        if (risk >= 65 && deltaValue(delta, "risk") < 0) {
+            score += 30;
+        }
+        if (risk >= 65 && deltaValue(delta, "risk") > 0) {
+            score -= 16;
+        }
+        if (skill < 40 && deltaValue(delta, "skill") > 0) {
+            score += 12;
+        }
+        if (network < 30 && deltaValue(delta, "network") > 0) {
+            score += 10;
+        }
+        if (reputation < 30 && deltaValue(delta, "reputation") > 0) {
+            score += 8;
+        }
+
+        if ("opening_crisis".equals(stageId)) {
+            score += positive(delta, "money") / 20;
+            score += positive(delta, "health");
+            score += positiveNegated(delta, "risk") * 2;
+        } else if ("growth_split".equals(stageId)) {
+            score += positive(delta, "skill") * 3;
+            score += positive(delta, "network") * 2;
+            score += positive(delta, "reputation") * 2;
+        } else if ("key_opportunity".equals(stageId)) {
+            score += positive(delta, "network") * 2;
+            score += positive(delta, "reputation") * 3;
+            score += positive(delta, "skill") * 2;
+            score += positive(delta, "money") / 30;
+        } else if ("settlement_echo".equals(stageId)) {
+            score += positive(delta, "reputation") * 3;
+            score += positive(delta, "health") * 2;
+            score += positiveNegated(delta, "risk") * 3;
+        }
+        return score;
+    }
+
+    private static String primaryImpact(TextGameActionDefinition action) {
+        Map<String, Integer> delta = action.statsDelta();
+        int cash = positive(delta, "money");
+        int stability = positive(delta, "health") + positiveNegated(delta, "risk") * 2;
+        int growth = positive(delta, "skill") + positive(delta, "network") + positive(delta, "reputation");
+        int riskTaking = positive(delta, "risk") + positiveNegated(delta, "health");
+        int max = Math.max(Math.max(cash, stability), Math.max(growth, riskTaking));
+        if (max <= 0) {
+            return "maintenance";
+        }
+        if (cash == max) {
+            return "cash";
+        }
+        if (stability == max) {
+            return "stability";
+        }
+        if (growth == max) {
+            return "growth";
+        }
+        return "risk";
+    }
+
+    private static int deltaValue(Map<String, Integer> delta, String key) {
+        return delta.getOrDefault(key, 0);
+    }
+
+    private static int positive(Map<String, Integer> delta, String key) {
+        return Math.max(0, deltaValue(delta, key));
+    }
+
+    private static int positiveNegated(Map<String, Integer> delta, String key) {
+        return Math.max(0, -deltaValue(delta, key));
     }
 
     private static boolean isAllowedByStats(TextGameActionDefinition action, Map<String, Integer> stats) {

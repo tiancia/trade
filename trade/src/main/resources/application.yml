@@ -42,7 +42,6 @@ trade:
       # OKX 代理端口。
       port: 7897
 
-
   # Polymarket 独立 AI 决策模块；默认关闭，避免启动后直接读取市场并下注。
   polymarket:
     # 是否启用 Polymarket AI 决策调度。
@@ -119,14 +118,15 @@ trade:
       # AI 服务提供商；可选值：gemini、openai-compatible、deepseek、kimi。。。
       provider: deepseek
       # 使用的 AI 模型名称；未配置时会使用 provider 对应的默认模型。
-      model: deepseek-v4-pro
+#      model: deepseek-v4-pro
+      model: deepseek-v4-flash
       # 保存 AI API Key 的环境变量名；实际密钥建议放在环境变量里。
       api-key-env-name: DEEPSEEK_API_KEY
       base-url: "https://api.deepseek.com"
       # OpenAI 兼容接口的 chat completions 路径；未配置时会使用 provider 对应的默认路径。
       # chat-completions-path:
       # 是否要求 OpenAI 兼容接口返回 JSON object 格式。
-      # json-response-format-enabled: true
+      json-response-format-enabled: true
       # AI 采样温度；值越低越稳定，未配置时由服务端默认值决定。
       # temperature:
       # 单次 AI 输出的最大 token 数；未配置时由服务端默认值决定。

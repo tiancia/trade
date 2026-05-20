@@ -65,6 +65,11 @@ public class TextGameController {
         return textGameService.retryResolution(sessionId);
     }
 
+    @PostMapping("/sessions/{sessionId}/resolution/advance")
+    public TextGameSessionResponse advanceResolution(@PathVariable String sessionId) {
+        return textGameService.advanceResolution(sessionId);
+    }
+
     @DeleteMapping("/sessions/{sessionId}")
     public ResponseEntity<Void> deleteSession(@PathVariable String sessionId) {
         textGameService.deleteSession(sessionId);
