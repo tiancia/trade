@@ -1,0 +1,28 @@
+# Build outputs
+backend/target/
+frontend/**/dist/
+frontend/**/node_modules/
+frontend/**/*.tsbuildinfo
+
+# Local runtime data and secrets
+backend/.env
+backend/polymarket.env
+*.env
+*.local
+
+# Python generated files
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+
+# IDE and OS files
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
