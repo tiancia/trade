@@ -13,6 +13,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Builds the JSON-only prompts consumed by the text-game AI.
+ *
+ * <p>The prompts deliberately include compact definition/session views instead
+ * of full service objects so the model sees only the fields it must reason
+ * about.</p>
+ */
 @Component
 public class TextGamePromptBuilder {
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -139,6 +146,7 @@ public class TextGamePromptBuilder {
             TextGameModeDefinition mode,
             TextGameStageDefinition stage
     ) {
+        // Keep this map ordered for readable logs and reproducible prompt tests.
         LinkedHashMap<String, Object> view = new LinkedHashMap<>();
         view.put("themeId", theme.id());
         view.put("themeName", theme.name());
@@ -171,6 +179,7 @@ public class TextGamePromptBuilder {
             String lastResult,
             List<Map<String, Object>> history
     ) {
+        // This is the minimum mutable state needed to advance one turn.
         LinkedHashMap<String, Object> view = new LinkedHashMap<>();
         view.put("sessionId", sessionId);
         view.put("currentTurn", currentTurn);

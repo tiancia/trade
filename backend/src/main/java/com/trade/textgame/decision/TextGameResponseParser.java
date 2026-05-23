@@ -14,6 +14,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Converts tolerant AI JSON responses into strict game DTOs.
+ *
+ * <p>The parser accepts a few field aliases because model providers sometimes
+ * vary names, but it still fails fast when required gameplay fields are absent.</p>
+ */
 @Component
 public class TextGameResponseParser {
     private final ObjectMapper objectMapper;
@@ -146,6 +152,8 @@ public class TextGameResponseParser {
         if (root == null) {
             return null;
         }
+        // Field aliases make prompt upgrades less brittle without weakening the
+        // final DTO validation.
         for (String fieldName : fieldNames) {
             JsonNode node = root.get(fieldName);
             if (node != null && !node.isMissingNode() && !node.isNull()) {
@@ -182,6 +190,8 @@ public class TextGameResponseParser {
 
     private static String extractJsonObject(String rawResponse) {
         String text = stripMarkdownFence(rawResponse);
+        // Some models wrap JSON with prose despite the prompt; keep only the
+        // outer object so a recoverable response does not fail parsing.
         int start = text.indexOf('{');
         int end = text.lastIndexOf('}');
         if (start >= 0 && end > start) {

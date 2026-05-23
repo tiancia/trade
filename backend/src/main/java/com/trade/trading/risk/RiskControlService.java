@@ -17,6 +17,13 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Evaluates application-side risk rules before an AI decision can place orders.
+ *
+ * <p>Rules are ordered from hard AI payload validation to account-level limits;
+ * the first violation becomes the short skip reason while all violations remain
+ * available on the assessment.</p>
+ */
 @Component
 public class RiskControlService {
     private final TradingProperties properties;
@@ -47,6 +54,8 @@ public class RiskControlService {
 
     public RiskAssessment evaluate(AiTradingDecision decision, TradingDecisionContext decisionContext) {
         TradingProperties.RiskProperties riskProperties = riskProperties();
+        // Refresh risk state first so daily loss, drawdown, and cooldown rules
+        // compare the current decision against the latest estimated equity.
         TradingRiskState riskState = refreshRiskState(decisionContext);
         BigDecimal currentEquity = zeroIfNull(riskState.getCurrentEquity());
 
@@ -61,6 +70,8 @@ public class RiskControlService {
 
         List<RiskViolation> violations = new ArrayList<>();
         for (RiskRule rule : rules) {
+            // Keep AI hard gates active even when optional account risk controls
+            // are disabled, because malformed non-HOLD decisions must not trade.
             if (!riskProperties.isEnabled() && !(rule instanceof AiDecisionHardGateRule)) {
                 continue;
             }
@@ -120,6 +131,7 @@ public class RiskControlService {
 
     private void applyDailyBoundary(TradingRiskState riskState, BigDecimal currentEquity, Instant now) {
         String today = LocalDate.ofInstant(now, dailyZone()).toString();
+        // A new risk day resets the reference equity used by daily loss checks.
         if (riskState.getDayStartDate() == null
                 || !riskState.getDayStartDate().equals(today)
                 || zeroIfNull(riskState.getDayStartEquity()).signum() <= 0) {
@@ -141,6 +153,8 @@ public class RiskControlService {
         boolean hasLoss = decline.compareTo(noise) > 0;
         Instant cooldownUntil = parseInstant(riskState.getLossCooldownUntil());
         boolean activeCooldown = cooldownUntil != null && now.isBefore(cooldownUntil);
+        // Tiny equity movements below the noise ratio do not count as losses;
+        // this prevents fees or mark-price jitter from triggering cooldowns.
         if (hasLoss) {
             riskState.setConsecutiveLosses(riskState.getConsecutiveLosses() + 1);
         } else if (!activeCooldown) {

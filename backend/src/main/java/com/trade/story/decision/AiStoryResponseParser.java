@@ -10,6 +10,10 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Parses AI story planning/drafting responses while accepting common Chinese
+ * and English field aliases from different model outputs.
+ */
 @Component
 public class AiStoryResponseParser {
     private static final int MAX_PARAGRAPH_CHARS = 180;
@@ -82,6 +86,8 @@ public class AiStoryResponseParser {
                         jsonError
                 );
             }
+            // Some models return plain prose for section bodies. Treat non-JSON
+            // prose as usable content instead of losing the whole generation.
             String text = stripMarkdownFence(rawResponse).trim();
             if (!hasText(text)) {
                 throw new IllegalArgumentException(
@@ -215,6 +221,8 @@ public class AiStoryResponseParser {
     }
 
     private static String normalizeContent(String content) {
+        // Normalize for text-file readability: remove header noise, standardize
+        // newlines, and split overly long paragraphs at sentence boundaries.
         String text = stripLeadingMetaLines(content)
                 .replace("\r\n", "\n")
                 .replace('\r', '\n')

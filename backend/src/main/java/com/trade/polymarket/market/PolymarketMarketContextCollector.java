@@ -31,6 +31,10 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+/**
+ * Discovers tradable Polymarket markets and enriches each outcome with CLOB
+ * order-book data for AI decision making.
+ */
 @Component
 public class PolymarketMarketContextCollector {
     private static final Logger log = LoggerFactory.getLogger(PolymarketMarketContextCollector.class);
@@ -38,6 +42,8 @@ public class PolymarketMarketContextCollector {
     private final PolymarketApi polymarketApi;
     private final AiPolymarketProperties properties;
     private final ObjectMapper objectMapper;
+    // Discovery cursors rotate through market pages across runs so the AI does
+    // not repeatedly inspect only the same top-volume markets.
     private final AtomicInteger marketDiscoveryOffset = new AtomicInteger();
     private final AtomicReference<String> samplingMarketsCursor = new AtomicReference<>();
 
@@ -74,6 +80,8 @@ public class PolymarketMarketContextCollector {
     }
 
     private MarketSnapshotBatch collectMarketSnapshots() {
+        // Prefer CLOB sampling when no explicit market filters are configured,
+        // then fall back to Gamma volume discovery if sampling yields nothing.
         if (!hasConfiguredMarketFilters()
                 && properties.getMarketDiscoverySource() == AiPolymarketProperties.MarketDiscoverySource.CLOB_SAMPLING) {
             try {
@@ -413,6 +421,8 @@ public class PolymarketMarketContextCollector {
                 .setNegRisk(marketNegRisk);
 
         try {
+            // CLOB book data is the executable view; Gamma prices are kept only
+            // as fallback/context when book or last-trade calls fail.
             PolymarketOrderBook orderBook = polymarketApi.getOrderBook(tokenId);
             List<PolymarketOrderBookLevel> bids = nullToEmpty(orderBook.getBids());
             List<PolymarketOrderBookLevel> asks = nullToEmpty(orderBook.getAsks());
@@ -508,6 +518,8 @@ public class PolymarketMarketContextCollector {
     private int nextDiscoveryOffset(int marketLimit, int discoveryWindow) {
         int maxOffset = Math.max(discoveryWindow - marketLimit, 0);
         while (true) {
+            // CAS keeps the rotating offset safe if multiple schedulers/tests
+            // ever call collect concurrently.
             int current = marketDiscoveryOffset.get();
             int offset = current < 0 || current > maxOffset ? 0 : current;
             int nextOffset = offset >= maxOffset ? 0 : offset + marketLimit;

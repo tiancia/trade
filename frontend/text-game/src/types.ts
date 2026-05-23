@@ -1,5 +1,7 @@
 export type Stats = Record<string, number>;
 
+// Catalog data drives the start screen selectors; detailed definitions stay on
+// the backend so the frontend only needs summaries.
 export interface TextGameCatalog {
   themes: ThemeSummary[];
   modes: ModeSummary[];
@@ -44,10 +46,14 @@ export interface TextGameEnding {
   finalStats: Stats;
 }
 
+// Phase describes the screen-level workflow; resolutionStatus describes only
+// the async AI generation attached to a submitted choice.
 export type TextGamePhase = 'decision' | 'interlude' | 'settling' | 'completed' | 'error';
 
 export type TextGameResolutionStatus = 'none' | 'pending' | 'ready' | 'error';
 
+// Interlude actions are deterministic client-visible options that can adjust
+// stats while the backend prepares the next main scene.
 export interface TextGameActionDefinition {
   id: string;
   label: string;
@@ -65,6 +71,8 @@ export interface TextGameResolution {
   canAdvance: boolean;
 }
 
+// Log entries are shown in the waiting/interlude panel and also let the client
+// compute the notice displayed when a pending resolution advances the turn.
 export interface TextGameInterludeLogEntry {
   turn: number;
   step: number;
@@ -88,6 +96,8 @@ export interface TextGameInterlude {
   log: TextGameInterludeLogEntry[];
 }
 
+// Full session snapshot returned by every text-game endpoint. The frontend
+// treats it as the single source of truth instead of patching local fragments.
 export interface TextGameSession {
   sessionId: string;
   themeId: string;

@@ -14,6 +14,12 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 
+/**
+ * Applies exchange and strategy caps to AI-requested order sizes.
+ *
+ * <p>The executor only receives plain OKX-compatible size strings from here,
+ * so rounding and min-size checks stay in one place.</p>
+ */
 @Component
 public class OrderSizingService {
     private final TradingProperties properties;
@@ -26,6 +32,8 @@ public class OrderSizingService {
         BigDecimal aiAmount = decision.getBuyQuoteAmountUsdt();
         BigDecimal availableQuote = available(context.getQuoteBalance());
         BigDecimal maxAmount = properties.getMaxBuyQuoteAmount();
+        // Optional equity-ratio cap limits a single new open even if the AI
+        // asks for less than the absolute maxBuyQuoteAmount.
         maxAmount = TradingMath.clamp(maxAmount, maxSingleOpenQuoteAmount(context));
         BigDecimal amount = TradingMath.clamp(TradingMath.clamp(aiAmount, maxAmount), availableQuote);
         amount = amount.setScale(properties.getQuoteAmountScale(), RoundingMode.DOWN);

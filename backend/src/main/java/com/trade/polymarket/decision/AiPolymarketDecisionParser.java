@@ -8,6 +8,10 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 
+/**
+ * Parses Polymarket model output and downgrades unsafe or incomplete BUY
+ * payloads to HOLD decisions.
+ */
 @Component
 public class AiPolymarketDecisionParser {
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -39,6 +43,8 @@ public class AiPolymarketDecisionParser {
                     readDecimal(root, "winProbability"),
                     readDecimal(root, "estimatedProbability")
             );
+            // Older prompts used estimatedProbability; keep accepting it as an
+            // alias so stored prompts/tests do not break during upgrades.
             BigDecimal estimatedProbability = firstNonNull(readDecimal(root, "estimatedProbability"), winProbability);
 
             AiPolymarketDecision decision = new AiPolymarketDecision()
@@ -159,6 +165,8 @@ public class AiPolymarketDecisionParser {
 
         int start = text.indexOf('{');
         int end = text.lastIndexOf('}');
+        // Recover JSON wrapped in markdown or short prose without accepting
+        // responses that contain no object at all.
         if (start >= 0 && end > start) {
             return text.substring(start, end + 1);
         }

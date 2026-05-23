@@ -22,6 +22,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
+/**
+ * HTTP boundary for the React text-game client.
+ *
+ * <p>All gameplay state changes are delegated to {@link TextGameService}; this
+ * class only maps routes and normalizes expected exceptions into JSON errors.</p>
+ */
 @RestController
 @RequestMapping("/api/text-game")
 public class TextGameController {

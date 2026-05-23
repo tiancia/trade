@@ -9,11 +9,17 @@ import com.trade.trading.support.TradingMath;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Converts raw market snapshots into lightweight triggers for the scheduler.
+ * Detection is intentionally stateless except for local position data supplied
+ * by {@link TradingState}.
+ */
 @Component
 public class TradingEventDetector {
     private final TradingProperties properties;
@@ -24,6 +30,8 @@ public class TradingEventDetector {
 
     public List<TradingEvent> detect(TickerResp ticker, List<CandleResp> oneMinuteCandles, TradingState state) {
         List<TradingEvent> events = new ArrayList<>();
+        // OKX may include the still-forming current candle; trigger logic uses
+        // only confirmed candles to avoid reacting to incomplete volume/price.
         List<CandleResp> confirmedCandles = confirmed(oneMinuteCandles);
         BigDecimal lastPrice = TradingMath.decimal(ticker == null ? null : ticker.getLast());
 
@@ -66,7 +74,7 @@ public class TradingEventDetector {
             return;
         }
 
-        BigDecimal ratio = latestVolume.divide(average, 10, java.math.RoundingMode.HALF_UP);
+        BigDecimal ratio = latestVolume.divide(average, 10, RoundingMode.HALF_UP);
         if (ratio.compareTo(properties.getVolumeSpikeMultiplier()) >= 0) {
             Map<String, Object> details = new LinkedHashMap<>();
             details.put("latestOneMinuteQuoteVolume", latestVolume);

@@ -18,11 +18,18 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * File-backed local trading memory used by prompts, risk checks, and fill
+ * reconciliation. All public mutations are synchronized because multiple
+ * schedulers can read or update this state.
+ */
 @Component
 public class TradingStateRepository {
     private final ObjectMapper objectMapper = new ObjectMapper()
             .setSerializationInclusion(JsonInclude.Include.NON_NULL);
     private final Path statePath;
+    // Cached copy of the JSON file; public methods return deep copies so callers
+    // cannot mutate the repository state without going through record* methods.
     private TradingState state;
 
     @Autowired
@@ -50,6 +57,8 @@ public class TradingStateRepository {
         BigDecimal oldBase = nullToZero(current.getTrackedBaseAmount());
         BigDecimal oldCost = nullToZero(current.getAverageCost());
         BigDecimal newBase = oldBase.add(baseAmount);
+        // Weighted-average cost basis after fees, used later by the prompt to
+        // estimate whether a sell is actually profitable.
         BigDecimal newCost = oldBase.multiply(oldCost)
                 .add(baseAmount.multiply(price))
                 .divide(newBase, 18, java.math.RoundingMode.HALF_UP);
@@ -94,6 +103,8 @@ public class TradingStateRepository {
             return;
         }
 
+        // Newest-first list gives the AI short-term memory without making the
+        // prompt grow indefinitely.
         TradingState current = state == null ? readState() : state;
         List<TradingDecisionRecord> recent = new ArrayList<>();
         recent.add(copyDecision(record));

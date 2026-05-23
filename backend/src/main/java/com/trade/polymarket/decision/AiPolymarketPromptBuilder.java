@@ -2,6 +2,10 @@ package com.trade.polymarket.decision;
 
 import org.springframework.stereotype.Component;
 
+/**
+ * Builds the Polymarket prompt contract. It exposes only BUY/HOLD because the
+ * current executor supports buying one outcome token per decision cycle.
+ */
 @Component
 public class AiPolymarketPromptBuilder {
     public String buildPrompt(String aiParametersJson) {

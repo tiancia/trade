@@ -36,12 +36,18 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Collects OKX market, account, and local strategy state into one prompt-ready
+ * context. The same context is later reused by risk checks and execution.
+ */
 @Component
 public class MarketContextCollector {
     private final OkxApi okxApi;
     private final TradingProperties properties;
     private final TradingStateRepository stateRepository;
     private final ObjectMapper objectMapper;
+    // Instrument rules change rarely and are needed on every decision, so keep
+    // a small process-local cache instead of hitting OKX each cycle.
     private volatile InstrumentInfoResp cachedInstrument;
 
     public MarketContextCollector(
@@ -204,6 +210,8 @@ public class MarketContextCollector {
             InstrumentInfoResp instrument,
             TradingState tradingState
     ) {
+        // LinkedHashMap keeps logs and persisted prompt JSON in a predictable
+        // order, which is useful when comparing decision runs.
         Map<String, Object> parameters = new LinkedHashMap<>();
         parameters.put("timestamp", Instant.now().toString());
         parameters.put("instrumentId", properties.getInstId());
@@ -263,6 +271,8 @@ public class MarketContextCollector {
     private Map<String, Object> buildDecisionPolicy() {
         TradingProperties.StrategyProperties strategy = properties.getStrategy();
         Map<String, Object> policy = new LinkedHashMap<>();
+        // These policy strings are intentionally passed to the AI alongside
+        // numeric limits so the prompt and application-side guards match.
         policy.put("defaultAction", "HOLD");
         policy.put("objectivePriority", List.of(
                 "1. Preserve capital and avoid avoidable drawdown.",
@@ -358,6 +368,8 @@ public class MarketContextCollector {
             derived.put("fiveMinutePriceChangePercent", TradingMath.percentChange(last, fiveMinuteBase));
         }
         if (tradingState != null && tradingState.hasTrackedPosition()) {
+            // Use local cost basis, not only exchange balances, so the prompt
+            // can reason about net profitability after estimated exit fees.
             derived.put("trackedPositionUnrealizedPnlPercent",
                     TradingMath.percentChange(last, tradingState.getAverageCost()));
             BigDecimal estimatedExitPriceAfterFee = last.multiply(BigDecimal.ONE.subtract(properties.getTakerFeeRate()));

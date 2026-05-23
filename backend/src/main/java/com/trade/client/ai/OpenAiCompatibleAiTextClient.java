@@ -18,6 +18,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Minimal chat-completions client for OpenAI-compatible providers.
+ *
+ * <p>It returns only assistant content; callers are responsible for validating
+ * that the content itself is the JSON contract they requested.</p>
+ */
 public class OpenAiCompatibleAiTextClient implements AiTextClient {
     private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleAiTextClient.class);
 
@@ -135,6 +141,8 @@ public class OpenAiCompatibleAiTextClient implements AiTextClient {
     }
 
     private static String extractText(JsonNode node) {
+        // Providers differ between plain strings, content part arrays, and
+        // nested text/value objects. Flatten the common shapes into one string.
         if (node == null || node.isMissingNode() || node.isNull()) {
             return null;
         }

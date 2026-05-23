@@ -4,8 +4,13 @@ import com.trade.client.gemini.GeminiApi;
 
 import java.util.function.Supplier;
 
+/**
+ * Lazy adapter from the shared {@link AiTextClient} interface to GeminiApi.
+ */
 public class GeminiAiTextClient implements AiTextClient {
     private final Supplier<GeminiApi> geminiApiSupplier;
+    // Lazily initialized so tests/configuration can supply a factory without
+    // creating the HTTP client until the first generation request.
     private volatile GeminiApi geminiApi;
 
     public GeminiAiTextClient(GeminiApi geminiApi) {

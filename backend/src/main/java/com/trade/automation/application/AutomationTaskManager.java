@@ -25,6 +25,11 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * Runtime registry for background automation loops such as trading schedulers.
+ * Each registered task can contain multiple loops, but loops in the same task
+ * are serialized to avoid overlapping side effects.
+ */
 @Component
 public class AutomationTaskManager implements DisposableBean {
     private static final Logger log = LoggerFactory.getLogger(AutomationTaskManager.class);
@@ -113,6 +118,8 @@ public class AutomationTaskManager implements DisposableBean {
     private final class ManagedTask {
         private final AutomationTaskDefinition definition;
         private final AtomicBoolean running = new AtomicBoolean(false);
+        // Shared across loops in one task so a slow loop cannot overlap with
+        // another loop that touches the same external account or local state.
         private final ReentrantLock executionLock = new ReentrantLock();
         private final Map<String, ManagedLoop> loops = new LinkedHashMap<>();
 
@@ -196,6 +203,8 @@ public class AutomationTaskManager implements DisposableBean {
                     return;
                 }
 
+                // Skip this tick when the previous one is still active. This
+                // keeps scheduler delay bounded without building a backlog.
                 boolean locked = executionLock.tryLock();
                 if (!locked) {
                     complete(false, "Another loop in the same task is still running");

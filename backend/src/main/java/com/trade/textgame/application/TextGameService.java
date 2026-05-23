@@ -44,10 +44,19 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * Coordinates the in-memory text-game session lifecycle.
+ *
+ * <p>A submitted choice starts an asynchronous AI resolution. While that AI
+ * call is running, the player can take deterministic interlude actions that
+ * adjust stats without waiting for the next main scene.</p>
+ */
 @Service
 public class TextGameService {
     private static final Logger log = LoggerFactory.getLogger(TextGameService.class);
     private static final Duration SESSION_TTL = Duration.ofHours(2);
+    // Number of interlude actions that can change stats before the waiting
+    // period becomes a no-op settling phase.
     private static final int INTERLUDE_STEPS_REQUIRED = 4;
 
     private static final String PHASE_DECISION = "decision";
@@ -107,6 +116,8 @@ public class TextGameService {
     private final TextGameResponseParser responseParser;
     private final TextGameDefinitionRegistry definitionRegistry;
     private final Executor resolutionExecutor;
+    // Sessions are intentionally process-local; the frontend stores only the
+    // UUID and refreshes the full snapshot through the API.
     private final ConcurrentHashMap<UUID, TextGameSession> sessions = new ConcurrentHashMap<>();
 
     @Autowired
@@ -140,6 +151,11 @@ public class TextGameService {
         );
     }
 
+    /**
+     * Creates a new session and blocks only for the opening scene generation.
+     * Later turns use {@link #submitChoice(String, SubmitTextGameChoiceRequest)}
+     * to schedule generation in the background.
+     */
     public TextGameSessionResponse createSession(CreateTextGameSessionRequest request) {
         cleanupExpiredSessions();
         String themeId = hasText(request == null ? null : request.themeId())
@@ -231,6 +247,9 @@ public class TextGameService {
                     finalTurn,
                     prompt
             );
+            // Store the full generation request before leaving the lock so the
+            // async worker can validate that it is still resolving the latest
+            // choice for this session.
             session.pendingResolution = pendingResolution;
             session.interludeStep = 0;
             session.interludeLog.clear();
@@ -272,6 +291,8 @@ public class TextGameService {
                 throw new TextGameConflictException("Text game interlude action has already advanced");
             }
 
+            // After the configured number of interlude steps, actions are kept
+            // available for UX continuity but no longer mutate stats.
             boolean settling = session.interludeStep >= INTERLUDE_STEPS_REQUIRED;
             List<TextGameActionDefinition> actions = candidateActions(session, settling);
             TextGameActionDefinition action = requireAction(actions, request.actionId());
@@ -371,6 +392,8 @@ public class TextGameService {
         session.lock.lock();
         try {
             pendingResolution = session.pendingResolution;
+            // Ignore stale workers if the session was retried, deleted, or
+            // replaced before this background task started running.
             if (pendingResolution == null || !pendingResolution.id.equals(resolutionId)) {
                 return;
             }
@@ -400,6 +423,8 @@ public class TextGameService {
         session.lock.lock();
         try {
             PendingResolution current = session.pendingResolution;
+            // The same stale-worker check is repeated after the AI call because
+            // users may retry or delete the session while generation is in flight.
             if (current == null || !current.id.equals(resolutionId)) {
                 return;
             }
@@ -421,6 +446,8 @@ public class TextGameService {
     private void commitResolution(TextGameSession session) {
         PendingResolution pendingResolution = session.pendingResolution;
         TextGameTurnOutcome outcome = pendingResolution.outcome;
+        // Interlude deltas have already been applied; this adds only the AI
+        // outcome delta from the selected main-scene choice.
         Map<String, Integer> nextStats = applyStatsDelta(session.stats, outcome.statsDelta());
         session.turn = pendingResolution.nextTurn;
         session.stats = nextStats;
@@ -635,6 +662,8 @@ public class TextGameService {
             return List.of();
         }
 
+        // Cool down recently used actions first, then rotate by turn/step so
+        // equivalent choices do not appear in the same order every time.
         int desiredCount = Math.min(3, filtered.size());
         List<TextGameActionDefinition> cooled = withoutRecentActions(filtered, recentActionIds);
         if (cooled.size() < desiredCount && !recentActionIds.isEmpty()) {
@@ -683,6 +712,8 @@ public class TextGameService {
             List<TextGameActionDefinition> actions,
             int desiredCount
     ) {
+        // Prefer different primary impacts, for example cash + stability +
+        // growth, before filling any remaining slots with the highest scores.
         List<TextGameActionDefinition> selected = new ArrayList<>(desiredCount);
         List<String> selectedCategories = new ArrayList<>(desiredCount);
         for (TextGameActionDefinition action : actions) {
@@ -711,6 +742,9 @@ public class TextGameService {
             Map<String, Integer> stats,
             String stageId
     ) {
+        // Score favors actions that repair weak stats and match the current
+        // stage's design goal. It only ranks options; min/max stat gates filter
+        // invalid options before this point.
         Map<String, Integer> delta = action.statsDelta();
         int score = 0;
         int money = stats.getOrDefault("money", 0);
@@ -948,6 +982,8 @@ public class TextGameService {
         ERROR
     }
 
+    // Mutable state for one AI generation request. The id lets background
+    // workers detect stale results after retries.
     private static class PendingResolution {
         private final String id = UUID.randomUUID().toString();
         private final Instant createdAt = Instant.now();
@@ -979,6 +1015,8 @@ public class TextGameService {
         }
     }
 
+    // All mutable session fields are protected by lock except lastAccessedAt,
+    // which is volatile because cleanup only needs an approximate TTL view.
     private static class TextGameSession {
         private final UUID sessionId;
         private final TextGameThemeDefinition theme;

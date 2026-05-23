@@ -18,6 +18,7 @@
   --blue: #3d6f8f;
 }
 
+/* Base reset and shared controls. */
 * {
   box-sizing: border-box;
 }
@@ -125,6 +126,7 @@ h1 {
   color: #fff;
 }
 
+/* Start screen: theme/mode selection before a session exists. */
 .start-layout,
 .game-layout {
   max-width: 1180px;
@@ -223,6 +225,7 @@ h1 {
   align-self: flex-start;
 }
 
+/* Main play layout: story surface on the left, state summary on the right. */
 .game-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 330px;
@@ -392,6 +395,7 @@ h1 {
   line-height: 1.35;
 }
 
+/* Interlude state while the backend is generating the next main scene. */
 .interlude-panel {
   margin-top: 24px;
   display: grid;
@@ -664,6 +668,7 @@ h1 {
   line-height: 1.55;
 }
 
+/* Right rail: visual context, mode summary, and animated stat bars. */
 .status-surface {
   padding: 18px;
   position: sticky;
@@ -882,6 +887,7 @@ h1 {
   }
 }
 
+/* Responsive breakpoints keep the game playable on narrow screens. */
 @media (max-width: 900px) {
   .app-shell {
     padding: 16px;

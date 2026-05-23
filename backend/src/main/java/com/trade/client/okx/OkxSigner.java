@@ -8,6 +8,9 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
 
+/**
+ * Produces OKX REST/WebSocket HMAC signatures from the configured API secret.
+ */
 final class OkxSigner {
     private static final String HMAC_SHA256 = "HmacSHA256";
     private static final DateTimeFormatter REST_TIMESTAMP_FORMATTER = DateTimeFormatter
@@ -22,6 +25,7 @@ final class OkxSigner {
 
     SignResult signRest(String method, String requestPath, String body) {
         String timestamp = REST_TIMESTAMP_FORMATTER.format(Instant.now());
+        // OKX signs timestamp + method + request path + raw body exactly.
         String payload = timestamp + method.toUpperCase() + requestPath + nullToEmpty(body);
         return new SignResult(timestamp, hmacSha256Base64(payload, properties.requiredSecretKey()));
     }

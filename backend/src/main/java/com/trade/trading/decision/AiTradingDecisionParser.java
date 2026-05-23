@@ -8,6 +8,12 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 
+/**
+ * Parses model output into an executable trading decision.
+ *
+ * <p>Invalid non-HOLD payloads are downgraded to HOLD with the raw response
+ * attached, so downstream execution can remain conservative.</p>
+ */
 @Component
 public class AiTradingDecisionParser {
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -169,6 +175,8 @@ public class AiTradingDecisionParser {
 
         int start = text.indexOf('{');
         int end = text.lastIndexOf('}');
+        // Recover from occasional prose around the JSON object without trying
+        // to parse arbitrary text as a decision.
         if (start >= 0 && end > start) {
             return text.substring(start, end + 1);
         }

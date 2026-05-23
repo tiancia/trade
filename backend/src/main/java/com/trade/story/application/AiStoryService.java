@@ -29,6 +29,10 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * Generates one complete story artifact from trend collection through section
+ * drafting and file persistence.
+ */
 @Component
 public class AiStoryService {
     private static final Logger log = LoggerFactory.getLogger(AiStoryService.class);
@@ -40,6 +44,8 @@ public class AiStoryService {
     private final StoryFileRepository fileRepository;
     private final AiStoryProperties properties;
     private final AiResponseParseErrorSink parseErrorSink;
+    // Story generation is long-running and writes files, so overlapping runs
+    // are skipped instead of queued.
     private final ReentrantLock generationLock = new ReentrantLock();
 
     public AiStoryService(
@@ -101,6 +107,8 @@ public class AiStoryService {
                     properties.getOutputDir()
             );
 
+            // Topic planning establishes the continuity bible used by every
+            // section prompt that follows.
             StoryTrendContext trendContext = trendCollector.collect();
             List<String> recentStoryNames = fileRepository.recentStoryNames();
             String topicPrompt = promptBuilder.buildTopicPrompt(trendContext, recentStoryNames, properties);
@@ -189,6 +197,8 @@ public class AiStoryService {
         List<StorySectionDraft> drafts = new ArrayList<>();
         int totalSections = topicPlan.getSectionPlans().size();
         for (int i = 0; i < totalSections; i++) {
+            // Recompute written text before every prompt so each section can
+            // account for actual prior output length, not only the plan.
             StorySectionPlan sectionPlan = topicPlan.getSectionPlans().get(i);
             int writtenChars = countNonWhitespace(joinContents(drafts));
             int remainingSections = totalSections - i;

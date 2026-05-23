@@ -16,6 +16,10 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 
+/**
+ * Validates AI-selected Polymarket BUY decisions and turns them into order
+ * runner payloads. Execution can run in dry-run mode for audit-only cycles.
+ */
 @Component
 public class PolymarketOrderExecutor {
     private static final Logger log = LoggerFactory.getLogger(PolymarketOrderExecutor.class);
@@ -73,6 +77,8 @@ public class PolymarketOrderExecutor {
         PolymarketOutcomeSnapshot outcome = context.findOutcomeByTokenId(decision.getTokenId()).orElseThrow();
         PolymarketMarketSnapshot market = context.findMarketByTokenId(decision.getTokenId()).orElseThrow();
         BigDecimal price = decision.getLimitPrice();
+        // Clamp spend before calculating shares so both dry-run and live orders
+        // use the exact risk-capped value.
         BigDecimal spendUsdc = marketBuySpend(TradingMath.clamp(decision.getMaxSpendUsdc(), properties.getMaxOrderUsdc()));
         BigDecimal size = sharesForSpend(spendUsdc, price);
         BigDecimal minOrderSize = minOrderSize(market, outcome);
@@ -136,6 +142,8 @@ public class PolymarketOrderExecutor {
     }
 
     private String validateDecision(AiPolymarketDecision decision, PolymarketDecisionContext context) {
+        // These checks duplicate the prompt's hard gates. The prompt guides the
+        // model, while this method is the final application-side guard.
         if (decision.getLimitPrice().compareTo(properties.getMinLimitPrice()) < 0
                 || decision.getLimitPrice().compareTo(properties.getMaxLimitPrice()) > 0) {
             return "limitPrice outside configured range";

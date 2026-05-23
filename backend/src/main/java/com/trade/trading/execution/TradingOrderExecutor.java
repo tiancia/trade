@@ -26,9 +26,18 @@ import java.math.RoundingMode;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * Applies risk gates and translates validated AI decisions into OKX orders.
+ *
+ * <p>Spot orders update the local cost-basis state after fills are confirmed;
+ * derivative orders currently record fill details without maintaining a local
+ * cost basis.</p>
+ */
 @Component
 public class TradingOrderExecutor {
     private static final Logger log = LoggerFactory.getLogger(TradingOrderExecutor.class);
+    // OKX client order IDs are limited to 32 chars; the sequence helps avoid
+    // collisions when multiple orders are sent in the same millisecond.
     private static final AtomicLong CLIENT_ORDER_SEQUENCE = new AtomicLong();
 
     private final OkxApi okxApi;
@@ -309,6 +318,8 @@ public class TradingOrderExecutor {
     private Optional<OrderInfoResp> queryFilledOrder(OrderActionResp actionResp) {
         String ordId = actionResp.getOrdId();
         String clOrdId = actionResp.getClOrdId();
+        // Market orders are usually filled quickly but OKX order detail can lag
+        // the accept response, so poll briefly before updating local state.
         for (int i = 0; i < properties.getOrderFillQueryAttempts(); i++) {
             OkxResponse<OrderInfoResp> response = okxApi.getOrder(new OrderQueryReq()
                     .setInstId(properties.getInstId())
@@ -364,6 +375,8 @@ public class TradingOrderExecutor {
             BigDecimal averagePrice,
             BigDecimal netBase
     ) {
+        // If the fee is charged in quote currency, it increases total cost; if
+        // charged in base currency, netBase was already reduced above.
         BigDecimal quoteCost = filledBase.multiply(averagePrice);
         if (sameCurrency(order.getFeeCcy(), properties.getQuoteCcy())) {
             quoteCost = quoteCost.add(TradingMath.decimal(order.getFee()).abs());
@@ -407,6 +420,7 @@ public class TradingOrderExecutor {
     }
 
     private static DerivativeOrder derivativeOrder(TradingAction action) {
+        // Map domain actions to OKX side/posSide/reduceOnly semantics.
         return switch (action) {
             case OPEN_LONG -> new DerivativeOrder("buy", "long", false, "openlong");
             case CLOSE_LONG -> new DerivativeOrder("sell", "long", true, "closelong");

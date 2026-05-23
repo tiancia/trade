@@ -27,6 +27,13 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * Orchestrates one OKX AI trading decision from market snapshot to execution.
+ *
+ * <p>The service is intentionally sequential: a decision uses account balances,
+ * open orders, local state, and risk state that should not be evaluated by two
+ * overlapping AI calls.</p>
+ */
 @Component
 public class AiTradingService {
     private static final Logger log = LoggerFactory.getLogger(AiTradingService.class);
@@ -40,6 +47,8 @@ public class AiTradingService {
     private final AiDecisionAuditSink auditSink;
     private final AiResponseParseErrorSink parseErrorSink;
     private final TradingProperties properties;
+    // Prevents concurrent decisions from using the same account snapshot and
+    // then racing each other into duplicate orders.
     private final ReentrantLock decisionLock = new ReentrantLock();
 
     public AiTradingService(
@@ -108,12 +117,16 @@ public class AiTradingService {
         Exception failure = null;
 
         try {
+            // 1. Collect all market/account/local state that the prompt and
+            // executor must agree on.
             context = contextCollector.collect(trigger);
             log.info("AI decision parameters:\n {}", context.getAiParametersJson());
 
             prompt = promptBuilder.buildPrompt(context.getAiParametersJson());
 
             try {
+                // 2. Ask the configured AI client for strict JSON. Client-level
+                // parse failures are separately audited with the raw response.
                 rawAiResponse = aiTextClient.generateJson(prompt);
             } catch (AiResponseParseException e) {
                 rawAiResponse = e.getRawResponse();
@@ -129,6 +142,8 @@ public class AiTradingService {
             }
             log.info("AI raw decision response:\n {}", rawAiResponse);
 
+            // 3. Convert invalid model payloads into HOLD decisions so the
+            // executor can stay defensive and deterministic.
             decision = decisionParser.parse(rawAiResponse);
             if (isInvalidAiDecision(decision)) {
                 persistAiResponseParseError(
@@ -157,6 +172,8 @@ public class AiTradingService {
 
             decisionRecord = decisionRecord(decisionId, startedAt, trigger, decision, context);
             try {
+                // 4. Risk checks and order placement happen in the executor,
+                // but still use the exact context that was shown to the model.
                 orderExecutor.execute(decision, context, decisionRecord);
             } catch (Exception e) {
                 decisionRecord.setExecutionStatus("FAILED")
@@ -169,6 +186,8 @@ public class AiTradingService {
             log.error("AI trading decision failed, trigger={}, err={}", trigger, e.getMessage(), e);
             return false;
         } finally {
+            // Persist every available artifact even after partial failures, so
+            // a failed run can still be debugged from audit tables/local state.
             AiDecisionAuditRecord auditRecord = new AiDecisionAuditRecord()
                     .setDecisionId(decisionId)
                     .setStartedAt(startedAt)

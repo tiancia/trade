@@ -22,6 +22,10 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * Runs one Polymarket AI decision cycle: collect markets, prompt the model,
+ * parse the decision, optionally place an order, and persist an audit record.
+ */
 @Component
 public class AiPolymarketService {
     private static final Logger log = LoggerFactory.getLogger(AiPolymarketService.class);
@@ -34,6 +38,8 @@ public class AiPolymarketService {
     private final AiPolymarketProperties properties;
     private final PolymarketDecisionAuditSink auditSink;
     private final AiResponseParseErrorSink parseErrorSink;
+    // Market discovery and execution share mutable cursors/risk limits, so run
+    // only one decision loop at a time.
     private final ReentrantLock decisionLock = new ReentrantLock();
 
     public AiPolymarketService(
@@ -113,6 +119,8 @@ public class AiPolymarketService {
                     properties.getMarketIds(),
                     properties.getClobTokenIds()
             );
+            // The collector returns both typed snapshots and the exact JSON
+            // parameters used for the prompt/audit trail.
             context = contextCollector.collect();
             if (context.getMarkets() == null || context.getMarkets().isEmpty()) {
                 log.info("AI Polymarket decision skipped: decisionId={}, no eligible markets collected", decisionId);
@@ -133,6 +141,8 @@ public class AiPolymarketService {
             prompt = promptBuilder.buildPrompt(context.getAiParametersJson());
             log.info("AI Polymarket request started: decisionId={}, promptChars={}", decisionId, prompt.length());
             try {
+                // Client-level JSON extraction failures are persisted with the
+                // raw response before being rethrown.
                 rawAiResponse = aiTextClient.generateJson(prompt);
             } catch (AiResponseParseException e) {
                 rawAiResponse = e.getRawResponse();
@@ -148,6 +158,8 @@ public class AiPolymarketService {
             }
             log.info("AI Polymarket raw decision response: decisionId={}\n {}", decisionId, rawAiResponse);
 
+            // Invalid BUY payloads become HOLD decisions, then are audited as
+            // parse errors so no malformed order reaches the executor.
             decision = decisionParser.parse(rawAiResponse);
             if (isInvalidAiDecision(decision)) {
                 persistAiResponseParseError(

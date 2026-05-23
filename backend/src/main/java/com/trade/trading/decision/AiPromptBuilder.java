@@ -4,6 +4,12 @@ import com.trade.trading.config.TradingProperties;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+/**
+ * Builds the OKX trading prompt from the serialized decision context.
+ *
+ * <p>The prompt mirrors executor/risk-control constraints so the model is asked
+ * to choose HOLD before the application has to reject an unsafe action.</p>
+ */
 @Component
 public class AiPromptBuilder {
     private final TradingProperties properties;

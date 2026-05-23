@@ -30,8 +30,10 @@ import type {
 } from './types';
 
 const STORAGE_KEY = 'text-game-session-id';
+// Keep display order stable even when the backend later adds extra stats.
 const STAT_ORDER = ['money', 'health', 'skill', 'network', 'reputation', 'risk'];
 
+// UI metadata for known stat keys; unknown keys still render with a fallback icon.
 const STAT_META: Record<string, { label: string; Icon: LucideIcon; tone: string }> = {
   money: { label: '现金', Icon: Wallet, tone: 'money' },
   health: { label: '健康', Icon: HeartPulse, tone: 'health' },
@@ -54,6 +56,8 @@ type ActionResultNotice = {
   statsDelta: Stats;
 };
 
+// Thin API wrapper for the text-game backend. It keeps response parsing and
+// backend error-message extraction out of the component event handlers.
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body) {
@@ -92,7 +96,11 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
   const [advanceNotice, setAdvanceNotice] = useState<ActionResultNotice | null>(null);
+  // The polling effect needs the freshest session without restarting the timer
+  // on every local state change.
   const sessionRef = useRef<TextGameSession | null>(null);
+  // Stores the last interlude action result so it can be merged into the notice
+  // shown when the async main-scene resolution finally advances the turn.
   const lastInterludeResultRef = useRef<ActionResultNotice | null>(null);
 
   useEffect(() => {
@@ -108,6 +116,9 @@ export default function App() {
       return;
     }
 
+    // The backend resolves the selected choice asynchronously, while the player
+    // can keep taking interlude actions. Poll until that pending resolution is
+    // ready, failed, or already committed by another request.
     let cancelled = false;
     const refresh = async () => {
       try {
@@ -169,6 +180,8 @@ export default function App() {
       const storedSessionId = localStorage.getItem(STORAGE_KEY);
       if (storedSessionId) {
         try {
+          // Resume lightweight in-browser sessions after a refresh; missing or
+          // expired backend sessions are treated as a clean start.
           const restored = await api<TextGameSession>(`/sessions/${storedSessionId}`);
           setSession(restored);
         } catch {
@@ -786,6 +799,7 @@ function StatsPanel({ stats }: { stats: Stats }) {
       return;
     }
 
+    // Flash only the latest delta; the persisted value always comes from props.
     setRecentDeltas(nextDeltas);
     const timer = window.setTimeout(() => setRecentDeltas({}), 1800);
     return () => window.clearTimeout(timer);

@@ -23,6 +23,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Bridges the Java scheduler to the Python CLOB order script.
+ *
+ * <p>Secrets are passed through environment variables, while order details are
+ * sent as a single JSON payload on stdin.</p>
+ */
 @Component
 public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
     private static final Logger log = LoggerFactory.getLogger(PolymarketPythonOrderRunner.class);
@@ -67,6 +73,7 @@ public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
             Process process = builder.start();
             String payload = buildPayload(request);
             log.debug("Polymarket order script payload: {}", payload);
+            // Stdin avoids leaking order payload details into process arguments.
             process.getOutputStream().write(payload.getBytes(StandardCharsets.UTF_8));
             process.getOutputStream().close();
 
@@ -185,6 +192,8 @@ public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
         if (Files.exists(cwdPath)) {
             return cwdPath;
         }
+        // The backend is often started from backend/, while the default script
+        // path is rooted at the repository, so also try the parent directory.
         Path parentDirectory = baseDirectory.getParent();
         if (parentDirectory != null) {
             Path parentPath = parentDirectory.resolve(path).normalize();
@@ -242,6 +251,8 @@ public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
             String envName,
             String configuredValue
     ) {
+        // Resolution order: explicit config, inherited process env, local .env,
+        // then Windows user/machine environment for desktop runs.
         if (hasText(configuredValue)) {
             return configuredValue.trim();
         }
