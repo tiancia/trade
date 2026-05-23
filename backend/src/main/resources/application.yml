@@ -90,7 +90,7 @@ trade:
       enabled: true
       # Python SDK 下单桥接脚本。
       python-command: "python"
-      script-path: "A:\\trade\\tools\\polymarket\\polymarket_place_order.py"
+      script-path: ${POLYMARKET_ORDER_SCRIPT:tools/polymarket/polymarket_place_order.py}
       timeout-ms: 60000
       chain-id: 137
       # EOA 通常为 0；使用 Polymarket proxy/funder 钱包时按官方 SDK 要求调整。

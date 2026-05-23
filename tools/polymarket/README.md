@@ -8,3 +8,5 @@
 - `examples/decision.json`: AI 决策样例。
 
 密钥使用环境变量提供，例如 `POLYMARKET_PRIVATE_KEY`、`POLYMARKET_API_KEY`、`POLYMARKET_API_SECRET`、`POLYMARKET_API_PASSPHRASE`、`POLYMARKET_FUNDER_ADDRESS`。不要把真实值写进这个目录。
+
+后端默认通过 `tools/polymarket/polymarket_place_order.py` 调用下单脚本。如果部署目录不同，设置 `POLYMARKET_ORDER_SCRIPT` 覆盖。
