@@ -4,11 +4,13 @@ import lombok.Data;
 import lombok.experimental.Accessors;
 
 import java.math.BigDecimal;
+import java.util.Map;
 
 @Data
 @Accessors(chain = true)
 public class TradingDecisionRecord {
     private String decisionId;
+    private String strategyId;
     private String timestamp;
     private String triggerType;
     private String triggerReason;
@@ -40,4 +42,5 @@ public class TradingDecisionRecord {
     private BigDecimal fee;
     private String feeCcy;
     private String error;
+    private Map<String, Object> metadata;
 }

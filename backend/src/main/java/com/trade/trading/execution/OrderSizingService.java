@@ -4,8 +4,8 @@ import com.trade.client.okx.dto.BalanceDetail;
 import com.trade.client.okx.dto.InstrumentInfoResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.config.TradingProperties;
-import com.trade.trading.model.AiTradingDecision;
 import com.trade.trading.model.OrderSizing;
+import com.trade.trading.model.StrategyDecision;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.risk.RiskContext;
 import com.trade.trading.support.TradingMath;
@@ -15,7 +15,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 /**
- * Applies exchange and strategy caps to AI-requested order sizes.
+ * Applies exchange and strategy caps to strategy-requested order sizes.
  *
  * <p>The executor only receives plain OKX-compatible size strings from here,
  * so rounding and min-size checks stay in one place.</p>
@@ -28,14 +28,14 @@ public class OrderSizingService {
         this.properties = properties;
     }
 
-    public OrderSizing buySize(AiTradingDecision decision, TradingDecisionContext context) {
-        BigDecimal aiAmount = decision.getBuyQuoteAmountUsdt();
+    public OrderSizing buySize(StrategyDecision decision, TradingDecisionContext context) {
+        BigDecimal requestedAmount = decision.getBuyQuoteAmount();
         BigDecimal availableQuote = available(context.getQuoteBalance());
         BigDecimal maxAmount = properties.getMaxBuyQuoteAmount();
         // Optional equity-ratio cap limits a single new open even if the AI
         // asks for less than the absolute maxBuyQuoteAmount.
         maxAmount = TradingMath.clamp(maxAmount, maxSingleOpenQuoteAmount(context));
-        BigDecimal amount = TradingMath.clamp(TradingMath.clamp(aiAmount, maxAmount), availableQuote);
+        BigDecimal amount = TradingMath.clamp(TradingMath.clamp(requestedAmount, maxAmount), availableQuote);
         amount = amount.setScale(properties.getQuoteAmountScale(), RoundingMode.DOWN);
 
         InstrumentInfoResp instrument = context.getInstrument();
@@ -58,11 +58,11 @@ public class OrderSizingService {
         return OrderSizing.executable(TradingMath.plain(amount));
     }
 
-    public OrderSizing sellSize(AiTradingDecision decision, TradingDecisionContext context) {
-        BigDecimal aiAmount = decision.getSellBaseAmountBtc();
+    public OrderSizing sellSize(StrategyDecision decision, TradingDecisionContext context) {
+        BigDecimal requestedAmount = decision.getSellBaseAmount();
         BigDecimal availableBase = available(context.getBaseBalance());
         BigDecimal maxByRatio = availableBase.multiply(properties.getMaxSellPositionRatio());
-        BigDecimal amount = TradingMath.clamp(TradingMath.clamp(aiAmount, maxByRatio), availableBase);
+        BigDecimal amount = TradingMath.clamp(TradingMath.clamp(requestedAmount, maxByRatio), availableBase);
 
         InstrumentInfoResp instrument = context.getInstrument();
         BigDecimal lotSize = TradingMath.decimal(instrument.getLotSz());
@@ -83,7 +83,7 @@ public class OrderSizingService {
         return OrderSizing.executable(TradingMath.plain(amount));
     }
 
-    public OrderSizing derivativeSize(AiTradingDecision decision, TradingDecisionContext context) {
+    public OrderSizing derivativeSize(StrategyDecision decision, TradingDecisionContext context) {
         BigDecimal amount = TradingMath.clamp(decision.getOrderSize(), properties.getMaxDerivativeOrderSize());
 
         InstrumentInfoResp instrument = context.getInstrument();

@@ -4,7 +4,9 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.math.BigDecimal;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Data
 @ConfigurationProperties(prefix = "trade.trading")
@@ -16,6 +18,8 @@ public class TradingProperties {
     private String quoteCcy = "USDT";
     private String tdMode = "cash";
     private String positionMode = "long_short";
+    private ExecutionMode executionMode = ExecutionMode.PAPER;
+    private boolean liveEnabled = false;
     private BigDecimal maxBuyQuoteAmount = new BigDecimal("10");
     private BigDecimal maxSellPositionRatio = BigDecimal.ONE;
     private BigDecimal maxDerivativeOrderSize = BigDecimal.ONE;
@@ -41,6 +45,7 @@ public class TradingProperties {
     private long orderFillQueryDelayMs = 1_000L;
     private int quoteAmountScale = 2;
     private StrategyProperties strategy = new StrategyProperties();
+    private List<StrategyInstanceProperties> strategies = List.of(defaultThresholdStrategy());
     private RiskProperties risk = new RiskProperties();
 
     public boolean isSpotInstrument() {
@@ -60,6 +65,29 @@ public class TradingProperties {
 
     public boolean isShortEnabled() {
         return strategy != null && strategy.isAllowShort();
+    }
+
+    public boolean isLiveExecutionAllowed() {
+        return executionMode == ExecutionMode.LIVE && liveEnabled;
+    }
+
+    private static StrategyInstanceProperties defaultThresholdStrategy() {
+        StrategyInstanceProperties strategy = new StrategyInstanceProperties();
+        strategy.setId("threshold-event-default");
+        strategy.setType("threshold-event");
+        strategy.setEnabled(true);
+        strategy.setBar("1m");
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("price-move-window-candles", 5);
+        params.put("volume-lookback-candles", 20);
+        strategy.setParams(params);
+        return strategy;
+    }
+
+    public enum ExecutionMode {
+        PAPER,
+        LIVE,
+        BACKTEST
     }
 
     @Data
@@ -87,6 +115,15 @@ public class TradingProperties {
                 "Open or add exposure only when expected net edge, risk-reward, win probability, and confidence all clear their configured thresholds.",
                 "Reduce exposure when the thesis is invalidated or drawdown pressure threatens the objective."
         );
+    }
+
+    @Data
+    public static class StrategyInstanceProperties {
+        private String id;
+        private String type;
+        private boolean enabled = true;
+        private String bar = "1m";
+        private Map<String, Object> params = new LinkedHashMap<>();
     }
 
     @Data

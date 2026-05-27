@@ -4,8 +4,8 @@ import com.trade.client.okx.dto.BalanceDetail;
 import com.trade.client.okx.dto.InstrumentInfoResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.config.TradingProperties;
-import com.trade.trading.model.AiTradingDecision;
 import com.trade.trading.model.OrderSizing;
+import com.trade.trading.model.StrategyDecision;
 import com.trade.trading.model.TradingAction;
 import com.trade.trading.model.TradingDecisionContext;
 import org.junit.jupiter.api.Test;
@@ -25,9 +25,9 @@ class OrderSizingServiceTest {
         properties.setMaxBuyQuoteAmount(new BigDecimal("100"));
         OrderSizingService sizingService = new OrderSizingService(properties);
 
-        AiTradingDecision decision = new AiTradingDecision()
+        StrategyDecision decision = new StrategyDecision()
                 .setAction(TradingAction.BUY)
-                .setBuyQuoteAmountUsdt(new BigDecimal("500"));
+                .setBuyQuoteAmount(new BigDecimal("500"));
         TradingDecisionContext context = context("50000", "0", "80", "0.00001", "0.00000001");
 
         OrderSizing sizing = sizingService.buySize(decision, context);
@@ -42,9 +42,9 @@ class OrderSizingServiceTest {
         properties.getRisk().setEnabled(false);
         OrderSizingService sizingService = new OrderSizingService(properties);
 
-        AiTradingDecision decision = new AiTradingDecision()
+        StrategyDecision decision = new StrategyDecision()
                 .setAction(TradingAction.BUY)
-                .setBuyQuoteAmountUsdt(new BigDecimal("0.10"));
+                .setBuyQuoteAmount(new BigDecimal("0.10"));
         TradingDecisionContext context = context("50000", "0", "100", "0.00001", "0.00000001");
 
         OrderSizing sizing = sizingService.buySize(decision, context);
@@ -59,9 +59,9 @@ class OrderSizingServiceTest {
         properties.getRisk().setEnabled(false);
         OrderSizingService sizingService = new OrderSizingService(properties);
 
-        AiTradingDecision decision = new AiTradingDecision()
+        StrategyDecision decision = new StrategyDecision()
                 .setAction(TradingAction.SELL)
-                .setSellBaseAmountBtc(new BigDecimal("2"));
+                .setSellBaseAmount(new BigDecimal("2"));
         TradingDecisionContext context = context("50000", "0.123456", "100", "0.00001", "0.0001");
 
         OrderSizing sizing = sizingService.sellSize(decision, context);
@@ -77,7 +77,7 @@ class OrderSizingServiceTest {
         properties.setMaxDerivativeOrderSize(new BigDecimal("3.7"));
         OrderSizingService sizingService = new OrderSizingService(properties);
 
-        AiTradingDecision decision = new AiTradingDecision()
+        StrategyDecision decision = new StrategyDecision()
                 .setAction(TradingAction.OPEN_LONG)
                 .setOrderSize(new BigDecimal("10"));
         TradingDecisionContext context = context("50000", "0", "100", "1", "0.5");
@@ -95,9 +95,9 @@ class OrderSizingServiceTest {
         properties.getRisk().setMaxSingleOpenEquityRatio(new BigDecimal("0.10"));
         OrderSizingService sizingService = new OrderSizingService(properties);
 
-        AiTradingDecision decision = new AiTradingDecision()
+        StrategyDecision decision = new StrategyDecision()
                 .setAction(TradingAction.BUY)
-                .setBuyQuoteAmountUsdt(new BigDecimal("500"));
+                .setBuyQuoteAmount(new BigDecimal("500"));
         TradingDecisionContext context = context("50000", "0", "800", "0.00001", "0.00000001");
 
         OrderSizing sizing = sizingService.buySize(decision, context);

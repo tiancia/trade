@@ -9,7 +9,7 @@ import com.trade.story.config.AiStoryProperties;
 import com.trade.story.scheduler.AiStoryScheduler;
 import com.trade.trading.config.TradingProperties;
 import com.trade.trading.market.OkxMarketDataWebSocketFeed;
-import com.trade.trading.scheduler.AiTradingScheduler;
+import com.trade.trading.scheduler.TradingScheduler;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -21,7 +21,7 @@ public class AutomationTaskRegistrar {
     public AutomationTaskRegistrar(
             AutomationTaskManager manager,
             AutomationProperties automationProperties,
-            AiTradingScheduler tradingScheduler,
+            TradingScheduler tradingScheduler,
             TradingProperties tradingProperties,
             OkxMarketDataWebSocketFeed marketDataWebSocketFeed,
             AiPolymarketScheduler polymarketScheduler,
@@ -31,7 +31,7 @@ public class AutomationTaskRegistrar {
     ) {
         manager.register(new AutomationTaskDefinition(
                 "trading",
-                "OKX AI trading",
+                "OKX strategy trading",
                 automationProperties.getTrading().isAutoStart(),
                 marketDataWebSocketFeed::start,
                 marketDataWebSocketFeed::stop,

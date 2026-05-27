@@ -194,6 +194,8 @@ trade:
     td-mode: cash
     # OKX 合约持仓模式；long_short 会发送 posSide=long/short，net 会省略 posSide。
     position-mode: long_short
+    execution-mode: paper
+    live-enabled: false
     # 单次买入最多使用多少计价币种金额。
     max-buy-quote-amount: 10
     # 单次卖出最多占可用基础币种持仓的比例，1 表示最多全部卖出。
@@ -217,6 +219,19 @@ trade:
         - "Keep decisions consistent with the active strategy thesis unless the invalidation condition is met."
         - "Open or add exposure only when expected net edge, risk-reward, win probability, and confidence all clear their configured thresholds."
         - "Reduce exposure when the thesis is invalidated or drawdown pressure threatens the objective."
+    strategies:
+      - id: threshold-event-default
+        type: threshold-event
+        enabled: true
+        bar: 1m
+        params:
+          price-move-trigger-percent: "0.02"
+          volume-spike-multiplier: "3"
+          floating-loss-trigger-percent: "0.10"
+          buy-quote-amount: "10"
+          price-move-window-candles: 5
+          volume-lookback-candles: 20
+          require-confirmed-candle: true
     # 常规定时 AI 决策的执行间隔，单位毫秒。
     decision-fixed-delay-ms: 1800000
     # 市场事件扫描的执行间隔，单位毫秒。

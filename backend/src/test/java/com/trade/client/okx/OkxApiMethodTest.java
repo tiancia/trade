@@ -32,6 +32,9 @@ class OkxApiMethodTest {
 
         api.getCandles(new CandlesReq().setInstId("BTC-USDT").setBar("1m"));
         assertCall(client, "GET", OkxEndpoints.MARKET_CANDLES, false);
+
+        api.getHistoryCandles(new CandlesReq().setInstId("BTC-USDT").setBar("1m"));
+        assertCall(client, "GET", OkxEndpoints.MARKET_HISTORY_CANDLES, false);
     }
 
     @Test

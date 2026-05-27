@@ -1,20 +1,14 @@
 package com.trade.trading.decision;
 
 import com.trade.trading.config.TradingProperties;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
 
 /**
- * Builds the OKX trading prompt from the serialized decision context.
- *
- * <p>The prompt mirrors executor/risk-control constraints so the model is asked
- * to choose HOLD before the application has to reject an unsafe action.</p>
+ * Legacy OKX AI prompt builder retained only for historical tests/data tools.
+ * The runtime OKX trading path no longer uses prompts or AI decisions.
  */
-@Component
 public class AiPromptBuilder {
     private final TradingProperties properties;
 
-    @Autowired
     public AiPromptBuilder(TradingProperties properties) {
         this.properties = properties;
     }

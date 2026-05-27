@@ -37,7 +37,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Collects OKX market, account, and local strategy state into one prompt-ready
+ * Collects OKX market, account, and local state into one strategy evaluation
  * context. The same context is later reused by risk checks and execution.
  */
 @Component
@@ -141,10 +141,16 @@ public class MarketContextCollector {
                 .setAiParameters(parameters)
                 .setAiParametersJson(toJson(parameters))
                 .setTicker(ticker)
+                .setOrderBook(orderBook)
+                .setOneMinuteCandles(candles1m)
+                .setFiveMinuteCandles(candles5m)
                 .setAccountBalance(balance)
                 .setBaseBalance(baseBalance)
                 .setQuoteBalance(quoteBalance)
                 .setInstrument(instrument)
+                .setPendingOrders(pendingOrders)
+                .setRecentOrders(recentOrders)
+                .setRecentFills(recentFills)
                 .setPositions(positions)
                 .setTradingState(tradingState);
     }

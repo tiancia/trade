@@ -3,7 +3,7 @@ package com.trade.trading.risk;
 import com.trade.client.okx.dto.AccountBalanceResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.config.TradingProperties;
-import com.trade.trading.model.AiTradingDecision;
+import com.trade.trading.model.StrategyDecision;
 import com.trade.trading.model.TradingAction;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingRiskState;
@@ -152,32 +152,22 @@ class RiskControlServiceTest {
         return properties;
     }
 
-    private static AiTradingDecision openDecision(TradingAction action) {
+    private static StrategyDecision openDecision(TradingAction action) {
         return decision(action)
-                .setBuyQuoteAmountUsdt(new BigDecimal("10"))
+                .setBuyQuoteAmount(new BigDecimal("10"))
                 .setOrderSize(BigDecimal.ONE);
     }
 
-    private static AiTradingDecision closeDecision(TradingAction action) {
+    private static StrategyDecision closeDecision(TradingAction action) {
         return decision(action)
-                .setSellBaseAmountBtc(new BigDecimal("0.01"))
+                .setSellBaseAmount(new BigDecimal("0.01"))
                 .setOrderSize(BigDecimal.ONE);
     }
 
-    private static AiTradingDecision decision(TradingAction action) {
-        return new AiTradingDecision()
+    private static StrategyDecision decision(TradingAction action) {
+        return new StrategyDecision()
                 .setAction(action)
-                .setReason("test")
-                .setWinProbability(new BigDecimal("0.70"))
-                .setConfidence(new BigDecimal("0.80"))
-                .setObjectiveAlignment("PASS")
-                .setExpectedNetEdgePercent(new BigDecimal("0.003"))
-                .setRiskRewardRatio(new BigDecimal("2"))
-                .setThesisChangeEvidence("test evidence confirms the action")
-                .setStrategyBias("LONG")
-                .setStrategyThesis("test thesis")
-                .setStrategyInvalidation("test invalidation")
-                .setStrategyHorizon("4-24 hours");
+                .setReason("test");
     }
 
     private static TradingDecisionContext context(String equity) {

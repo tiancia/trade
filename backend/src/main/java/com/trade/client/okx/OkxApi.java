@@ -138,6 +138,18 @@ public class OkxApi {
     }
 
     /**
+     * Gets historical candlesticks. OKX returns newest rows first.
+     */
+    public OkxResponse<CandleResp> getHistoryCandles(CandlesReq req) {
+        return okxClient.get(
+                OkxEndpoints.MARKET_HISTORY_CANDLES,
+                req,
+                false,
+                CandleResp.class
+        );
+    }
+
+    /**
      * Places an order. The response only confirms request acceptance; query order state afterward.
      */
     public OkxResponse<OrderActionResp> placeOrder(PlaceOrderReq req) {

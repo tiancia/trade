@@ -236,6 +236,7 @@ public class TradingStateRepository {
         }
         return new TradingDecisionRecord()
                 .setDecisionId(source.getDecisionId())
+                .setStrategyId(source.getStrategyId())
                 .setTimestamp(source.getTimestamp())
                 .setTriggerType(source.getTriggerType())
                 .setTriggerReason(source.getTriggerReason())
@@ -266,7 +267,8 @@ public class TradingStateRepository {
                 .setAverageFillPrice(source.getAverageFillPrice())
                 .setFee(source.getFee())
                 .setFeeCcy(source.getFeeCcy())
-                .setError(source.getError());
+                .setError(source.getError())
+                .setMetadata(source.getMetadata());
     }
 
     private static TradingStrategyState copyStrategyState(TradingStrategyState source) {

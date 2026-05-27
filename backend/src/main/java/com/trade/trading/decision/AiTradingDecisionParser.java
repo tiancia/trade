@@ -4,17 +4,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.trading.model.AiTradingDecision;
 import com.trade.trading.model.TradingAction;
-import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 
 /**
- * Parses model output into an executable trading decision.
+ * Legacy OKX AI model output parser retained only for historical tests/data
+ * tools. The runtime OKX trading path no longer parses AI responses.
  *
  * <p>Invalid non-HOLD payloads are downgraded to HOLD with the raw response
  * attached, so downstream execution can remain conservative.</p>
  */
-@Component
 public class AiTradingDecisionParser {
     private final ObjectMapper objectMapper = new ObjectMapper();
 

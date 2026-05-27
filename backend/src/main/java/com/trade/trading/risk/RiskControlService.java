@@ -1,7 +1,7 @@
 package com.trade.trading.risk;
 
 import com.trade.trading.config.TradingProperties;
-import com.trade.trading.model.AiTradingDecision;
+import com.trade.trading.model.StrategyDecision;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingRiskState;
 import com.trade.trading.model.TradingState;
@@ -18,11 +18,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Evaluates application-side risk rules before an AI decision can place orders.
+ * Evaluates application-side risk rules before a strategy decision can place orders.
  *
- * <p>Rules are ordered from hard AI payload validation to account-level limits;
- * the first violation becomes the short skip reason while all violations remain
- * available on the assessment.</p>
+ * <p>The first violation becomes the short skip reason while all violations
+ * remain available on the assessment.</p>
  */
 @Component
 public class RiskControlService {
@@ -52,7 +51,7 @@ public class RiskControlService {
         this.rules = rules == null ? defaultRules() : List.copyOf(rules);
     }
 
-    public RiskAssessment evaluate(AiTradingDecision decision, TradingDecisionContext decisionContext) {
+    public RiskAssessment evaluate(StrategyDecision decision, TradingDecisionContext decisionContext) {
         TradingProperties.RiskProperties riskProperties = riskProperties();
         // Refresh risk state first so daily loss, drawdown, and cooldown rules
         // compare the current decision against the latest estimated equity.
@@ -70,9 +69,7 @@ public class RiskControlService {
 
         List<RiskViolation> violations = new ArrayList<>();
         for (RiskRule rule : rules) {
-            // Keep AI hard gates active even when optional account risk controls
-            // are disabled, because malformed non-HOLD decisions must not trade.
-            if (!riskProperties.isEnabled() && !(rule instanceof AiDecisionHardGateRule)) {
+            if (!riskProperties.isEnabled()) {
                 continue;
             }
             rule.evaluate(context).ifPresent(violations::add);
@@ -86,7 +83,7 @@ public class RiskControlService {
         return RiskAssessment.blocked(riskState, currentEquity, violations);
     }
 
-    public void recordExecutedAction(AiTradingDecision decision, TradingDecisionContext decisionContext) {
+    public void recordExecutedAction(StrategyDecision decision, TradingDecisionContext decisionContext) {
         if (decision == null || decision.getAction() == null || !riskProperties().isEnabled()) {
             return;
         }
@@ -188,7 +185,6 @@ public class RiskControlService {
 
     private static List<RiskRule> defaultRules() {
         return List.of(
-                new AiDecisionHardGateRule(),
                 new LossCooldownRule(),
                 new MaxDrawdownRule(),
                 new DailyLossRule(),

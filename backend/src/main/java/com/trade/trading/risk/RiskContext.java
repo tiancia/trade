@@ -3,7 +3,7 @@ package com.trade.trading.risk;
 import com.trade.client.okx.dto.AccountBalanceResp;
 import com.trade.client.okx.dto.BalanceDetail;
 import com.trade.trading.config.TradingProperties;
-import com.trade.trading.model.AiTradingDecision;
+import com.trade.trading.model.StrategyDecision;
 import com.trade.trading.model.TradingAction;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingRiskState;
@@ -17,7 +17,7 @@ import java.time.Instant;
 @Data
 @Accessors(chain = true)
 public class RiskContext {
-    private AiTradingDecision decision;
+    private StrategyDecision decision;
     private TradingDecisionContext decisionContext;
     private TradingProperties properties;
     private TradingRiskState riskState;
@@ -63,7 +63,7 @@ public class RiskContext {
             return BigDecimal.ZERO;
         }
         return switch (action()) {
-            case BUY -> zeroIfNull(decision.getBuyQuoteAmountUsdt());
+            case BUY -> zeroIfNull(decision.getBuyQuoteAmount());
             case OPEN_LONG, OPEN_SHORT -> zeroIfNull(decision.getOrderSize()).multiply(lastPrice());
             default -> BigDecimal.ZERO;
         };
