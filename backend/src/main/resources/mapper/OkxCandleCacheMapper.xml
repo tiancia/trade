@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.trading.persistence.OkxCandleCacheMapper">
+    <select id="findRange" resultType="com.trade.trading.persistence.OkxCandleCacheRow">
+        SELECT
+            inst_id,
+            bar,
+            ts,
+            open,
+            high,
+            low,
+            close,
+            vol,
+            vol_ccy,
+            vol_ccy_quote,
+            confirm
+        FROM okx_candle_cache
+        WHERE inst_id = #{instId}
+          AND bar = #{bar}
+          AND ts &gt;= #{fromTs}
+          AND ts &lt;= #{toTs}
+        ORDER BY ts ASC
+    </select>
+
+    <insert id="upsert" parameterType="com.trade.trading.persistence.OkxCandleCacheRow">
+        INSERT INTO okx_candle_cache (
+            inst_id,
+            bar,
+            ts,
+            open,
+            high,
+            low,
+            close,
+            vol,
+            vol_ccy,
+            vol_ccy_quote,
+            confirm
+        ) VALUES (
+            #{instId},
+            #{bar},
+            #{ts},
+            #{open},
+            #{high},
+            #{low},
+            #{close},
+            #{vol},
+            #{volCcy},
+            #{volCcyQuote},
+            #{confirm}
+        )
+        ON DUPLICATE KEY UPDATE
+            open = VALUES(open),
+            high = VALUES(high),
+            low = VALUES(low),
+            close = VALUES(close),
+            vol = VALUES(vol),
+            vol_ccy = VALUES(vol_ccy),
+            vol_ccy_quote = VALUES(vol_ccy_quote),
+            confirm = VALUES(confirm)
+    </insert>
+</mapper>

@@ -1,0 +1,400 @@
+package com.trade.trading.execution;
+
+import com.trade.client.okx.OkxApi;
+import com.trade.client.okx.OkxResponses;
+import com.trade.client.okx.dto.OkxResponse;
+import com.trade.client.okx.dto.OrderActionResp;
+import com.trade.client.okx.dto.OrderInfoResp;
+import com.trade.client.okx.dto.OrderQueryReq;
+import com.trade.client.okx.dto.PlaceOrderReq;
+import com.trade.trading.config.TradingProperties;
+import com.trade.trading.model.OrderSizing;
+import com.trade.trading.model.StrategyDecision;
+import com.trade.trading.model.TradingAction;
+import com.trade.trading.model.TradingDecisionContext;
+import com.trade.trading.model.TradingDecisionRecord;
+import com.trade.trading.persistence.TradingStateRepository;
+import com.trade.trading.risk.RiskAssessment;
+import com.trade.trading.risk.RiskControlService;
+import com.trade.trading.support.TradingMath;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
+
+@Component
+public class OkxLiveBroker implements TradingBroker {
+    private static final Logger log = LoggerFactory.getLogger(OkxLiveBroker.class);
+    private static final AtomicLong CLIENT_ORDER_SEQUENCE = new AtomicLong();
+
+    private final OkxApi okxApi;
+    private final OrderSizingService orderSizingService;
+    private final TradingStateRepository stateRepository;
+    private final TradingProperties properties;
+    private final RiskControlService riskControlService;
+
+    public OkxLiveBroker(
+            OkxApi okxApi,
+            OrderSizingService orderSizingService,
+            TradingStateRepository stateRepository,
+            TradingProperties properties,
+            RiskControlService riskControlService
+    ) {
+        this.okxApi = okxApi;
+        this.orderSizingService = orderSizingService;
+        this.stateRepository = stateRepository;
+        this.properties = properties;
+        this.riskControlService = riskControlService;
+    }
+
+    @Override
+    public void execute(
+            StrategyDecision decision,
+            TradingDecisionContext context,
+            TradingDecisionRecord decisionRecord
+    ) {
+        if (!properties.isLiveExecutionAllowed()) {
+            decisionRecord.setExecutionStatus("SKIPPED")
+                    .setSkipReason("Live OKX order blocked: execution-mode=live and live-enabled=true are both required");
+            return;
+        }
+
+        RiskAssessment riskAssessment = riskControlService.evaluate(decision, context);
+        if (!riskAssessment.isAllowed()) {
+            decisionRecord.setExecutionStatus("SKIPPED")
+                    .setSkipReason(riskAssessment.skipReason());
+            log.info("{}", riskAssessment.skipReason());
+            return;
+        }
+
+        if (decision.getAction() == TradingAction.BUY) {
+            executeBuy(decision, context, decisionRecord);
+        } else if (decision.getAction() == TradingAction.SELL) {
+            executeSell(decision, context, decisionRecord);
+        } else if (decision.getAction() != null && decision.getAction().isDerivativeAction()) {
+            executeDerivative(decision, context, decisionRecord);
+        } else {
+            decisionRecord.setExecutionStatus("HELD");
+            log.info("Strategy decision HOLD, no order placed. reason={}", decision.getReason());
+        }
+    }
+
+    private void executeBuy(
+            StrategyDecision decision,
+            TradingDecisionContext context,
+            TradingDecisionRecord decisionRecord
+    ) {
+        if (!properties.isSpotInstrument()) {
+            decisionRecord.setExecutionStatus("SKIPPED")
+                    .setSkipReason("BUY skipped: use OPEN_LONG for non-spot instruments");
+            return;
+        }
+        OrderSizing sizing = orderSizingService.buySize(decision, context);
+        if (!sizing.isExecutable()) {
+            decisionRecord.setExecutionStatus("SKIPPED")
+                    .setSkipReason(sizing.getSkipReason());
+            return;
+        }
+
+        PlaceOrderReq req = new PlaceOrderReq()
+                .setInstId(properties.getInstId())
+                .setTdMode(properties.getTdMode())
+                .setSide("buy")
+                .setOrdType("market")
+                .setTgtCcy("quote_ccy")
+                .setSz(sizing.getSize())
+                .setClOrdId(clientOrderId("buy"))
+                .setTag("strategyTrade");
+        decisionRecord.setOrderSize(sizing.getSize());
+
+        OrderActionResp actionResp = placeOrder(req);
+        riskControlService.recordExecutedAction(decision, context);
+        decisionRecord.setOrderId(actionResp.getOrdId())
+                .setClientOrderId(actionResp.getClOrdId());
+        Optional<FillSummary> fillSummary = updateStateFromFilledOrder(actionResp, "buy");
+        applyFillSummary(decisionRecord, fillSummary);
+    }
+
+    private void executeDerivative(
+            StrategyDecision decision,
+            TradingDecisionContext context,
+            TradingDecisionRecord decisionRecord
+    ) {
+        if (properties.isSpotInstrument()) {
+            decisionRecord.setExecutionStatus("SKIPPED")
+                    .setSkipReason("Derivative action skipped: current instrument type is SPOT");
+            return;
+        }
+        if ((decision.getAction() == TradingAction.OPEN_SHORT || decision.getAction() == TradingAction.CLOSE_SHORT)
+                && !properties.isShortEnabled()) {
+            decisionRecord.setExecutionStatus("SKIPPED")
+                    .setSkipReason(decision.getAction() + " skipped: short trading is disabled by strategy.allowShort");
+            return;
+        }
+
+        OrderSizing sizing = orderSizingService.derivativeSize(decision, context);
+        if (!sizing.isExecutable()) {
+            decisionRecord.setExecutionStatus("SKIPPED")
+                    .setSkipReason(sizing.getSkipReason());
+            return;
+        }
+
+        DerivativeOrder order = derivativeOrder(decision.getAction());
+        PlaceOrderReq req = new PlaceOrderReq()
+                .setInstId(properties.getInstId())
+                .setTdMode(properties.getTdMode())
+                .setSide(order.side())
+                .setOrdType("market")
+                .setSz(sizing.getSize())
+                .setClOrdId(clientOrderId(order.clientOrderPrefix()))
+                .setTag("strategyTrade");
+        if (properties.isLongShortPositionMode()) {
+            req.setPosSide(order.posSide());
+        }
+        if (order.reduceOnly() && !properties.isLongShortPositionMode()) {
+            req.setReduceOnly("true");
+        }
+        decisionRecord.setOrderSize(sizing.getSize());
+
+        OrderActionResp actionResp = placeOrder(req);
+        riskControlService.recordExecutedAction(decision, context);
+        decisionRecord.setOrderId(actionResp.getOrdId())
+                .setClientOrderId(actionResp.getClOrdId());
+        Optional<FillSummary> fillSummary = readFillSummary(actionResp);
+        applyFillSummary(decisionRecord, fillSummary);
+    }
+
+    private void executeSell(
+            StrategyDecision decision,
+            TradingDecisionContext context,
+            TradingDecisionRecord decisionRecord
+    ) {
+        if (!properties.isSpotInstrument()) {
+            decisionRecord.setExecutionStatus("SKIPPED")
+                    .setSkipReason("SELL skipped: use CLOSE_LONG or OPEN_SHORT for non-spot instruments");
+            return;
+        }
+        OrderSizing sizing = orderSizingService.sellSize(decision, context);
+        if (!sizing.isExecutable()) {
+            decisionRecord.setExecutionStatus("SKIPPED")
+                    .setSkipReason(sizing.getSkipReason());
+            return;
+        }
+
+        PlaceOrderReq req = new PlaceOrderReq()
+                .setInstId(properties.getInstId())
+                .setTdMode(properties.getTdMode())
+                .setSide("sell")
+                .setOrdType("market")
+                .setTgtCcy("base_ccy")
+                .setSz(sizing.getSize())
+                .setClOrdId(clientOrderId("sell"))
+                .setTag("strategyTrade");
+        decisionRecord.setOrderSize(sizing.getSize());
+
+        OrderActionResp actionResp = placeOrder(req);
+        riskControlService.recordExecutedAction(decision, context);
+        decisionRecord.setOrderId(actionResp.getOrdId())
+                .setClientOrderId(actionResp.getClOrdId());
+        Optional<FillSummary> fillSummary = updateStateFromFilledOrder(actionResp, "sell");
+        applyFillSummary(decisionRecord, fillSummary);
+    }
+
+    private OrderActionResp placeOrder(PlaceOrderReq req) {
+        OkxResponse<OrderActionResp> response = okxApi.placeOrder(req);
+        OrderActionResp actionResp = OkxResponses.first(response)
+                .orElseThrow(() -> new IllegalStateException(OkxResponses.failureMessage(response, "order action")));
+        if (!OkxResponses.isOk(response) || (actionResp.getSCode() != null && !"0".equals(actionResp.getSCode()))) {
+            throw new IllegalStateException(orderRejectedMessage(response, actionResp));
+        }
+        log.info("OKX order accepted: ordId={}, clOrdId={}", actionResp.getOrdId(), actionResp.getClOrdId());
+        return actionResp;
+    }
+
+    private static String orderRejectedMessage(OkxResponse<OrderActionResp> response, OrderActionResp actionResp) {
+        return "OKX order rejected, code=" + (response == null ? null : response.getCode())
+                + ", msg=" + (response == null ? null : response.getMsg())
+                + ", sCode=" + (actionResp == null ? null : actionResp.getSCode())
+                + ", sMsg=" + (actionResp == null ? null : actionResp.getSMsg())
+                + ", ordId=" + (actionResp == null ? null : actionResp.getOrdId())
+                + ", clOrdId=" + (actionResp == null ? null : actionResp.getClOrdId());
+    }
+
+    private Optional<FillSummary> updateStateFromFilledOrder(OrderActionResp actionResp, String side) {
+        Optional<OrderInfoResp> orderInfo = queryFilledOrder(actionResp);
+        if (orderInfo.isEmpty()) {
+            return Optional.empty();
+        }
+
+        OrderInfoResp order = orderInfo.get();
+        BigDecimal filledBase = fillBaseAmount(order);
+        BigDecimal averagePrice = fillAveragePrice(order);
+        BigDecimal fee = TradingMath.decimal(order.getFee());
+        String feeCcy = order.getFeeCcy();
+        if (filledBase.signum() <= 0) {
+            return Optional.empty();
+        }
+
+        if ("buy".equals(side)) {
+            if (averagePrice.signum() <= 0) {
+                return Optional.empty();
+            }
+            BigDecimal netBase = buyBaseAfterFee(order, filledBase);
+            if (netBase.signum() <= 0) {
+                return Optional.empty();
+            }
+            BigDecimal averageCostAfterFee = buyAverageCostAfterFee(order, filledBase, averagePrice, netBase);
+            stateRepository.recordBuy(netBase, averageCostAfterFee);
+        } else {
+            stateRepository.recordSell(sellBaseReductionAfterFee(order, filledBase));
+        }
+        return Optional.of(new FillSummary(filledBase, averagePrice, fee, feeCcy));
+    }
+
+    private Optional<FillSummary> readFillSummary(OrderActionResp actionResp) {
+        Optional<OrderInfoResp> orderInfo = queryFilledOrder(actionResp);
+        if (orderInfo.isEmpty()) {
+            return Optional.empty();
+        }
+
+        OrderInfoResp order = orderInfo.get();
+        BigDecimal filledBase = fillBaseAmount(order);
+        if (filledBase.signum() <= 0) {
+            return Optional.empty();
+        }
+        return Optional.of(new FillSummary(
+                filledBase,
+                fillAveragePrice(order),
+                TradingMath.decimal(order.getFee()),
+                order.getFeeCcy()
+        ));
+    }
+
+    private Optional<OrderInfoResp> queryFilledOrder(OrderActionResp actionResp) {
+        for (int i = 0; i < properties.getOrderFillQueryAttempts(); i++) {
+            OkxResponse<OrderInfoResp> response = okxApi.getOrder(new OrderQueryReq()
+                    .setInstId(properties.getInstId())
+                    .setOrdId(actionResp.getOrdId())
+                    .setClOrdId(actionResp.getClOrdId()));
+            OkxResponses.requireOk(response, "order query");
+            Optional<OrderInfoResp> order = OkxResponses.first(response);
+            if (order.isPresent() && fillBaseAmount(order.get()).signum() > 0) {
+                return order;
+            }
+            sleepBeforeRetry();
+        }
+        return Optional.empty();
+    }
+
+    private void sleepBeforeRetry() {
+        if (properties.getOrderFillQueryDelayMs() <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(properties.getOrderFillQueryDelayMs());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static BigDecimal fillBaseAmount(OrderInfoResp order) {
+        BigDecimal accFill = TradingMath.decimal(order.getAccFillSz());
+        if (accFill.signum() > 0) {
+            return accFill;
+        }
+        return TradingMath.decimal(order.getFillSz());
+    }
+
+    private static BigDecimal fillAveragePrice(OrderInfoResp order) {
+        BigDecimal avg = TradingMath.decimal(order.getAvgPx());
+        if (avg.signum() > 0) {
+            return avg;
+        }
+        return TradingMath.decimal(order.getFillPx());
+    }
+
+    private BigDecimal buyBaseAfterFee(OrderInfoResp order, BigDecimal filledBase) {
+        if (sameCurrency(order.getFeeCcy(), properties.getBaseCcy())) {
+            return filledBase.subtract(TradingMath.decimal(order.getFee()).abs());
+        }
+        return filledBase;
+    }
+
+    private BigDecimal buyAverageCostAfterFee(
+            OrderInfoResp order,
+            BigDecimal filledBase,
+            BigDecimal averagePrice,
+            BigDecimal netBase
+    ) {
+        BigDecimal quoteCost = filledBase.multiply(averagePrice);
+        if (sameCurrency(order.getFeeCcy(), properties.getQuoteCcy())) {
+            quoteCost = quoteCost.add(TradingMath.decimal(order.getFee()).abs());
+        }
+        return quoteCost.divide(netBase, 18, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal sellBaseReductionAfterFee(OrderInfoResp order, BigDecimal filledBase) {
+        if (sameCurrency(order.getFeeCcy(), properties.getBaseCcy())) {
+            return filledBase.add(TradingMath.decimal(order.getFee()).abs());
+        }
+        return filledBase;
+    }
+
+    private static boolean sameCurrency(String left, String right) {
+        return left != null && right != null && left.equalsIgnoreCase(right);
+    }
+
+    private static void applyFillSummary(
+            TradingDecisionRecord decisionRecord,
+            Optional<FillSummary> fillSummary
+    ) {
+        if (fillSummary.isEmpty()) {
+            decisionRecord.setExecutionStatus("FILL_UNCONFIRMED");
+            return;
+        }
+
+        FillSummary summary = fillSummary.get();
+        decisionRecord.setExecutionStatus("FILLED")
+                .setFilledBaseAmount(summary.filledBaseAmount())
+                .setAverageFillPrice(summary.averagePrice())
+                .setFee(summary.fee())
+                .setFeeCcy(summary.feeCcy());
+    }
+
+    private static String clientOrderId(String side) {
+        String suffix = Long.toString(System.currentTimeMillis(), 36)
+                + Long.toString(CLIENT_ORDER_SEQUENCE.incrementAndGet(), 36);
+        String clientOrderId = "st" + side + suffix;
+        return clientOrderId.length() <= 32 ? clientOrderId : clientOrderId.substring(0, 32);
+    }
+
+    private static DerivativeOrder derivativeOrder(TradingAction action) {
+        return switch (action) {
+            case OPEN_LONG -> new DerivativeOrder("buy", "long", false, "openlong");
+            case CLOSE_LONG -> new DerivativeOrder("sell", "long", true, "closelong");
+            case OPEN_SHORT -> new DerivativeOrder("sell", "short", false, "openshort");
+            case CLOSE_SHORT -> new DerivativeOrder("buy", "short", true, "closeshort");
+            default -> throw new IllegalArgumentException("Unsupported derivative action: " + action);
+        };
+    }
+
+    private record FillSummary(
+            BigDecimal filledBaseAmount,
+            BigDecimal averagePrice,
+            BigDecimal fee,
+            String feeCcy
+    ) {
+    }
+
+    private record DerivativeOrder(
+            String side,
+            String posSide,
+            boolean reduceOnly,
+            String clientOrderPrefix
+    ) {
+    }
+}
