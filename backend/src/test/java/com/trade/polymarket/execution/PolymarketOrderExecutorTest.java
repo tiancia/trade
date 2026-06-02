@@ -11,6 +11,8 @@ import com.trade.polymarket.model.PolymarketOutcomeSnapshot;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -83,6 +85,23 @@ class PolymarketOrderExecutorTest {
         assertEquals("winProbability * confidence below configured minimum", result.getSkipReason());
     }
 
+    @Test
+    void skipsWhenMarketResolvesBeyondTurnoverWindow() {
+        AiPolymarketProperties properties = new AiPolymarketProperties();
+        properties.setMinWinConfidenceScore(new BigDecimal("0.45"));
+        properties.setRequireMarketEndDate(true);
+        properties.setMaxTimeToResolutionHours(72);
+        PolymarketOrderExecutor executor = new PolymarketOrderExecutor(properties, new RecordingRunner(), null);
+
+        PolymarketOrderResult result = executor.execute(
+                buyDecision(),
+                contextWithEndDate(Instant.now().plus(Duration.ofDays(7)).toString())
+        );
+
+        assertEquals("SKIPPED", result.getStatus());
+        assertEquals("market resolves beyond configured short-term window", result.getSkipReason());
+    }
+
     private static AiPolymarketDecision buyDecision() {
         return new AiPolymarketDecision()
                 .setAction(PolymarketAction.BUY)
@@ -98,6 +117,10 @@ class PolymarketOrderExecutorTest {
     }
 
     private static PolymarketDecisionContext context() {
+        return contextWithEndDate(null);
+    }
+
+    private static PolymarketDecisionContext contextWithEndDate(String endDate) {
         PolymarketOutcomeSnapshot outcome = new PolymarketOutcomeSnapshot()
                 .setOutcome("Yes")
                 .setTokenId("token-1")
@@ -105,6 +128,7 @@ class PolymarketOrderExecutorTest {
         PolymarketMarketSnapshot market = new PolymarketMarketSnapshot()
                 .setSlug("market")
                 .setQuestion("Question?")
+                .setEndDate(endDate)
                 .setAcceptingOrders(true)
                 .setEnableOrderBook(true)
                 .setOutcomes(List.of(outcome));

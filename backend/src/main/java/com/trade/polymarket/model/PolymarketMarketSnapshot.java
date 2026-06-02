@@ -15,6 +15,7 @@ public class PolymarketMarketSnapshot {
     private String description;
     private String category;
     private String endDate;
+    private Long timeToResolutionMinutes;
     private Boolean active;
     private Boolean closed;
     private Boolean archived;

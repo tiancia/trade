@@ -8,6 +8,7 @@ import com.trade.polymarket.model.PolymarketMarketSnapshot;
 import com.trade.polymarket.model.PolymarketOrderRequest;
 import com.trade.polymarket.model.PolymarketOrderResult;
 import com.trade.polymarket.model.PolymarketOutcomeSnapshot;
+import com.trade.polymarket.support.PolymarketMarketFilters;
 import com.trade.trading.support.TradingMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 
 /**
  * Validates AI-selected Polymarket BUY decisions and turns them into order
@@ -154,7 +156,8 @@ public class PolymarketOrderExecutor {
         if (decision.getEstimatedEdge().compareTo(properties.getMinExpectedEdge()) < 0) {
             return "estimatedEdge below configured minimum";
         }
-        if (context.findOutcomeByTokenId(decision.getTokenId()).isEmpty()) {
+        PolymarketOutcomeSnapshot outcome = context.findOutcomeByTokenId(decision.getTokenId()).orElse(null);
+        if (outcome == null) {
             return "tokenId is not present in collected Polymarket context";
         }
         PolymarketMarketSnapshot market = context.findMarketByTokenId(decision.getTokenId()).orElse(null);
@@ -169,6 +172,20 @@ public class PolymarketOrderExecutor {
                 && (Boolean.FALSE.equals(market.getAcceptingOrders())
                 || Boolean.FALSE.equals(market.getEnableOrderBook()))) {
             return "market is not accepting orders";
+        }
+        String turnoverSkipReason = PolymarketMarketFilters.marketTurnoverSkipReason(
+                properties,
+                market.getEndDate(),
+                market.getVolume24hr(),
+                market.getLiquidity(),
+                Instant.now()
+        );
+        if (turnoverSkipReason != null) {
+            return turnoverSkipReason;
+        }
+        String outcomeSkipReason = PolymarketMarketFilters.outcomeLiquiditySkipReason(properties, outcome);
+        if (outcomeSkipReason != null) {
+            return outcomeSkipReason;
         }
         return null;
     }

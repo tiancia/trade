@@ -13,6 +13,9 @@ import com.trade.polymarket.config.AiPolymarketProperties;
 import com.trade.polymarket.model.PolymarketDecisionContext;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -87,6 +90,55 @@ class PolymarketMarketContextCollectorTest {
         assertEquals("cursor-2", marketSelection.get("samplingMarketsNextCursor"));
     }
 
+    @Test
+    void filtersMarketsOutsideConfiguredShortTermResolutionWindow() {
+        AiPolymarketProperties properties = new AiPolymarketProperties();
+        properties.setMarketLimit(5);
+        properties.setRequireMarketEndDate(true);
+        properties.setMinTimeToResolutionMinutes(15);
+        properties.setMaxTimeToResolutionHours(72);
+        PolymarketMarketContextCollector collector = new PolymarketMarketContextCollector(
+                new FakePolymarketApi(List.of(
+                        tradableMarket("market-1", "next-week-market", "token-long-yes", "token-long-no")
+                                .setEndDate(Instant.now().plus(Duration.ofDays(7)).toString()),
+                        tradableMarket("market-2", "next-hour-market", "token-soon-yes", "token-soon-no")
+                                .setEndDate(Instant.now().plus(Duration.ofHours(2)).toString())
+                )),
+                properties
+        );
+
+        PolymarketDecisionContext context = collector.collect();
+
+        assertEquals(1, context.getMarkets().size());
+        assertEquals("next-hour-market", context.getMarkets().getFirst().getSlug());
+    }
+
+    @Test
+    void filtersOutcomesWithWideSpreadOrInsufficientAskLiquidity() {
+        AiPolymarketProperties properties = new AiPolymarketProperties();
+        properties.setMarketLimit(1);
+        properties.setMaxOutcomeSpread(new BigDecimal("0.03"));
+        properties.setMinOutcomeAskLiquidityUsdc(new BigDecimal("20"));
+        OrderBookAwarePolymarketApi api = new OrderBookAwarePolymarketApi(List.of(
+                tradableMarket("market-1", "tight-liquid-market", "token-wide-yes", "token-tight-no")
+        ));
+        api.putOrderBook(
+                "token-wide-yes",
+                orderBook("0.40", "100", "0.48", "100")
+        );
+        api.putOrderBook(
+                "token-tight-no",
+                orderBook("0.50", "100", "0.52", "100")
+        );
+        PolymarketMarketContextCollector collector = new PolymarketMarketContextCollector(api, properties);
+
+        PolymarketDecisionContext context = collector.collect();
+
+        assertEquals(1, context.getMarkets().size());
+        assertEquals(1, context.getMarkets().getFirst().getOutcomes().size());
+        assertEquals("No", context.getMarkets().getFirst().getOutcomes().getFirst().getOutcome());
+    }
+
     private static GammaMarket restrictedTradableMarket() {
         return tradableMarket("market-1", "restricted-but-tradable", "token-yes", "token-no")
                 .setRestricted(true);
@@ -106,8 +158,24 @@ class PolymarketMarketContextCollectorTest {
                 .setOutcomes(OBJECT_MAPPER.valueToTree(List.of("Yes", "No")))
                 .setClobTokenIds(OBJECT_MAPPER.valueToTree(List.of(yesTokenId, noTokenId)))
                 .setOutcomePrices(OBJECT_MAPPER.valueToTree(List.of("0.51", "0.49")))
+                .setVolume24hr("1000")
+                .setLiquidityNum("500")
                 .setOrderMinSize("5")
                 .setOrderPriceMinTickSize("0.001");
+    }
+
+    private static PolymarketOrderBook orderBook(
+            String bidPrice,
+            String bidSize,
+            String askPrice,
+            String askSize
+    ) {
+        return new PolymarketOrderBook()
+                .setBids(List.of(new PolymarketOrderBookLevel().setPrice(bidPrice).setSize(bidSize)))
+                .setAsks(List.of(new PolymarketOrderBookLevel().setPrice(askPrice).setSize(askSize)))
+                .setMinOrderSize("5")
+                .setTickSize("0.001")
+                .setLastTradePrice(askPrice);
     }
 
     private static class FakePolymarketApi extends PolymarketApi {
@@ -160,6 +228,23 @@ class PolymarketMarketContextCollectorTest {
                     "token-" + offset + "-yes",
                     "token-" + offset + "-no"
             ));
+        }
+    }
+
+    private static class OrderBookAwarePolymarketApi extends FakePolymarketApi {
+        private final Map<String, PolymarketOrderBook> orderBooks = new LinkedHashMap<>();
+
+        OrderBookAwarePolymarketApi(List<GammaMarket> markets) {
+            super(markets);
+        }
+
+        void putOrderBook(String tokenId, PolymarketOrderBook orderBook) {
+            orderBooks.put(tokenId, orderBook);
+        }
+
+        @Override
+        public PolymarketOrderBook getOrderBook(String tokenId) {
+            return orderBooks.getOrDefault(tokenId, super.getOrderBook(tokenId));
         }
     }
 

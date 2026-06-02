@@ -17,6 +17,13 @@ public class AiPolymarketProperties {
     private int marketDiscoveryWindow = 50;
     private MarketDiscoverySource marketDiscoverySource = MarketDiscoverySource.GAMMA_VOLUME;
     private String samplingMarketsInitialCursor;
+    private boolean requireMarketEndDate = false;
+    private long minTimeToResolutionMinutes = 0L;
+    private long maxTimeToResolutionHours = 0L;
+    private BigDecimal minMarketVolume24hr = BigDecimal.ZERO;
+    private BigDecimal minMarketLiquidity = BigDecimal.ZERO;
+    private BigDecimal maxOutcomeSpread = BigDecimal.ZERO;
+    private BigDecimal minOutcomeAskLiquidityUsdc = BigDecimal.ZERO;
     private List<String> marketSlugs = new ArrayList<>();
     private List<String> marketIds = new ArrayList<>();
     private List<String> clobTokenIds = new ArrayList<>();

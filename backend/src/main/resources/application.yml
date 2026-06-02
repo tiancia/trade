@@ -25,7 +25,7 @@ trade:
     trading:
       auto-start: false
     polymarket:
-      auto-start: false
+      auto-start: true
   # OKX 交易所客户端配置，用于 REST 和 WebSocket 请求。
   okx:
     # OKX REST API 基础地址。
@@ -50,6 +50,13 @@ trade:
     market-limit: 5
     # 市场发现来源：gamma-volume 使用 Gamma /markets 成交量轮换；clob-sampling 使用 CLOB /sampling-markets 游标轮换。
     market-discovery-source: clob-sampling
+    # 短周期资金周转筛选：只把预计 15 分钟后到 72 小时内结算的市场交给 AI。
+    require-market-end-date: true
+    min-time-to-resolution-minutes: 15
+    max-time-to-resolution-hours: 72
+    # 可执行流动性筛选：过滤盘口过宽、买入侧深度不足的 outcome。
+    max-outcome-spread: "0.06"
+    min-outcome-ask-liquidity-usdc: "25"
     # 指定 Gamma market slug；留空时按 24h 成交量拉取开放市场。
     market-slugs: []
     # 指定 Gamma market id；可与 market-slugs 搭配使用。
@@ -61,7 +68,7 @@ trade:
     # 传给 AI 的每边盘口档位数。
     order-book-depth: 5
     # 单笔最多下注 USDC。
-    max-order-usdc: 5
+    max-order-usdc: 2
     # BUY 真正下单前要求 winProbability * confidence 达到的最低分数，0.50 表示 50%。
     min-win-confidence-score: "0.70"
     # AI 估计概率减去限价后的最低边际，0.03 表示 3 个百分点。
@@ -72,7 +79,7 @@ trade:
     # 默认最小 shares 数；市场返回 min_order_size 时优先使用市场值。
     min-order-size: 1
     # Polymarket 常规定时 AI 决策的执行间隔，单位毫秒。
-    decision-fixed-delay-ms: 1800000
+    decision-fixed-delay-ms: 900000
     # 应用启动后首次执行 Polymarket AI 决策前的延迟，单位毫秒。
     initial-delay-ms: 60000
     client:
@@ -84,7 +91,7 @@ trade:
         # 是否给 Polymarket HTTP 请求启用代理。
         enabled: true
         host: "127.0.0.1"
-        port: 7890
+        port: 7897
     execution:
       # 是否启用真实下单；false 时只记录 dry-run。
       enabled: true

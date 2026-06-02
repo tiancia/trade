@@ -15,6 +15,7 @@ import com.trade.polymarket.model.PolymarketDecisionContext;
 import com.trade.polymarket.model.PolymarketMarketSnapshot;
 import com.trade.polymarket.model.PolymarketOutcomeSnapshot;
 import com.trade.polymarket.support.PolymarketJsonLists;
+import com.trade.polymarket.support.PolymarketMarketFilters;
 import com.trade.trading.support.TradingMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,10 +57,12 @@ public class PolymarketMarketContextCollector {
 
     public PolymarketDecisionContext collect() {
         log.info(
-                "Collect Polymarket context started: marketLimit={}, discoverySource={}, requireAcceptingOrders={}, slugs={}, ids={}, clobTokenIds={}",
+                "Collect Polymarket context started: marketLimit={}, discoverySource={}, requireAcceptingOrders={}, maxTimeToResolutionHours={}, maxOutcomeSpread={}, slugs={}, ids={}, clobTokenIds={}",
                 properties.getMarketLimit(),
                 properties.getMarketDiscoverySource(),
                 properties.isRequireAcceptingOrders(),
+                properties.getMaxTimeToResolutionHours(),
+                properties.getMaxOutcomeSpread(),
                 properties.getMarketSlugs(),
                 properties.getMarketIds(),
                 properties.getClobTokenIds()
@@ -111,6 +114,14 @@ public class PolymarketMarketContextCollector {
                 continue;
             }
             PolymarketMarketSnapshot snapshot = toSnapshot(market);
+            if (snapshot.getOutcomes() == null || snapshot.getOutcomes().isEmpty()) {
+                log.info(
+                        "Skip Polymarket market candidate with no usable outcomes: id={}, slug={}",
+                        market.getId(),
+                        market.getSlug()
+                );
+                continue;
+            }
             snapshots.add(snapshot);
             log.info(
                     "Collected Polymarket market snapshot: id={}, slug={}, question={}, outcomeCount={}",
@@ -129,7 +140,10 @@ public class PolymarketMarketContextCollector {
                     "No Gamma market matched configured token ids; building token-only Polymarket context: tokenCount={}",
                     properties.getClobTokenIds().size()
             );
-            snapshots.add(configuredTokenSnapshot(properties.getClobTokenIds()));
+            PolymarketMarketSnapshot snapshot = configuredTokenSnapshot(properties.getClobTokenIds());
+            if (snapshot.getOutcomes() != null && !snapshot.getOutcomes().isEmpty()) {
+                snapshots.add(snapshot);
+            }
         }
         return new MarketSnapshotBatch(
                 snapshots,
@@ -225,17 +239,19 @@ public class PolymarketMarketContextCollector {
 
         int discoveryWindow = effectiveMarketDiscoveryWindow(marketLimit);
         int discoveryOffset = nextDiscoveryOffset(marketLimit, discoveryWindow);
+        int queryLimit = turnoverFilterEnabled() ? discoveryWindow : marketLimit;
         Map<String, Object> query = new LinkedHashMap<>();
         query.put("active", true);
         query.put("closed", false);
         query.put("order", "volume_24hr");
         query.put("ascending", false);
-        query.put("limit", marketLimit);
+        query.put("limit", queryLimit);
         query.put("offset", discoveryOffset);
         log.info(
-                "List top Polymarket markets by 24h volume: offset={}, window={}, query={}",
+                "List top Polymarket markets by 24h volume: offset={}, window={}, queryLimit={}, query={}",
                 discoveryOffset,
                 discoveryWindow,
+                queryLimit,
                 query
         );
         return new MarketCandidateBatch(
@@ -285,7 +301,13 @@ public class PolymarketMarketContextCollector {
                 return "market order book is disabled";
             }
         }
-        return null;
+        return PolymarketMarketFilters.marketTurnoverSkipReason(
+                properties,
+                market.getEndDate(),
+                firstText(market.getVolume24hr(), market.getVolumeNum(), market.getVolume()),
+                firstText(market.getLiquidityNum(), market.getLiquidity()),
+                Instant.now()
+        );
     }
 
     private String tradabilitySkipReason(PolymarketSamplingMarket market) {
@@ -304,7 +326,13 @@ public class PolymarketMarketContextCollector {
                 return "market order book is disabled";
             }
         }
-        return null;
+        return PolymarketMarketFilters.marketTurnoverSkipReason(
+                properties,
+                market.getEndDateIso(),
+                null,
+                null,
+                Instant.now()
+        );
     }
 
     private PolymarketMarketSnapshot toSnapshot(GammaMarket market) {
@@ -322,7 +350,7 @@ public class PolymarketMarketContextCollector {
             BigDecimal gammaPrice = i < outcomePrices.size()
                     ? TradingMath.decimal(outcomePrices.get(i))
                     : BigDecimal.ZERO;
-            outcomeSnapshots.add(outcomeSnapshot(
+            addOutcomeIfEligible(outcomeSnapshots, market.getSlug(), outcomeSnapshot(
                     outcomes.get(i),
                     tokenId,
                     gammaPrice,
@@ -340,6 +368,7 @@ public class PolymarketMarketContextCollector {
                 .setDescription(market.getDescription())
                 .setCategory(market.getCategory())
                 .setEndDate(market.getEndDate())
+                .setTimeToResolutionMinutes(PolymarketMarketFilters.timeToResolutionMinutes(market.getEndDate(), Instant.now()))
                 .setActive(market.getActive())
                 .setClosed(market.getClosed())
                 .setArchived(market.getArchived())
@@ -360,7 +389,7 @@ public class PolymarketMarketContextCollector {
             if (token == null || !hasText(token.getTokenId()) || isFilteredOutToken(token.getTokenId())) {
                 continue;
             }
-            outcomeSnapshots.add(outcomeSnapshot(
+            addOutcomeIfEligible(outcomeSnapshots, market.getMarketSlug(), outcomeSnapshot(
                     firstText(token.getOutcome(), token.getTokenId()),
                     token.getTokenId(),
                     TradingMath.decimal(token.getPrice()),
@@ -377,6 +406,7 @@ public class PolymarketMarketContextCollector {
                 .setQuestion(market.getQuestion())
                 .setDescription(market.getDescription())
                 .setEndDate(market.getEndDateIso())
+                .setTimeToResolutionMinutes(PolymarketMarketFilters.timeToResolutionMinutes(market.getEndDateIso(), Instant.now()))
                 .setActive(market.getActive())
                 .setClosed(market.getClosed())
                 .setArchived(market.getArchived())
@@ -389,10 +419,11 @@ public class PolymarketMarketContextCollector {
     }
 
     private PolymarketMarketSnapshot configuredTokenSnapshot(List<String> tokenIds) {
-        List<PolymarketOutcomeSnapshot> outcomes = tokenIds.stream()
+        List<PolymarketOutcomeSnapshot> outcomes = new ArrayList<>();
+        tokenIds.stream()
                 .filter(tokenId -> tokenId != null && !tokenId.isBlank())
                 .map(tokenId -> outcomeSnapshot(tokenId, tokenId, BigDecimal.ZERO, null, null, null))
-                .toList();
+                .forEach(outcome -> addOutcomeIfEligible(outcomes, "configured-token", outcome));
         return new PolymarketMarketSnapshot()
                 .setQuestion("Configured Polymarket CLOB tokens")
                 .setAcceptingOrders(true)
@@ -426,14 +457,18 @@ public class PolymarketMarketContextCollector {
             PolymarketOrderBook orderBook = polymarketApi.getOrderBook(tokenId);
             List<PolymarketOrderBookLevel> bids = nullToEmpty(orderBook.getBids());
             List<PolymarketOrderBookLevel> asks = nullToEmpty(orderBook.getAsks());
+            List<PolymarketOrderBookLevel> topBids = trimLevels(bids);
+            List<PolymarketOrderBookLevel> topAsks = trimLevels(asks);
             BigDecimal bestBid = bestBid(bids);
             BigDecimal bestAsk = bestAsk(asks);
             snapshot.setBestBid(bestBid)
                     .setBestAsk(bestAsk)
                     .setMidPrice(midPrice(bestBid, bestAsk))
                     .setSpread(bestAsk.signum() > 0 && bestBid.signum() > 0 ? bestAsk.subtract(bestBid) : BigDecimal.ZERO)
-                    .setTopBids(trimLevels(bids))
-                    .setTopAsks(trimLevels(asks))
+                    .setTopBids(topBids)
+                    .setTopAsks(topAsks)
+                    .setTopBidLiquidityUsdc(liquidityUsdc(topBids))
+                    .setTopAskLiquidityUsdc(liquidityUsdc(topAsks))
                     .setMinOrderSize(firstText(orderBook.getMinOrderSize(), marketMinOrderSize))
                     .setTickSize(firstText(orderBook.getTickSize(), marketTickSize))
                     .setNegRisk(orderBook.getNegRisk() == null ? marketNegRisk : orderBook.getNegRisk())
@@ -486,6 +521,15 @@ public class PolymarketMarketContextCollector {
                 "maxLimitPrice", properties.getMaxLimitPrice(),
                 "minOrderSize", properties.getMinOrderSize()
         ));
+        parameters.put("turnoverFilters", Map.of(
+                "requireMarketEndDate", properties.isRequireMarketEndDate(),
+                "minTimeToResolutionMinutes", properties.getMinTimeToResolutionMinutes(),
+                "maxTimeToResolutionHours", properties.getMaxTimeToResolutionHours(),
+                "minMarketVolume24hr", properties.getMinMarketVolume24hr(),
+                "minMarketLiquidity", properties.getMinMarketLiquidity(),
+                "maxOutcomeSpread", properties.getMaxOutcomeSpread(),
+                "minOutcomeAskLiquidityUsdc", properties.getMinOutcomeAskLiquidityUsdc()
+        ));
         Map<String, Object> marketSelection = new LinkedHashMap<>();
         marketSelection.put("marketSlugs", properties.getMarketSlugs());
         marketSelection.put("marketIds", properties.getMarketIds());
@@ -513,6 +557,16 @@ public class PolymarketMarketContextCollector {
 
     private int effectiveMarketDiscoveryWindow(int marketLimit) {
         return Math.max(properties.getMarketDiscoveryWindow(), marketLimit);
+    }
+
+    private boolean turnoverFilterEnabled() {
+        return properties.isRequireMarketEndDate()
+                || properties.getMinTimeToResolutionMinutes() > 0
+                || properties.getMaxTimeToResolutionHours() > 0
+                || isPositive(properties.getMinMarketVolume24hr())
+                || isPositive(properties.getMinMarketLiquidity())
+                || isPositive(properties.getMaxOutcomeSpread())
+                || isPositive(properties.getMinOutcomeAskLiquidityUsdc());
     }
 
     private int nextDiscoveryOffset(int marketLimit, int discoveryWindow) {
@@ -550,6 +604,35 @@ public class PolymarketMarketContextCollector {
         return levels.stream()
                 .limit(Math.max(properties.getOrderBookDepth(), 0))
                 .toList();
+    }
+
+    private void addOutcomeIfEligible(
+            List<PolymarketOutcomeSnapshot> outcomes,
+            String marketSlug,
+            PolymarketOutcomeSnapshot outcome
+    ) {
+        String skipReason = PolymarketMarketFilters.outcomeLiquiditySkipReason(properties, outcome);
+        if (skipReason != null) {
+            log.info(
+                    "Skip Polymarket outcome candidate: marketSlug={}, outcome={}, tokenId={}, reason={}",
+                    marketSlug,
+                    outcome == null ? null : outcome.getOutcome(),
+                    outcome == null ? null : outcome.getTokenId(),
+                    skipReason
+            );
+            return;
+        }
+        outcomes.add(outcome);
+    }
+
+    private static BigDecimal liquidityUsdc(List<PolymarketOrderBookLevel> levels) {
+        if (levels == null || levels.isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+        return levels.stream()
+                .map(level -> TradingMath.decimal(level.getPrice()).multiply(TradingMath.decimal(level.getSize())))
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .stripTrailingZeros();
     }
 
     private static BigDecimal bestBid(List<PolymarketOrderBookLevel> bids) {
@@ -590,6 +673,10 @@ public class PolymarketMarketContextCollector {
 
     private static boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private static boolean isPositive(BigDecimal value) {
+        return value != null && value.signum() > 0;
     }
 
     private record MarketCandidateBatch(

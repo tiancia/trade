@@ -39,6 +39,9 @@ public class AiPolymarketPromptBuilder {
                 - estimatedEdge is winProbability minus limitPrice. BUY only when estimatedEdge is at least riskLimits.minExpectedEdge.
                 - confidence is your self-assessed confidence in the final action.
                 - winConfidenceScore is winProbability multiplied by confidence. BUY only when winConfidenceScore is at least riskLimits.minWinConfidenceScore.
+                - Prioritize capital turnover: BUY only markets that satisfy turnoverFilters and prefer the soonest credible resolution among qualified markets.
+                - Prefer markets with known endDate and small positive timeToResolutionMinutes; avoid long-dated markets even when their edge looks attractive.
+                - Treat maxOutcomeSpread and minOutcomeAskLiquidityUsdc as hard executable-liquidity gates for the selected token.
                 - Prefer HOLD when order-book data, market wording, settlement date, or edge evidence is insufficient.
                 - Do not chase thin markets, crossed books, stale books, or markets with unclear resolution criteria.
                 - Treat Polymarket prices as implied probabilities and account for spread/slippage before buying.

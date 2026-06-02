@@ -18,6 +18,8 @@ public class PolymarketOutcomeSnapshot {
     private BigDecimal bestAsk;
     private BigDecimal midPrice;
     private BigDecimal spread;
+    private BigDecimal topBidLiquidityUsdc;
+    private BigDecimal topAskLiquidityUsdc;
     private String minOrderSize;
     private String tickSize;
     private Boolean negRisk;
