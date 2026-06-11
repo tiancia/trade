@@ -60,4 +60,44 @@
             vol_ccy_quote = VALUES(vol_ccy_quote),
             confirm = VALUES(confirm)
     </insert>
+
+    <insert id="upsertBatch">
+        INSERT INTO okx_candle_cache (
+            inst_id,
+            bar,
+            ts,
+            open,
+            high,
+            low,
+            close,
+            vol,
+            vol_ccy,
+            vol_ccy_quote,
+            confirm
+        ) VALUES
+        <foreach collection="rows" item="row" separator=",">
+            (
+                #{row.instId},
+                #{row.bar},
+                #{row.ts},
+                #{row.open},
+                #{row.high},
+                #{row.low},
+                #{row.close},
+                #{row.vol},
+                #{row.volCcy},
+                #{row.volCcyQuote},
+                #{row.confirm}
+            )
+        </foreach>
+        ON DUPLICATE KEY UPDATE
+            open = VALUES(open),
+            high = VALUES(high),
+            low = VALUES(low),
+            close = VALUES(close),
+            vol = VALUES(vol),
+            vol_ccy = VALUES(vol_ccy),
+            vol_ccy_quote = VALUES(vol_ccy_quote),
+            confirm = VALUES(confirm)
+    </insert>
 </mapper>

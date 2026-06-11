@@ -175,6 +175,34 @@ CREATE TABLE IF NOT EXISTS `okx_candle_cache` (
     PRIMARY KEY (`inst_id`, `bar`, `ts`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `okx_market_snapshots` (
+    `id` bigint NOT NULL AUTO_INCREMENT COMMENT 'Surrogate primary key',
+    `inst_id` varchar(64) NOT NULL COMMENT 'OKX instrument identifier',
+    `source` varchar(64) NOT NULL COMMENT 'REST or WebSocket collection path',
+    `market_ts` bigint DEFAULT NULL COMMENT 'Ticker exchange timestamp in epoch milliseconds',
+    `last_price` decimal(38,18) DEFAULT NULL COMMENT 'Last traded price',
+    `last_size` decimal(38,18) DEFAULT NULL COMMENT 'Last traded size',
+    `bid_price` decimal(38,18) DEFAULT NULL COMMENT 'Best bid price',
+    `bid_size` decimal(38,18) DEFAULT NULL COMMENT 'Best bid size',
+    `ask_price` decimal(38,18) DEFAULT NULL COMMENT 'Best ask price',
+    `ask_size` decimal(38,18) DEFAULT NULL COMMENT 'Best ask size',
+    `open_24h` decimal(38,18) DEFAULT NULL COMMENT 'Rolling 24-hour opening price',
+    `high_24h` decimal(38,18) DEFAULT NULL COMMENT 'Rolling 24-hour high price',
+    `low_24h` decimal(38,18) DEFAULT NULL COMMENT 'Rolling 24-hour low price',
+    `vol_ccy_24h` decimal(38,18) DEFAULT NULL COMMENT 'Rolling 24-hour currency volume',
+    `vol_24h` decimal(38,18) DEFAULT NULL COMMENT 'Rolling 24-hour base or contract volume',
+    `order_book_ts` bigint DEFAULT NULL COMMENT 'Order-book exchange timestamp in epoch milliseconds',
+    `sequence_id` bigint DEFAULT NULL COMMENT 'OKX order-book sequence identifier',
+    `ticker_json` json DEFAULT NULL COMMENT 'Original ticker payload',
+    `order_book_json` json DEFAULT NULL COMMENT 'Original order-book payload',
+    `collected_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT 'Database collection time',
+    PRIMARY KEY (`id`),
+    KEY `idx_okx_market_snapshots_inst_collected` (`inst_id`, `collected_at`),
+    KEY `idx_okx_market_snapshots_source_collected` (`source`, `collected_at`),
+    KEY `idx_okx_market_snapshots_market_ts` (`inst_id`, `market_ts`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Ticker and order-book snapshots collected by the trading module';
+
 CREATE TABLE IF NOT EXISTS `polymarket_decision_runs` (
     `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `started_at` datetime(6) NOT NULL,

@@ -5,11 +5,16 @@ import lombok.Data;
 
 import java.util.List;
 
+/** One price level in an OKX order-book snapshot. */
 @Data
 public class OrderBookLevel {
+    /** Price at this level. */
     private String px;
+    /** Aggregate size at this level. */
     private String sz;
+    /** Number of liquidated orders; retained for OKX array compatibility. */
     private String liquidatedOrders;
+    /** Number of orders represented by the level. */
     private String orders;
 
     public OrderBookLevel() {

@@ -11,6 +11,7 @@ import com.trade.client.okx.ws.OkxWsListener;
 import com.trade.client.okx.ws.OkxWsSubscription;
 import com.trade.client.okx.ws.TickerChannelReq;
 import com.trade.trading.config.TradingProperties;
+import com.trade.trading.persistence.OkxMarketDataStore;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -26,7 +27,7 @@ class OkxMarketDataWebSocketFeedTest {
         TradingProperties properties = new TradingProperties();
         properties.setInstId("ETH-USDT");
 
-        OkxMarketDataWebSocketFeed feed = new OkxMarketDataWebSocketFeed(okxApi, properties);
+        OkxMarketDataWebSocketFeed feed = new OkxMarketDataWebSocketFeed(okxApi, properties, new CapturingMarketDataStore());
 
         feed.start();
 
@@ -40,7 +41,12 @@ class OkxMarketDataWebSocketFeedTest {
     void cachesLatestTickerAndRecentCandles() {
         TradingProperties properties = new TradingProperties();
         properties.getWebsocket().setCandleCacheLimit(2);
-        OkxMarketDataWebSocketFeed feed = new OkxMarketDataWebSocketFeed(new FakeOkxApi(), properties);
+        CapturingMarketDataStore marketDataStore = new CapturingMarketDataStore();
+        OkxMarketDataWebSocketFeed feed = new OkxMarketDataWebSocketFeed(
+                new FakeOkxApi(),
+                properties,
+                marketDataStore
+        );
 
         TickerResp ticker = new TickerResp();
         ticker.setInstId("BTC-USDT");
@@ -60,6 +66,9 @@ class OkxMarketDataWebSocketFeedTest {
         assertEquals(2, candles.size());
         assertEquals("2000", candles.get(0).getTs());
         assertEquals("1500", candles.get(1).getTs());
+        assertEquals(1, marketDataStore.snapshotCount);
+        assertEquals(3, marketDataStore.candleCount);
+        assertEquals("BTC-USDT", marketDataStore.lastInstId);
     }
 
     private static CandleResp candle(String ts, String close) {
@@ -116,6 +125,24 @@ class OkxMarketDataWebSocketFeedTest {
         @Override
         public <T> OkxResponse<T> post(String path, Object req, boolean needAuth, Class<T> dataClass) {
             return OkxResponse.success(List.of());
+        }
+    }
+
+    private static class CapturingMarketDataStore implements OkxMarketDataStore {
+        private int snapshotCount;
+        private int candleCount;
+        private String lastInstId;
+
+        @Override
+        public void saveSnapshot(String instId, String source, TickerResp ticker, com.trade.client.okx.dto.OrderBookResp orderBook) {
+            snapshotCount++;
+            lastInstId = instId;
+        }
+
+        @Override
+        public void saveCandles(String instId, String bar, List<CandleResp> candles) {
+            candleCount += candles == null ? 0 : candles.size();
+            lastInstId = instId;
         }
     }
 }

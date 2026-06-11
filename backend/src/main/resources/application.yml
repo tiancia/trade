@@ -21,11 +21,11 @@ trade:
   # 模块开关
   automation:
     story:
-      auto-start: false
+      auto-start: true
     trading:
       auto-start: false
     polymarket:
-      auto-start: true
+      auto-start: false
   # OKX 交易所客户端配置，用于 REST 和 WebSocket 请求。
   okx:
     # OKX REST API 基础地址。
@@ -125,8 +125,8 @@ trade:
       # AI 服务提供商；可选值：gemini、openai-compatible、deepseek、kimi。。。
       provider: deepseek
       # 使用的 AI 模型名称；未配置时会使用 provider 对应的默认模型。
-#      model: deepseek-v4-pro
-      model: deepseek-v4-flash
+      model: deepseek-v4-pro
+#      model: deepseek-v4-flash
       # 保存 AI API Key 的环境变量名；实际密钥建议放在环境变量里。
       api-key-env-name: DEEPSEEK_API_KEY
       base-url: "https://api.deepseek.com"
@@ -201,7 +201,9 @@ trade:
     td-mode: cash
     # OKX 合约持仓模式；long_short 会发送 posSide=long/short，net 会省略 posSide。
     position-mode: long_short
+    # 策略执行模式：paper 为模拟成交，live 为真实下单，backtest 为历史回测。
     execution-mode: paper
+    # 真实下单二次保险开关；只有 execution-mode=live 且此项为 true 才允许发单。
     live-enabled: false
     # 单次买入最多使用多少计价币种金额。
     max-buy-quote-amount: 10
@@ -211,33 +213,56 @@ trade:
     max-derivative-order-size: 10
     # 持久化策略目标；每次 AI 决策都会基于这个目标和本地 strategyState，而不是单次孤立判断。
     strategy:
+      # 策略首要目标，会随每次 AI 请求一起发送。
       objective: "Preserve USDT-denominated capital first, then compound account equity through only high-conviction, cost-adjusted BTC setups."
+      # 策略复盘频率和预期持仓周期。
       horizon: "review every 30-60 minutes; hold a valid thesis for 4 hours to 7 days unless invalidated"
+      # 风险偏好描述，会写入 AI 上下文。
       risk-profile: conservative
+      # 策略允许的最大回撤比例，0.1 表示 10%。
       max-drawdown-ratio: "0.1"
+      # 非 HOLD 决策要求的最低收益风险比。
       min-risk-reward-ratio: "1.5"
+      # 非 HOLD 决策要求的最低胜率估计。
       min-win-probability: "0.56"
+      # 非 HOLD 决策要求的最低 AI 置信度。
       min-confidence: "0.65"
+      # winProbability * confidence 的最低乘积分数。
       min-win-confidence-score: "0.40"
+      # 是否允许合约策略做空；现货配置不使用此项。
       allow-short: false
+      # AI 决策必须遵守的长期原则列表。
       principles:
         - "HOLD is the default action; trade only when all non-HOLD decision gates pass."
         - "Preserve capital and avoid churn before pursuing incremental return."
         - "Keep decisions consistent with the active strategy thesis unless the invalidation condition is met."
         - "Open or add exposure only when expected net edge, risk-reward, win probability, and confidence all clear their configured thresholds."
         - "Reduce exposure when the thesis is invalidated or drawdown pressure threatens the objective."
+    # 可同时配置多个确定性策略实例，id 用于日志、状态和回测关联。
     strategies:
+      # 策略实例唯一标识。
       - id: threshold-event-default
+        # 对应代码中注册的策略类型。
         type: threshold-event
+        # 是否启用当前策略实例。
         enabled: true
+        # 当前策略使用的 K 线周期。
         bar: 1m
+        # threshold-event 策略的专属参数。
         params:
+          # 价格窗口累计变化达到该比例时触发。
           price-move-trigger-percent: "0.02"
+          # 当前成交量达到历史均量的该倍数时触发。
           volume-spike-multiplier: "3"
+          # 本地跟踪持仓浮亏达到该比例时触发。
           floating-loss-trigger-percent: "0.10"
+          # 策略 BUY 时默认使用的计价币种金额。
           buy-quote-amount: "10"
+          # 计算价格变化时使用的 K 线根数。
           price-move-window-candles: 5
+          # 计算历史均量时使用的 K 线根数。
           volume-lookback-candles: 20
+          # 是否只使用 OKX 已确认收盘的 K 线。
           require-confirmed-candle: true
     # 常规定时 AI 决策的执行间隔，单位毫秒。
     decision-fixed-delay-ms: 1800000
@@ -256,6 +281,18 @@ trade:
       stale-timeout-ms: 120000
       # 本地保留的 1 分钟 K 线缓存数量，用于事件检测。
       candle-cache-limit: 100
+    # 公共市场数据数据库落库配置；数据库异常只告警，不阻断交易决策。
+    market-data-persistence:
+      # 是否启用 ticker、order book 和 K 线持久化。
+      enabled: true
+      # 是否保存 ticker 快照和可查询的价格字段。
+      ticker-enabled: true
+      # 是否保存 REST 决策采集到的 order book JSON。
+      order-book-enabled: true
+      # 是否把 REST/WebSocket K 线写入 okx_candle_cache。
+      candle-enabled: true
+      # WebSocket ticker 最小写库间隔，避免高频行情产生过多快照，单位毫秒。
+      websocket-ticker-min-interval-ms: 5000
     # 5 分钟价格变化触发 AI 决策的阈值比例，0.02 表示 2%。
     price-move-trigger-percent: "0.02"
     # 1 分钟成交量相对前 20 分钟均量的放大倍数阈值。
@@ -286,3 +323,25 @@ trade:
     # order-fill-query-delay-ms: 1000
     # 买入金额保留的小数位数。
     # quote-amount-scale: 2
+    # 应用侧风险控制配置，在 AI 输出之外再次执行硬性校验。
+    risk:
+      # 是否启用风险规则。
+      enabled: true
+      # 连续亏损达到该次数后进入冷却。
+      max-consecutive-losses: 3
+      # 连续亏损后的冷却时间，单位毫秒。
+      loss-cooldown-ms: 3600000
+      # 相对权益高水位允许的最大回撤比例。
+      max-drawdown-ratio: "0.20"
+      # 相对当日起始权益允许的最大日亏损比例。
+      max-daily-loss-ratio: "0.05"
+      # 划分交易日使用的时区。
+      daily-zone: Asia/Shanghai
+      # 两次增加风险敞口操作之间的最小间隔，单位毫秒。
+      min-open-interval-ms: 600000
+      # 最多允许连续增加风险敞口的次数。
+      max-consecutive-open-actions: 2
+      # 单次增加风险敞口最多占账户权益的比例。
+      max-single-open-equity-ratio: "0.10"
+      # 小于该比例的权益变化视为数值噪声。
+      equity-noise-ratio: "0.0001"

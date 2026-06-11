@@ -15,4 +15,7 @@ public interface OkxCandleCacheMapper {
     );
 
     void upsert(OkxCandleCacheRow row);
+
+    /** Upserts one API/WebSocket batch in a single database round trip. */
+    void upsertBatch(@Param("rows") List<OkxCandleCacheRow> rows);
 }

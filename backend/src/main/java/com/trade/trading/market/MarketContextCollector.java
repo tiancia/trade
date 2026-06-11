@@ -26,6 +26,7 @@ import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingState;
 import com.trade.trading.model.TradingTrigger;
+import com.trade.trading.persistence.OkxMarketDataStore;
 import com.trade.trading.persistence.TradingStateRepository;
 import com.trade.trading.support.TradingMath;
 import org.springframework.stereotype.Component;
@@ -45,6 +46,7 @@ public class MarketContextCollector {
     private final OkxApi okxApi;
     private final TradingProperties properties;
     private final TradingStateRepository stateRepository;
+    private final OkxMarketDataStore marketDataStore;
     private final ObjectMapper objectMapper;
     // Instrument rules change rarely and are needed on every decision, so keep
     // a small process-local cache instead of hitting OKX each cycle.
@@ -53,11 +55,13 @@ public class MarketContextCollector {
     public MarketContextCollector(
             OkxApi okxApi,
             TradingProperties properties,
-            TradingStateRepository stateRepository
+            TradingStateRepository stateRepository,
+            OkxMarketDataStore marketDataStore
     ) {
         this.okxApi = okxApi;
         this.properties = properties;
         this.stateRepository = stateRepository;
+        this.marketDataStore = marketDataStore;
         this.objectMapper = new ObjectMapper()
                 .setSerializationInclusion(JsonInclude.Include.NON_NULL);
     }
@@ -87,6 +91,7 @@ public class MarketContextCollector {
                         .setLimit(String.valueOf(properties.getFiveMinuteCandleLimit()))),
                 "5m candles"
         );
+        persistDecisionMarketData(ticker, orderBook, candles1m, candles5m);
         AccountBalanceResp balance = OkxResponses.requireFirst(
                 okxApi.getAccountBalance(new AccountBalanceReq()
                         .setCcy(properties.getBaseCcy() + "," + properties.getQuoteCcy())),
@@ -156,20 +161,47 @@ public class MarketContextCollector {
     }
 
     public List<CandleResp> getOneMinuteCandles() {
-        return OkxResponses.data(
+        List<CandleResp> candles = OkxResponses.data(
                 okxApi.getCandles(new CandlesReq()
                         .setInstId(properties.getInstId())
                         .setBar("1m")
                         .setLimit(String.valueOf(properties.getOneMinuteCandleLimit()))),
                 "1m candles"
         );
+        marketDataStore.saveCandles(properties.getInstId(), "1m", candles);
+        return candles;
     }
 
     public TickerResp getTicker() {
-        return OkxResponses.requireFirst(
+        TickerResp ticker = OkxResponses.requireFirst(
                 okxApi.getTicker(new TickerReq().setInstId(properties.getInstId())),
                 "ticker"
         );
+        marketDataStore.saveSnapshot(
+                properties.getInstId(),
+                OkxMarketDataStore.SOURCE_REST_EVENT_FALLBACK,
+                ticker,
+                null
+        );
+        return ticker;
+    }
+
+    private void persistDecisionMarketData(
+            TickerResp ticker,
+            OrderBookResp orderBook,
+            List<CandleResp> candles1m,
+            List<CandleResp> candles5m
+    ) {
+        // Persist public data before private account calls so a later account API
+        // failure does not discard an otherwise valid market observation.
+        marketDataStore.saveSnapshot(
+                properties.getInstId(),
+                OkxMarketDataStore.SOURCE_REST_DECISION,
+                ticker,
+                orderBook
+        );
+        marketDataStore.saveCandles(properties.getInstId(), "1m", candles1m);
+        marketDataStore.saveCandles(properties.getInstId(), "5m", candles5m);
     }
 
     private InstrumentInfoResp getInstrument() {

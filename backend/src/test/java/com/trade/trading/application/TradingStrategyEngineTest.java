@@ -2,7 +2,9 @@ package com.trade.trading.application;
 
 import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.OkxRestClient;
+import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.OkxResponse;
+import com.trade.client.okx.dto.OrderBookResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.config.TradingProperties;
 import com.trade.trading.execution.TradingBroker;
@@ -14,6 +16,7 @@ import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingDecisionRecord;
 import com.trade.trading.model.TradingTrigger;
 import com.trade.trading.persistence.TradingStateRepository;
+import com.trade.trading.persistence.OkxMarketDataStore;
 import com.trade.trading.strategy.StrategyConfig;
 import com.trade.trading.strategy.StrategyEvaluationContext;
 import com.trade.trading.strategy.TradingStrategy;
@@ -76,7 +79,11 @@ class TradingStrategyEngineTest {
                 broker,
                 repository,
                 properties,
-                new OkxMarketDataWebSocketFeed(new OkxApi(new NoopOkxRestClient()), properties)
+                new OkxMarketDataWebSocketFeed(
+                        new OkxApi(new NoopOkxRestClient()),
+                        properties,
+                        new NoopMarketDataStore()
+                )
         );
     }
 
@@ -148,7 +155,7 @@ class TradingStrategyEngineTest {
         private final TradingDecisionContext context;
 
         FakeMarketContextCollector(TradingDecisionContext context) {
-            super(null, null, null);
+            super(null, null, null, null);
             this.context = context;
         }
 
@@ -167,6 +174,16 @@ class TradingStrategyEngineTest {
         @Override
         public <T> OkxResponse<T> post(String path, Object req, boolean needAuth, Class<T> dataClass) {
             return OkxResponse.success(List.of());
+        }
+    }
+
+    private static class NoopMarketDataStore implements OkxMarketDataStore {
+        @Override
+        public void saveSnapshot(String instId, String source, TickerResp ticker, OrderBookResp orderBook) {
+        }
+
+        @Override
+        public void saveCandles(String instId, String bar, List<CandleResp> candles) {
         }
     }
 }

@@ -9,6 +9,7 @@ import com.trade.client.okx.ws.OkxWsListener;
 import com.trade.client.okx.ws.OkxWsSubscription;
 import com.trade.client.okx.ws.TickerChannelReq;
 import com.trade.trading.config.TradingProperties;
+import com.trade.trading.persistence.OkxMarketDataStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
@@ -32,6 +33,7 @@ public class OkxMarketDataWebSocketFeed implements DisposableBean {
 
     private final OkxApi okxApi;
     private final TradingProperties properties;
+    private final OkxMarketDataStore marketDataStore;
     private final AtomicBoolean started = new AtomicBoolean(false);
     private final AtomicReference<TickerResp> latestTicker = new AtomicReference<>();
     private final AtomicReference<Instant> latestTickerAt = new AtomicReference<>();
@@ -39,9 +41,14 @@ public class OkxMarketDataWebSocketFeed implements DisposableBean {
     private final List<OkxWsSubscription> subscriptions = new CopyOnWriteArrayList<>();
     private final Map<String, CandleResp> oneMinuteCandles = new LinkedHashMap<>();
 
-    public OkxMarketDataWebSocketFeed(OkxApi okxApi, TradingProperties properties) {
+    public OkxMarketDataWebSocketFeed(
+            OkxApi okxApi,
+            TradingProperties properties,
+            OkxMarketDataStore marketDataStore
+    ) {
         this.okxApi = okxApi;
         this.properties = properties;
+        this.marketDataStore = marketDataStore;
     }
 
     public void start() {
@@ -109,6 +116,12 @@ public class OkxMarketDataWebSocketFeed implements DisposableBean {
         TickerResp ticker = event.getData().getFirst();
         latestTicker.set(ticker);
         latestTickerAt.set(Instant.now());
+        marketDataStore.saveSnapshot(
+                properties.getInstId(),
+                OkxMarketDataStore.SOURCE_WEBSOCKET_TICKER,
+                ticker,
+                null
+        );
     }
 
     void handleCandleData(OkxWsEvent<CandleResp> event) {
@@ -127,6 +140,7 @@ public class OkxMarketDataWebSocketFeed implements DisposableBean {
             trimCandleCache();
         }
         latestCandleAt.set(Instant.now());
+        marketDataStore.saveCandles(properties.getInstId(), "1m", updates);
     }
 
     private void subscribeTicker() {

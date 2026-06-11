@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.trading.persistence.OkxMarketSnapshotMapper">
+    <insert id="insert"
+            parameterType="com.trade.trading.persistence.OkxMarketSnapshotRow"
+            useGeneratedKeys="true"
+            keyProperty="id">
+        INSERT INTO okx_market_snapshots (
+            inst_id,
+            source,
+            market_ts,
+            last_price,
+            last_size,
+            bid_price,
+            bid_size,
+            ask_price,
+            ask_size,
+            open_24h,
+            high_24h,
+            low_24h,
+            vol_ccy_24h,
+            vol_24h,
+            order_book_ts,
+            sequence_id,
+            ticker_json,
+            order_book_json
+        ) VALUES (
+            #{instId},
+            #{source},
+            #{marketTs},
+            #{lastPrice},
+            #{lastSize},
+            #{bidPrice},
+            #{bidSize},
+            #{askPrice},
+            #{askSize},
+            #{open24h},
+            #{high24h},
+            #{low24h},
+            #{volCcy24h},
+            #{vol24h},
+            #{orderBookTs},
+            #{sequenceId},
+            #{tickerJson},
+            #{orderBookJson}
+        )
+    </insert>
+</mapper>
