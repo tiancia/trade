@@ -1,117 +1,35 @@
-export type Stats = Record<string, number>;
+export type NumberMap = Record<string, number>;
+export type FlagMap = Record<string, unknown>;
 
-// Catalog data drives the start screen selectors; detailed definitions stay on
-// the backend so the frontend only needs summaries.
-export interface TextGameCatalog {
-  themes: ThemeSummary[];
-  modes: ModeSummary[];
-}
-
-export interface ThemeSummary {
-  id: string;
-  name: string;
-  description: string;
-}
-
-export interface ModeSummary {
-  id: string;
-  name: string;
-  description: string;
-  maxTurns: number;
-  totalDays: number;
-}
-
-export interface TextGameStage {
-  id: string;
-  name: string;
-}
-
-export interface TextGameChoice {
-  id: string;
-  label: string;
-  hint?: string | null;
-}
-
-export interface TextGameScene {
+export interface TextGameCatalog { stories: StorySummary[]; }
+export interface StorySummary {
+  storyKey: string;
   title: string;
-  text: string;
-  choices: TextGameChoice[];
-}
-
-export interface TextGameEnding {
-  title: string;
-  grade: string;
   summary: string;
-  echoes: string[];
-  finalStats: Stats;
+  durationMinutes: number;
+  maxChoices: number;
+  tags: string[];
+  coverImage?: string | null;
+  version: number;
 }
-
-// Phase describes the screen-level workflow; resolutionStatus describes only
-// the async AI generation attached to a submitted choice.
-export type TextGamePhase = 'decision' | 'interlude' | 'settling' | 'completed' | 'error';
-
-export type TextGameResolutionStatus = 'none' | 'pending' | 'ready' | 'error';
-
-// Interlude actions are deterministic client-visible options that can adjust
-// stats while the backend prepares the next main scene.
-export interface TextGameActionDefinition {
-  id: string;
-  label: string;
-  hint?: string | null;
-  statsDelta: Stats;
-  feedbackTemplates?: string[];
-  minStats?: Stats;
-  maxStats?: Stats;
-}
-
-export interface TextGameResolution {
-  status: TextGameResolutionStatus;
-  turn?: number | null;
-  error?: string | null;
-  canAdvance: boolean;
-}
-
-// Log entries are shown in the waiting/interlude panel and also let the client
-// compute the notice displayed when a pending resolution advances the turn.
-export interface TextGameInterludeLogEntry {
-  turn: number;
-  step: number;
-  day: number;
-  actionId: string;
-  actionLabel: string;
-  feedback: string;
-  statsDelta: Stats;
-  statsAfter: Stats;
-  settling: boolean;
-}
-
-export interface TextGameInterlude {
-  turn: number;
-  completedSteps: number;
-  totalSteps: number;
-  currentDay: number;
-  nextStep: number;
-  actions: TextGameActionDefinition[];
-  recentFeedback?: string | null;
-  log: TextGameInterludeLogEntry[];
-}
-
-// Full session snapshot returned by every text-game endpoint. The frontend
-// treats it as the single source of truth instead of patching local fragments.
+export interface StoryRef { storyKey: string; title: string; version: number; }
+export type TextGamePhase = 'scene' | 'result' | 'completed';
+export interface Progress { turn: number; maxTurns: number; chapterNumber: number; chapterTitle: string; date: string; }
+export interface TextGameChoice { id: string; label: string; hint?: string | null; enabled: boolean; disabledReason?: string | null; }
+export interface TextGameScene { nodeId: string; title: string; text: string[]; choices: TextGameChoice[]; }
+export interface EffectSummary { attributes: NumberMap; relations: NumberMap; flags: FlagMap; }
+export interface ChoiceResult { choiceId: string; text: string[]; effects: EffectSummary; }
+export interface TextGameEnding { nodeId: string; title: string; grade: string; text: string[]; echoes: string[]; }
 export interface TextGameSession {
   sessionId: string;
-  themeId: string;
-  modeId: string;
+  story: StoryRef;
+  revision: number;
   phase: TextGamePhase;
-  turn: number;
-  maxTurns: number;
-  day: number;
-  stage: TextGameStage;
-  stats: Stats;
-  lastResult?: string | null;
-  scene: TextGameScene;
+  progress: Progress;
+  scene?: TextGameScene | null;
+  result?: ChoiceResult | null;
   ending?: TextGameEnding | null;
-  resolution: TextGameResolution;
-  interlude?: TextGameInterlude | null;
-  completed: boolean;
+  attributes: NumberMap;
+  relations: NumberMap;
+  flags: FlagMap;
 }

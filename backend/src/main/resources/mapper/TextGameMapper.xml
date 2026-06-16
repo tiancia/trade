@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.textgame.persistence.TextGameMapper">
+    <sql id="versionColumns">
+        v.id, v.story_id, s.story_key, s.title, s.summary, s.enabled, s.sort_order,
+        v.version_number, v.status, v.revision, v.story_json, v.checksum,
+        v.published_at, v.created_at, v.updated_at
+    </sql>
+
+    <select id="findPublishedCatalog" resultType="com.trade.textgame.persistence.TextGameVersionRow">
+        SELECT <include refid="versionColumns"/>
+        FROM text_game_story_versions v
+        JOIN text_game_stories s ON s.id = v.story_id
+        WHERE v.status = 'PUBLISHED' AND s.enabled = 1
+        ORDER BY s.sort_order, s.id
+    </select>
+
+    <select id="findLatestPublished" resultType="com.trade.textgame.persistence.TextGameVersionRow">
+        SELECT <include refid="versionColumns"/>
+        FROM text_game_story_versions v
+        JOIN text_game_stories s ON s.id = v.story_id
+        WHERE s.story_key = #{storyKey} AND s.enabled = 1 AND v.status = 'PUBLISHED'
+        ORDER BY v.version_number DESC LIMIT 1
+    </select>
+
+    <select id="findVersionById" resultType="com.trade.textgame.persistence.TextGameVersionRow">
+        SELECT <include refid="versionColumns"/>
+        FROM text_game_story_versions v
+        JOIN text_game_stories s ON s.id = v.story_id
+        WHERE v.id = #{id}
+    </select>
+
+    <select id="findVersion" resultType="com.trade.textgame.persistence.TextGameVersionRow">
+        SELECT <include refid="versionColumns"/>
+        FROM text_game_story_versions v
+        JOIN text_game_stories s ON s.id = v.story_id
+        WHERE v.story_id = #{storyId} AND v.version_number = #{versionNumber}
+    </select>
+
+    <select id="findStoryByKey" resultType="com.trade.textgame.persistence.TextGameStoryRow">
+        SELECT id, story_key, title, summary, enabled, sort_order, created_at, updated_at
+        FROM text_game_stories WHERE story_key = #{storyKey}
+    </select>
+
+    <select id="listStories" resultType="com.trade.textgame.persistence.TextGameStoryRow">
+        SELECT id, story_key, title, summary, enabled, sort_order, created_at, updated_at
+        FROM text_game_stories ORDER BY sort_order, id
+    </select>
+
+    <select id="listVersions" resultType="com.trade.textgame.persistence.TextGameVersionRow">
+        SELECT <include refid="versionColumns"/>
+        FROM text_game_story_versions v
+        JOIN text_game_stories s ON s.id = v.story_id
+        WHERE v.story_id = #{storyId}
+        ORDER BY v.version_number DESC
+    </select>
+
+    <insert id="insertStory" parameterType="com.trade.textgame.persistence.TextGameStoryRow"
+            useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO text_game_stories (story_key, title, summary, enabled, sort_order)
+        VALUES (#{storyKey}, #{title}, #{summary}, #{enabled}, #{sortOrder})
+    </insert>
+
+    <insert id="insertVersion" parameterType="com.trade.textgame.persistence.TextGameVersionRow"
+            useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO text_game_story_versions
+            (story_id, version_number, status, revision, story_json, checksum, published_at)
+        VALUES
+            (#{storyId}, #{versionNumber}, #{status}, #{revision}, #{storyJson}, #{checksum}, #{publishedAt})
+    </insert>
+
+    <update id="updateDraft">
+        UPDATE text_game_story_versions
+        SET story_json = #{storyJson}, checksum = #{checksum}, revision = revision + 1
+        WHERE id = #{id} AND status = 'DRAFT' AND revision = #{expectedRevision}
+    </update>
+
+    <update id="archivePublished">
+        UPDATE text_game_story_versions SET status = 'ARCHIVED'
+        WHERE story_id = #{storyId} AND status = 'PUBLISHED'
+    </update>
+
+    <update id="publishDraft">
+        UPDATE text_game_story_versions
+        SET status = 'PUBLISHED', published_at = #{publishedAt}, revision = revision + 1
+        WHERE id = #{id} AND status = 'DRAFT' AND revision = #{expectedRevision}
+    </update>
+
+    <update id="updateStoryMetadata" parameterType="com.trade.textgame.persistence.TextGameStoryRow">
+        UPDATE text_game_stories
+        SET title = #{title}, summary = #{summary}, enabled = #{enabled}, sort_order = #{sortOrder}
+        WHERE id = #{id}
+    </update>
+
+    <select id="findSession" resultType="com.trade.textgame.persistence.TextGameSessionRow">
+        SELECT session_id, story_version_id, current_node_id, pending_node_id, phase,
+               attributes_json, relations_json, flags_json, history_json, result_json,
+               revision, expires_at, completed_at, created_at, updated_at
+        FROM text_game_sessions WHERE session_id = #{sessionId}
+    </select>
+
+    <insert id="insertSession" parameterType="com.trade.textgame.persistence.TextGameSessionRow">
+        INSERT INTO text_game_sessions
+            (session_id, story_version_id, current_node_id, pending_node_id, phase,
+             attributes_json, relations_json, flags_json, history_json, result_json,
+             revision, expires_at, completed_at)
+        VALUES
+            (#{sessionId}, #{storyVersionId}, #{currentNodeId}, #{pendingNodeId}, #{phase},
+             #{attributesJson}, #{relationsJson}, #{flagsJson}, #{historyJson}, #{resultJson},
+             #{revision}, #{expiresAt}, #{completedAt})
+    </insert>
+
+    <update id="updateSession" parameterType="com.trade.textgame.persistence.TextGameSessionRow">
+        UPDATE text_game_sessions
+        SET current_node_id = #{currentNodeId}, pending_node_id = #{pendingNodeId}, phase = #{phase},
+            attributes_json = #{attributesJson}, relations_json = #{relationsJson},
+            flags_json = #{flagsJson}, history_json = #{historyJson}, result_json = #{resultJson},
+            revision = revision + 1, expires_at = #{expiresAt}, completed_at = #{completedAt}
+        WHERE session_id = #{sessionId} AND revision = #{revision}
+    </update>
+
+    <delete id="deleteSession">
+        DELETE FROM text_game_sessions WHERE session_id = #{sessionId}
+    </delete>
+
+    <insert id="insertSessionEvent" parameterType="com.trade.textgame.persistence.TextGameSessionEventRow"
+            useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO text_game_session_events
+            (session_id, sequence_no, node_id, choice_id, effects_json, state_after_json)
+        VALUES
+            (#{sessionId}, #{sequenceNo}, #{nodeId}, #{choiceId}, #{effectsJson}, #{stateAfterJson})
+    </insert>
+
+    <select id="listSessionEvents" resultType="com.trade.textgame.persistence.TextGameSessionEventRow">
+        SELECT id, session_id, sequence_no, node_id, choice_id, effects_json, state_after_json, created_at
+        FROM text_game_session_events WHERE session_id = #{sessionId} ORDER BY sequence_no
+    </select>
+</mapper>

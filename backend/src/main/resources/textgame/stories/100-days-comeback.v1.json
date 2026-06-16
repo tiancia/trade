@@ -1,0 +1,628 @@
+{
+  "schemaVersion": 1,
+  "storyKey": "100-days-comeback",
+  "metadata": {
+    "title": "100天翻身",
+    "summary": "失业、负债、房租倒计时。你有一百天，把一次谷底变成新的起点。",
+    "durationMinutes": 12,
+    "maxChoices": 6,
+    "chapterCount": 3,
+    "tags": ["都市", "逆袭", "多结局", "短篇"],
+    "coverImage": "/assets/city-100-days.svg"
+  },
+  "initialState": {
+    "attributes": {
+      "cash": -30,
+      "health": 60,
+      "skill": 20,
+      "network": 15,
+      "reputation": 20,
+      "risk": 25
+    },
+    "relations": {
+      "linXia": 5,
+      "meiJie": 5,
+      "zhouBo": 0
+    },
+    "flags": {
+      "route": "none",
+      "debt": true,
+      "promise": false,
+      "keptPromise": false
+    }
+  },
+  "startNodeId": "day01_crossroads",
+  "nodes": [
+    {
+      "id": "day01_crossroads",
+      "type": "scene",
+      "chapter": {"number": 1, "title": "谷底"},
+      "date": "第1天",
+      "title": "最后一张催款单",
+      "text": [
+        "裁员通知和催款短信在同一分钟抵达。银行卡余额是负数，房东只给你七天。",
+        "你把桌上能卖的东西排成一列，也把还能求助的人写成三个名字。今天的选择，会决定接下来一百天的方向。"
+      ],
+      "choices": [
+        {
+          "id": "start_delivery",
+          "label": "先跑夜班配送，现金止血",
+          "hint": "现金上升，健康和风险承压",
+          "resultText": ["你借来一辆旧电动车，接下整夜最远的订单。", "凌晨四点，第一笔现金到账，至少明天不会断粮。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": 20},
+            {"target": "attribute", "key": "health", "op": "add", "value": -6},
+            {"target": "attribute", "key": "risk", "op": "add", "value": 8},
+            {"target": "flag", "key": "route", "op": "set", "value": "delivery"}
+          ],
+          "transitions": [{"to": "day15_delivery"}]
+        },
+        {
+          "id": "start_skill",
+          "label": "押上时间，重做作品集",
+          "hint": "技能成长，但短期现金更紧",
+          "resultText": ["你关掉招聘网站，先把三年前最得意的项目全部推倒重做。", "天亮时，空白页面上终于出现一个能证明自己的原型。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": -5},
+            {"target": "attribute", "key": "skill", "op": "add", "value": 10},
+            {"target": "attribute", "key": "health", "op": "add", "value": -3},
+            {"target": "flag", "key": "route", "op": "set", "value": "skill"}
+          ],
+          "transitions": [{"to": "day15_skill"}]
+        },
+        {
+          "id": "start_network",
+          "label": "给林夏打电话，承认自己需要帮助",
+          "hint": "打开人脉路线，也欠下一份承诺",
+          "resultText": ["电话那头沉默了几秒。林夏没有安慰你，只约你明早去她的共享办公室。", "她说机会可以介绍，但你必须答应：拿到机会后，也要拉别人一把。"],
+          "effects": [
+            {"target": "attribute", "key": "network", "op": "add", "value": 12},
+            {"target": "relation", "key": "linXia", "op": "add", "value": 15},
+            {"target": "flag", "key": "route", "op": "set", "value": "network"},
+            {"target": "flag", "key": "promise", "op": "set", "value": true}
+          ],
+          "transitions": [{"to": "day15_network"}]
+        }
+      ]
+    },
+    {
+      "id": "day15_delivery",
+      "type": "scene",
+      "chapter": {"number": 1, "title": "谷底"},
+      "date": "第15天",
+      "title": "暴雨订单",
+      "text": ["连续两周夜班让欠款不再增长，但你的手腕开始发麻。", "暴雨夜，平台弹出一张三倍价远单；同一时间，周伯发消息说仓库缺一个会整理账目的人。"],
+      "choices": [
+        {
+          "id": "delivery_take_storm",
+          "label": "接下暴雨远单",
+          "hint": "高现金，高风险",
+          "resultText": ["雨水灌进鞋里，你还是在倒计时前送到。", "顾客给了大额小费，平台却记录了一次危险驾驶提醒。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": 30},
+            {"target": "attribute", "key": "health", "op": "add", "value": -8},
+            {"target": "attribute", "key": "risk", "op": "add", "value": 12}
+          ],
+          "transitions": [{"to": "day35_delivery"}]
+        },
+        {
+          "id": "delivery_help_zhou",
+          "label": "去周伯仓库帮忙",
+          "hint": "收入较少，获得稳定关系",
+          "resultText": ["仓库的账比你想象得更乱，你用半夜做出一张清楚的流水表。", "周伯把钥匙交给你，说以后有活先找你。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": 18},
+            {"target": "attribute", "key": "skill", "op": "add", "value": 5},
+            {"target": "relation", "key": "zhouBo", "op": "add", "value": 18},
+            {"target": "attribute", "key": "reputation", "op": "add", "value": 5}
+          ],
+          "transitions": [{"to": "day35_delivery"}]
+        }
+      ]
+    },
+    {
+      "id": "day15_skill",
+      "type": "scene",
+      "chapter": {"number": 1, "title": "谷底"},
+      "date": "第15天",
+      "title": "第一次评审",
+      "text": ["作品集有了雏形，但你已经靠泡面撑了五天。", "前同事梅姐愿意看一遍，她指出核心方案不错，表达却像一份没人愿意读完的说明书。"],
+      "choices": [
+        {
+          "id": "skill_accept_review",
+          "label": "接受批评，按她的意见重做",
+          "hint": "技能与梅姐关系提升",
+          "resultText": ["你逐条删掉自我辩解，只留下用户真正关心的结果。", "梅姐看完第二版，第一次说这份作品可以拿出去见人。"],
+          "effects": [
+            {"target": "attribute", "key": "skill", "op": "add", "value": 10},
+            {"target": "relation", "key": "meiJie", "op": "add", "value": 14},
+            {"target": "attribute", "key": "reputation", "op": "add", "value": 4}
+          ],
+          "transitions": [{"to": "day35_skill"}]
+        },
+        {
+          "id": "skill_rush_freelance",
+          "label": "先接急单，用实战补作品",
+          "hint": "现金与技能同步增长，风险较高",
+          "resultText": ["你接下一个只给三天期限的外包，把未完成的原型直接用在真实业务里。", "项目勉强上线，客户付了钱，也留下几条尖锐的返工意见。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": 22},
+            {"target": "attribute", "key": "skill", "op": "add", "value": 7},
+            {"target": "attribute", "key": "risk", "op": "add", "value": 8},
+            {"target": "attribute", "key": "health", "op": "add", "value": -5}
+          ],
+          "transitions": [{"to": "day35_skill"}]
+        }
+      ]
+    },
+    {
+      "id": "day15_network",
+      "type": "scene",
+      "chapter": {"number": 1, "title": "谷底"},
+      "date": "第15天",
+      "title": "一张空椅子",
+      "text": ["林夏把你带进一场小型创业者早餐会，却没有替你介绍。", "桌边只剩一张空椅子。你必须自己决定，是推销自己，还是先解决别人正在争论的问题。"],
+      "choices": [
+        {
+          "id": "network_pitch_self",
+          "label": "直接讲自己的经历和能力",
+          "hint": "快速扩大人脉，名声有波动",
+          "resultText": ["你的坦白让几个人记住了你，也让一位投资人当场追问失败细节。", "你没有躲闪，虽然没拿到工作，却收下了三张名片。"],
+          "effects": [
+            {"target": "attribute", "key": "network", "op": "add", "value": 15},
+            {"target": "attribute", "key": "reputation", "op": "add", "value": 3},
+            {"target": "attribute", "key": "risk", "op": "add", "value": 4}
+          ],
+          "transitions": [{"to": "day35_network"}]
+        },
+        {
+          "id": "network_solve_problem",
+          "label": "先帮他们梳理争议",
+          "hint": "提升名声与林夏关系",
+          "resultText": ["你把白板分成成本、用户和时间三栏，十分钟内让争论有了结论。", "林夏没有说话，只在散场时把下一场活动的名单发给你。"],
+          "effects": [
+            {"target": "attribute", "key": "skill", "op": "add", "value": 6},
+            {"target": "attribute", "key": "reputation", "op": "add", "value": 10},
+            {"target": "relation", "key": "linXia", "op": "add", "value": 10}
+          ],
+          "transitions": [{"to": "day35_network"}]
+        }
+      ]
+    },
+    {
+      "id": "day35_delivery",
+      "type": "scene",
+      "chapter": {"number": 2, "title": "借力"},
+      "date": "第35天",
+      "title": "稳定与上限",
+      "text": ["你已经摸清夜班最赚钱的路线，收入开始稳定。", "周伯提出把三家小店的配送和库存交给你统筹，但需要你先垫一笔周转款。"],
+      "choices": [
+        {
+          "id": "delivery_manage_stores",
+          "label": "接下统筹工作",
+          "hint": "现金、技能和周伯关系提升",
+          "resultText": ["你把路线、库存和结算做成一张共享表，第一次不靠体力赚到整笔服务费。", "三家店按时收到货，周伯开始叫你小老板。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": 35},
+            {"target": "attribute", "key": "skill", "op": "add", "value": 8},
+            {"target": "relation", "key": "zhouBo", "op": "add", "value": 15},
+            {"target": "attribute", "key": "risk", "op": "add", "value": -5}
+          ],
+          "transitions": [{"to": "day60_delivery"}]
+        },
+        {
+          "id": "delivery_expand_team",
+          "label": "招两名骑手扩大单量",
+          "hint": "现金潜力更大，管理风险上升",
+          "resultText": ["你预支工资组了一个三人小队，订单量很快翻倍。", "一次送错货让你赔掉半天收入，也逼你补上了流程漏洞。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": 42},
+            {"target": "attribute", "key": "network", "op": "add", "value": 8},
+            {"target": "attribute", "key": "risk", "op": "add", "value": 10},
+            {"target": "attribute", "key": "health", "op": "add", "value": -4}
+          ],
+          "transitions": [{"to": "day60_delivery"}]
+        }
+      ]
+    },
+    {
+      "id": "day35_skill",
+      "type": "scene",
+      "chapter": {"number": 2, "title": "借力"},
+      "date": "第35天",
+      "title": "演示日前夜",
+      "text": ["梅姐替你争取到一次闭门演示，观众是三家真正有预算的公司。", "原型还有一个关键缺陷。你可以通宵修复，也可以保留缺陷、把边界讲清楚。"],
+      "choices": [
+        {
+          "id": "skill_fix_night",
+          "label": "通宵修复关键缺陷",
+          "hint": "技能提升，健康下降",
+          "resultText": ["清晨六点，最后一条测试终于通过。", "演示流畅得像早已排练过，客户当场要求进入报价环节。"],
+          "effects": [
+            {"target": "attribute", "key": "skill", "op": "add", "value": 12},
+            {"target": "attribute", "key": "health", "op": "add", "value": -9},
+            {"target": "attribute", "key": "reputation", "op": "add", "value": 9}
+          ],
+          "transitions": [{"to": "day60_skill"}]
+        },
+        {
+          "id": "skill_show_boundary",
+          "label": "保留缺陷，诚实说明边界",
+          "hint": "名声和信任提升",
+          "resultText": ["你主动展示失败场景，并给出两周内的修复计划。", "客户没有被吓走，反而说终于遇到一个不把风险藏起来的人。"],
+          "effects": [
+            {"target": "attribute", "key": "reputation", "op": "add", "value": 14},
+            {"target": "relation", "key": "meiJie", "op": "add", "value": 10},
+            {"target": "attribute", "key": "risk", "op": "add", "value": -8}
+          ],
+          "transitions": [{"to": "day60_skill"}]
+        }
+      ]
+    },
+    {
+      "id": "day35_network",
+      "type": "scene",
+      "chapter": {"number": 2, "title": "借力"},
+      "date": "第35天",
+      "title": "被忽略的求助",
+      "text": ["活动结束后，一个和你当初一样失业的年轻人拦住你，请你帮忙看简历。", "你今晚原本要去见一位可能带来大单的客户。林夏没有催你，只提醒你还记得那份承诺。"],
+      "choices": [
+        {
+          "id": "network_keep_promise",
+          "label": "留下来帮他改完简历",
+          "hint": "兑现承诺，关系与名声提升",
+          "resultText": ["你错过了酒局，却陪他把十页简历压成两页。", "第二天，他拿到面试，也把你的名字推荐给了前公司。"],
+          "effects": [
+            {"target": "flag", "key": "keptPromise", "op": "set", "value": true},
+            {"target": "attribute", "key": "reputation", "op": "add", "value": 12},
+            {"target": "relation", "key": "linXia", "op": "add", "value": 12},
+            {"target": "attribute", "key": "network", "op": "add", "value": 8}
+          ],
+          "transitions": [{"to": "day60_network"}]
+        },
+        {
+          "id": "network_chase_client",
+          "label": "先去见大客户",
+          "hint": "现金机会提升，但承诺受损",
+          "resultText": ["酒局让你拿到一份试单合同，金额足以缓解两个月压力。", "散场后你看到三条未读消息，林夏只回了一个句号。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": 28},
+            {"target": "attribute", "key": "network", "op": "add", "value": 10},
+            {"target": "relation", "key": "linXia", "op": "add", "value": -12},
+            {"target": "attribute", "key": "risk", "op": "add", "value": 6}
+          ],
+          "transitions": [{"to": "day60_network"}]
+        }
+      ]
+    },
+    {
+      "id": "day60_delivery",
+      "type": "scene",
+      "chapter": {"number": 2, "title": "借力"},
+      "date": "第60天",
+      "title": "账本上的缺口",
+      "text": ["业务增长后，一笔货款没有按时到账，月底工资却不能拖。", "你可以拿自己的积蓄补洞，也可以把真实情况告诉团队和店主。"],
+      "choices": [
+        {
+          "id": "delivery_cover_gap",
+          "label": "先用自己的钱补上",
+          "hint": "保住名声，现金承压",
+          "resultText": ["所有人按时拿到工资，没有人知道你把最后的备用金转了进去。", "两周后货款到账，你保住信用，也记住了现金流比利润更重要。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": 18},
+            {"target": "attribute", "key": "reputation", "op": "add", "value": 12},
+            {"target": "attribute", "key": "risk", "op": "add", "value": -5}
+          ],
+          "transitions": [{"to": "day82_delivery"}]
+        },
+        {
+          "id": "delivery_open_books",
+          "label": "公开账本，共同调整排期",
+          "hint": "关系和管理能力提升",
+          "resultText": ["你把每一笔收支投到墙上，承认自己低估了回款周期。", "团队同意错峰结算，周伯还替你催回一笔旧账。"],
+          "effects": [
+            {"target": "attribute", "key": "skill", "op": "add", "value": 8},
+            {"target": "attribute", "key": "network", "op": "add", "value": 10},
+            {"target": "relation", "key": "zhouBo", "op": "add", "value": 12},
+            {"target": "attribute", "key": "cash", "op": "add", "value": 25}
+          ],
+          "transitions": [{"to": "day82_delivery"}]
+        }
+      ]
+    },
+    {
+      "id": "day60_skill",
+      "type": "scene",
+      "chapter": {"number": 2, "title": "借力"},
+      "date": "第60天",
+      "title": "第一份正式报价",
+      "text": ["客户要求你给出正式报价，金额足以还掉一半债务。", "梅姐提醒你别再按失业者的心态定价，但高价也意味着更严格的交付责任。"],
+      "choices": [
+        {
+          "id": "skill_price_value",
+          "label": "按创造的价值报价",
+          "hint": "高回报，也提高风险",
+          "resultText": ["你把报价翻到原先的两倍，并逐项写明成果和责任。", "客户删掉两项需求后签字，你第一次靠专业而不是熬夜换来收入。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": 45},
+            {"target": "attribute", "key": "reputation", "op": "add", "value": 10},
+            {"target": "attribute", "key": "risk", "op": "add", "value": 7}
+          ],
+          "transitions": [{"to": "day82_skill"}]
+        },
+        {
+          "id": "skill_partner_mei",
+          "label": "邀请梅姐共同交付",
+          "hint": "分出收益，降低风险并强化关系",
+          "resultText": ["梅姐接下项目管理，你专注完成最核心的部分。", "利润少了一截，交付却提前三天完成，客户主动介绍了下一单。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": 32},
+            {"target": "relation", "key": "meiJie", "op": "add", "value": 15},
+            {"target": "attribute", "key": "network", "op": "add", "value": 10},
+            {"target": "attribute", "key": "risk", "op": "add", "value": -8}
+          ],
+          "transitions": [{"to": "day82_skill"}]
+        }
+      ]
+    },
+    {
+      "id": "day60_network",
+      "type": "scene",
+      "chapter": {"number": 2, "title": "借力"},
+      "date": "第60天",
+      "title": "资源交换",
+      "text": ["你手里同时有客户需求、自由职业者名单和一处闲置场地。", "把它们撮合起来能形成长期合作，但需要你承担第一次失败的责任。"],
+      "choices": [
+        {
+          "id": "network_build_group",
+          "label": "组建临时协作组",
+          "hint": "人脉与名声大幅提升",
+          "resultText": ["你没有把所有好处留给自己，而是按贡献公开分账。", "第一次合作磕磕绊绊，却有六个人愿意继续留下。"],
+          "effects": [
+            {"target": "attribute", "key": "network", "op": "add", "value": 20},
+            {"target": "attribute", "key": "reputation", "op": "add", "value": 14},
+            {"target": "attribute", "key": "cash", "op": "add", "value": 18}
+          ],
+          "transitions": [{"to": "day82_network"}]
+        },
+        {
+          "id": "network_broker_deal",
+          "label": "只做中间人，收取介绍费",
+          "hint": "现金更快，关系增长有限",
+          "resultText": ["你把双方拉进同一个群，明确边界后退出项目。", "介绍费很快到账，但合作过程中的核心信任与你无关。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": 35},
+            {"target": "attribute", "key": "network", "op": "add", "value": 8},
+            {"target": "attribute", "key": "risk", "op": "add", "value": -3}
+          ],
+          "transitions": [{"to": "day82_network"}]
+        }
+      ]
+    },
+    {
+      "id": "day82_delivery",
+      "type": "scene",
+      "chapter": {"number": 3, "title": "翻身"},
+      "date": "第82天",
+      "title": "旧车与新合同",
+      "text": ["旧电动车彻底报废的那天，连锁店发来一份季度配送合同。", "签下它需要更新设备；拒绝它，你可以带着已有利润稳稳收尾。"],
+      "choices": [
+        {
+          "id": "delivery_sign_contract",
+          "label": "更新设备，签季度合同",
+          "hint": "现金和规模提升，风险增加",
+          "resultText": ["你卖掉旧车残件，添置两台可靠设备，把合同逐页看完后签字。", "这不再是一份临时工作，而是一门可以持续的生意。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": 38},
+            {"target": "attribute", "key": "reputation", "op": "add", "value": 10},
+            {"target": "attribute", "key": "risk", "op": "add", "value": 6}
+          ],
+          "transitions": [{"to": "day100_choice"}]
+        },
+        {
+          "id": "delivery_secure_profit",
+          "label": "拒绝扩张，先清理债务",
+          "hint": "现金稳健，风险下降",
+          "resultText": ["你没有被合同数字冲昏头，先把高息欠款一笔笔结清。", "手机安静下来的那晚，你第一次睡了完整的八小时。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": 45},
+            {"target": "attribute", "key": "risk", "op": "add", "value": -15},
+            {"target": "attribute", "key": "health", "op": "add", "value": 8}
+          ],
+          "transitions": [{"to": "day100_choice"}]
+        }
+      ]
+    },
+    {
+      "id": "day82_skill",
+      "type": "scene",
+      "chapter": {"number": 3, "title": "翻身"},
+      "date": "第82天",
+      "title": "产品还是项目",
+      "text": ["连续三位客户提出了相似需求，一个可以重复销售的小产品轮廓出现了。", "你可以继续接稳妥项目，也可以拿出十八天做一次真正的产品冲刺。"],
+      "choices": [
+        {
+          "id": "skill_product_sprint",
+          "label": "投入十八天做产品",
+          "hint": "需要较高技能，冲击突破结局",
+          "enabledWhen": {"source": "attribute", "key": "skill", "op": "gte", "value": 42},
+          "disabledReason": "技能不足，原型还无法在十八天内完成",
+          "resultText": ["你把所有需求压成一个核心功能，每天只验证最危险的假设。", "第十八天，第一位陌生用户付费，不是因为人情，而是因为产品有用。"],
+          "effects": [
+            {"target": "attribute", "key": "skill", "op": "add", "value": 14},
+            {"target": "attribute", "key": "cash", "op": "add", "value": 30},
+            {"target": "attribute", "key": "risk", "op": "add", "value": 12}
+          ],
+          "transitions": [{"to": "day100_choice"}]
+        },
+        {
+          "id": "skill_keep_projects",
+          "label": "继续做高质量项目",
+          "hint": "稳定现金和名声",
+          "resultText": ["你把模板和流程整理好，只接边界清晰、价格合理的项目。", "收入不再惊险，却第一次可以预测下个月会发生什么。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": 42},
+            {"target": "attribute", "key": "reputation", "op": "add", "value": 12},
+            {"target": "attribute", "key": "risk", "op": "add", "value": -10}
+          ],
+          "transitions": [{"to": "day100_choice"}]
+        }
+      ]
+    },
+    {
+      "id": "day82_network",
+      "type": "scene",
+      "chapter": {"number": 3, "title": "翻身"},
+      "date": "第82天",
+      "title": "林夏的空位",
+      "text": ["林夏准备离开共享办公室，她问你愿不愿意接手每周的互助会。", "这件事短期几乎不赚钱，却会让你成为许多人遇到困难时第一个想到的人。"],
+      "choices": [
+        {
+          "id": "network_take_community",
+          "label": "接下互助会",
+          "hint": "关系和长期人脉大幅提升",
+          "resultText": ["你把第一次活动的主题定为“失败之后还能做什么”。", "到场人数超过座位数，林夏把门卡放进你手里，没有再提那份承诺。"],
+          "effects": [
+            {"target": "attribute", "key": "network", "op": "add", "value": 22},
+            {"target": "attribute", "key": "reputation", "op": "add", "value": 15},
+            {"target": "relation", "key": "linXia", "op": "add", "value": 18},
+            {"target": "flag", "key": "keptPromise", "op": "set", "value": true}
+          ],
+          "transitions": [{"to": "day100_choice"}]
+        },
+        {
+          "id": "network_focus_business",
+          "label": "婉拒，把关系转成业务",
+          "hint": "现金提升，保留个人时间",
+          "resultText": ["你整理出一份合作清单，把能落地的关系逐一转成合同。", "账户数字开始好看，但共享办公室的灯从此与你无关。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": 40},
+            {"target": "attribute", "key": "network", "op": "add", "value": 10},
+            {"target": "attribute", "key": "health", "op": "add", "value": 5}
+          ],
+          "transitions": [{"to": "day100_choice"}]
+        }
+      ]
+    },
+    {
+      "id": "day100_choice",
+      "type": "scene",
+      "chapter": {"number": 3, "title": "翻身"},
+      "date": "第100天",
+      "title": "第一百天",
+      "text": ["第一百天清晨，你重新翻出那张催款单。数字不再像当初那样能决定你的命运。", "你已经拥有一些现金、能力和愿意接电话的人。现在要决定的不是怎么活过今天，而是把下一段路建成什么样。"],
+      "textVariants": [
+        {
+          "when": {"source": "relation", "key": "linXia", "op": "gte", "value": 35},
+          "text": ["第一百天清晨，林夏把共享办公室的新名单发给你，备注只有一句：这次轮到你开门。", "催款单还夹在笔记本里，但你身边已经有一群会互相接住的人。下一步，你要决定这种连接通向哪里。"]
+        },
+        {
+          "when": {"source": "relation", "key": "meiJie", "op": "gte", "value": 25},
+          "text": ["第一百天，梅姐发来一份新的合作协议，称呼从“帮忙”改成了“伙伴”。", "你关掉旧作品集，债务和失败仍是履历的一部分，却不再是结论。"]
+        }
+      ],
+      "choices": [
+        {
+          "id": "final_clear_debt",
+          "label": "先清掉债务，守住来之不易的底盘",
+          "hint": "需要足够现金",
+          "enabledWhen": {"source": "attribute", "key": "cash", "op": "gte", "value": 60},
+          "disabledReason": "现金还不足以一次性清理主要债务",
+          "resultText": ["你按下最后一笔还款确认，保存了余额截图。", "负数消失后，账户并不富裕，但每一分钱终于属于未来。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": -60},
+            {"target": "attribute", "key": "risk", "op": "add", "value": -20},
+            {"target": "flag", "key": "debt", "op": "set", "value": false}
+          ],
+          "transitions": [
+            {"when": {"source": "flag", "key": "debt", "op": "eq", "value": false}, "to": "ending_debt_free"},
+            {"to": "ending_balanced"}
+          ]
+        },
+        {
+          "id": "final_build_product",
+          "label": "把积累押在可复制的事业上",
+          "hint": "需要足够技能或人脉",
+          "enabledWhen": {
+            "any": [
+              {"source": "attribute", "key": "skill", "op": "gte", "value": 45},
+              {"source": "attribute", "key": "network", "op": "gte", "value": 55}
+            ]
+          },
+          "disabledReason": "技能或合作网络尚未形成可复制的基础",
+          "resultText": ["你没有把第一百天当作终点，而是把流程、产品和伙伴写进一份新的计划。", "这一次，冒险不是逃离谷底，而是从已经站稳的地方向上搭楼。"],
+          "effects": [
+            {"target": "attribute", "key": "risk", "op": "add", "value": 15},
+            {"target": "attribute", "key": "reputation", "op": "add", "value": 8}
+          ],
+          "transitions": [
+            {"when": {"source": "attribute", "key": "skill", "op": "gte", "value": 45}, "to": "ending_breakthrough"},
+            {"when": {"source": "attribute", "key": "network", "op": "gte", "value": 55}, "to": "ending_breakthrough"},
+            {"to": "ending_balanced"}
+          ]
+        },
+        {
+          "id": "final_keep_promise",
+          "label": "兑现承诺，把机会继续传下去",
+          "hint": "只在承诺路线出现",
+          "visibleWhen": {"source": "flag", "key": "promise", "op": "eq", "value": true},
+          "enabledWhen": {"source": "flag", "key": "keptPromise", "op": "eq", "value": true},
+          "disabledReason": "你还没有用行动兑现当初的承诺",
+          "resultText": ["你把第一笔稳定收入的一部分设成互助基金，并公开申请规则。", "林夏没有夸你，只把第一位需要帮助的人介绍过来。"],
+          "effects": [
+            {"target": "attribute", "key": "cash", "op": "add", "value": -15},
+            {"target": "attribute", "key": "reputation", "op": "add", "value": 20},
+            {"target": "relation", "key": "linXia", "op": "add", "value": 15}
+          ],
+          "transitions": [
+            {"when": {"source": "flag", "key": "keptPromise", "op": "eq", "value": true}, "to": "ending_trusted"},
+            {"to": "ending_balanced"}
+          ]
+        },
+        {
+          "id": "final_choose_balance",
+          "label": "暂停扩张，重新安排生活",
+          "hint": "保住健康和稳定",
+          "resultText": ["你删掉两个不必要的目标，把睡眠、运动和固定休息日写进日历。", "翻身不必是一场永不停止的冲刺，你决定先把已经得到的生活过稳。"],
+          "effects": [
+            {"target": "attribute", "key": "health", "op": "add", "value": 18},
+            {"target": "attribute", "key": "risk", "op": "add", "value": -15}
+          ],
+          "transitions": [{"to": "ending_balanced"}]
+        }
+      ]
+    },
+    {
+      "id": "ending_debt_free",
+      "type": "ending",
+      "title": "无债的清晨",
+      "grade": "A",
+      "text": ["催款电话彻底停止。你没有一夜暴富，却拿回了选择工作的权利。", "旧账清零不是传奇的终点，而是一个普通人终于能为未来做决定的第一天。"],
+      "echoes": ["第一晚赚到的现金曾替你争取一天。", "你选择先建立底盘，再谈更远的野心。"]
+    },
+    {
+      "id": "ending_breakthrough",
+      "type": "ending",
+      "title": "第二条增长曲线",
+      "grade": "S",
+      "text": ["第一批客户、伙伴和流程同时留下，你拥有了不再只依赖体力或工时的事业。", "债务仍需时间处理，但你已经从被动求生走到主动创造。"],
+      "echoes": ["作品、流程或关系在关键时刻变成了可复制的资产。", "你承担风险，但这次风险有边界、有证据。"]
+    },
+    {
+      "id": "ending_trusted",
+      "type": "ending",
+      "title": "有人会接住你",
+      "grade": "S",
+      "text": ["你的名字开始意味着可靠：不是因为你从未失败，而是因为你得到机会后愿意把门留着。", "一百天前你打出求助电话；一百天后，你成为另一个人敢于打电话的原因。"],
+      "echoes": ["林夏当初留下的空位，如今由你守着。", "兑现过的承诺成为比名片更牢固的关系。"]
+    },
+    {
+      "id": "ending_balanced",
+      "type": "ending",
+      "title": "路还很长",
+      "grade": "B",
+      "text": ["你没有解决所有问题，但收入、能力和生活都离开了失控边缘。", "真正的翻身不是把自己燃尽，而是有余力走进下一百天。"],
+      "echoes": ["你学会在机会和代价之间停下来计算。", "谷底仍在身后，但不再需要靠恐惧驱动前进。"]
+    }
+  ]
+}

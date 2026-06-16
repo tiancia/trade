@@ -9,7 +9,8 @@ import org.springframework.boot.test.context.SpringBootTest;
         "spring.datasource.url=jdbc:h2:mem:trade_context;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
         "spring.datasource.username=sa",
         "spring.datasource.password=",
-        "spring.sql.init.mode=never"
+        "spring.sql.init.mode=never",
+        "trade.text-game.seed-enabled=false"
 })
 class TradeApplicationTests {
 

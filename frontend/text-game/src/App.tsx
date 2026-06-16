@@ -1,932 +1,265 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  AlertTriangle,
-  CheckCircle2,
-  ClipboardList,
-  Clock3,
-  Dumbbell,
-  HeartPulse,
-  Hourglass,
-  Loader2,
-  Play,
-  RefreshCw,
-  RotateCcw,
-  ShieldAlert,
-  Star,
-  Users,
-  Wallet,
-} from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
-import cityImage from './assets/city-100-days.svg';
-import type {
-  ModeSummary,
-  Stats,
-  TextGameActionDefinition,
-  TextGameCatalog,
-  TextGameChoice,
-  TextGameInterlude,
-  TextGameSession,
-  ThemeSummary,
-} from './types';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode, RefObject } from 'react';
+import { ArrowLeft, ArrowRight, BookOpen, Clock3, HeartPulse, RotateCcw, ShieldAlert, SkipForward, Sparkles, Trash2, Users, WalletCards } from 'lucide-react';
+import coverArt from './assets/city-100-days.svg';
+import type { EffectSummary, NumberMap, StorySummary, TextGameCatalog, TextGameChoice, TextGameSession } from './types';
 
-const STORAGE_KEY = 'text-game-session-id';
-// Keep display order stable even when the backend later adds extra stats.
-const STAT_ORDER = ['money', 'health', 'skill', 'network', 'reputation', 'risk'];
+const STORAGE_KEY = 'text-game-session-id-v2';
+const ATTRIBUTE_LABELS: Record<string, string> = { cash: '现金', health: '健康', skill: '技能', network: '人脉', reputation: '名声', risk: '风险' };
+const RELATION_LABELS: Record<string, string> = { linXia: '林夏', meiJie: '梅姐', zhouBo: '周伯' };
 
-// UI metadata for known stat keys; unknown keys still render with a fallback icon.
-const STAT_META: Record<string, { label: string; Icon: LucideIcon; tone: string }> = {
-  money: { label: '现金', Icon: Wallet, tone: 'money' },
-  health: { label: '健康', Icon: HeartPulse, tone: 'health' },
-  skill: { label: '技能', Icon: Dumbbell, tone: 'skill' },
-  network: { label: '人脉', Icon: Users, tone: 'network' },
-  reputation: { label: '名声', Icon: Star, tone: 'reputation' },
-  risk: { label: '风险', Icon: ShieldAlert, tone: 'risk' },
-};
+class ApiError extends Error {
+  constructor(public status: number, message: string) { super(message); }
+}
 
-type BusyState = 'boot' | 'start' | 'choice' | 'interlude' | 'resolution' | 'advance' | 'restart' | null;
-
-type RetryAction =
-  | { type: 'boot' }
-  | { type: 'start' }
-  | { type: 'choice'; choiceId: string; turn: number }
-  | { type: 'resolution' };
-
-type ActionResultNotice = {
-  feedback: string;
-  statsDelta: Stats;
-};
-
-// Thin API wrapper for the text-game backend. It keeps response parsing and
-// backend error-message extraction out of the component event handlers.
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers);
-  if (init?.body) {
-    headers.set('Content-Type', 'application/json');
-  }
   const response = await fetch(`/api/text-game${path}`, {
     ...init,
-    headers,
+    headers: init?.body ? { 'Content-Type': 'application/json', ...init.headers } : init?.headers,
   });
-
   if (!response.ok) {
-    let message = `${response.status} ${response.statusText}`;
-    try {
-      const body = (await response.json()) as { error?: string };
-      message = body.error || message;
-    } catch {
-      // Keep the HTTP status text when the backend returns no JSON body.
-    }
-    throw new Error(message);
+    const payload = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new ApiError(response.status, payload.error || `请求失败（${response.status}）`);
   }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-  return (await response.json()) as T;
+  return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
 }
 
 export default function App() {
   const [catalog, setCatalog] = useState<TextGameCatalog | null>(null);
-  const [selectedThemeId, setSelectedThemeId] = useState('');
-  const [selectedModeId, setSelectedModeId] = useState('');
   const [session, setSession] = useState<TextGameSession | null>(null);
-  const [busy, setBusy] = useState<BusyState>('boot');
+  const [showCatalog, setShowCatalog] = useState(false);
+  const [busy, setBusy] = useState<'boot' | 'start' | 'continue' | 'delete' | null>('boot');
   const [pendingChoiceId, setPendingChoiceId] = useState<string | null>(null);
-  const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
-  const [advanceNotice, setAdvanceNotice] = useState<ActionResultNotice | null>(null);
-  // The polling effect needs the freshest session without restarting the timer
-  // on every local state change.
-  const sessionRef = useRef<TextGameSession | null>(null);
-  // Stores the last interlude action result so it can be merged into the notice
-  // shown when the async main-scene resolution finally advances the turn.
-  const lastInterludeResultRef = useRef<ActionResultNotice | null>(null);
+  const [sceneBeat, setSceneBeat] = useState(0);
+  const [resultBeat, setResultBeat] = useState(0);
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
-  useEffect(() => {
-    void bootstrap();
+  const loadSession = useCallback(async (sessionId: string) => {
+    const restored = await api<TextGameSession>(`/sessions/${sessionId}`);
+    setSession(restored);
+    localStorage.setItem(STORAGE_KEY, restored.sessionId);
+    return restored;
   }, []);
 
   useEffect(() => {
-    sessionRef.current = session;
-  }, [session]);
+    let active = true;
+    async function boot() {
+      try {
+        const nextCatalog = await api<TextGameCatalog>('/catalog');
+        if (!active) return;
+        setCatalog(nextCatalog);
+        const storedId = localStorage.getItem(STORAGE_KEY);
+        if (storedId) {
+          try { await loadSession(storedId); }
+          catch (cause) {
+            if (cause instanceof ApiError && cause.status === 404) localStorage.removeItem(STORAGE_KEY);
+            else throw cause;
+          }
+        } else setShowCatalog(true);
+      } catch (cause) {
+        if (active) setError(messageOf(cause));
+      } finally {
+        if (active) setBusy(null);
+      }
+    }
+    void boot();
+    return () => { active = false; };
+  }, [loadSession]);
 
   useEffect(() => {
-    if (!session || session.completed || session.resolution?.status !== 'pending') {
-      return;
-    }
+    setSceneBeat(0);
+    setResultBeat(0);
+    window.setTimeout(() => headingRef.current?.focus(), 0);
+  }, [session?.phase, session?.scene?.nodeId, session?.revision]);
 
-    // The backend resolves the selected choice asynchronously, while the player
-    // can keep taking interlude actions. Poll until that pending resolution is
-    // ready, failed, or already committed by another request.
-    let cancelled = false;
-    const refresh = async () => {
-      try {
-        const latest = await api<TextGameSession>(`/sessions/${session.sessionId}`);
-        if (cancelled) {
-          return;
-        }
-        rememberInterludeLog(latest);
-        const currentSession = sessionRef.current;
-        if (currentSession && latest.turn > currentSession.turn) {
-          setAdvanceNotice({
-            feedback: lastInterludeResultRef.current?.feedback ?? '主线已推进，等待期行动和主线结果已经结算。',
-            statsDelta: diffStats(currentSession.stats, latest.stats),
-          });
-          lastInterludeResultRef.current = null;
-        }
-        sessionRef.current = latest;
-        setSession(latest);
-        if (latest.phase === 'error' && latest.resolution?.error) {
-          setError(latest.resolution.error);
-          setRetryAction({ type: 'resolution' });
-        } else if (retryAction?.type === 'resolution') {
-          setError(null);
-          setRetryAction(null);
-        }
-      } catch (caught) {
-        if (!cancelled) {
-          setError(errorMessage(caught));
-        }
+  const sceneRead = Boolean(session?.scene && sceneBeat >= session.scene.text.length - 1);
+  const resultRead = Boolean(session?.result && resultBeat >= session.result.text.length - 1);
+
+  async function startStory(story: StorySummary) {
+    if (busy || pendingChoiceId) return;
+    setBusy('start'); setError(null);
+    try {
+      const previousId = session?.sessionId;
+      const created = await api<TextGameSession>('/sessions', { method: 'POST', body: JSON.stringify({ storyKey: story.storyKey }) });
+      setSession(created); setShowCatalog(false); localStorage.setItem(STORAGE_KEY, created.sessionId);
+      if (previousId && previousId !== created.sessionId) void api<void>(`/sessions/${previousId}`, { method: 'DELETE' }).catch(() => undefined);
+    } catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(null); }
+  }
+
+  async function choose(choice: TextGameChoice) {
+    if (!session || !choice.enabled || busy || pendingChoiceId || !sceneRead) return;
+    setPendingChoiceId(choice.id); setError(null);
+    try {
+      const next = await api<TextGameSession>(`/sessions/${session.sessionId}/choices`, {
+        method: 'POST', body: JSON.stringify({ choiceId: choice.id, expectedRevision: session.revision }),
+      });
+      setSession(next);
+    } catch (cause) { await handleMutationError(cause); }
+    finally { setPendingChoiceId(null); }
+  }
+
+  async function continueGame() {
+    if (!session || session.phase !== 'result' || busy || pendingChoiceId || !resultRead) return;
+    setBusy('continue'); setError(null);
+    try {
+      const next = await api<TextGameSession>(`/sessions/${session.sessionId}/continue`, {
+        method: 'POST', body: JSON.stringify({ expectedRevision: session.revision }),
+      });
+      setSession(next);
+    } catch (cause) { await handleMutationError(cause); }
+    finally { setBusy(null); }
+  }
+
+  async function handleMutationError(cause: unknown) {
+    if (cause instanceof ApiError && cause.status === 409 && session) {
+      try { await loadSession(session.sessionId); setError(`${cause.message}，已载入最新进度。`); return; }
+      catch { /* Show the original mutation error. */ }
+    }
+    setError(messageOf(cause));
+  }
+
+  async function abandon() {
+    if (!session || busy || pendingChoiceId) return;
+    setBusy('delete'); setError(null);
+    try {
+      await api<void>(`/sessions/${session.sessionId}`, { method: 'DELETE' });
+      localStorage.removeItem(STORAGE_KEY); setSession(null); setShowCatalog(true);
+    } catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(null); }
+  }
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target?.matches('button, a, input, textarea, select') || !session || showCatalog || busy || pendingChoiceId) return;
+      if ((event.key === ' ' || event.key === 'Enter') && session.phase === 'scene' && session.scene && !sceneRead) {
+        event.preventDefault(); setSceneBeat((value) => Math.min(value + 1, session.scene!.text.length - 1));
+      } else if ((event.key === ' ' || event.key === 'Enter') && session.phase === 'result' && session.result) {
+        event.preventDefault();
+        if (!resultRead) setResultBeat((value) => Math.min(value + 1, session.result!.text.length - 1)); else void continueGame();
+      } else if (/^[1-4]$/.test(event.key) && session.phase === 'scene' && sceneRead && session.scene) {
+        const choice = session.scene.choices[Number(event.key) - 1]; if (choice) void choose(choice);
       }
-    };
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
 
-    const timer = window.setInterval(refresh, 1000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [retryAction?.type, session?.completed, session?.resolution?.status, session?.sessionId]);
-
-  const selectedTheme = useMemo(
-    () => catalog?.themes.find((theme) => theme.id === selectedThemeId) ?? catalog?.themes[0],
-    [catalog, selectedThemeId],
-  );
-
-  const selectedMode = useMemo(
-    () => catalog?.modes.find((mode) => mode.id === selectedModeId) ?? catalog?.modes[0],
-    [catalog, selectedModeId],
-  );
-
-  async function bootstrap() {
-    setBusy('boot');
-    setError(null);
-    try {
-      const nextCatalog = await api<TextGameCatalog>('/catalog');
-      setCatalog(nextCatalog);
-      setSelectedThemeId((current) => current || nextCatalog.themes[0]?.id || '');
-      setSelectedModeId((current) => current || nextCatalog.modes[0]?.id || '');
-
-      const storedSessionId = localStorage.getItem(STORAGE_KEY);
-      if (storedSessionId) {
-        try {
-          // Resume lightweight in-browser sessions after a refresh; missing or
-          // expired backend sessions are treated as a clean start.
-          const restored = await api<TextGameSession>(`/sessions/${storedSessionId}`);
-          setSession(restored);
-        } catch {
-          localStorage.removeItem(STORAGE_KEY);
-        }
-      }
-      setRetryAction(null);
-    } catch (caught) {
-      setError(errorMessage(caught));
-      setRetryAction({ type: 'boot' });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function startNewGame() {
-    if (!selectedTheme || !selectedMode) {
-      return;
-    }
-    setBusy('start');
-    setError(null);
-    try {
-      const nextSession = await api<TextGameSession>('/sessions', {
-        method: 'POST',
-        body: JSON.stringify({
-          themeId: selectedTheme.id,
-          modeId: selectedMode.id,
-        }),
-      });
-      setSession(nextSession);
-      setAdvanceNotice(null);
-      lastInterludeResultRef.current = null;
-      localStorage.setItem(STORAGE_KEY, nextSession.sessionId);
-      setRetryAction(null);
-    } catch (caught) {
-      setError(errorMessage(caught));
-      setRetryAction({ type: 'start' });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function restartGame() {
-    setBusy('restart');
-    setError(null);
-    const existingSessionId = session?.sessionId;
-    try {
-      if (existingSessionId) {
-        await api<void>(`/sessions/${existingSessionId}`, { method: 'DELETE' });
-      }
-      localStorage.removeItem(STORAGE_KEY);
-      setSession(null);
-      setAdvanceNotice(null);
-      lastInterludeResultRef.current = null;
-      await startNewGame();
-    } catch (caught) {
-      setError(errorMessage(caught));
-      setRetryAction({ type: 'start' });
-      setBusy(null);
-    }
-  }
-
-  async function submitChoice(choice: TextGameChoice, turn = session?.turn ?? 0) {
-    if (!session || busy) {
-      return;
-    }
-    setBusy('choice');
-    setPendingChoiceId(choice.id);
-    setError(null);
-    setAdvanceNotice(null);
-    lastInterludeResultRef.current = null;
-    try {
-      const nextSession = await api<TextGameSession>(`/sessions/${session.sessionId}/choices`, {
-        method: 'POST',
-        body: JSON.stringify({ choiceId: choice.id, turn }),
-      });
-      setSession(nextSession);
-      localStorage.setItem(STORAGE_KEY, nextSession.sessionId);
-      setRetryAction(null);
-    } catch (caught) {
-      setError(errorMessage(caught));
-      setRetryAction({ type: 'choice', choiceId: choice.id, turn });
-    } finally {
-      setPendingChoiceId(null);
-      setBusy(null);
-    }
-  }
-
-  async function submitInterludeAction(action: TextGameActionDefinition) {
-    if (!session || !session.interlude || !session.resolution?.turn || busy) {
-      return;
-    }
-    setBusy('interlude');
-    setPendingActionId(action.id);
-    setError(null);
-    try {
-      const nextSession = await api<TextGameSession>(`/sessions/${session.sessionId}/interlude-actions`, {
-        method: 'POST',
-        body: JSON.stringify({
-          actionId: action.id,
-          turn: session.resolution.turn,
-          step: session.interlude.nextStep,
-        }),
-      });
-      rememberInterludeLog(nextSession);
-      if (nextSession.turn > session.turn) {
-        setAdvanceNotice({
-          feedback: `主线已推进，「${action.label}」的影响已经并入新的局面。`,
-          statsDelta: diffStats(session.stats, nextSession.stats),
-        });
-        lastInterludeResultRef.current = null;
-      }
-      setSession(nextSession);
-      setRetryAction(null);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setPendingActionId(null);
-      setBusy(null);
-    }
-  }
-
-  async function retryResolution() {
-    if (!session || busy) {
-      return;
-    }
-    setBusy('resolution');
-    setError(null);
-    try {
-      const nextSession = await api<TextGameSession>(`/sessions/${session.sessionId}/resolution/retry`, {
-        method: 'POST',
-      });
-      setSession(nextSession);
-      setRetryAction(null);
-    } catch (caught) {
-      setError(errorMessage(caught));
-      setRetryAction({ type: 'resolution' });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function advanceResolution() {
-    if (!session || busy || !session.resolution?.canAdvance) {
-      return;
-    }
-    setBusy('advance');
-    setError(null);
-    try {
-      const nextSession = await api<TextGameSession>(`/sessions/${session.sessionId}/resolution/advance`, {
-        method: 'POST',
-      });
-      setAdvanceNotice({
-        feedback: nextSession.lastResult ?? '主线结果已经结算，新的局面已经展开。',
-        statsDelta: diffStats(session.stats, nextSession.stats),
-      });
-      lastInterludeResultRef.current = null;
-      setSession(nextSession);
-      setRetryAction(null);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  function retry() {
-    if (!retryAction) {
-      return;
-    }
-    if (retryAction.type === 'boot') {
-      void bootstrap();
-      return;
-    }
-    if (retryAction.type === 'start') {
-      void startNewGame();
-      return;
-    }
-    if (retryAction.type === 'resolution') {
-      void retryResolution();
-      return;
-    }
-    const choice = session?.scene.choices.find((item) => item.id === retryAction.choiceId);
-    if (choice) {
-      void submitChoice(choice, retryAction.turn);
-    }
-  }
-
-  function rememberInterludeLog(nextSession: TextGameSession) {
-    const entry = latestInterludeLog(nextSession.interlude);
-    if (!entry) {
-      return;
-    }
-    lastInterludeResultRef.current = {
-      feedback: entry.feedback,
-      statsDelta: entry.statsDelta,
-    };
-  }
-
-  const progressPercent = session ? Math.round((session.turn / session.maxTurns) * 100) : 0;
-  const isBusy = busy !== null;
-  const inInterlude = Boolean(
-    session?.interlude && ['interlude', 'settling', 'error'].includes(session.phase),
-  );
+  if (busy === 'boot') return <LoadingScreen />;
+  if (showCatalog || !session) return <CatalogScreen catalog={catalog} savedSession={session} busy={busy === 'start'} error={error} onStart={startStory} onResume={() => setShowCatalog(false)} />;
 
   return (
     <div className="app-shell">
       <header className="top-bar">
-        <div>
-          <p className="eyebrow">选择驱动文字游戏</p>
-          <h1>人生模拟器：100天翻身</h1>
-        </div>
-        {session && (
-          <button className="icon-text-button" type="button" onClick={() => void restartGame()} disabled={isBusy}>
-            <RotateCcw size={18} />
-            重新开始
-          </button>
-        )}
+        <button className="text-button" onClick={() => setShowCatalog(true)}><ArrowLeft size={17} /> 剧情库</button>
+        <div className="brand-lockup"><span>文字剧情实验室</span><strong>{session.story.title}</strong></div>
+        <button className="text-button danger" disabled={busy === 'delete'} onClick={() => void abandon()}><Trash2 size={16} /> 放弃存档</button>
       </header>
-
-      {error && (
-        <div className="error-banner" role="alert">
-          <AlertTriangle size={18} />
-          <span>{error}</span>
-          {retryAction && (
-            <button type="button" onClick={retry} disabled={isBusy}>
-              <RefreshCw size={16} />
-              重试
-            </button>
-          )}
-        </div>
-      )}
-
-      {!session ? (
-        <StartScreen
-          catalog={catalog}
-          selectedTheme={selectedTheme}
-          selectedMode={selectedMode}
-          selectedThemeId={selectedThemeId}
-          selectedModeId={selectedModeId}
-          busy={busy}
-          onThemeChange={setSelectedThemeId}
-          onModeChange={setSelectedModeId}
-          onStart={() => void startNewGame()}
-        />
-      ) : (
-        <main className="game-layout">
-          <section className="story-surface" aria-live="polite">
-            <div className="progress-header">
-              <div>
-                <span className="stage-pill">{session.stage.name}</span>
-                <h2>{inInterlude ? interludeTitle(session) : session.scene.title}</h2>
-              </div>
-              <div className="day-counter">
-                <Clock3 size={17} />
-                第 {session.day} 天
-              </div>
-            </div>
-
-            <div className="progress-track" aria-label={`回合进度 ${session.turn}/${session.maxTurns}`}>
-              <div style={{ width: `${progressPercent}%` }} />
-            </div>
-            <div className="turn-line">
-              <span>{session.turn}/{session.maxTurns} 回合</span>
-              <span>{progressPercent}%</span>
-            </div>
-
-            {session.lastResult && <div className="result-strip">{session.lastResult}</div>}
-            {advanceNotice && <AdvanceNotice notice={advanceNotice} />}
-
-            {session.completed && session.ending ? (
-              <EndingView session={session} onRestart={() => void restartGame()} disabled={isBusy} />
-            ) : inInterlude && session.interlude ? (
-              <InterludePanel
-                session={session}
-                interlude={session.interlude}
-                busy={busy}
-                pendingActionId={pendingActionId}
-                onAction={(action) => void submitInterludeAction(action)}
-                onRetryResolution={() => void retryResolution()}
-                onAdvanceResolution={() => void advanceResolution()}
-              />
-            ) : (
-              <DecisionPanel
-                session={session}
-                busy={busy}
-                pendingChoiceId={pendingChoiceId}
-                onChoice={(choice) => void submitChoice(choice)}
-              />
-            )}
-          </section>
-
-          <aside className="status-surface">
-            <img className="city-image" src={cityImage} alt="" />
-            <div className="mode-block">
-              <p>{selectedMode?.name ?? '短局'}</p>
-              <span>
-                {session.maxTurns} 次决策 / {selectedMode?.totalDays ?? 100} 天
-              </span>
-            </div>
-            <StatsPanel stats={session.stats} />
-          </aside>
-        </main>
-      )}
-
-      {busy === 'boot' && (
-        <div className="boot-loading">
-          <Loader2 className="spin" size={24} />
-          加载中
-        </div>
-      )}
+      <main className="game-layout">
+        <CompactStatus session={session} />
+        <aside className="status-panel" aria-label="角色状态"><Timeline session={session} /><StatGrid values={session.attributes} /><RelationList values={session.relations} /></aside>
+        <section className="story-panel">
+          {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
+          <p className="sr-only" aria-live="polite">{pendingChoiceId ? '正在提交选择' : busy === 'continue' ? '正在进入下一幕' : ''}</p>
+          {session.phase === 'scene' && session.scene && <SceneView session={session} beat={sceneBeat} headingRef={headingRef} pendingChoiceId={pendingChoiceId} onNextBeat={() => setSceneBeat((value) => Math.min(value + 1, session.scene!.text.length - 1))} onSkip={() => setSceneBeat(session.scene!.text.length - 1)} onChoice={choose} />}
+          {session.phase === 'result' && session.result && <ResultView session={session} beat={resultBeat} headingRef={headingRef} busy={busy === 'continue'} onNextBeat={() => setResultBeat((value) => Math.min(value + 1, session.result!.text.length - 1))} onSkip={() => setResultBeat(session.result!.text.length - 1)} onContinue={() => void continueGame()} />}
+          {session.phase === 'completed' && session.ending && <EndingView session={session} headingRef={headingRef} onRestart={() => setShowCatalog(true)} />}
+        </section>
+      </main>
     </div>
   );
 }
 
-function DecisionPanel({
-  session,
-  busy,
-  pendingChoiceId,
-  onChoice,
-}: {
-  session: TextGameSession;
-  busy: BusyState;
-  pendingChoiceId: string | null;
-  onChoice: (choice: TextGameChoice) => void;
-}) {
+function CatalogScreen({ catalog, savedSession, busy, error, onStart, onResume }: { catalog: TextGameCatalog | null; savedSession: TextGameSession | null; busy: boolean; error: string | null; onStart: (story: StorySummary) => void; onResume: () => void; }) {
   return (
-    <>
-      <article className="scene-text" key={session.turn}>
-        {session.scene.text}
-      </article>
-      <div className="choice-list">
-        {session.scene.choices.map((choice) => (
-          <button
-            className="choice-button"
-            type="button"
-            key={choice.id}
-            onClick={() => onChoice(choice)}
-            disabled={busy !== null}
-          >
-            <span className="choice-id">{choice.id}</span>
-            <span className="choice-copy">
-              <strong>{choice.label}</strong>
-              {choice.hint && <small>{choice.hint}</small>}
-            </span>
-            {busy === 'choice' && pendingChoiceId === choice.id && <Loader2 className="spin" size={18} />}
-          </button>
+    <div className="catalog-shell">
+      <header className="catalog-hero">
+        <div><p className="eyebrow">预制剧情 · 即时响应 · 自动存档</p><h1>在关键选择里，走完另一种人生</h1><p>每个故事都经过完整路径校验。没有生成等待，也不会在刷新后丢失进度。</p></div>
+        {savedSession && <button className="resume-card" onClick={onResume}><span>继续存档</span><strong>{savedSession.story.title}</strong><small>第 {Math.min(savedSession.progress.turn + 1, savedSession.progress.maxTurns)} / {savedSession.progress.maxTurns} 回合</small><ArrowRight size={20} /></button>}
+      </header>
+      {error && <ErrorBanner message={error} />}
+      <section className="catalog-grid" aria-label="可玩剧情">
+        {catalog?.stories.map((story) => (
+          <article className="story-card" key={story.storyKey}>
+            <img src={story.coverImage || coverArt} onError={(event) => { event.currentTarget.src = coverArt; }} alt="城市天际线插画" />
+            <div className="story-card-body">
+              <div className="tag-row">{story.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
+              <h2>{story.title}</h2><p>{story.summary}</p>
+              <div className="story-meta"><span><Clock3 size={16} /> {story.durationMinutes} 分钟</span><span><BookOpen size={16} /> {story.maxChoices} 回合</span><span>版本 {story.version}</span></div>
+              <button className="primary-button" disabled={busy} onClick={() => onStart(story)}>{busy ? '正在创建存档…' : savedSession?.story.storyKey === story.storyKey ? '重新开始' : '开始故事'}<ArrowRight size={18} /></button>
+            </div>
+          </article>
         ))}
-      </div>
-    </>
-  );
-}
-
-function InterludePanel({
-  session,
-  interlude,
-  busy,
-  pendingActionId,
-  onAction,
-  onRetryResolution,
-  onAdvanceResolution,
-}: {
-  session: TextGameSession;
-  interlude: TextGameInterlude;
-  busy: BusyState;
-  pendingActionId: string | null;
-  onAction: (action: TextGameActionDefinition) => void;
-  onRetryResolution: () => void;
-  onAdvanceResolution: () => void;
-}) {
-  const resolution = session.resolution;
-  const isError = session.phase === 'error' || resolution.status === 'error';
-  const isSettling = session.phase === 'settling';
-  const actionDisabled = busy !== null || isError;
-
-  return (
-    <div className="interlude-panel">
-      <div className="interlude-status">
-        <span className={`resolution-badge ${resolution.status}`}>
-          {resolution.status === 'pending' && <Loader2 className="spin" size={15} />}
-          {resolution.status === 'ready' && <CheckCircle2 size={15} />}
-          {resolution.status === 'error' && <AlertTriangle size={15} />}
-          {resolutionLabel(resolution.status)}
-        </span>
-        <span>
-          {interlude.completedSteps}/{interlude.totalSteps} 插曲日
-        </span>
-      </div>
-      <p className="interlude-wait-note">{interludeStatusText(session, interlude)}</p>
-
-      <div className="interlude-progress" aria-label={`插曲进度 ${interlude.completedSteps}/${interlude.totalSteps}`}>
-        {Array.from({ length: interlude.totalSteps }, (_, index) => (
-          <span className={index < interlude.completedSteps ? 'filled' : ''} key={index} />
-        ))}
-      </div>
-
-      {interlude.recentFeedback && <div className="feedback-strip">{interlude.recentFeedback}</div>}
-      {resolution.canAdvance && !isError && (
-        <div className="advance-ready">
-          <div>
-            <strong>主线已就绪</strong>
-            <span>可以进入下一幕，也可以继续做插曲行动。</span>
-          </div>
-          <button type="button" onClick={onAdvanceResolution} disabled={busy !== null}>
-            {busy === 'advance' ? <Loader2 className="spin" size={17} /> : <Play size={17} />}
-            进入下一幕
-          </button>
-        </div>
-      )}
-
-      {isError ? (
-        <div className="resolution-error">
-          <AlertTriangle size={19} />
-          <span>{resolution.error ?? '主线生成失败'}</span>
-          <button type="button" onClick={onRetryResolution} disabled={busy !== null}>
-            {busy === 'resolution' ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-            重试生成
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="interlude-heading">
-            {isSettling ? <Hourglass size={18} /> : <ClipboardList size={18} />}
-            <span>{isSettling ? '整理状态' : `第 ${interlude.currentDay} 天插曲行动`}</span>
-          </div>
-          <div className="interlude-actions">
-            {interlude.actions.map((action) => (
-              <button
-                className="interlude-action-button"
-                type="button"
-                key={action.id}
-                onClick={() => onAction(action)}
-                disabled={actionDisabled}
-              >
-                <span className="action-copy">
-                  <strong>{action.label}</strong>
-                  {action.hint && <small>{action.hint}</small>}
-                  <DeltaLine statsDelta={isSettling ? {} : action.statsDelta} />
-                </span>
-                {busy === 'interlude' && pendingActionId === action.id ? (
-                  <Loader2 className="spin" size={18} />
-                ) : (
-                  <CheckCircle2 size={18} />
-                )}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-
-      {interlude.log.length > 0 && (
-        <div className="interlude-log">
-          <h3>插曲日志</h3>
-          {interlude.log.slice(-4).map((entry) => (
-            <div className="log-row" key={`${entry.step}-${entry.actionId}`}>
-              <span className="log-meta">
-                第 {entry.day} 天
-                <strong>{entry.actionLabel}</strong>
-              </span>
-              <div className="log-content">
-                <p>{entry.feedback}</p>
-                <DeltaLine statsDelta={entry.statsDelta} />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AdvanceNotice({ notice }: { notice: ActionResultNotice }) {
-  return (
-    <div className="advance-notice">
-      <CheckCircle2 size={18} />
-      <div>
-        <strong>主线已推进</strong>
-        <p>{notice.feedback}</p>
-        <DeltaLine statsDelta={notice.statsDelta} />
-      </div>
-    </div>
-  );
-}
-
-function DeltaLine({ statsDelta }: { statsDelta: Stats }) {
-  const entries = Object.entries(statsDelta).filter(([, value]) => value !== 0);
-  if (entries.length === 0) {
-    return <small className="delta-line empty">不改变属性</small>;
-  }
-
-  return (
-    <small className="delta-line">
-      {entries.map(([key, value]) => (
-        <span className={value > 0 ? 'positive' : 'negative'} key={key}>
-          {STAT_META[key]?.label ?? key} {formatDelta(key, value)}
-        </span>
-      ))}
-    </small>
-  );
-}
-
-function StartScreen({
-  catalog,
-  selectedTheme,
-  selectedMode,
-  selectedThemeId,
-  selectedModeId,
-  busy,
-  onThemeChange,
-  onModeChange,
-  onStart,
-}: {
-  catalog: TextGameCatalog | null;
-  selectedTheme?: ThemeSummary;
-  selectedMode?: ModeSummary;
-  selectedThemeId: string;
-  selectedModeId: string;
-  busy: BusyState;
-  onThemeChange: (value: string) => void;
-  onModeChange: (value: string) => void;
-  onStart: () => void;
-}) {
-  const disabled = busy !== null || !selectedTheme || !selectedMode;
-
-  return (
-    <main className="start-layout">
-      <section className="start-surface">
-        <img src={cityImage} alt="" />
-        <div className="start-content">
-          <span className="stage-pill">100天 / 20次选择</span>
-          <h2>{selectedTheme?.name ?? '人生模拟器'}</h2>
-          <p>{selectedTheme?.description ?? '正在读取游戏目录'}</p>
-
-          <div className="selectors">
-            <label>
-              <span>主题</span>
-              <select value={selectedThemeId} onChange={(event) => onThemeChange(event.target.value)}>
-                {catalog?.themes.map((theme) => (
-                  <option key={theme.id} value={theme.id}>
-                    {theme.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>模式</span>
-              <select value={selectedModeId} onChange={(event) => onModeChange(event.target.value)}>
-                {catalog?.modes.map((mode) => (
-                  <option key={mode.id} value={mode.id}>
-                    {mode.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <button className="primary-action" type="button" onClick={onStart} disabled={disabled}>
-            {busy === 'start' ? <Loader2 className="spin" size={19} /> : <Play size={19} />}
-            开始新局
-          </button>
-        </div>
+        {!catalog?.stories.length && <div className="empty-state">当前没有已发布剧情。</div>}
       </section>
-    </main>
+    </div>
   );
 }
 
-function EndingView({
-  session,
-  onRestart,
-  disabled,
-}: {
-  session: TextGameSession;
-  onRestart: () => void;
-  disabled: boolean;
-}) {
-  const ending = session.ending;
-  if (!ending) {
-    return null;
-  }
-
+function SceneView({ session, beat, headingRef, pendingChoiceId, onNextBeat, onSkip, onChoice }: { session: TextGameSession; beat: number; headingRef: RefObject<HTMLHeadingElement>; pendingChoiceId: string | null; onNextBeat: () => void; onSkip: () => void; onChoice: (choice: TextGameChoice) => void; }) {
+  const scene = session.scene!; const finished = beat >= scene.text.length - 1;
   return (
-    <div className="ending-block">
-      <div className="ending-title-row">
-        <span className="grade-badge">{ending.grade}</span>
-        <h3>{ending.title}</h3>
+    <article className="narrative-card">
+      <div className="narrative-scroll">
+        <SceneHeader session={session} headingRef={headingRef} title={scene.title} />
+        <div className="prose" aria-live="polite">{scene.text.slice(0, beat + 1).map((paragraph, index) => <p className="beat" key={index}>{paragraph}</p>)}</div>
       </div>
-      <p>{ending.summary}</p>
-      <ul>
-        {ending.echoes.map((echo) => (
-          <li key={echo}>{echo}</li>
-        ))}
-      </ul>
-      <button className="primary-action compact" type="button" onClick={onRestart} disabled={disabled}>
-        <RotateCcw size={18} />
-        再来一局
-      </button>
-    </div>
+      {finished ? (
+        <section className="decision-dock" aria-label="可选行动">
+          <div className="decision-heading"><span>关键抉择</span><small>按数字键快速选择</small></div>
+          <div className="choice-list">{scene.choices.map((choice, index) => <button className="choice-button" key={choice.id} disabled={!choice.enabled || Boolean(pendingChoiceId)} onClick={() => onChoice(choice)} aria-describedby={!choice.enabled ? `${choice.id}-reason` : undefined}><span className="choice-index">{index + 1}</span><span><strong>{choice.label}</strong>{choice.hint && <small>{choice.hint}</small>}</span>{pendingChoiceId === choice.id ? <span className="button-spinner" /> : <ArrowRight size={19} />}{!choice.enabled && <em id={`${choice.id}-reason`}>{choice.disabledReason}</em>}</button>)}</div>
+        </section>
+      ) : <ReadingActions onNext={onNextBeat} onSkip={onSkip} label="继续阅读" />}
+    </article>
   );
 }
 
-function StatsPanel({ stats }: { stats: Stats }) {
-  const previousStatsRef = useRef<Stats | null>(null);
-  const [recentDeltas, setRecentDeltas] = useState<Stats>({});
-
-  useEffect(() => {
-    const previousStats = previousStatsRef.current;
-    previousStatsRef.current = stats;
-
-    if (!previousStats) {
-      return;
-    }
-
-    const nextDeltas = diffStats(previousStats, stats);
-    if (!hasStatsDelta(nextDeltas)) {
-      return;
-    }
-
-    // Flash only the latest delta; the persisted value always comes from props.
-    setRecentDeltas(nextDeltas);
-    const timer = window.setTimeout(() => setRecentDeltas({}), 1800);
-    return () => window.clearTimeout(timer);
-  }, [stats]);
-
-  const keys = [...STAT_ORDER, ...Object.keys(stats).filter((key) => !STAT_ORDER.includes(key))];
-
-  return (
-    <div className="stats-panel">
-      <h3>属性</h3>
-      {keys.map((key) => {
-        const value = stats[key] ?? 0;
-        const meta = STAT_META[key] ?? { label: key, Icon: Star, tone: 'default' };
-        const Icon = meta.Icon;
-        const width = statWidth(key, value);
-        const delta = recentDeltas[key] ?? 0;
-        return (
-          <div className={`stat-row ${meta.tone} ${delta !== 0 ? 'changed' : ''}`} key={key}>
-            <div className="stat-head">
-              <span>
-                <Icon size={16} />
-                {meta.label}
-              </span>
-              <strong>
-                {formatStat(key, value)}
-                {delta !== 0 && (
-                  <em className={delta > 0 ? 'positive' : 'negative'}>{formatDelta(key, delta)}</em>
-                )}
-              </strong>
-            </div>
-            <div className="stat-bar">
-              <div style={{ width: `${width}%` }} />
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
+function ResultView({ session, beat, headingRef, busy, onNextBeat, onSkip, onContinue }: { session: TextGameSession; beat: number; headingRef: RefObject<HTMLHeadingElement>; busy: boolean; onNextBeat: () => void; onSkip: () => void; onContinue: () => void; }) {
+  const result = session.result!; const finished = beat >= result.text.length - 1;
+  return <article className="narrative-card result-card"><div className="narrative-scroll"><SceneHeader session={session} headingRef={headingRef} title="选择的回声" /><div className="prose" aria-live="polite">{result.text.slice(0, beat + 1).map((paragraph, index) => <p className="beat" key={index}>{paragraph}</p>)}</div><EffectPanel effects={result.effects} /></div>{finished ? <div className="bottom-action-bar"><button className="primary-button wide" disabled={busy} onClick={onContinue}>{busy ? '正在进入下一幕…' : session.progress.turn >= session.progress.maxTurns ? '查看结局' : '进入下一幕'}<ArrowRight size={19} /></button></div> : <ReadingActions onNext={onNextBeat} onSkip={onSkip} label="查看后果" />}</article>;
 }
 
-function interludeTitle(session: TextGameSession) {
-  if (session.phase === 'error') {
-    return '主线生成遇到问题';
-  }
-  if (session.phase === 'settling') {
-    return '整理状态';
-  }
-  return `第 ${session.day} 天插曲行动`;
+function EndingView({ session, headingRef, onRestart }: { session: TextGameSession; headingRef: RefObject<HTMLHeadingElement>; onRestart: () => void; }) {
+  const ending = session.ending!;
+  return <article className="narrative-card ending-card"><div className="narrative-scroll"><div className="ending-grade">结局评价 <strong>{ending.grade}</strong></div><h1 ref={headingRef} tabIndex={-1}>{ending.title}</h1><div className="prose">{ending.text.map((paragraph, index) => <p className="beat" key={index}>{paragraph}</p>)}</div><div className="echo-list"><h2><Sparkles size={19} /> 选择回响</h2>{ending.echoes.map((echo) => <p key={echo}>{echo}</p>)}</div></div><div className="bottom-action-bar"><button className="primary-button" onClick={onRestart}><RotateCcw size={18} /> 返回剧情库</button></div></article>;
 }
 
-function interludeStatusText(session: TextGameSession, interlude: TextGameInterlude) {
-  if (session.phase === 'error' || session.resolution.status === 'error') {
-    return '主线推演中断，重试成功后可以继续当前等待期。';
-  }
-  if (session.phase === 'settling') {
-    return session.resolution.status === 'pending'
-      ? '插曲日已完成，正在整理状态；这些轻量行动不会继续改变属性。'
-      : '主线已就绪，整理完成后会进入新的局面。';
-  }
-  if (session.resolution.status === 'ready') {
-    const remaining = Math.max(0, interlude.totalSteps - interlude.completedSteps);
-    return remaining > 0
-      ? `主线已就绪，可以立即进入下一幕；也可以再完成 ${remaining} 个插曲日调整属性。`
-      : '主线已就绪，可以进入下一幕；继续等待只会做轻量整理，不再改变属性。';
-  }
-  return 'AI 正在推演主线，你可以用插曲行动调整真实属性。';
+function SceneHeader({ session, headingRef, title }: { session: TextGameSession; headingRef: RefObject<HTMLHeadingElement>; title: string; }) {
+  return <header className="scene-header"><div><span>第 {session.progress.chapterNumber} 章</span><span>{session.progress.date}</span></div><h1 ref={headingRef} tabIndex={-1}>{title}</h1><p>{session.progress.chapterTitle} · 第 {Math.min(session.progress.turn + 1, session.progress.maxTurns)} / {session.progress.maxTurns} 回合</p></header>;
 }
 
-function resolutionLabel(status: string) {
-  if (status === 'pending') {
-    return '主线生成中';
-  }
-  if (status === 'ready') {
-    return '主线已就绪';
-  }
-  if (status === 'error') {
-    return '生成失败';
-  }
-  return '未生成';
+function ReadingActions({ onNext, onSkip, label }: { onNext: () => void; onSkip: () => void; label: string; }) {
+  return <div className="bottom-action-bar reading-actions"><button className="secondary-button" onClick={onSkip}><SkipForward size={17} /> 跳过文本</button><button className="primary-button" onClick={onNext}>{label}<ArrowRight size={18} /></button><small>空格或 Enter 继续</small></div>;
 }
 
-function latestInterludeLog(interlude?: TextGameInterlude | null) {
-  if (!interlude?.log.length) {
-    return null;
-  }
-  return interlude.log[interlude.log.length - 1];
+function Timeline({ session }: { session: TextGameSession; }) {
+  return <section className="timeline-card"><p className="panel-kicker">章节进度</p><div className="timeline">{[1, 2, 3].map((chapter) => <div className={chapter < session.progress.chapterNumber ? 'done' : chapter === session.progress.chapterNumber ? 'active' : ''} key={chapter}><span>{chapter}</span><i /></div>)}</div><strong>{session.progress.chapterTitle}</strong><small>已完成 {session.progress.turn} 次关键选择</small></section>;
 }
 
-function diffStats(previous: Stats, next: Stats) {
-  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
-  const delta: Stats = {};
-  keys.forEach((key) => {
-    const value = (next[key] ?? 0) - (previous[key] ?? 0);
-    if (value !== 0) {
-      delta[key] = value;
-    }
-  });
-  return delta;
+function CompactStatus({ session }: { session: TextGameSession; }) {
+  const progress = Math.min(100, Math.max(0, (session.progress.turn / session.progress.maxTurns) * 100));
+  const keys = ['cash', 'health', 'risk'];
+  return <section className="compact-status" aria-label="关键状态"><div className="compact-progress"><span>第 {session.progress.chapterNumber} 章 · {session.progress.turn + 1}/{session.progress.maxTurns}</span><i><b style={{ width: `${progress}%` }} /></i></div>{keys.map((key) => { const value = session.attributes[key]; return value === undefined ? null : <span className={`compact-stat ${key === 'risk' || value < 0 ? 'warning' : ''}`} key={key}>{ATTRIBUTE_LABELS[key]} <strong>{value}</strong></span>; })}</section>;
 }
 
-function hasStatsDelta(statsDelta: Stats) {
-  return Object.values(statsDelta).some((value) => value !== 0);
+function StatGrid({ values }: { values: NumberMap; }) {
+  const icons: Record<string, ReactNode> = { cash: <WalletCards size={17} />, health: <HeartPulse size={17} />, skill: <BookOpen size={17} />, network: <Users size={17} />, reputation: <Sparkles size={17} />, risk: <ShieldAlert size={17} /> };
+  return <section className="stats-card"><p className="panel-kicker">当前状态</p><div className="stat-grid">{Object.entries(values).map(([key, value]) => <div className={key === 'risk' ? 'risk-stat' : ''} key={key}><span>{icons[key]} {ATTRIBUTE_LABELS[key] || key}</span><strong>{value}</strong></div>)}</div></section>;
 }
 
-function statWidth(key: string, value: number) {
-  if (key === 'money') {
-    return Math.max(4, Math.min(100, ((value + 5000) / 25000) * 100));
-  }
-  return Math.max(4, Math.min(100, value));
+function RelationList({ values }: { values: NumberMap; }) {
+  return <section className="relations-card"><p className="panel-kicker">人物关系</p>{Object.entries(values).map(([key, value]) => <div className="relation-row" key={key}><span>{RELATION_LABELS[key] || key}</span><div><i style={{ width: `${Math.max(0, Math.min(100, value))}%` }} /></div><strong>{value}</strong></div>)}</section>;
 }
 
-function formatStat(key: string, value: number) {
-  if (key === 'money') {
-    const sign = value >= 0 ? '' : '-';
-    return `${sign}¥${Math.abs(value).toLocaleString('zh-CN')}`;
-  }
-  return value.toString();
+function EffectPanel({ effects }: { effects: EffectSummary; }) {
+  const entries = useMemo(() => [...Object.entries(effects.attributes).map(([key, value]) => ({ label: ATTRIBUTE_LABELS[key] || key, value })), ...Object.entries(effects.relations).map(([key, value]) => ({ label: `${RELATION_LABELS[key] || key}关系`, value }))].filter((item) => item.value !== 0), [effects]);
+  if (!entries.length && !Object.keys(effects.flags).length) return null;
+  return <section className="effect-panel" aria-label="状态变化"><h2>本次变化</h2><div>{entries.map((entry) => <span className={entry.value > 0 ? 'positive' : 'negative'} key={entry.label}>{entry.label} {signed(entry.value)}</span>)}</div>{Object.keys(effects.flags).length > 0 && <small>你的选择改变了后续剧情条件。</small>}</section>;
 }
 
-function formatDelta(key: string, value: number) {
-  const sign = value > 0 ? '+' : '';
-  if (key === 'money') {
-    return `${sign}${value < 0 ? '-' : ''}¥${Math.abs(value).toLocaleString('zh-CN')}`;
-  }
-  return `${sign}${value}`;
-}
-
-function errorMessage(caught: unknown) {
-  return caught instanceof Error ? caught.message : '请求失败';
-}
+function ErrorBanner({ message, onDismiss }: { message: string; onDismiss?: () => void; }) { return <div className="error-banner" role="alert"><span>{message}</span>{onDismiss && <button onClick={onDismiss}>关闭</button>}</div>; }
+function LoadingScreen() { return <div className="loading-screen"><span className="large-spinner" /><strong>正在读取存档</strong></div>; }
+function signed(value: number) { return value > 0 ? `+${value}` : String(value); }
+function messageOf(cause: unknown) { return cause instanceof Error ? cause.message : '发生未知错误，请稍后重试。'; }

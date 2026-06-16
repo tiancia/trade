@@ -1,6 +1,9 @@
 spring:
   application:
     name: trade
+  http:
+    converters:
+      preferred-json-mapper: jackson2
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: ${SPRING_DATASOURCE_URL:jdbc:mysql://127.0.0.1:3306/ai_trade?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
@@ -21,11 +24,15 @@ trade:
   # 模块开关
   automation:
     story:
-      auto-start: true
+      auto-start: false
     trading:
       auto-start: false
     polymarket:
       auto-start: false
+  text-game:
+    admin-token: ${TRADE_TEXT_GAME_ADMIN_TOKEN:}
+    session-retention-days: 30
+    seed-enabled: true
   # OKX 交易所客户端配置，用于 REST 和 WebSocket 请求。
   okx:
     # OKX REST API 基础地址。

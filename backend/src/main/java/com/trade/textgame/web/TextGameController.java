@@ -1,14 +1,9 @@
 package com.trade.textgame.web;
 
-import com.trade.textgame.application.TextGameAiException;
 import com.trade.textgame.application.TextGameConflictException;
 import com.trade.textgame.application.TextGameNotFoundException;
-import com.trade.textgame.application.TextGameService;
-import com.trade.textgame.model.CreateTextGameSessionRequest;
-import com.trade.textgame.model.SubmitTextGameInterludeActionRequest;
-import com.trade.textgame.model.SubmitTextGameChoiceRequest;
-import com.trade.textgame.model.TextGameCatalogResponse;
-import com.trade.textgame.model.TextGameSessionResponse;
+import com.trade.textgame.application.TextGameSessionService;
+import com.trade.textgame.model.TextGameApi;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -22,87 +17,64 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
-/**
- * HTTP boundary for the React text-game client.
- *
- * <p>All gameplay state changes are delegated to {@link TextGameService}; this
- * class only maps routes and normalizes expected exceptions into JSON errors.</p>
- */
 @RestController
 @RequestMapping("/api/text-game")
 public class TextGameController {
-    private final TextGameService textGameService;
+    private final TextGameSessionService service;
 
-    public TextGameController(TextGameService textGameService) {
-        this.textGameService = textGameService;
+    public TextGameController(TextGameSessionService service) {
+        this.service = service;
     }
 
     @GetMapping("/catalog")
-    public TextGameCatalogResponse catalog() {
-        return textGameService.catalog();
+    public TextGameApi.Catalog catalog() {
+        return service.catalog();
     }
 
     @PostMapping("/sessions")
-    public TextGameSessionResponse createSession(
-            @RequestBody(required = false) CreateTextGameSessionRequest request
-    ) {
-        return textGameService.createSession(request);
+    public TextGameApi.Session create(@RequestBody TextGameApi.CreateSessionRequest request) {
+        return service.createSession(request);
     }
 
     @GetMapping("/sessions/{sessionId}")
-    public TextGameSessionResponse getSession(@PathVariable String sessionId) {
-        return textGameService.getSession(sessionId);
+    public TextGameApi.Session get(@PathVariable String sessionId) {
+        return service.getSession(sessionId);
     }
 
     @PostMapping("/sessions/{sessionId}/choices")
-    public TextGameSessionResponse submitChoice(
+    public TextGameApi.Session choose(
             @PathVariable String sessionId,
-            @RequestBody SubmitTextGameChoiceRequest request
+            @RequestBody TextGameApi.SubmitChoiceRequest request
     ) {
-        return textGameService.submitChoice(sessionId, request);
+        return service.submitChoice(sessionId, request);
     }
 
-    @PostMapping("/sessions/{sessionId}/interlude-actions")
-    public TextGameSessionResponse submitInterludeAction(
+    @PostMapping("/sessions/{sessionId}/continue")
+    public TextGameApi.Session continueGame(
             @PathVariable String sessionId,
-            @RequestBody SubmitTextGameInterludeActionRequest request
+            @RequestBody TextGameApi.ContinueRequest request
     ) {
-        return textGameService.submitInterludeAction(sessionId, request);
-    }
-
-    @PostMapping("/sessions/{sessionId}/resolution/retry")
-    public TextGameSessionResponse retryResolution(@PathVariable String sessionId) {
-        return textGameService.retryResolution(sessionId);
-    }
-
-    @PostMapping("/sessions/{sessionId}/resolution/advance")
-    public TextGameSessionResponse advanceResolution(@PathVariable String sessionId) {
-        return textGameService.advanceResolution(sessionId);
+        return service.continueGame(sessionId, request);
     }
 
     @DeleteMapping("/sessions/{sessionId}")
-    public ResponseEntity<Void> deleteSession(@PathVariable String sessionId) {
-        textGameService.deleteSession(sessionId);
+    public ResponseEntity<Void> delete(@PathVariable String sessionId) {
+        service.deleteSession(sessionId);
         return ResponseEntity.noContent().build();
     }
 
     @ExceptionHandler(TextGameNotFoundException.class)
-    public ResponseEntity<Map<String, String>> handleNotFound(TextGameNotFoundException e) {
+    public ResponseEntity<Map<String, String>> notFound(TextGameNotFoundException e) {
         return error(HttpStatus.NOT_FOUND, e.getMessage());
     }
 
     @ExceptionHandler(TextGameConflictException.class)
-    public ResponseEntity<Map<String, String>> handleConflict(TextGameConflictException e) {
+    public ResponseEntity<Map<String, String>> conflict(TextGameConflictException e) {
         return error(HttpStatus.CONFLICT, e.getMessage());
     }
 
-    @ExceptionHandler(TextGameAiException.class)
-    public ResponseEntity<Map<String, String>> handleAiError(TextGameAiException e) {
-        return error(HttpStatus.BAD_GATEWAY, e.getMessage());
-    }
-
     @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<Map<String, String>> handleIllegalArgument(IllegalArgumentException e) {
+    public ResponseEntity<Map<String, String>> badRequest(IllegalArgumentException e) {
         return error(HttpStatus.BAD_REQUEST, e.getMessage());
     }
 
