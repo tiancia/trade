@@ -1,4 +1,6 @@
 # Build outputs
+.worktrees
+.worktrees/
 backend/target/
 frontend/**/dist/
 frontend/**/node_modules/
