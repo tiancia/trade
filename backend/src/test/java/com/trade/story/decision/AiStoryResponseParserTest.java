@@ -4,6 +4,8 @@ import com.trade.story.model.StorySectionDraft;
 import com.trade.story.model.StoryTopicPlan;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -109,5 +111,34 @@ class AiStoryResponseParserTest {
         );
 
         assertEquals(true, error.getMessage().contains("missing content"));
+    }
+
+    @Test
+    void parsesFinalEditResponse() {
+        List<StorySectionDraft> drafts = parser.parseFinalEditResponse("""
+                {
+                  "editedSections": [
+                    {
+                      "section": 1,
+                      "sectionTitle": "雨线",
+                      "content": "正文：\\n房东把欠条拍在桌上。林舟反手拨通电话。",
+                      "sectionSummary": "林舟被催债后主动追查证据。"
+                    },
+                    {
+                      "section": 2,
+                      "sectionTitle": "反击",
+                      "content": "王经理看完监控，手里的茶杯磕在桌沿。",
+                      "sectionSummary": "王经理被证据反压。"
+                    }
+                  ],
+                  "editorNotes": ["删除套话", "补强动作"]
+                }
+                """);
+
+        assertEquals(2, drafts.size());
+        assertEquals(1, drafts.get(0).getSection());
+        assertEquals("雨线", drafts.get(0).getSectionTitle());
+        assertEquals("房东把欠条拍在桌上。林舟反手拨通电话。", drafts.get(0).getContent());
+        assertEquals("王经理被证据反压。", drafts.get(1).getSectionSummary());
     }
 }

@@ -8,6 +8,7 @@ import com.trade.story.model.StoryTopicPlan;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -100,6 +101,43 @@ public class AiStoryResponseParser {
                     .setSectionTitle("第" + sectionNumber + "节")
                     .setContent(normalizeContent(text))
                     .setRawResponse(rawResponse);
+        }
+    }
+
+    public List<StorySectionDraft> parseFinalEditResponse(String rawResponse) {
+        if (rawResponse == null || rawResponse.isBlank()) {
+            throw new IllegalArgumentException("AI story final edit response is empty");
+        }
+
+        try {
+            JsonNode root = objectMapper.readTree(extractJsonObject(rawResponse));
+            JsonNode editedSections = firstExisting(root, "editedSections", "sections");
+            if (editedSections == null || !editedSections.isArray() || editedSections.isEmpty()) {
+                throw new IllegalArgumentException("AI story final edit response missing editedSections");
+            }
+            List<StorySectionDraft> drafts = new ArrayList<>();
+            int fallbackSection = 1;
+            for (JsonNode item : editedSections) {
+                if (item == null || item.isNull()) {
+                    continue;
+                }
+                String content = firstText(item, "content", "正文", "story", "text");
+                if (!hasText(content)) {
+                    throw new IllegalArgumentException("AI story final edit section missing content");
+                }
+                int section = intOrDefault(item.path("section"), fallbackSection);
+                drafts.add(new StorySectionDraft()
+                        .setSection(section)
+                        .setSectionTitle(firstText(item, "sectionTitle", "chapterTitle", "title"))
+                        .setContent(normalizeContent(content))
+                        .setSectionSummary(firstText(item, "sectionSummary", "summary", "本节摘要"))
+                        .setRawResponse(rawResponse));
+                fallbackSection++;
+            }
+            drafts.sort(Comparator.comparingInt(StorySectionDraft::getSection));
+            return drafts;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Parse AI story final edit response failed: " + e.getMessage(), e);
         }
     }
 
