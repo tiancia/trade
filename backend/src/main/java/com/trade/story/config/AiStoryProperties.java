@@ -18,6 +18,12 @@ public class AiStoryProperties {
     private int sectionCount = 6;
     private int maxContinuationSections = 2;
     private int recentStoryLimit = 8;
+    private boolean qualityGateEnabled = true;
+    private int maxSectionRewriteAttempts = 1;
+    private boolean finalEditorPassEnabled = true;
+    private int minSectionQualityScore = 70;
+    private int forbiddenPhraseMaxCount = 1;
+    private int openingCheckChars = 800;
     private String targetPlatform = "番茄小说等中文网络小说平台";
     private boolean trendFetchEnabled = true;
     private int trendFetchTimeoutMs = 10_000;
