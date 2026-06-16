@@ -2,6 +2,7 @@ package com.trade.story.decision;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.story.config.AiStoryProperties;
+import com.trade.story.model.StorySectionDraft;
 import com.trade.story.model.StorySectionPlan;
 import com.trade.story.model.StoryTopicPlan;
 import com.trade.story.model.StoryTrendContext;
@@ -59,6 +60,7 @@ public class AiStoryPromptBuilder {
                 规则：
                 - 小说必须是中文原创内容，不能续写、仿写或借用现有小说、影视、动漫、游戏的书名、角色、世界观、具体桥段或作者风格。
                 - 可以参考榜单和题材文本中的“题材趋势”，但不要复制榜单作品名称、人物名、设定名和宣传语。
+                - 先在内部构思至少 3 个候选题材，并按“榜单新鲜度、开篇压迫、付费/追读期待、原创性、1.5 万字内完成度”筛选；最终 JSON 只输出被选中的一个完整方案。
                 - 面向免费阅读平台读者，开篇 800 字内必须出现明确压迫、主角选择和第一个反击机会。
                 - 爽文重点是“压迫足、反击狠、收益明、后患清楚”，不要只用旁白说主角很强。
                 - 主角必须主动做选择，不能靠巧合、路人解释、外挂自动解决核心冲突。
@@ -189,6 +191,126 @@ public class AiStoryPromptBuilder {
                 toJson(continuityNotes == null ? List.of() : continuityNotes),
                 toJson(openLoops == null ? List.of() : openLoops),
                 previousEnding == null || previousEnding.isBlank() ? "无" : previousEnding
+        );
+    }
+
+    public String buildSectionRewritePrompt(
+            StoryTopicPlan plan,
+            StorySectionPlan sectionPlan,
+            StorySectionDraft originalDraft,
+            StoryQualityReport qualityReport,
+            int sectionIndex,
+            int totalSections,
+            int targetChars,
+            String storySoFar,
+            List<String> continuityNotes,
+            List<String> openLoops,
+            String previousEnding,
+            boolean finalSection
+    ) {
+        return """
+                你是中文短篇网文编辑。请根据质检问题重写第 %d/%d 节。
+                只返回一个 JSON object，不要输出 markdown、注释或额外解释。
+
+                必须返回的 JSON schema：
+                {
+                  "sectionTitle": "本节标题",
+                  "content": "重写后的本节中文正文",
+                  "endingHook": "本节结尾钩子或收束说明",
+                  "sectionSummary": "80到160字概括本节关键事实",
+                  "continuityNotes": ["连续性事实"],
+                  "openLoops": ["未解决伏笔"],
+                  "resolvedLoops": ["已回收伏笔"]
+                }
+
+                重写硬规则：
+                - 保留原小节应该完成的核心事件、人物关系和因果方向，不要重启故事。
+                - 必须修复质检问题，不要只替换同义词。
+                - 删除空泛套话，改用动作、对话、具体物件、数字、证据和后果推动剧情。
+                - 本节目标长度约 %d 个中文字符。
+                - %s
+
+                质检分数：%d
+                质检问题 JSON：%s
+                重写建议 JSON：%s
+
+                整体规划 JSON：
+                %s
+
+                当前小节规划 JSON：
+                %s
+
+                已写剧情摘要：
+                %s
+
+                连续性台账 JSON：
+                %s
+
+                未回收伏笔 JSON：
+                %s
+
+                上一节结尾片段：
+                %s
+
+                原小节 JSON：
+                %s
+                """.formatted(
+                sectionIndex,
+                totalSections,
+                targetChars,
+                finalSection ? "这是最后一节，必须收束主线，不要新增未铺垫的新主线钩子。" : "结尾保留自然钩子，但不要机械断章。",
+                qualityReport == null ? 0 : qualityReport.getScore(),
+                toJson(qualityReport == null ? List.of() : qualityReport.getIssues()),
+                toJson(qualityReport == null ? List.of() : qualityReport.getRewriteAdvice()),
+                toJson(promptPlanView(plan)),
+                toJson(sectionPlan),
+                storySoFar == null || storySoFar.isBlank() ? "无" : storySoFar,
+                toJson(continuityNotes == null ? List.of() : continuityNotes),
+                toJson(openLoops == null ? List.of() : openLoops),
+                previousEnding == null || previousEnding.isBlank() ? "无" : previousEnding,
+                toJson(originalDraft)
+        );
+    }
+
+    public String buildFinalEditPrompt(
+            StoryTopicPlan plan,
+            List<StorySectionDraft> drafts,
+            int actualCharCount
+    ) {
+        return """
+                你是中文短篇网文终审编辑。请对整篇小说做最终编辑润色。
+                只返回一个 JSON object，不要输出 markdown、注释或额外解释。
+
+                必须返回的 JSON schema：
+                {
+                  "editedSections": [
+                    {
+                      "section": 1,
+                      "sectionTitle": "小节标题",
+                      "content": "润色后的正文",
+                      "sectionSummary": "80到160字本节摘要"
+                    }
+                  ],
+                  "editorNotes": ["做过的关键编辑说明"]
+                }
+
+                编辑规则：
+                - 不能改变核心事件、人物动机、伏笔回收和结局方向。
+                - 删除 AI 套话、空泛总结、机械升级和重复钩子。
+                - 补强动作、对话、可感知细节、数字、证据和因果结果。
+                - 最后一节必须收束主线，不能新增未铺垫的新主线。
+                - 保持 section 数量和 section 编号不变。
+                - 当前全文非空白字数约 %d。
+
+                整体规划 JSON：
+                %s
+
+                待编辑章节 JSON：
+                %s
+                """.formatted(
+                actualCharCount,
+                toJson(promptPlanView(plan)),
+                toJson(drafts == null ? List.of() : drafts)
         );
     }
 
