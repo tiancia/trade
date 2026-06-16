@@ -7,6 +7,8 @@ import com.trade.client.ai.AiTextClient;
 import com.trade.story.config.AiStoryProperties;
 import com.trade.story.decision.AiStoryPromptBuilder;
 import com.trade.story.decision.AiStoryResponseParser;
+import com.trade.story.decision.StoryQualityGate;
+import com.trade.story.decision.StoryQualityReport;
 import com.trade.story.model.StoryGenerationResult;
 import com.trade.story.model.StorySectionDraft;
 import com.trade.story.model.StorySectionPlan;
@@ -44,6 +46,7 @@ public class AiStoryService {
     private final StoryFileRepository fileRepository;
     private final AiStoryProperties properties;
     private final AiResponseParseErrorSink parseErrorSink;
+    private final StoryQualityGate qualityGate;
     // Story generation is long-running and writes files, so overlapping runs
     // are skipped instead of queued.
     private final ReentrantLock generationLock = new ReentrantLock();
@@ -77,6 +80,28 @@ public class AiStoryService {
             AiStoryProperties properties,
             AiResponseParseErrorSink parseErrorSink
     ) {
+        this(
+                aiTextClient,
+                trendCollector,
+                promptBuilder,
+                responseParser,
+                fileRepository,
+                properties,
+                parseErrorSink,
+                new StoryQualityGate(properties)
+        );
+    }
+
+    public AiStoryService(
+            AiTextClient aiTextClient,
+            StoryTrendCollector trendCollector,
+            AiStoryPromptBuilder promptBuilder,
+            AiStoryResponseParser responseParser,
+            StoryFileRepository fileRepository,
+            AiStoryProperties properties,
+            AiResponseParseErrorSink parseErrorSink,
+            StoryQualityGate qualityGate
+    ) {
         this.aiTextClient = aiTextClient;
         this.trendCollector = trendCollector;
         this.promptBuilder = promptBuilder;
@@ -84,6 +109,7 @@ public class AiStoryService {
         this.fileRepository = fileRepository;
         this.properties = properties;
         this.parseErrorSink = parseErrorSink == null ? AiResponseParseErrorSink.NOOP : parseErrorSink;
+        this.qualityGate = qualityGate == null ? new StoryQualityGate(properties) : qualityGate;
     }
 
     public Optional<StoryGenerationResult> generateStory() {
@@ -157,6 +183,7 @@ public class AiStoryService {
 
             List<StorySectionDraft> drafts = writePlannedSections(generationId, topicPlan);
             writeContinuationSectionsIfNeeded(generationId, topicPlan, drafts);
+            drafts = editFinalDraftIfEnabled(generationId, topicPlan, drafts);
 
             int actualCharCount = countNonWhitespace(joinContents(drafts));
             Path outputPath = fileRepository.save(topicPlan, drafts, trendContext, actualCharCount);
@@ -336,6 +363,52 @@ public class AiStoryService {
         if (!hasText(draft.getSectionSummary())) {
             draft.setSectionSummary(briefFromContent(draft.getContent(), 180));
         }
+        StoryQualityReport report = qualityGate.evaluateSection(
+                draft,
+                sectionIndex,
+                totalSections,
+                targetChars,
+                finalSection
+        );
+        if (properties.isQualityGateEnabled()
+                && !report.isPassed()
+                && properties.getMaxSectionRewriteAttempts() > 0) {
+            StorySectionDraft rewrite = rewriteSection(
+                    generationId,
+                    topicPlan,
+                    sectionPlan,
+                    draft,
+                    report,
+                    sectionIndex,
+                    totalSections,
+                    targetChars,
+                    storySoFar,
+                    continuityNotes,
+                    openLoops,
+                    previousEnding,
+                    finalSection
+            );
+            StoryQualityReport rewriteReport = qualityGate.evaluateSection(
+                    rewrite,
+                    sectionIndex,
+                    totalSections,
+                    targetChars,
+                    finalSection
+            );
+            if (rewriteReport.getScore() >= report.getScore()) {
+                draft = rewrite;
+                report = rewriteReport;
+            }
+        }
+        if (!report.isPassed()) {
+            log.warn(
+                    "AI story section quality gate not passed: generationId={}, section={}, score={}, issues={}",
+                    generationId,
+                    sectionIndex,
+                    report.getScore(),
+                    report.getIssues()
+            );
+        }
         int actualChars = countNonWhitespace(draft.getContent());
         log.info(
                 "AI story section generated: generationId={}, section={}, title={}, chars={}",
@@ -345,6 +418,133 @@ public class AiStoryService {
                 actualChars
         );
         return draft;
+    }
+
+    private StorySectionDraft rewriteSection(
+            String generationId,
+            StoryTopicPlan topicPlan,
+            StorySectionPlan sectionPlan,
+            StorySectionDraft originalDraft,
+            StoryQualityReport qualityReport,
+            int sectionIndex,
+            int totalSections,
+            int targetChars,
+            String storySoFar,
+            List<String> continuityNotes,
+            List<String> openLoops,
+            String previousEnding,
+            boolean finalSection
+    ) {
+        String prompt = promptBuilder.buildSectionRewritePrompt(
+                topicPlan,
+                sectionPlan,
+                originalDraft,
+                qualityReport,
+                sectionIndex,
+                totalSections,
+                targetChars,
+                storySoFar,
+                continuityNotes,
+                openLoops,
+                previousEnding,
+                finalSection
+        );
+        String rawResponse = null;
+        try {
+            rawResponse = aiTextClient.generateJson(prompt);
+            StorySectionDraft rewrite = responseParser.parseSectionDraft(rawResponse, sectionIndex);
+            if (!hasText(rewrite.getSectionSummary())) {
+                rewrite.setSectionSummary(briefFromContent(rewrite.getContent(), 180));
+            }
+            log.info(
+                    "AI story section rewrite generated: generationId={}, section={}, chars={}",
+                    generationId,
+                    sectionIndex,
+                    countNonWhitespace(rewrite.getContent())
+            );
+            return rewrite;
+        } catch (AiResponseParseException e) {
+            rawResponse = e.getRawResponse();
+            persistAiResponseParseError(
+                    generationId,
+                    "SECTION_REWRITE_AI_CLIENT_RESPONSE",
+                    prompt,
+                    rawResponse,
+                    e.getMessage(),
+                    "KEEP_ORIGINAL_SECTION_DRAFT"
+            );
+        } catch (IllegalArgumentException e) {
+            persistAiResponseParseError(
+                    generationId,
+                    "SECTION_REWRITE_PAYLOAD",
+                    prompt,
+                    rawResponse,
+                    e.getMessage(),
+                    "KEEP_ORIGINAL_SECTION_DRAFT"
+            );
+        } catch (Exception e) {
+            log.warn(
+                    "AI story section rewrite failed: generationId={}, section={}, error={}",
+                    generationId,
+                    sectionIndex,
+                    e.getMessage(),
+                    e
+            );
+        }
+        return originalDraft;
+    }
+
+    private List<StorySectionDraft> editFinalDraftIfEnabled(
+            String generationId,
+            StoryTopicPlan topicPlan,
+            List<StorySectionDraft> drafts
+    ) {
+        if (!properties.isFinalEditorPassEnabled() || drafts == null || drafts.isEmpty()) {
+            return drafts;
+        }
+        String prompt = promptBuilder.buildFinalEditPrompt(
+                topicPlan,
+                drafts,
+                countNonWhitespace(joinContents(drafts))
+        );
+        String rawResponse = null;
+        try {
+            rawResponse = aiTextClient.generateJson(prompt);
+            List<StorySectionDraft> edited = responseParser.parseFinalEditResponse(rawResponse);
+            if (edited.size() != drafts.size()) {
+                log.warn(
+                        "AI story final edit section count mismatch: generationId={}, original={}, edited={}",
+                        generationId,
+                        drafts.size(),
+                        edited.size()
+                );
+                return drafts;
+            }
+            log.info("AI story final edit applied: generationId={}, sectionCount={}", generationId, edited.size());
+            return edited;
+        } catch (AiResponseParseException e) {
+            rawResponse = e.getRawResponse();
+            persistAiResponseParseError(
+                    generationId,
+                    "FINAL_EDIT_AI_CLIENT_RESPONSE",
+                    prompt,
+                    rawResponse,
+                    e.getMessage(),
+                    "KEEP_PRE_EDIT_DRAFTS"
+            );
+        } catch (IllegalArgumentException e) {
+            persistAiResponseParseError(
+                    generationId,
+                    "FINAL_EDIT_PAYLOAD",
+                    prompt,
+                    rawResponse,
+                    e.getMessage(),
+                    "KEEP_PRE_EDIT_DRAFTS"
+            );
+        } catch (Exception e) {
+            log.warn("AI story final edit failed: generationId={}, error={}", generationId, e.getMessage(), e);
+        }
+        return drafts;
     }
 
     private StoryTopicPlan fallbackTopicPlan(
