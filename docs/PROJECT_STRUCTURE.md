@@ -50,3 +50,13 @@
 - Polymarket 下单脚本默认路径是 `tools/polymarket/polymarket_place_order.py`，可用 `POLYMARKET_ORDER_SCRIPT` 覆盖。
 - OKX 本地交易状态默认写到 `backend/data/trading-state.json`。
 - 小说输出默认写到 `story/`，可通过 `trade.story.output-dir` 覆盖。
+
+## Backend Dependency Boundaries
+
+- `com.trade.common.*`: shared, business-neutral helpers. It must not depend on any business domain package.
+- `com.trade.client.*`: external service clients and DTOs. It must stay transport-focused and must not contain business workflows.
+- Domain packages (`trading`, `polymarket`, `story`, `textgame`, `weibo`) may depend on `common`, `client`, and `ai` when needed.
+- `automation` may call scheduler or lifecycle entry points from domains, but it should not contain domain business rules.
+- Controllers stay in each domain's `web` package and delegate business flow to application services.
+- Schedulers stay thin and delegate to application services.
+- Pure helpers used by more than one domain belong in `com.trade.common.support`, not in a domain-specific `support` package.
