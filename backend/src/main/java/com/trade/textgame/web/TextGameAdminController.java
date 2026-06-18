@@ -25,6 +25,13 @@ import java.security.MessageDigest;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Admin-only HTTP API for text-game story definitions.
+ *
+ * <p>The controller is created only when {@code trade.text-game.admin-token} is
+ * configured, and each request must provide the matching {@code X-Admin-Token}
+ * header.</p>
+ */
 @RestController
 @RequestMapping("/api/text-game/admin")
 @ConditionalOnExpression("'${trade.text-game.admin-token:}' != ''")

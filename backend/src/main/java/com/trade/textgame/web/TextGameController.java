@@ -17,6 +17,13 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
+/**
+ * Player-facing HTTP API for the text game.
+ *
+ * <p>The API exposes catalog lookup plus session lifecycle operations. It does
+ * not edit story definitions; admin-only story management lives in
+ * {@link TextGameAdminController}.</p>
+ */
 @RestController
 @RequestMapping("/api/text-game")
 public class TextGameController {

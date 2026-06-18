@@ -5,6 +5,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+/**
+ * Scheduler-facing adapter for one Polymarket AI decision run.
+ *
+ * <p>The automation manager owns timing; this class only logs the trigger and
+ * delegates the actual collect-prompt-parse-execute flow to the service.</p>
+ */
 @Component
 public class AiPolymarketScheduler {
     private static final Logger log = LoggerFactory.getLogger(AiPolymarketScheduler.class);

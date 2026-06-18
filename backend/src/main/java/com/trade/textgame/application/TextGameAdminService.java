@@ -19,6 +19,12 @@ import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 
+/**
+ * Admin-side story version workflow for the text-game domain.
+ *
+ * <p>Draft creation, replacement, validation, publishing, and checksum updates
+ * are kept here so the controller only handles HTTP and token checks.</p>
+ */
 @Service
 public class TextGameAdminService {
     private final TextGameMapper mapper;

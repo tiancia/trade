@@ -25,6 +25,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Public text-game session use cases.
+ *
+ * <p>This service loads the published story definition, advances a session
+ * through scene/result/completed phases, applies rule-engine effects, and
+ * persists optimistic-lock revisions for browser clients.</p>
+ */
 @Service
 public class TextGameSessionService {
     private static final TypeReference<LinkedHashMap<String, Integer>> INT_MAP = new TypeReference<>() { };

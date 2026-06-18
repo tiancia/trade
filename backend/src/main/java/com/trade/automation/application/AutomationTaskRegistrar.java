@@ -15,6 +15,13 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.List;
 
+/**
+ * Registers domain-owned background loops with the shared automation manager.
+ *
+ * <p>This class is the quickest map from {@code trade.automation.*} startup
+ * switches to the concrete loops that run OKX trading, Polymarket decisions,
+ * and story generation.</p>
+ */
 @Component
 public class AutomationTaskRegistrar {
 

@@ -27,6 +27,13 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Map;
 
+/**
+ * Admin-protected Weibo OAuth and publishing API.
+ *
+ * <p>The controller is absent unless {@code trade.weibo.admin-token} is set.
+ * Most endpoints require {@code X-Weibo-Admin-Token}; the OAuth callback stays
+ * open because Weibo redirects back without that custom header.</p>
+ */
 @RestController
 @RequestMapping("/api/weibo")
 @ConditionalOnExpression("'${trade.weibo.admin-token:}' != ''")

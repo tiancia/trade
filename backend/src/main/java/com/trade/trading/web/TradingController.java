@@ -18,6 +18,13 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
+/**
+ * HTTP read and backtest API for the OKX strategy domain.
+ *
+ * <p>Live decision execution remains scheduler-driven; this controller exposes
+ * strategy configuration, runtime status, and backtest runs for operators and
+ * frontends.</p>
+ */
 @RestController
 @RequestMapping("/api/trading")
 public class TradingController {

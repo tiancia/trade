@@ -20,6 +20,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Thin trigger layer for OKX strategy trading.
+ *
+ * <p>Scheduled decisions always call the strategy engine. Event scans first
+ * look for market movement, volume, or local-risk events, then run the same
+ * engine with cooldown protection.</p>
+ */
 @Component
 public class TradingScheduler {
     private static final Logger log = LoggerFactory.getLogger(TradingScheduler.class);

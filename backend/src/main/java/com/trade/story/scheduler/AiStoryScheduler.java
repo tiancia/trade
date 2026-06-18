@@ -8,6 +8,12 @@ import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 
+/**
+ * Scheduler-facing adapter for one AI story generation run.
+ *
+ * <p>The heavy workflow lives in {@link AiStoryService}; this class keeps the
+ * scheduled loop thin and records concise start/finish logs.</p>
+ */
 @Component
 public class AiStoryScheduler {
     private static final Logger log = LoggerFactory.getLogger(AiStoryScheduler.class);

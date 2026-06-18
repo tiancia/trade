@@ -14,6 +14,12 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Operational API for inspecting and manually controlling background tasks.
+ *
+ * <p>Use this controller to start or stop registered loops without restarting
+ * the Spring Boot process.</p>
+ */
 @RestController
 @RequestMapping("/api/automation/tasks")
 public class AutomationTaskController {

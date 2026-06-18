@@ -25,6 +25,14 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * Orchestrates one OKX strategy-decision run.
+ *
+ * <p>For onboarding, read this after {@link com.trade.trading.scheduler.TradingScheduler}:
+ * it collects market context once, evaluates every configured strategy, routes
+ * executable decisions to the selected broker, and records the result in local
+ * trading state.</p>
+ */
 @Component
 public class TradingStrategyEngine {
     private static final Logger log = LoggerFactory.getLogger(TradingStrategyEngine.class);
