@@ -3,7 +3,7 @@ package com.trade.trading.execution;
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.trading.model.StrategyDecision;
 import com.trade.trading.model.TradingAction;
-import com.trade.trading.support.TradingMath;
+import com.trade.common.support.TradingMath;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;

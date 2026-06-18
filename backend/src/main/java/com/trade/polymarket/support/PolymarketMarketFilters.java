@@ -2,7 +2,7 @@ package com.trade.polymarket.support;
 
 import com.trade.polymarket.config.AiPolymarketProperties;
 import com.trade.polymarket.model.PolymarketOutcomeSnapshot;
-import com.trade.trading.support.TradingMath;
+import com.trade.common.support.TradingMath;
 
 import java.math.BigDecimal;
 import java.time.Duration;

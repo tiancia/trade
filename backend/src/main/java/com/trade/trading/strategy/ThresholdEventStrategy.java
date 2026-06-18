@@ -6,7 +6,7 @@ import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.StrategyDecision;
 import com.trade.trading.model.TradingAction;
 import com.trade.trading.model.TradingState;
-import com.trade.trading.support.TradingMath;
+import com.trade.common.support.TradingMath;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;

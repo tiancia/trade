@@ -16,7 +16,7 @@ import com.trade.trading.model.TradingDecisionRecord;
 import com.trade.trading.persistence.TradingStateRepository;
 import com.trade.trading.risk.RiskAssessment;
 import com.trade.trading.risk.RiskControlService;
-import com.trade.trading.support.TradingMath;
+import com.trade.common.support.TradingMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

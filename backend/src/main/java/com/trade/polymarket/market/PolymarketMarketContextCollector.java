@@ -16,7 +16,7 @@ import com.trade.polymarket.model.PolymarketMarketSnapshot;
 import com.trade.polymarket.model.PolymarketOutcomeSnapshot;
 import com.trade.polymarket.support.PolymarketJsonLists;
 import com.trade.polymarket.support.PolymarketMarketFilters;
-import com.trade.trading.support.TradingMath;
+import com.trade.common.support.TradingMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

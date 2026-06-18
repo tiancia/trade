@@ -28,7 +28,7 @@ import com.trade.trading.model.TradingState;
 import com.trade.trading.model.TradingTrigger;
 import com.trade.trading.persistence.OkxMarketDataStore;
 import com.trade.trading.persistence.TradingStateRepository;
-import com.trade.trading.support.TradingMath;
+import com.trade.common.support.TradingMath;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;

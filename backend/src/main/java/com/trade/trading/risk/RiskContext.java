@@ -7,7 +7,7 @@ import com.trade.trading.model.StrategyDecision;
 import com.trade.trading.model.TradingAction;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingRiskState;
-import com.trade.trading.support.TradingMath;
+import com.trade.common.support.TradingMath;
 import lombok.Data;
 import lombok.experimental.Accessors;
 

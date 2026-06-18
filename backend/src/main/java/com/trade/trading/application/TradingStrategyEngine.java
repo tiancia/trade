@@ -13,7 +13,7 @@ import com.trade.trading.persistence.TradingStateRepository;
 import com.trade.trading.strategy.ConfiguredTradingStrategy;
 import com.trade.trading.strategy.StrategyEvaluationContext;
 import com.trade.trading.strategy.TradingStrategyRegistry;
-import com.trade.trading.support.TradingMath;
+import com.trade.common.support.TradingMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;

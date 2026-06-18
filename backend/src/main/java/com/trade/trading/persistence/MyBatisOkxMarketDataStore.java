@@ -7,7 +7,7 @@ import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.OrderBookResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.config.TradingProperties;
-import com.trade.trading.support.TradingMath;
+import com.trade.common.support.TradingMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

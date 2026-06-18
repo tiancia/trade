@@ -1,4 +1,4 @@
-package com.trade.trading.support;
+package com.trade.common.support;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;

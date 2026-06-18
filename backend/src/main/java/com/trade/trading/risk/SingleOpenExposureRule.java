@@ -2,7 +2,7 @@ package com.trade.trading.risk;
 
 import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.TradingAction;
-import com.trade.trading.support.TradingMath;
+import com.trade.common.support.TradingMath;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;

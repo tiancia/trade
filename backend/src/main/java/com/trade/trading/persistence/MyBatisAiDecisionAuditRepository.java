@@ -10,7 +10,7 @@ import com.trade.trading.model.TradingAction;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingDecisionRecord;
 import com.trade.trading.model.TradingTrigger;
-import com.trade.trading.support.TradingMath;
+import com.trade.common.support.TradingMath;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 

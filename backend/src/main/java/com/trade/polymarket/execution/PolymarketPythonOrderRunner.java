@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.client.polymarket.PolymarketClientProperties;
 import com.trade.polymarket.config.AiPolymarketProperties;
 import com.trade.polymarket.model.PolymarketOrderRequest;
-import com.trade.trading.support.TradingMath;
+import com.trade.common.support.TradingMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

@@ -9,7 +9,7 @@ import com.trade.polymarket.model.PolymarketOrderRequest;
 import com.trade.polymarket.model.PolymarketOrderResult;
 import com.trade.polymarket.model.PolymarketOutcomeSnapshot;
 import com.trade.polymarket.support.PolymarketMarketFilters;
-import com.trade.trading.support.TradingMath;
+import com.trade.common.support.TradingMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

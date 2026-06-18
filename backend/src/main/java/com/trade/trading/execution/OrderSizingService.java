@@ -8,7 +8,7 @@ import com.trade.trading.model.OrderSizing;
 import com.trade.trading.model.StrategyDecision;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.risk.RiskContext;
-import com.trade.trading.support.TradingMath;
+import com.trade.common.support.TradingMath;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
