@@ -82,7 +82,12 @@ public class AliyunMarketplaceOssStsClient implements MarketplaceOssStsClient {
         try {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new MarketplaceUnavailableException("Aliyun STS request failed with status " + response.statusCode());
+                throw new MarketplaceUnavailableException(
+                        "Aliyun STS request failed with status "
+                                + response.statusCode()
+                                + ", body="
+                                + response.body()
+                );
             }
             return credentials(response.body());
         } catch (MarketplaceUnavailableException e) {

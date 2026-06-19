@@ -18,6 +18,7 @@ import java.util.UUID;
 
 @Service
 public class MarketplaceUploadService {
+    private static final String PUBLIC_READ_ACL = "public-read";
     private static final List<String> ALLOWED_CONTENT_TYPES = List.of(
             "image/jpeg",
             "image/png",
@@ -74,6 +75,7 @@ public class MarketplaceUploadService {
                     oss.normalizedPublicBaseUrl() + "/" + objectKey,
                     oss.requiredBucket(),
                     oss.requiredRegion(),
+                    PUBLIC_READ_ACL,
                     credentials
             );
         } catch (IllegalStateException e) {
@@ -85,7 +87,7 @@ public class MarketplaceUploadService {
         try {
             Map<String, Object> statement = Map.of(
                     "Effect", "Allow",
-                    "Action", List.of("oss:PutObject", "oss:AbortMultipartUpload", "oss:ListParts"),
+                    "Action", List.of("oss:PutObject", "oss:PutObjectAcl", "oss:AbortMultipartUpload", "oss:ListParts"),
                     "Resource", List.of("acs:oss:*:*:" + bucket + "/" + objectKey)
             );
             return objectMapper.writeValueAsString(Map.of(

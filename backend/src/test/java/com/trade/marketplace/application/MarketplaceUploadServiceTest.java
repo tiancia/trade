@@ -36,8 +36,10 @@ class MarketplaceUploadServiceTest {
         assertTrue(intent.objectKey().startsWith("marketplace/users/42/"));
         assertTrue(intent.objectKey().endsWith(".png"));
         assertEquals("https://img.example.com/" + intent.objectKey(), intent.publicUrl());
+        assertEquals("public-read", intent.objectAcl());
         assertEquals("sts-ak", intent.credentials().accessKeyId());
         assertTrue(stsClient.policy.contains("oss:PutObject"));
+        assertTrue(stsClient.policy.contains("oss:PutObjectAcl"));
         assertTrue(stsClient.policy.contains("bucket/" + intent.objectKey()));
     }
 

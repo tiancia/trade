@@ -107,6 +107,7 @@ describe('marketplace app', () => {
       publicUrl: 'https://cdn.example.com/uploaded.png',
       bucket: 'bucket',
       region: 'oss-cn-hangzhou',
+      objectAcl: 'public-read',
       credentials: {
         accessKeyId: 'ak',
         accessKeySecret: 'sk',

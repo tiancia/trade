@@ -60,6 +60,7 @@ public final class MarketplaceApi {
             String publicUrl,
             String bucket,
             String region,
+            String objectAcl,
             OssCredentials credentials
     ) {
     }

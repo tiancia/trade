@@ -54,9 +54,9 @@ public class MarketplaceItemService {
         if (seller == null) {
             throw new MarketplaceUnauthorizedException("login is required to create items");
         }
-        String title = requiredText(request == null ? null : request.title(), "title is required", 3, 120);
-        String description = requiredText(request == null ? null : request.description(), "description is required", 1, 2000);
-        String imageUrl = requiredText(request == null ? null : request.imageUrl(), "imageUrl is required", 8, 1000);
+        String title = requiredText(request == null ? null : request.title(), "title is illegal", 1, 120);
+        String description = requiredText(request == null ? null : request.description(), "description is too long", 0, 2000);
+        String imageUrl = requiredText(request == null ? null : request.imageUrl(), "imageUrl is illegal", 8, 1000);
         if (!imageUrl.startsWith("http://") && !imageUrl.startsWith("https://")) {
             throw new IllegalArgumentException("imageUrl must be an absolute URL");
         }
