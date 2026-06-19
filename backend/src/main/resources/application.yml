@@ -33,6 +33,18 @@ trade:
     admin-token: ${TRADE_TEXT_GAME_ADMIN_TOKEN:}
     session-retention-days: 30
     seed-enabled: ${TRADE_TEXT_GAME_SEED_ENABLED:true}
+  marketplace:
+    session-retention-days: ${TRADE_MARKETPLACE_SESSION_RETENTION_DAYS:30}
+    oss:
+      access-key-id: ${ALIBABA_CLOUD_ACCESS_KEY_ID:}
+      access-key-secret: ${ALIBABA_CLOUD_ACCESS_KEY_SECRET:}
+      role-arn: ${TRADE_MARKETPLACE_OSS_ROLE_ARN:}
+      bucket: ${TRADE_MARKETPLACE_OSS_BUCKET:26-6-second-hand-market}
+      region: ${TRADE_MARKETPLACE_OSS_REGION:cn-beijing}
+      public-base-url: ${TRADE_MARKETPLACE_OSS_PUBLIC_BASE_URL:https://26-6-second-hand-market.cn-beijing.aliyuncs.com}
+      sts-endpoint: ${TRADE_MARKETPLACE_OSS_STS_ENDPOINT:https://sts.aliyuncs.com}
+      duration-seconds: ${TRADE_MARKETPLACE_OSS_DURATION_SECONDS:900}
+      key-prefix: ${TRADE_MARKETPLACE_OSS_KEY_PREFIX:marketplace}
   weibo:
     client-id: ${WEIBO_CLIENT_ID:}
     client-secret: ${WEIBO_CLIENT_SECRET:}

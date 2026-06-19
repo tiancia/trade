@@ -7,6 +7,7 @@
 ```text
 backend/             Spring Boot 后端：交易决策、调度、外部客户端、持久化、HTTP API
 frontend/text-game/  React + Vite 文字游戏前端：浏览器交互和界面状态
+frontend/market/     React + Vite 二手集市前端：商品发布、筛选、会话和图片上传
 tools/polymarket/    Polymarket Python 工具：CLOB 下单桥接、凭证调试、样例 payload
 story/               AI 小说生成输出和素材，属于运行产物
 ```
@@ -24,6 +25,11 @@ cd backend
 
 ```powershell
 cd frontend\text-game
+npm run build
+```
+
+```powershell
+cd frontend\market
 npm run build
 ```
 

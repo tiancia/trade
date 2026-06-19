@@ -14,4 +14,5 @@ public class AiResponseParseErrorRecord {
     private String errorMessage;
     private String fallbackAction;
     private String metadataJson;
+
 }

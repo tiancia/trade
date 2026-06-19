@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.marketplace.persistence.MarketplaceMapper">
+    <sql id="itemColumns">
+        i.id, i.seller_id, seller.username AS seller_username, seller.display_name AS seller_display_name,
+        i.category_id, category.name AS category_name, category.slug AS category_slug,
+        i.title, i.description, i.image_url, i.price, i.status, i.created_at, i.updated_at
+    </sql>
+
+    <sql id="conversationColumns">
+        conv.id, conv.item_id,
+        item.title AS item_title, item.description AS item_description,
+        item.category_id AS item_category_id, category.name AS item_category_name, category.slug AS item_category_slug,
+        item.image_url AS item_image_url, item.price AS item_price, item.status AS item_status,
+        item.created_at AS item_created_at, item.updated_at AS item_updated_at,
+        conv.buyer_id, buyer.username AS buyer_username, buyer.display_name AS buyer_display_name,
+        conv.seller_id, seller.username AS seller_username, seller.display_name AS seller_display_name,
+        last_message.id AS last_message_id,
+        last_message.sender_id AS last_message_sender_id,
+        last_sender.username AS last_message_sender_username,
+        last_sender.display_name AS last_message_sender_display_name,
+        last_message.body AS last_message_body,
+        last_message.created_at AS last_message_created_at,
+        conv.created_at, conv.updated_at
+    </sql>
+
+    <select id="findUserByUsername" resultType="com.trade.marketplace.persistence.MarketplaceUserRow">
+        SELECT id, username, password_hash, display_name, created_at, updated_at
+        FROM marketplace_users
+        WHERE username = #{username}
+    </select>
+
+    <select id="findUserById" resultType="com.trade.marketplace.persistence.MarketplaceUserRow">
+        SELECT id, username, password_hash, display_name, created_at, updated_at
+        FROM marketplace_users
+        WHERE id = #{id}
+    </select>
+
+    <insert id="insertUser" parameterType="com.trade.marketplace.persistence.MarketplaceUserRow"
+            useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO marketplace_users (username, password_hash, display_name)
+        VALUES (#{username}, #{passwordHash}, #{displayName})
+    </insert>
+
+    <insert id="insertSession" parameterType="com.trade.marketplace.persistence.MarketplaceSessionRow">
+        INSERT INTO marketplace_sessions (token_hash, user_id, expires_at, revoked_at, last_seen_at)
+        VALUES (#{tokenHash}, #{userId}, #{expiresAt}, #{revokedAt}, #{lastSeenAt})
+    </insert>
+
+    <select id="findSessionByTokenHash" resultType="com.trade.marketplace.persistence.MarketplaceSessionRow">
+        SELECT token_hash, user_id, expires_at, revoked_at, last_seen_at, created_at
+        FROM marketplace_sessions
+        WHERE token_hash = #{tokenHash}
+    </select>
+
+    <update id="revokeSession">
+        UPDATE marketplace_sessions
+        SET revoked_at = #{revokedAt}
+        WHERE token_hash = #{tokenHash} AND revoked_at IS NULL
+    </update>
+
+    <update id="touchSession">
+        UPDATE marketplace_sessions
+        SET last_seen_at = #{lastSeenAt}
+        WHERE token_hash = #{tokenHash}
+    </update>
+
+    <select id="listCategories" resultType="com.trade.marketplace.persistence.MarketplaceCategoryRow">
+        SELECT id, name, slug, sort_order, created_at
+        FROM marketplace_categories
+        ORDER BY sort_order, id
+    </select>
+
+    <select id="findCategoryById" resultType="com.trade.marketplace.persistence.MarketplaceCategoryRow">
+        SELECT id, name, slug, sort_order, created_at
+        FROM marketplace_categories
+        WHERE id = #{id}
+    </select>
+
+    <select id="listItems" resultType="com.trade.marketplace.persistence.MarketplaceItemRow">
+        SELECT <include refid="itemColumns"/>
+        FROM marketplace_items i
+        JOIN marketplace_users seller ON seller.id = i.seller_id
+        JOIN marketplace_categories category ON category.id = i.category_id
+        WHERE 1 = 1
+        <choose>
+            <when test="mine">
+                AND i.seller_id = #{sellerId}
+            </when>
+            <otherwise>
+                AND i.status = 'LISTED'
+            </otherwise>
+        </choose>
+        <if test="categoryId != null">
+            AND i.category_id = #{categoryId}
+        </if>
+        <if test="q != null and q != ''">
+            AND (LOWER(i.title) LIKE #{q} OR LOWER(i.description) LIKE #{q})
+        </if>
+        ORDER BY i.created_at DESC, i.id DESC
+    </select>
+
+    <select id="findItemById" resultType="com.trade.marketplace.persistence.MarketplaceItemRow">
+        SELECT <include refid="itemColumns"/>
+        FROM marketplace_items i
+        JOIN marketplace_users seller ON seller.id = i.seller_id
+        JOIN marketplace_categories category ON category.id = i.category_id
+        WHERE i.id = #{id}
+    </select>
+
+    <insert id="insertItem" parameterType="com.trade.marketplace.persistence.MarketplaceItemRow"
+            useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO marketplace_items
+            (seller_id, category_id, title, description, image_url, price, status)
+        VALUES
+            (#{sellerId}, #{categoryId}, #{title}, #{description}, #{imageUrl}, #{price}, #{status})
+    </insert>
+
+    <update id="delistItem">
+        UPDATE marketplace_items
+        SET status = 'DELISTED'
+        WHERE id = #{id} AND seller_id = #{sellerId} AND status = 'LISTED'
+    </update>
+
+    <select id="findConversationForItemBuyer" resultType="com.trade.marketplace.persistence.MarketplaceConversationRow">
+        SELECT <include refid="conversationColumns"/>
+        FROM marketplace_conversations conv
+        JOIN marketplace_items item ON item.id = conv.item_id
+        JOIN marketplace_categories category ON category.id = item.category_id
+        JOIN marketplace_users buyer ON buyer.id = conv.buyer_id
+        JOIN marketplace_users seller ON seller.id = conv.seller_id
+        LEFT JOIN marketplace_messages last_message ON last_message.id = (
+            SELECT MAX(m.id) FROM marketplace_messages m WHERE m.conversation_id = conv.id
+        )
+        LEFT JOIN marketplace_users last_sender ON last_sender.id = last_message.sender_id
+        WHERE conv.item_id = #{itemId} AND conv.buyer_id = #{buyerId}
+    </select>
+
+    <select id="findConversationById" resultType="com.trade.marketplace.persistence.MarketplaceConversationRow">
+        SELECT <include refid="conversationColumns"/>
+        FROM marketplace_conversations conv
+        JOIN marketplace_items item ON item.id = conv.item_id
+        JOIN marketplace_categories category ON category.id = item.category_id
+        JOIN marketplace_users buyer ON buyer.id = conv.buyer_id
+        JOIN marketplace_users seller ON seller.id = conv.seller_id
+        LEFT JOIN marketplace_messages last_message ON last_message.id = (
+            SELECT MAX(m.id) FROM marketplace_messages m WHERE m.conversation_id = conv.id
+        )
+        LEFT JOIN marketplace_users last_sender ON last_sender.id = last_message.sender_id
+        WHERE conv.id = #{id}
+    </select>
+
+    <insert id="insertConversation" parameterType="com.trade.marketplace.persistence.MarketplaceConversationRow"
+            useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO marketplace_conversations (item_id, buyer_id, seller_id)
+        VALUES (#{itemId}, #{buyerId}, #{sellerId})
+    </insert>
+
+    <select id="listConversations" resultType="com.trade.marketplace.persistence.MarketplaceConversationRow">
+        SELECT <include refid="conversationColumns"/>
+        FROM marketplace_conversations conv
+        JOIN marketplace_items item ON item.id = conv.item_id
+        JOIN marketplace_categories category ON category.id = item.category_id
+        JOIN marketplace_users buyer ON buyer.id = conv.buyer_id
+        JOIN marketplace_users seller ON seller.id = conv.seller_id
+        LEFT JOIN marketplace_messages last_message ON last_message.id = (
+            SELECT MAX(m.id) FROM marketplace_messages m WHERE m.conversation_id = conv.id
+        )
+        LEFT JOIN marketplace_users last_sender ON last_sender.id = last_message.sender_id
+        WHERE conv.buyer_id = #{userId} OR conv.seller_id = #{userId}
+        ORDER BY COALESCE(last_message.created_at, conv.updated_at) DESC, conv.id DESC
+    </select>
+
+    <insert id="insertMessage" parameterType="com.trade.marketplace.persistence.MarketplaceMessageRow"
+            useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO marketplace_messages (conversation_id, sender_id, body, created_at)
+        VALUES (#{conversationId}, #{senderId}, #{body}, #{createdAt})
+    </insert>
+
+    <update id="touchConversation">
+        UPDATE marketplace_conversations SET updated_at = #{updatedAt} WHERE id = #{id}
+    </update>
+
+    <select id="listMessages" resultType="com.trade.marketplace.persistence.MarketplaceMessageRow">
+        SELECT m.id, m.conversation_id, m.sender_id, sender.username AS sender_username,
+               sender.display_name AS sender_display_name, m.body, m.created_at
+        FROM marketplace_messages m
+        JOIN marketplace_users sender ON sender.id = m.sender_id
+        WHERE m.conversation_id = #{conversationId}
+        <if test="afterId != null">
+            AND m.id &gt; #{afterId}
+        </if>
+        ORDER BY m.id
+        LIMIT #{limit}
+    </select>
+</mapper>
