@@ -9,10 +9,9 @@ backend/             Spring Boot 后端：交易决策、调度、外部客户�
 frontend/text-game/  React + Vite 文字游戏前端：浏览器交互和界面状态
 tools/polymarket/    Polymarket Python 工具：CLOB 下单桥接、凭证调试、样例 payload
 story/               AI 小说生成输出和素材，属于运行产物
-docs/                项目结构、维护约定和后续设计说明
 ```
 
-后端 Java 包也按“业务域 + 层职责”拆分。具体规则见 [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)。
+后端 Java 包也按“业务域 + 层职责”拆分。具体规则见 [backend/README.md](backend/README.md)。
 
 ## 常用命令
 
@@ -35,6 +34,6 @@ python debug_polymarket_place_order.py --print-only
 
 ## 配置约定
 
-- Polymarket、OKX、AI、数据库等密钥只从环境变量或本地 `.env` 读取，不写进仓库。
-- Polymarket 下单脚本默认使用 `tools/polymarket/polymarket_place_order.py`，需要改路径时设置 `POLYMARKET_ORDER_SCRIPT`。
+- Polymarket、OKX、AI、数据库等密钥只从环境变量或启动工具加载的本地 `.env` 读取，不写进仓库。
+- 从 `backend/` 启动时，Polymarket 下单脚本默认使用 `../tools/polymarket/polymarket_place_order.py`，需要改路径时设置 `POLYMARKET_ORDER_SCRIPT`。
 - `story/` 是生成内容目录，不放服务端源码；后端生成位置由 `trade.story.output-dir` 控制。

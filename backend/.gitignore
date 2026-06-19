@@ -1,5 +1,6 @@
 HELP.md
 target/
+data/trading-state.json
 .env
 polymarket.env
 .mvn/wrapper/maven-wrapper.jar

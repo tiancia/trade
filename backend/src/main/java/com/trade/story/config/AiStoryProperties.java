@@ -12,7 +12,7 @@ public class AiStoryProperties {
     private boolean enabled = false;
     private long generationFixedDelayMs = 14_400_000L;
     private long initialDelayMs = 120_000L;
-    private String outputDir = "A:\\trade\\story";
+    private String outputDir = "../story";
     private int targetCharCount = 15_000;
     private int minAcceptableCharCount = 13_000;
     private int sectionCount = 6;

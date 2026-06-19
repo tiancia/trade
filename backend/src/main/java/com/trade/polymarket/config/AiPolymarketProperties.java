@@ -46,7 +46,7 @@ public class AiPolymarketProperties {
     public static class ExecutionProperties {
         private boolean enabled = false;
         private String pythonCommand = "python";
-        private String scriptPath = "tools/polymarket/polymarket_place_order.py";
+        private String scriptPath = "../tools/polymarket/polymarket_place_order.py";
         private long timeoutMs = 60_000L;
         private int chainId = 137;
         private int signatureType = 1;

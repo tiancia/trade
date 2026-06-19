@@ -9,6 +9,7 @@ frontend/**/*.tsbuildinfo
 # Local runtime data and secrets
 backend/.env
 backend/polymarket.env
+backend/data/trading-state.json
 *.env
 *.local
 

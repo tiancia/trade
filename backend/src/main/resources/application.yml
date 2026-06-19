@@ -8,7 +8,7 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: ${SPRING_DATASOURCE_URL:jdbc:mysql://127.0.0.1:3306/ai_trade?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
     username: ${SPRING_DATASOURCE_USERNAME:root}
-    password: ${SPRING_DATASOURCE_PASSWORD:Aa259189.}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
   sql:
     init:
       mode: always
@@ -24,15 +24,15 @@ trade:
   # 模块开关
   automation:
     story:
-      auto-start: false
+      auto-start: ${TRADE_AUTOMATION_STORY_AUTO_START:false}
     trading:
-      auto-start: false
+      auto-start: ${TRADE_AUTOMATION_TRADING_AUTO_START:false}
     polymarket:
-      auto-start: false
+      auto-start: ${TRADE_AUTOMATION_POLYMARKET_AUTO_START:false}
   text-game:
     admin-token: ${TRADE_TEXT_GAME_ADMIN_TOKEN:}
     session-retention-days: 30
-    seed-enabled: true
+    seed-enabled: ${TRADE_TEXT_GAME_SEED_ENABLED:true}
   weibo:
     client-id: ${WEIBO_CLIENT_ID:}
     client-secret: ${WEIBO_CLIENT_SECRET:}
@@ -41,9 +41,9 @@ trade:
     oauth-base-url: "https://api.weibo.com/oauth2"
     api-base-url: "https://api.weibo.com/2"
     proxy:
-      enabled: false
-      host: "127.0.0.1"
-      port: 7897
+      enabled: ${TRADE_WEIBO_PROXY_ENABLED:false}
+      host: ${TRADE_WEIBO_PROXY_HOST:127.0.0.1}
+      port: ${TRADE_WEIBO_PROXY_PORT:7897}
   # OKX 交易所客户端配置，用于 REST 和 WebSocket 请求。
   okx:
     # OKX REST API 基础地址。
@@ -54,16 +54,16 @@ trade:
     ws-private-url: "wss://ws.okx.com:8443/ws/v5/private"
     proxy:
       # 是否给 OKX HTTP/WebSocket 请求启用代理。
-      enabled: true
+      enabled: ${TRADE_OKX_PROXY_ENABLED:false}
       # OKX 代理主机地址。
-      host: "127.0.0.1"
+      host: ${TRADE_OKX_PROXY_HOST:127.0.0.1}
       # OKX 代理端口。
-      port: 7897
+      port: ${TRADE_OKX_PROXY_PORT:7897}
 
   # Polymarket 独立 AI 决策模块；默认关闭，避免启动后直接读取市场并下注。
   polymarket:
     # 是否启用 Polymarket AI 决策调度。
-    enabled: true
+    enabled: ${TRADE_POLYMARKET_ENABLED:false}
     # 单次 AI 决策最多分析多少个市场。
     market-limit: 5
     # 市场发现来源：gamma-volume 使用 Gamma /markets 成交量轮换；clob-sampling 使用 CLOB /sampling-markets 游标轮换。
@@ -107,15 +107,15 @@ trade:
       clob-base-url: "https://clob.polymarket.com"
       proxy:
         # 是否给 Polymarket HTTP 请求启用代理。
-        enabled: true
-        host: "127.0.0.1"
-        port: 7897
+        enabled: ${TRADE_POLYMARKET_PROXY_ENABLED:false}
+        host: ${TRADE_POLYMARKET_PROXY_HOST:127.0.0.1}
+        port: ${TRADE_POLYMARKET_PROXY_PORT:7897}
     execution:
       # 是否启用真实下单；false 时只记录 dry-run。
-      enabled: true
+      enabled: ${TRADE_POLYMARKET_EXECUTION_ENABLED:false}
       # Python SDK 下单桥接脚本。
       python-command: "python"
-      script-path: ${POLYMARKET_ORDER_SCRIPT:tools/polymarket/polymarket_place_order.py}
+      script-path: ${POLYMARKET_ORDER_SCRIPT:../tools/polymarket/polymarket_place_order.py}
       timeout-ms: 60000
       chain-id: 137
       # EOA 通常为 0；使用 Polymarket proxy/funder 钱包时按官方 SDK 要求调整。
@@ -158,22 +158,22 @@ trade:
       # max-output-tokens:
       proxy:
         # 是否给 AI 请求启用代理。
-        enabled: false
+        enabled: ${TRADE_AI_PROXY_ENABLED:false}
         # AI 请求代理主机地址。
-        host: "127.0.0.1"
+        host: ${TRADE_AI_PROXY_HOST:127.0.0.1}
         # AI 请求代理端口。
-        port: 7897
+        port: ${TRADE_AI_PROXY_PORT:7897}
 
   # AI 自动短篇小说生成模块
   story:
     # 是否启用小说生成调度；启用后会消耗 AI token。
-    enabled: true
+    enabled: ${TRADE_STORY_ENABLED:false}
     # 小说生成定时执行间隔，单位毫秒；14400000 = 4 小时。
     generation-fixed-delay-ms: 1800000
     # 应用启动后首次生成小说前的延迟，单位毫秒。
     initial-delay-ms: 12000
     # 小说保存目录。
-    output-dir: "A:\\trade\\story"
+    output-dir: ${TRADE_STORY_OUTPUT_DIR:../story}
     # 目标非空白中文字符数
     target-char-count: 10000
     # 低于该字数时最多补写 max-continuation-sections 节。
@@ -199,14 +199,14 @@ trade:
       - "女频成长：女主事业线、家庭关系和情感选择并行推进"
       - "无限流副本：高概念副本、团队博弈和阶段性通关奖励"
     trend-proxy:
-      enabled: false
-      host: "127.0.0.1"
-      port: 7897
+      enabled: ${TRADE_STORY_TREND_PROXY_ENABLED:false}
+      host: ${TRADE_STORY_TREND_PROXY_HOST:127.0.0.1}
+      port: ${TRADE_STORY_TREND_PROXY_PORT:7897}
 
   # OKX 自动交易模块配置。
   trading:
     # 是否启用 OKX AI 自动交易；false 时调度任务会跳过实际决策和下单。
-    enabled: true
+    enabled: ${TRADE_TRADING_ENABLED:false}
     # 交易标的 ID，例如 BTC-USDT。
     inst-id: BTC-USDT
     # OKX 产品类型，例如 SPOT 表示现货。
@@ -294,7 +294,7 @@ trade:
     event-cooldown-ms: 600000
     websocket:
       # 是否启用 OKX 行情 WebSocket 订阅；启用后事件扫描优先使用 WebSocket 缓存。
-      enabled: true
+      enabled: ${TRADE_TRADING_WEBSOCKET_ENABLED:false}
       # WebSocket 行情缓存超过该时间未更新时视为过期，事件扫描会回退到 REST 查询，单位毫秒。
       stale-timeout-ms: 120000
       # 本地保留的 1 分钟 K 线缓存数量，用于事件检测。
