@@ -42,7 +42,7 @@ export interface UploadIntent {
   publicUrl: string;
   bucket: string;
   region: string;
-  objectAcl: string;
+  objectAcl:string;
   credentials: {
     accessKeyId: string;
     accessKeySecret: string;
@@ -165,12 +165,7 @@ export async function uploadFileToOss(file: File, intent: UploadIntent) {
     stsToken: intent.credentials.securityToken,
     secure: true,
   });
-  await client.put(intent.objectKey, file, {
-    headers: {
-      'Content-Type': file.type,
-      'x-oss-object-acl': intent.objectAcl,
-    },
-  });
+  await client.put(intent.objectKey, file, { headers: { 'Content-Type': file.type } });
   return intent.publicUrl;
 }
 
