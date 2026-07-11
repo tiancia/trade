@@ -2,7 +2,7 @@ package com.trade.marketplace.oss;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trade.marketplace.application.MarketplaceUnavailableException;
+import com.trade.marketplace.exception.MarketplaceUnavailableException;
 import com.trade.marketplace.config.MarketplaceProperties;
 import com.trade.marketplace.model.MarketplaceApi;
 import org.springframework.beans.factory.annotation.Autowired;

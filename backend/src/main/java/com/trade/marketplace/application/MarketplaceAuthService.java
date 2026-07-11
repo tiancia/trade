@@ -1,7 +1,10 @@
 package com.trade.marketplace.application;
 
 import com.trade.marketplace.config.MarketplaceProperties;
+import com.trade.marketplace.exception.MarketplaceConflictException;
+import com.trade.marketplace.exception.MarketplaceUnauthorizedException;
 import com.trade.marketplace.model.MarketplaceApi;
+import com.trade.marketplace.model.MarketplacePrincipal;
 import com.trade.marketplace.persistence.MarketplaceMapper;
 import com.trade.marketplace.persistence.MarketplaceSessionRow;
 import com.trade.marketplace.persistence.MarketplaceUserRow;
@@ -22,6 +25,12 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.regex.Pattern;
 
+/**
+ * Registers users and manages opaque, expiring marketplace sessions.
+ *
+ * <p>Only token hashes are persisted; callers receive the raw bearer token
+ * once when a session is issued.</p>
+ */
 @Service
 public class MarketplaceAuthService {
     private static final Pattern USERNAME = Pattern.compile("[A-Za-z0-9_.-]{3,32}");
@@ -91,14 +100,14 @@ public class MarketplaceAuthService {
         return MarketplaceViews.user(requireUser(authorization));
     }
 
-    public MarketplaceUserRow optionalUser(String authorization) {
+    public MarketplacePrincipal optionalUser(String authorization) {
         if (authorization == null || authorization.isBlank()) {
             return null;
         }
         return requireToken(bearerToken(authorization, true));
     }
 
-    public MarketplaceUserRow requireUser(String authorization) {
+    public MarketplacePrincipal requireUser(String authorization) {
         return requireToken(bearerToken(authorization, true));
     }
 
@@ -114,7 +123,7 @@ public class MarketplaceAuthService {
         return new MarketplaceApi.AuthResponse(token, MarketplaceViews.user(user), expiresAt);
     }
 
-    private MarketplaceUserRow requireToken(String token) {
+    private MarketplacePrincipal requireToken(String token) {
         Instant now = Instant.now(clock);
         String hash = hashToken(token);
         MarketplaceSessionRow session = mapper.findSessionByTokenHash(hash);
@@ -126,7 +135,7 @@ public class MarketplaceAuthService {
             throw new MarketplaceUnauthorizedException("marketplace session user no longer exists");
         }
         mapper.touchSession(hash, Timestamp.from(now));
-        return user;
+        return new MarketplacePrincipal(user.getId(), user.getUsername(), user.getDisplayName());
     }
 
     private static String cleanUsername(String value) {

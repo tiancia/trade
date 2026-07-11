@@ -1,72 +1,97 @@
 # Trade Backend
 
-Spring Boot 4 + Java 21 backend for automated trading, Polymarket decisioning, AI story generation, text-game APIs, and Weibo publishing.
+基于 Spring Boot 4 和 Java 21 的后端服务，包含 OKX 策略交易、Polymarket AI 决策、AI 小说生成、文字游戏、二手集市、微博发布以及后台任务编排。
 
-## Quick Start
+如果是第一次接触项目，建议先看本页的模块导航，再阅读 [后端架构说明](docs/ARCHITECTURE.md)。代码采用“业务域优先、域内分层”的组织方式，不按 Controller、Service、Mapper 建立全局大目录。
+
+## 快速启动
+
+前置条件：
+
+- JDK 21；
+- 可连接的 MySQL 数据库；
+- 在 `backend/` 目录运行命令，确保状态文件、小说输出目录和 Python 脚本的相对路径正确。
+
+以下命令从仓库根目录执行；如果终端已经位于 `backend/`，跳过第一行：
 
 ```powershell
-cd A:\trade\backend
-.\mvnw test
-.\mvnw spring-boot:run
+cd backend
+.\mvnw.cmd test
+.\mvnw.cmd spring-boot:run
 ```
 
-Use `.env.example` as a variable checklist for your shell, IDE, or deployment environment. Spring Boot reads environment variables; it does not load `.env` files automatically.
+`.env.example` 是环境变量清单，不会被 Spring Boot 自动加载。请把所需变量配置到当前 Shell、IDE Run Configuration 或部署环境中。默认数据库账号为 `root`、密码为空；实际环境应显式设置 `SPRING_DATASOURCE_*`。
 
-By default, trading, Polymarket execution, and story generation are disabled. Enable them explicitly after database, API keys, and risk settings are ready.
+交易、Polymarket 和小说生成默认关闭。数据库、密钥和风险参数未确认前，不要开启自动任务或真实下单开关。
 
-## Main Structure
+## 模块导航
+
+| 模块 | 主要职责 | 首要入口 | HTTP / 启动方式 |
+| --- | --- | --- | --- |
+| `automation` | 注册、启动、停止和查看后台循环 | `AutomationTaskController`、`AutomationTaskRegistrar` | `/api/automation/tasks` |
+| `trading` | OKX 行情、策略、风控、模拟/真实执行和回测 | `TradingController`、`TradingStrategyEngine` | `/api/trading`，任务 ID `trading` |
+| `polymarket` | 市场筛选、AI 决策、下单校验和审计 | `AiPolymarketService` | 任务 ID `polymarket` |
+| `story` | 热点采集、AI 分段生成和文件落盘 | `AiStoryService` | 任务 ID `story` |
+| `textgame` | 剧情发布、会话推进和规则计算 | `TextGameController`、`TextGameAdminController` | `/api/text-game`；配置管理员令牌后才创建 `/admin` API |
+| `marketplace` | 用户认证、商品、会话聊天和 OSS 上传凭证 | 三个 `Marketplace*Controller` | `/api/marketplace` |
+| `weibo` | OAuth 授权、账号状态和微博发布 | `WeiboController` | `/api/weibo`；配置管理员令牌后才创建 |
+| `client` | AI、OKX、Polymarket、微博等外部传输适配 | `AiClientConfiguration`、各 provider client | 由业务模块调用 |
+| `ai` | 跨业务的 AI 解析失败审计契约与持久化 | `AiResponseParseErrorSink` | 内部能力 |
+| `common` | 无业务归属的纯工具 | `TradingMath` | 内部能力 |
+
+## 目录速览
 
 ```text
-src/main/java/com/trade/
-  TradeApplication.java       Spring Boot entry point
-  trading/                    OKX strategy trading domain
-  polymarket/                 Polymarket AI decision and order execution domain
-  story/                      AI short-story generation domain
-  textgame/                   Text-game session and admin APIs
-  weibo/                      Weibo OAuth and publishing domain
-  client/                     Transport clients for external services
-  ai/                         Shared AI persistence and parse-error auditing
-  automation/                 Start/stop/status orchestration for background loops
-  common/                     Business-neutral shared helpers
-
-src/main/resources/
-  application.yml             Runtime configuration and safe defaults
-  db/ai_trade_mysql_schema.sql Main MySQL bootstrap schema
-  db/migration/               Manual database migration scripts
-  mapper/<domain>/            MyBatis XML grouped by owning domain
-  textgame/stories/           Seed story JSON files
-
-data/
-  trading-state.example.json  Example local trading state file
+backend/
+├─ docs/
+│  └─ ARCHITECTURE.md          # 分层、依赖方向和扩展规则
+├─ data/
+│  └─ trading-state.example.json
+├─ src/main/java/com/trade/
+│  ├─ automation/              # 跨域后台任务编排
+│  ├─ trading/                 # OKX 交易域
+│  ├─ polymarket/              # Polymarket 决策域
+│  ├─ story/                   # 小说生成域
+│  ├─ textgame/                # 文字游戏域
+│  ├─ marketplace/             # 二手集市域
+│  ├─ weibo/                   # 微博域
+│  ├─ client/                  # 外部系统传输适配
+│  ├─ ai/                      # 共享 AI 基础能力
+│  └─ common/                  # 业务无关的共享代码
+├─ src/main/resources/
+│  ├─ application.yml          # 运行配置与安全默认值
+│  ├─ db/                      # 新库基线和手工迁移脚本
+│  ├─ mapper/<domain>/         # 按所属业务域分组的 MyBatis XML
+│  └─ textgame/stories/        # 内置剧情资源
+└─ src/test/java/com/trade/    # 与生产包路径镜像的测试
 ```
 
-## Layer Rules
+详细的标准域目录、允许依赖和典型调用链见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
-- `web`: HTTP controllers and request checks only; keep business decisions out.
-- `scheduler`: timed triggers only; delegate real work to application services.
-- `application`: orchestrates a use case across clients, domain logic, persistence, and execution.
-- `decision`, `strategy`, `risk`, `market`, `execution`, `domain`: domain rules and calculations.
-- `persistence`: MyBatis mappers, row objects, repositories, and file-backed state.
-- `model`: API or domain data structures with minimal behavior.
-- `config`: `@ConfigurationProperties` and Spring bean wiring.
-- `client`: external HTTP/WebSocket details only; no trading or publishing policy.
+## 配置与安全开关
 
-## Configuration
+后台能力通常有三层开关，含义不同：
 
-Use `.env.example` as a checklist. The checked-in configuration intentionally keeps risky loops disabled:
+1. `trade.automation.<task>.auto-start`：应用启动后是否自动启动循环；
+2. `trade.trading.enabled`、`trade.polymarket.enabled`、`trade.story.enabled`：业务模块是否执行；
+3. 真实资金开关：OKX 必须同时满足 `execution-mode=live` 和 `live-enabled=true`，Polymarket 必须设置 `execution.enabled=true`。
 
-- `TRADE_TRADING_ENABLED=false`
-- `TRADE_TRADING_WEBSOCKET_ENABLED=false`
-- `TRADE_POLYMARKET_ENABLED=false`
-- `TRADE_POLYMARKET_EXECUTION_ENABLED=false`
-- `TRADE_STORY_ENABLED=false`
+只打开自动启动并不等于允许真实下单；真实资金开关也不应在缺少风控参数、API 权限或地域检查时启用。
 
-Runtime state belongs in `data/trading-state.json`, which is ignored by Git. Commit only `data/trading-state.example.json`.
+常用环境变量示例见 `.env.example`。密钥、令牌和运行时状态不得提交到 Git；本地状态写入已忽略的 `data/trading-state.json`，仓库只保留示例文件。
 
-## Tests
+## 数据库
+
+应用启动时会执行 `db/ai_trade_mysql_schema.sql`。该文件使用 `CREATE TABLE IF NOT EXISTS`，适合初始化新库，但不会自动把已有表升级到最新字段结构。
+
+`db/migration/` 下的脚本是手工迁移，不使用 Flyway 或 Liquibase，也不会被 Spring 自动执行。升级已有数据库前请先备份，再根据当前表结构选择脚本；具体约定见 [迁移说明](src/main/resources/db/migration/README.md)。
+
+## 测试
 
 ```powershell
-.\mvnw test
+.\mvnw.cmd clean test
 ```
 
-Most domain code has focused unit tests under the same package path in `src/test/java`. Add tests beside the domain you change.
+单元测试和集成测试应放在与生产代码一致的包路径中。例如修改 `com.trade.weibo.application` 时，相应测试应位于 `src/test/java/com/trade/weibo/application/`。
+
+默认测试套件不会真实下单；需要外部凭据的 OKX 集成测试会按条件跳过。

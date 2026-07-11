@@ -4,6 +4,12 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
+/**
+ * JSON request and response contracts exposed by marketplace controllers.
+ *
+ * <p>Keeping the small immutable records together makes the public wire model
+ * easy to find and prevents persistence rows from becoming API contracts.</p>
+ */
 public final class MarketplaceApi {
     private MarketplaceApi() {
     }

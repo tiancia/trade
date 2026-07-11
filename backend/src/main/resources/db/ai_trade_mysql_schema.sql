@@ -1,3 +1,10 @@
+-- Complete schema baseline for a new database.
+-- Existing databases must be upgraded with the reviewed scripts in db/migration;
+-- CREATE TABLE IF NOT EXISTS does not add missing columns to existing tables.
+
+-- -----------------------------------------------------------------------------
+-- OKX trading, strategy, backtest, and market-data storage
+-- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `okx_decision_runs` (
     `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `started_at` datetime(6) NOT NULL,
@@ -203,6 +210,9 @@ CREATE TABLE IF NOT EXISTS `okx_market_snapshots` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Ticker and order-book snapshots collected by the trading module';
 
+-- -----------------------------------------------------------------------------
+-- Polymarket AI decisions and order-execution audit
+-- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `polymarket_decision_runs` (
     `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `started_at` datetime(6) NOT NULL,
@@ -277,6 +287,9 @@ CREATE TABLE IF NOT EXISTS `polymarket_order_executions` (
         FOREIGN KEY (`decision_run_id`) REFERENCES `polymarket_decision_runs` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- -----------------------------------------------------------------------------
+-- Shared AI response parse-error audit
+-- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `ai_response_parse_errors` (
     `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -293,6 +306,9 @@ CREATE TABLE IF NOT EXISTS `ai_response_parse_errors` (
     KEY `idx_ai_response_parse_errors_related_id` (`related_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- -----------------------------------------------------------------------------
+-- Text-game stories, published versions, sessions, and event history
+-- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `text_game_stories` (
     `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `story_key` varchar(128) NOT NULL UNIQUE,
@@ -357,6 +373,9 @@ CREATE TABLE IF NOT EXISTS `text_game_session_events` (
         FOREIGN KEY (`session_id`) REFERENCES `text_game_sessions` (`session_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- -----------------------------------------------------------------------------
+-- Weibo OAuth state and account credentials
+-- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `weibo_oauth_state` (
     `state` varchar(128) NOT NULL PRIMARY KEY,
     `expires_at` datetime(6) NOT NULL,
@@ -375,6 +394,9 @@ CREATE TABLE IF NOT EXISTS `weibo_account_token` (
     KEY `idx_weibo_account_token_expires_at` (`expires_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- -----------------------------------------------------------------------------
+-- Marketplace users, listings, conversations, and messages
+-- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `marketplace_users` (
     `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `username` varchar(64) NOT NULL UNIQUE,

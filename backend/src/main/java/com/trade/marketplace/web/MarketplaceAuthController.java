@@ -11,6 +11,9 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * HTTP boundary for registration, login, logout, and current-user lookup.
+ */
 @RestController
 @RequestMapping("/api/marketplace/auth")
 public class MarketplaceAuthController {

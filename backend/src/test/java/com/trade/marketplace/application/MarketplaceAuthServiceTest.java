@@ -1,5 +1,6 @@
 package com.trade.marketplace.application;
 
+import com.trade.marketplace.exception.MarketplaceUnauthorizedException;
 import com.trade.marketplace.config.MarketplaceProperties;
 import com.trade.marketplace.model.MarketplaceApi;
 import com.trade.marketplace.support.InMemoryMarketplaceMapper;

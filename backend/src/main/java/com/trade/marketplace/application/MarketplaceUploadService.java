@@ -2,9 +2,11 @@ package com.trade.marketplace.application;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.marketplace.config.MarketplaceProperties;
+import com.trade.marketplace.exception.MarketplaceUnauthorizedException;
+import com.trade.marketplace.exception.MarketplaceUnavailableException;
 import com.trade.marketplace.model.MarketplaceApi;
+import com.trade.marketplace.model.MarketplacePrincipal;
 import com.trade.marketplace.oss.MarketplaceOssStsClient;
-import com.trade.marketplace.persistence.MarketplaceUserRow;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -16,6 +18,12 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Creates constrained Aliyun OSS upload intents for authenticated users.
+ *
+ * <p>Image bytes go directly from the frontend to OSS; this service only
+ * validates metadata and issues short-lived credentials.</p>
+ */
 @Service
 public class MarketplaceUploadService {
     private static final String PUBLIC_READ_ACL = "public-read";
@@ -53,7 +61,7 @@ public class MarketplaceUploadService {
     }
 
     public MarketplaceApi.UploadIntent createIntent(
-            MarketplaceUserRow user,
+            MarketplacePrincipal user,
             MarketplaceApi.UploadIntentRequest request
     ) {
         if (user == null) {
@@ -66,7 +74,7 @@ public class MarketplaceUploadService {
             String policy = uploadPolicy(oss.requiredBucket(), objectKey);
             MarketplaceApi.OssCredentials credentials = stsClient.assumeRole(
                     oss.requiredRoleArn(),
-                    "marketplace-user-" + user.getId() + "-" + UUID.randomUUID().toString().substring(0, 8),
+                    "marketplace-user-" + user.id() + "-" + UUID.randomUUID().toString().substring(0, 8),
                     policy,
                     oss.normalizedDurationSeconds()
             );
@@ -99,11 +107,11 @@ public class MarketplaceUploadService {
         }
     }
 
-    private String objectKey(MarketplaceUserRow user, String fileName, String contentType) {
+    private String objectKey(MarketplacePrincipal user, String fileName, String contentType) {
         LocalDate date = LocalDate.now(clock.withZone(ZoneOffset.UTC));
         String ext = extension(fileName, contentType);
         return properties.getOss().normalizedKeyPrefix()
-                + "/users/" + user.getId()
+                + "/users/" + user.id()
                 + "/" + date.getYear()
                 + "/" + String.format(Locale.ROOT, "%02d", date.getMonthValue())
                 + "/" + UUID.randomUUID() + ext;

@@ -309,8 +309,9 @@ public class MarketContextCollector {
     private Map<String, Object> buildDecisionPolicy() {
         TradingProperties.StrategyProperties strategy = properties.getStrategy();
         Map<String, Object> policy = new LinkedHashMap<>();
-        // These policy strings are intentionally passed to the AI alongside
-        // numeric limits so the prompt and application-side guards match.
+        // This legacy policy metadata remains in the collected context for
+        // audit and compatibility; the current runtime evaluates strategies
+        // deterministically and does not send an AI prompt.
         policy.put("defaultAction", "HOLD");
         policy.put("objectivePriority", List.of(
                 "1. Preserve capital and avoid avoidable drawdown.",

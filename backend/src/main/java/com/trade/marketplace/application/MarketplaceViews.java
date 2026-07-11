@@ -1,6 +1,7 @@
 package com.trade.marketplace.application;
 
 import com.trade.marketplace.model.MarketplaceApi;
+import com.trade.marketplace.model.MarketplacePrincipal;
 import com.trade.marketplace.persistence.MarketplaceCategoryRow;
 import com.trade.marketplace.persistence.MarketplaceConversationRow;
 import com.trade.marketplace.persistence.MarketplaceItemRow;
@@ -16,6 +17,10 @@ final class MarketplaceViews {
 
     static MarketplaceApi.User user(MarketplaceUserRow row) {
         return new MarketplaceApi.User(row.getId(), row.getUsername(), row.getDisplayName());
+    }
+
+    static MarketplaceApi.User user(MarketplacePrincipal principal) {
+        return new MarketplaceApi.User(principal.id(), principal.username(), principal.displayName());
     }
 
     static MarketplaceApi.User user(Long id, String username, String displayName) {

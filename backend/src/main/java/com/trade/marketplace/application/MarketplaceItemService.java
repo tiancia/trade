@@ -1,16 +1,22 @@
 package com.trade.marketplace.application;
 
+import com.trade.marketplace.exception.MarketplaceForbiddenException;
+import com.trade.marketplace.exception.MarketplaceNotFoundException;
+import com.trade.marketplace.exception.MarketplaceUnauthorizedException;
 import com.trade.marketplace.model.MarketplaceApi;
+import com.trade.marketplace.model.MarketplacePrincipal;
 import com.trade.marketplace.persistence.MarketplaceCategoryRow;
 import com.trade.marketplace.persistence.MarketplaceItemRow;
 import com.trade.marketplace.persistence.MarketplaceMapper;
-import com.trade.marketplace.persistence.MarketplaceUserRow;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
 
+/**
+ * Owns listing queries, creation validation, and seller-only delisting.
+ */
 @Service
 public class MarketplaceItemService {
     private final MarketplaceMapper mapper;
@@ -26,7 +32,7 @@ public class MarketplaceItemService {
         return new MarketplaceApi.Categories(categories);
     }
 
-    public MarketplaceApi.Items listItems(Long categoryId, String q, boolean mine, MarketplaceUserRow currentUser) {
+    public MarketplaceApi.Items listItems(Long categoryId, String q, boolean mine, MarketplacePrincipal currentUser) {
         if (mine && currentUser == null) {
             throw new MarketplaceUnauthorizedException("login is required to view your items");
         }
@@ -34,14 +40,14 @@ public class MarketplaceItemService {
             throw new MarketplaceNotFoundException("category does not exist");
         }
         String query = q == null || q.isBlank() ? null : "%" + q.trim().toLowerCase() + "%";
-        Long sellerId = mine ? currentUser.getId() : null;
+        Long sellerId = mine ? currentUser.id() : null;
         List<MarketplaceApi.Item> items = mapper.listItems(categoryId, query, sellerId, mine).stream()
                 .map(MarketplaceViews::item)
                 .toList();
         return new MarketplaceApi.Items(items);
     }
 
-    public MarketplaceApi.Item getItem(long id, MarketplaceUserRow currentUser) {
+    public MarketplaceApi.Item getItem(long id, MarketplacePrincipal currentUser) {
         MarketplaceItemRow item = requireItem(id);
         if (!"LISTED".equals(item.getStatus()) && !isSeller(item, currentUser)) {
             throw new MarketplaceNotFoundException("item does not exist");
@@ -50,7 +56,7 @@ public class MarketplaceItemService {
     }
 
     @Transactional
-    public MarketplaceApi.Item createItem(MarketplaceUserRow seller, MarketplaceApi.CreateItemRequest request) {
+    public MarketplaceApi.Item createItem(MarketplacePrincipal seller, MarketplaceApi.CreateItemRequest request) {
         if (seller == null) {
             throw new MarketplaceUnauthorizedException("login is required to create items");
         }
@@ -70,7 +76,7 @@ public class MarketplaceItemService {
         }
         BigDecimal price = normalizePrice(request == null ? null : request.price());
         MarketplaceItemRow row = new MarketplaceItemRow()
-                .setSellerId(seller.getId())
+                .setSellerId(seller.id())
                 .setCategoryId(categoryId)
                 .setTitle(title)
                 .setDescription(description)
@@ -82,7 +88,7 @@ public class MarketplaceItemService {
     }
 
     @Transactional
-    public MarketplaceApi.Item delistItem(MarketplaceUserRow seller, long itemId) {
+    public MarketplaceApi.Item delistItem(MarketplacePrincipal seller, long itemId) {
         if (seller == null) {
             throw new MarketplaceUnauthorizedException("login is required to delist items");
         }
@@ -91,7 +97,7 @@ public class MarketplaceItemService {
             throw new MarketplaceForbiddenException("only the seller can delist this item");
         }
         if ("LISTED".equals(item.getStatus())) {
-            mapper.delistItem(itemId, seller.getId());
+            mapper.delistItem(itemId, seller.id());
         }
         return MarketplaceViews.item(requireItem(itemId));
     }
@@ -104,8 +110,8 @@ public class MarketplaceItemService {
         return item;
     }
 
-    private static boolean isSeller(MarketplaceItemRow item, MarketplaceUserRow user) {
-        return user != null && item.getSellerId() != null && item.getSellerId().equals(user.getId());
+    private static boolean isSeller(MarketplaceItemRow item, MarketplacePrincipal user) {
+        return user != null && item.getSellerId() != null && item.getSellerId().equals(user.id());
     }
 
     private static BigDecimal normalizePrice(BigDecimal price) {

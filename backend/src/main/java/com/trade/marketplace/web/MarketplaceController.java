@@ -4,7 +4,7 @@ import com.trade.marketplace.application.MarketplaceAuthService;
 import com.trade.marketplace.application.MarketplaceItemService;
 import com.trade.marketplace.application.MarketplaceUploadService;
 import com.trade.marketplace.model.MarketplaceApi;
-import com.trade.marketplace.persistence.MarketplaceUserRow;
+import com.trade.marketplace.model.MarketplacePrincipal;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -15,6 +15,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * HTTP boundary for categories, listings, and image-upload intents.
+ */
 @RestController
 @RequestMapping("/api/marketplace")
 public class MarketplaceController {
@@ -44,7 +47,9 @@ public class MarketplaceController {
             @RequestParam(defaultValue = "false") boolean mine,
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization
     ) {
-        MarketplaceUserRow currentUser = mine ? authService.requireUser(authorization) : authService.optionalUser(authorization);
+        MarketplacePrincipal currentUser = mine
+                ? authService.requireUser(authorization)
+                : authService.optionalUser(authorization);
         return itemService.listItems(categoryId, q, mine, currentUser);
     }
 

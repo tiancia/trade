@@ -149,10 +149,10 @@ trade:
       geoblock-check-enabled: true
       geoblock-url: "https://polymarket.com/api/geoblock"
 
-  # 通用 AI 客户端配置，供 OKX 交易和 Polymarket 决策复用。
+  # 通用 AI 客户端配置，供小说生成和 Polymarket 决策复用。
   ai:
     client:
-      # AI 服务提供商；可选值：gemini、openai-compatible、deepseek、kimi。。。
+      # AI 服务提供商；可选值：gemini、openai-compatible、deepseek、kimi。
       provider: deepseek
       # 使用的 AI 模型名称；未配置时会使用 provider 对应的默认模型。
       model: deepseek-v4-pro
@@ -180,7 +180,7 @@ trade:
   story:
     # 是否启用小说生成调度；启用后会消耗 AI token。
     enabled: ${TRADE_STORY_ENABLED:false}
-    # 小说生成定时执行间隔，单位毫秒；14400000 = 4 小时。
+    # 小说生成定时执行间隔，单位毫秒；1800000 = 30 分钟。
     generation-fixed-delay-ms: 1800000
     # 应用启动后首次生成小说前的延迟，单位毫秒。
     initial-delay-ms: 12000
@@ -217,7 +217,7 @@ trade:
 
   # OKX 自动交易模块配置。
   trading:
-    # 是否启用 OKX AI 自动交易；false 时调度任务会跳过实际决策和下单。
+    # 是否启用 OKX 策略交易；false 时调度任务会跳过策略评估和下单。
     enabled: ${TRADE_TRADING_ENABLED:false}
     # 交易标的 ID，例如 BTC-USDT。
     inst-id: BTC-USDT
@@ -241,13 +241,13 @@ trade:
     max-sell-position-ratio: 1
     # 单次合约/永续下单的最大 OKX sz。
     max-derivative-order-size: 10
-    # 持久化策略目标；每次 AI 决策都会基于这个目标和本地 strategyState，而不是单次孤立判断。
+    # 持久化策略画像；保留长期目标、历史兼容阈值和本地 strategyState。
     strategy:
-      # 策略首要目标，会随每次 AI 请求一起发送。
+      # 策略首要目标，写入采集上下文和持久化状态。
       objective: "Preserve USDT-denominated capital first, then compound account equity through only high-conviction, cost-adjusted BTC setups."
       # 策略复盘频率和预期持仓周期。
       horizon: "review every 30-60 minutes; hold a valid thesis for 4 hours to 7 days unless invalidated"
-      # 风险偏好描述，会写入 AI 上下文。
+      # 风险偏好描述，写入策略上下文。
       risk-profile: conservative
       # 策略允许的最大回撤比例，0.1 表示 10%。
       max-drawdown-ratio: "0.1"
@@ -255,13 +255,13 @@ trade:
       min-risk-reward-ratio: "1.5"
       # 非 HOLD 决策要求的最低胜率估计。
       min-win-probability: "0.56"
-      # 非 HOLD 决策要求的最低 AI 置信度。
+      # 历史兼容的非 HOLD 决策最低置信度。
       min-confidence: "0.65"
       # winProbability * confidence 的最低乘积分数。
       min-win-confidence-score: "0.40"
       # 是否允许合约策略做空；现货配置不使用此项。
       allow-short: false
-      # AI 决策必须遵守的长期原则列表。
+      # 历史兼容的长期决策原则列表。
       principles:
         - "HOLD is the default action; trade only when all non-HOLD decision gates pass."
         - "Preserve capital and avoid churn before pursuing incremental return."
@@ -294,15 +294,15 @@ trade:
           volume-lookback-candles: 20
           # 是否只使用 OKX 已确认收盘的 K 线。
           require-confirmed-candle: true
-    # 常规定时 AI 决策的执行间隔，单位毫秒。
+    # 常规定时策略评估的执行间隔，单位毫秒。
     decision-fixed-delay-ms: 1800000
     # 市场事件扫描的执行间隔，单位毫秒。
     event-scan-fixed-delay-ms: 60000
-    # 应用启动后首次执行常规 AI 决策前的延迟，单位毫秒。
+    # 应用启动后首次执行常规策略评估前的延迟，单位毫秒。
     initial-delay-ms: 30000
     # 应用启动后首次执行市场事件扫描前的延迟，单位毫秒。
     event-initial-delay-ms: 30000
-    # 市场事件触发 AI 决策后的冷却时间，单位毫秒。
+    # 市场事件触发策略评估后的冷却时间，单位毫秒。
     event-cooldown-ms: 600000
     websocket:
       # 是否启用 OKX 行情 WebSocket 订阅；启用后事件扫描优先使用 WebSocket 缓存。
@@ -329,13 +329,13 @@ trade:
     volume-spike-multiplier: 3
     # 本地追踪持仓浮亏触发 AI 决策的阈值比例，0.10 表示 10%。
     floating-loss-trigger-percent: "0.10"
-    # Estimated taker fee rate used in AI trading-cost context. 0.001 means 0.1%.
+    # 策略交易成本上下文使用的 taker 费率；0.001 表示 0.1%。
     taker-fee-rate: "0.001"
     # Required expected net edge after fee and spread. 0.001 means 0.1%.
     min-expected-net-edge-percent: "0.001"
     # 本地交易状态文件路径，用于记录 AI 买入后的持仓成本等信息。
     state-file: "data/trading-state.json"
-    # Number of recent AI decisions persisted and sent into each new AI request.
+    # 本地状态中保留的近期策略决策数量。
     recent-decision-memory-limit: 20
     # 下单前采集的盘口深度档位数。
     # order-book-depth: 5
@@ -353,7 +353,7 @@ trade:
     # order-fill-query-delay-ms: 1000
     # 买入金额保留的小数位数。
     # quote-amount-scale: 2
-    # 应用侧风险控制配置，在 AI 输出之外再次执行硬性校验。
+    # 应用侧风险控制配置，在策略输出之外再次执行硬性校验。
     risk:
       # 是否启用风险规则。
       enabled: true

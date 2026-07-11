@@ -1,13 +1,16 @@
 package com.trade.weibo.persistence;
 
-import com.trade.weibo.WeiboAccountToken;
-import com.trade.weibo.WeiboAccountTokenRepository;
+import com.trade.weibo.application.port.WeiboAccountTokenRepository;
+import com.trade.weibo.model.WeiboAccountToken;
 import org.springframework.stereotype.Repository;
 
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Optional;
 
+/**
+ * MyBatis adapter for the account-token application port.
+ */
 @Repository
 public class MyBatisWeiboAccountTokenRepository implements WeiboAccountTokenRepository {
     private final WeiboMapper mapper;

@@ -3,8 +3,8 @@ package com.trade.marketplace.application;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.marketplace.config.MarketplaceProperties;
 import com.trade.marketplace.model.MarketplaceApi;
+import com.trade.marketplace.model.MarketplacePrincipal;
 import com.trade.marketplace.oss.MarketplaceOssStsClient;
-import com.trade.marketplace.persistence.MarketplaceUserRow;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -27,7 +27,7 @@ class MarketplaceUploadServiceTest {
         MarketplaceUploadService service = new MarketplaceUploadService(properties, stsClient, new ObjectMapper());
 
         MarketplaceApi.UploadIntent intent = service.createIntent(
-                new MarketplaceUserRow().setId(42L).setUsername("alice").setDisplayName("Alice"),
+                new MarketplacePrincipal(42L, "alice", "Alice"),
                 new MarketplaceApi.UploadIntentRequest("phone.png", "image/png")
         );
 
@@ -52,7 +52,7 @@ class MarketplaceUploadServiceTest {
         );
 
         assertThrows(IllegalArgumentException.class, () -> service.createIntent(
-                new MarketplaceUserRow().setId(1L).setUsername("alice").setDisplayName("Alice"),
+                new MarketplacePrincipal(1L, "alice", "Alice"),
                 new MarketplaceApi.UploadIntentRequest("notes.txt", "text/plain")
         ));
     }

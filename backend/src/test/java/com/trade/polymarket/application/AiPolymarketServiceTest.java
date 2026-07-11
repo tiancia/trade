@@ -1,7 +1,7 @@
 package com.trade.polymarket.application;
 
-import com.trade.ai.persistence.AiResponseParseErrorRecord;
-import com.trade.ai.persistence.AiResponseParseErrorSink;
+import com.trade.ai.audit.AiResponseParseErrorRecord;
+import com.trade.ai.audit.AiResponseParseErrorSink;
 import com.trade.polymarket.config.AiPolymarketProperties;
 import com.trade.polymarket.decision.AiPolymarketDecisionParser;
 import com.trade.polymarket.decision.AiPolymarketPromptBuilder;

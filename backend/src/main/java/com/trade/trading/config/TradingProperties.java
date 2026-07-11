@@ -79,7 +79,7 @@ public class TradingProperties {
     private long orderFillQueryDelayMs = 1_000L;
     /** Decimal scale applied to quote-currency order amounts. */
     private int quoteAmountScale = 2;
-    /** Long-lived objective and AI decision thresholds. */
+    /** Long-lived strategy profile and legacy decision thresholds. */
     private StrategyProperties strategy = new StrategyProperties();
     /** Configured deterministic strategy instances. */
     private List<StrategyInstanceProperties> strategies = List.of(defaultThresholdStrategy());
@@ -154,25 +154,25 @@ public class TradingProperties {
 
     @Data
     public static class StrategyProperties {
-        /** Primary capital and return objective included in every AI prompt. */
+        /** Primary capital and return objective retained in the decision context. */
         private String objective = "Preserve USDT-denominated capital first, then compound account equity through only high-conviction, cost-adjusted BTC setups.";
         /** Expected review frequency and position holding horizon. */
         private String horizon = "review every 30-60 minutes; hold a valid thesis for 4 hours to 7 days unless invalidated";
-        /** Human-readable risk posture included in the prompt. */
+        /** Human-readable risk posture retained in the strategy context. */
         private String riskProfile = "conservative";
         /** Maximum strategy drawdown ratio. */
         private BigDecimal maxDrawdownRatio = new BigDecimal("0.05");
         /** Minimum accepted reward-to-risk ratio for a non-HOLD action. */
         private BigDecimal minRiskRewardRatio = new BigDecimal("1.5");
-        /** Minimum AI-estimated win probability. */
+        /** Legacy minimum estimated win probability. */
         private BigDecimal minWinProbability = new BigDecimal("0.56");
-        /** Minimum AI confidence. */
+        /** Legacy minimum decision confidence. */
         private BigDecimal minConfidence = new BigDecimal("0.65");
         /** Minimum product of win probability and confidence. */
         private BigDecimal minWinConfidenceScore = new BigDecimal("0.40");
         /** Allows short actions for derivative instruments. */
         private boolean allowShort = false;
-        /** Ordered qualitative rules included in every decision prompt. */
+        /** Ordered qualitative rules retained for decision-policy compatibility. */
         private List<String> principles = List.of(
                 "HOLD is the default action; trade only when all non-HOLD decision gates pass.",
                 "Preserve capital and avoid churn before pursuing incremental return.",

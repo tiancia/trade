@@ -1,7 +1,7 @@
 package com.trade.story.application;
 
-import com.trade.ai.persistence.AiResponseParseErrorRecord;
-import com.trade.ai.persistence.AiResponseParseErrorSink;
+import com.trade.ai.audit.AiResponseParseErrorRecord;
+import com.trade.ai.audit.AiResponseParseErrorSink;
 import com.trade.client.ai.AiResponseParseException;
 import com.trade.client.ai.AiTextClient;
 import com.trade.story.config.AiStoryProperties;

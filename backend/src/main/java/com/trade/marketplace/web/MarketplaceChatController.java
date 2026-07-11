@@ -3,7 +3,7 @@ package com.trade.marketplace.web;
 import com.trade.marketplace.application.MarketplaceAuthService;
 import com.trade.marketplace.application.MarketplaceChatService;
 import com.trade.marketplace.model.MarketplaceApi;
-import com.trade.marketplace.persistence.MarketplaceUserRow;
+import com.trade.marketplace.model.MarketplacePrincipal;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -14,6 +14,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * HTTP boundary for buyer-seller conversations and message polling.
+ */
 @RestController
 @RequestMapping("/api/marketplace")
 public class MarketplaceChatController {
@@ -30,7 +33,7 @@ public class MarketplaceChatController {
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
             @PathVariable long itemId
     ) {
-        MarketplaceUserRow user = authService.requireUser(authorization);
+        MarketplacePrincipal user = authService.requireUser(authorization);
         return chatService.createConversation(user, itemId);
     }
 
@@ -38,7 +41,7 @@ public class MarketplaceChatController {
     public MarketplaceApi.Conversations conversations(
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization
     ) {
-        MarketplaceUserRow user = authService.requireUser(authorization);
+        MarketplacePrincipal user = authService.requireUser(authorization);
         return chatService.listConversations(user);
     }
 
@@ -49,7 +52,7 @@ public class MarketplaceChatController {
             @RequestParam(required = false) Long afterId,
             @RequestParam(required = false) Integer limit
     ) {
-        MarketplaceUserRow user = authService.requireUser(authorization);
+        MarketplacePrincipal user = authService.requireUser(authorization);
         return chatService.listMessages(user, id, afterId, limit);
     }
 
@@ -59,7 +62,7 @@ public class MarketplaceChatController {
             @PathVariable long id,
             @RequestBody MarketplaceApi.SendMessageRequest request
     ) {
-        MarketplaceUserRow user = authService.requireUser(authorization);
+        MarketplacePrincipal user = authService.requireUser(authorization);
         return chatService.sendMessage(user, id, request);
     }
 }

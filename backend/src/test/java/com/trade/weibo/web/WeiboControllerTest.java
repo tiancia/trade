@@ -1,11 +1,11 @@
 package com.trade.weibo.web;
 
 import com.trade.client.weibo.WeiboClientProperties;
-import com.trade.weibo.WeiboAccount;
-import com.trade.weibo.WeiboAccountService;
-import com.trade.weibo.WeiboAuthorizeUrl;
-import com.trade.weibo.WeiboOAuthService;
-import com.trade.weibo.WeiboPublishingService;
+import com.trade.weibo.application.WeiboAccountService;
+import com.trade.weibo.application.WeiboOAuthService;
+import com.trade.weibo.application.WeiboPublishingService;
+import com.trade.weibo.model.WeiboAccount;
+import com.trade.weibo.model.WeiboAuthorizeUrl;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;

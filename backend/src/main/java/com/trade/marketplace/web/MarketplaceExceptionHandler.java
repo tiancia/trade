@@ -1,10 +1,10 @@
 package com.trade.marketplace.web;
 
-import com.trade.marketplace.application.MarketplaceConflictException;
-import com.trade.marketplace.application.MarketplaceForbiddenException;
-import com.trade.marketplace.application.MarketplaceNotFoundException;
-import com.trade.marketplace.application.MarketplaceUnauthorizedException;
-import com.trade.marketplace.application.MarketplaceUnavailableException;
+import com.trade.marketplace.exception.MarketplaceConflictException;
+import com.trade.marketplace.exception.MarketplaceForbiddenException;
+import com.trade.marketplace.exception.MarketplaceNotFoundException;
+import com.trade.marketplace.exception.MarketplaceUnauthorizedException;
+import com.trade.marketplace.exception.MarketplaceUnavailableException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -12,6 +12,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.Map;
 
+/**
+ * Maps marketplace use-case failures to the public HTTP error contract.
+ */
 @RestControllerAdvice(basePackages = "com.trade.marketplace.web")
 public class MarketplaceExceptionHandler {
     @ExceptionHandler(MarketplaceUnauthorizedException.class)

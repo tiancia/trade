@@ -1,6 +1,8 @@
 package com.trade.marketplace.application;
 
+import com.trade.marketplace.exception.MarketplaceForbiddenException;
 import com.trade.marketplace.model.MarketplaceApi;
+import com.trade.marketplace.model.MarketplacePrincipal;
 import com.trade.marketplace.persistence.MarketplaceCategoryRow;
 import com.trade.marketplace.persistence.MarketplaceUserRow;
 import com.trade.marketplace.support.InMemoryMarketplaceMapper;
@@ -16,9 +18,9 @@ class MarketplaceItemAndChatServiceTest {
     private final InMemoryMarketplaceMapper mapper = new InMemoryMarketplaceMapper();
     private MarketplaceItemService itemService;
     private MarketplaceChatService chatService;
-    private MarketplaceUserRow seller;
-    private MarketplaceUserRow buyer;
-    private MarketplaceUserRow outsider;
+    private MarketplacePrincipal seller;
+    private MarketplacePrincipal buyer;
+    private MarketplacePrincipal outsider;
     private MarketplaceCategoryRow digital;
     private MarketplaceCategoryRow books;
 
@@ -84,12 +86,12 @@ class MarketplaceItemAndChatServiceTest {
         assertEquals(second.body(), chatService.listConversations(seller).conversations().getFirst().lastMessage().body());
     }
 
-    private MarketplaceUserRow user(String username, String displayName) {
+    private MarketplacePrincipal user(String username, String displayName) {
         MarketplaceUserRow row = new MarketplaceUserRow()
                 .setUsername(username)
                 .setDisplayName(displayName)
                 .setPasswordHash("hash");
         mapper.insertUser(row);
-        return row;
+        return new MarketplacePrincipal(row.getId(), row.getUsername(), row.getDisplayName());
     }
 }

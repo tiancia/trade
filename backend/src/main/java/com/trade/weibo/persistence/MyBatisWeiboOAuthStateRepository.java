@@ -1,11 +1,14 @@
 package com.trade.weibo.persistence;
 
-import com.trade.weibo.WeiboOAuthStateRepository;
+import com.trade.weibo.application.port.WeiboOAuthStateRepository;
 import org.springframework.stereotype.Repository;
 
 import java.sql.Timestamp;
 import java.time.Instant;
 
+/**
+ * MyBatis adapter that makes OAuth states single-use and time-bound.
+ */
 @Repository
 public class MyBatisWeiboOAuthStateRepository implements WeiboOAuthStateRepository {
     private final WeiboMapper mapper;

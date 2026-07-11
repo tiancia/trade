@@ -1,8 +1,13 @@
 package com.trade.ai.persistence;
 
+import com.trade.ai.audit.AiResponseParseErrorRecord;
+import com.trade.ai.audit.AiResponseParseErrorSink;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * MyBatis adapter for the shared AI parse-error audit port.
+ */
 @Component
 public class MyBatisAiResponseParseErrorRepository implements AiResponseParseErrorSink {
     private final AiResponseParseErrorMapper mapper;
