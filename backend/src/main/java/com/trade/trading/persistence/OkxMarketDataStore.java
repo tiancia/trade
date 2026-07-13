@@ -22,4 +22,31 @@ public interface OkxMarketDataStore {
 
     /** Upserts candles by instrument, bar, and exchange timestamp. */
     void saveCandles(String instId, String bar, List<CandleResp> candles);
+
+    /**
+     * Saves a snapshot and reports the best-effort persistence outcome.
+     * Implementations that do not distinguish skipped/failed writes retain the
+     * original {@link #saveSnapshot} contract through this default adapter.
+     */
+    default SaveResult saveSnapshotWithResult(
+            String instId,
+            String source,
+            TickerResp ticker,
+            OrderBookResp orderBook
+    ) {
+        saveSnapshot(instId, source, ticker, orderBook);
+        return SaveResult.SAVED;
+    }
+
+    /** Same as {@link #saveCandles}, with an observable persistence outcome. */
+    default SaveResult saveCandlesWithResult(String instId, String bar, List<CandleResp> candles) {
+        saveCandles(instId, bar, candles);
+        return SaveResult.SAVED;
+    }
+
+    enum SaveResult {
+        SAVED,
+        SKIPPED,
+        FAILED
+    }
 }

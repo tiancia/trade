@@ -14,6 +14,12 @@ spring:
       mode: always
       schema-locations: classpath:db/ai_trade_mysql_schema.sql
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics
+
 mybatis:
   mapper-locations: classpath*:mapper/**/*.xml
   configuration:
@@ -311,6 +317,12 @@ trade:
       stale-timeout-ms: 120000
       # 本地保留的 1 分钟 K 线缓存数量，用于事件检测。
       candle-cache-limit: 100
+      # Bounded queue between OKX callbacks and MyBatis persistence.
+      persistence-queue-capacity: ${TRADE_TRADING_WEBSOCKET_PERSISTENCE_QUEUE_CAPACITY:1024}
+      # drop-oldest keeps fresher market data; drop-latest preserves queued ordering.
+      persistence-queue-full-policy: ${TRADE_TRADING_WEBSOCKET_PERSISTENCE_QUEUE_FULL_POLICY:drop-oldest}
+      # Stop accepting callbacks, then wait up to this duration for queued writes to drain.
+      persistence-shutdown-timeout-ms: ${TRADE_TRADING_WEBSOCKET_PERSISTENCE_SHUTDOWN_TIMEOUT_MS:5000}
     # 公共市场数据数据库落库配置；数据库异常只告警，不阻断交易决策。
     market-data-persistence:
       # 是否启用 ticker、order book 和 K 线持久化。

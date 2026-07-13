@@ -10,7 +10,6 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -83,13 +82,13 @@ class MyBatisOkxMarketDataStoreTest {
         };
         MyBatisOkxMarketDataStore store = store(failingSnapshotMapper, failingCandleMapper, properties);
 
-        assertDoesNotThrow(() -> store.saveSnapshot(
+        assertEquals(OkxMarketDataStore.SaveResult.FAILED, store.saveSnapshotWithResult(
                 "BTC-USDT",
                 OkxMarketDataStore.SOURCE_REST_DECISION,
                 new TickerResp(),
                 null
         ));
-        assertDoesNotThrow(() -> store.saveCandles(
+        assertEquals(OkxMarketDataStore.SaveResult.FAILED, store.saveCandlesWithResult(
                 "BTC-USDT",
                 "1m",
                 List.of(candle("1710000000000", "65000"))

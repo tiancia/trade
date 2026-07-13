@@ -40,34 +40,46 @@ public class MyBatisOkxMarketDataStore implements OkxMarketDataStore {
 
     @Override
     public void saveSnapshot(String instId, String source, TickerResp ticker, OrderBookResp orderBook) {
+        saveSnapshotWithResult(instId, source, ticker, orderBook);
+    }
+
+    @Override
+    public SaveResult saveSnapshotWithResult(String instId, String source, TickerResp ticker, OrderBookResp orderBook) {
         TradingProperties.MarketDataPersistenceProperties config = properties.getMarketDataPersistence();
         if (!config.isEnabled() || (ticker == null && orderBook == null)) {
-            return;
+            return SaveResult.SKIPPED;
         }
         if (OkxMarketDataStore.SOURCE_WEBSOCKET_TICKER.equals(source) && !reserveWebSocketTickerWrite(config)) {
-            return;
+            return SaveResult.SKIPPED;
         }
 
         TickerResp persistedTicker = config.isTickerEnabled() ? ticker : null;
         OrderBookResp persistedOrderBook = config.isOrderBookEnabled() ? orderBook : null;
         if (persistedTicker == null && persistedOrderBook == null) {
-            return;
+            return SaveResult.SKIPPED;
         }
 
         try {
             snapshotMapper.insert(toSnapshotRow(instId, source, persistedTicker, persistedOrderBook));
+            return SaveResult.SAVED;
         } catch (Exception e) {
             // Market persistence is observational; trading must continue when it is unavailable.
             log.warn("Persist OKX market snapshot failed: instId={}, source={}, error={}",
                     instId, source, e.getMessage(), e);
+            return SaveResult.FAILED;
         }
     }
 
     @Override
     public void saveCandles(String instId, String bar, List<CandleResp> candles) {
+        saveCandlesWithResult(instId, bar, candles);
+    }
+
+    @Override
+    public SaveResult saveCandlesWithResult(String instId, String bar, List<CandleResp> candles) {
         TradingProperties.MarketDataPersistenceProperties config = properties.getMarketDataPersistence();
         if (!config.isEnabled() || !config.isCandleEnabled() || candles == null || candles.isEmpty()) {
-            return;
+            return SaveResult.SKIPPED;
         }
 
         List<OkxCandleCacheRow> rows = candles.stream()
@@ -75,14 +87,16 @@ public class MyBatisOkxMarketDataStore implements OkxMarketDataStore {
                 .filter(row -> row.getTs() != null && row.getTs() > 0)
                 .toList();
         if (rows.isEmpty()) {
-            return;
+            return SaveResult.SKIPPED;
         }
 
         try {
             candleMapper.upsertBatch(rows);
+            return SaveResult.SAVED;
         } catch (Exception e) {
             log.warn("Persist OKX candles failed: instId={}, bar={}, count={}, error={}",
                     instId, bar, rows.size(), e.getMessage(), e);
+            return SaveResult.FAILED;
         }
     }
 

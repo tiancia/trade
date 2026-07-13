@@ -21,6 +21,7 @@ import com.trade.trading.strategy.StrategyConfig;
 import com.trade.trading.strategy.StrategyEvaluationContext;
 import com.trade.trading.strategy.TradingStrategy;
 import com.trade.trading.strategy.TradingStrategyRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import lombok.Data;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -82,7 +83,8 @@ class TradingStrategyEngineTest {
                 new OkxMarketDataWebSocketFeed(
                         new OkxApi(new NoopOkxRestClient()),
                         properties,
-                        new NoopMarketDataStore()
+                        new NoopMarketDataStore(),
+                        new SimpleMeterRegistry()
                 )
         );
     }

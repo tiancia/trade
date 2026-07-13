@@ -136,6 +136,19 @@ public class TradingProperties {
         private long staleTimeoutMs = 120_000L;
         /** Maximum number of one-minute candles retained in memory. */
         private int candleCacheLimit = 100;
+        /** Maximum number of pending WebSocket persistence commands. */
+        private int persistenceQueueCapacity = 1_024;
+        /** Non-blocking policy used when the persistence queue is full. */
+        private PersistenceQueueFullPolicy persistenceQueueFullPolicy = PersistenceQueueFullPolicy.DROP_OLDEST;
+        /** Maximum time allowed for draining queued persistence commands during shutdown. */
+        private long persistenceShutdownTimeoutMs = 5_000L;
+    }
+
+    public enum PersistenceQueueFullPolicy {
+        /** Discards the oldest queued command so that fresher market data can be retained. */
+        DROP_OLDEST,
+        /** Discards the newly received command. */
+        DROP_LATEST
     }
 
     @Data
