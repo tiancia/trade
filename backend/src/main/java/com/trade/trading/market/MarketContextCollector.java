@@ -23,10 +23,12 @@ import com.trade.client.okx.dto.PositionsReq;
 import com.trade.client.okx.dto.TickerReq;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.config.TradingProperties;
+import com.trade.trading.event.TradingEvent;
+import com.trade.trading.event.TradingEventPublisher;
+import com.trade.trading.event.TradingEventSource;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingState;
 import com.trade.trading.model.TradingTrigger;
-import com.trade.trading.persistence.OkxMarketDataStore;
 import com.trade.trading.persistence.TradingStateRepository;
 import com.trade.common.support.TradingMath;
 import org.springframework.stereotype.Component;
@@ -36,6 +38,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Collects OKX market, account, and local state into one strategy evaluation
@@ -46,7 +49,7 @@ public class MarketContextCollector {
     private final OkxApi okxApi;
     private final TradingProperties properties;
     private final TradingStateRepository stateRepository;
-    private final OkxMarketDataStore marketDataStore;
+    private final TradingEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
     // Instrument rules change rarely and are needed on every decision, so keep
     // a small process-local cache instead of hitting OKX each cycle.
@@ -56,12 +59,12 @@ public class MarketContextCollector {
             OkxApi okxApi,
             TradingProperties properties,
             TradingStateRepository stateRepository,
-            OkxMarketDataStore marketDataStore
+            TradingEventPublisher eventPublisher
     ) {
         this.okxApi = okxApi;
         this.properties = properties;
         this.stateRepository = stateRepository;
-        this.marketDataStore = marketDataStore;
+        this.eventPublisher = eventPublisher;
         this.objectMapper = new ObjectMapper()
                 .setSerializationInclusion(JsonInclude.Include.NON_NULL);
     }
@@ -91,7 +94,7 @@ public class MarketContextCollector {
                         .setLimit(String.valueOf(properties.getFiveMinuteCandleLimit()))),
                 "5m candles"
         );
-        persistDecisionMarketData(ticker, orderBook, candles1m, candles5m);
+        publishDecisionMarketData(ticker, orderBook, candles1m, candles5m);
         AccountBalanceResp balance = OkxResponses.requireFirst(
                 okxApi.getAccountBalance(new AccountBalanceReq()
                         .setCcy(properties.getBaseCcy() + "," + properties.getQuoteCcy())),
@@ -168,7 +171,7 @@ public class MarketContextCollector {
                         .setLimit(String.valueOf(properties.getOneMinuteCandleLimit()))),
                 "1m candles"
         );
-        marketDataStore.saveCandles(properties.getInstId(), "1m", candles);
+        publishCandles(TradingEventSource.OKX_REST_EVENT_FALLBACK, null, "1m", candles);
         return candles;
     }
 
@@ -177,31 +180,48 @@ public class MarketContextCollector {
                 okxApi.getTicker(new TickerReq().setInstId(properties.getInstId())),
                 "ticker"
         );
-        marketDataStore.saveSnapshot(
+        eventPublisher.publish(TradingEvent.marketSnapshot(
                 properties.getInstId(),
-                OkxMarketDataStore.SOURCE_REST_EVENT_FALLBACK,
+                TradingEventSource.OKX_REST_EVENT_FALLBACK,
+                null,
                 ticker,
                 null
-        );
+        ));
         return ticker;
     }
 
-    private void persistDecisionMarketData(
+    private void publishDecisionMarketData(
             TickerResp ticker,
             OrderBookResp orderBook,
             List<CandleResp> candles1m,
             List<CandleResp> candles5m
     ) {
-        // Persist public data before private account calls so a later account API
-        // failure does not discard an otherwise valid market observation.
-        marketDataStore.saveSnapshot(
+        // Publish before private account calls so a later account API failure
+        // does not discard an otherwise valid public market observation.
+        String correlationId = UUID.randomUUID().toString();
+        eventPublisher.publish(TradingEvent.marketSnapshot(
                 properties.getInstId(),
-                OkxMarketDataStore.SOURCE_REST_DECISION,
+                TradingEventSource.OKX_REST_DECISION,
+                correlationId,
                 ticker,
                 orderBook
-        );
-        marketDataStore.saveCandles(properties.getInstId(), "1m", candles1m);
-        marketDataStore.saveCandles(properties.getInstId(), "5m", candles5m);
+        ));
+        publishCandles(TradingEventSource.OKX_REST_DECISION, correlationId, "1m", candles1m);
+        publishCandles(TradingEventSource.OKX_REST_DECISION, correlationId, "5m", candles5m);
+    }
+
+    private void publishCandles(
+            TradingEventSource source,
+            String correlationId,
+            String bar,
+            List<CandleResp> candles
+    ) {
+        if (candles == null || candles.isEmpty()) {
+            return;
+        }
+        eventPublisher.publish(TradingEvent.candleBatch(
+                properties.getInstId(), source, correlationId, bar, candles
+        ));
     }
 
     private InstrumentInfoResp getInstrument() {

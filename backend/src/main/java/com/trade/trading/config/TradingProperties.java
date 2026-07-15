@@ -47,6 +47,8 @@ public class TradingProperties {
     private long eventCooldownMs = 600_000L;
     /** WebSocket subscription and in-memory cache settings. */
     private WebSocketProperties websocket = new WebSocketProperties();
+    /** Bounded asynchronous pipeline shared by every market-data producer. */
+    private EventQueueProperties eventQueue = new EventQueueProperties();
     /** Database persistence settings for public market data. */
     private MarketDataPersistenceProperties marketDataPersistence = new MarketDataPersistenceProperties();
     /** Price-change ratio that triggers an event decision. */
@@ -136,19 +138,29 @@ public class TradingProperties {
         private long staleTimeoutMs = 120_000L;
         /** Maximum number of one-minute candles retained in memory. */
         private int candleCacheLimit = 100;
-        /** Maximum number of pending WebSocket persistence commands. */
-        private int persistenceQueueCapacity = 1_024;
-        /** Non-blocking policy used when the persistence queue is full. */
-        private PersistenceQueueFullPolicy persistenceQueueFullPolicy = PersistenceQueueFullPolicy.DROP_OLDEST;
-        /** Maximum time allowed for draining queued persistence commands during shutdown. */
-        private long persistenceShutdownTimeoutMs = 5_000L;
     }
 
-    public enum PersistenceQueueFullPolicy {
-        /** Discards the oldest queued command so that fresher market data can be retained. */
+    @Data
+    public static class EventQueueProperties {
+        /** Maximum number of events waiting for the consumer. */
+        private int capacity = 1_024;
+        /** Backpressure behavior used when the bounded queue is full. */
+        private EventQueueFullPolicy fullPolicy = EventQueueFullPolicy.DROP_OLDEST;
+        /** Maximum producer wait for BLOCK policy, in milliseconds. */
+        private long publishTimeoutMs = 100L;
+        /** Consumer polling interval, in milliseconds. */
+        private long pollTimeoutMs = 100L;
+        /** Maximum time allowed for draining queued events during shutdown. */
+        private long shutdownTimeoutMs = 5_000L;
+    }
+
+    public enum EventQueueFullPolicy {
+        /** Discards the oldest queued event so fresher market data can be retained. */
         DROP_OLDEST,
-        /** Discards the newly received command. */
-        DROP_LATEST
+        /** Discards the newly received event and never blocks its producer. */
+        DROP_LATEST,
+        /** Waits up to publish-timeout-ms for consumer capacity. */
+        BLOCK
     }
 
     @Data

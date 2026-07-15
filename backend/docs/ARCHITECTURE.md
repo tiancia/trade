@@ -100,6 +100,26 @@ Story / Polymarket Application Service
     <- ai.persistence.MyBatisAiResponseParseErrorRepository
 ```
 
+### Trading 行情事件管道
+
+实时和批量行情统一使用 `trading/event/TradingEvent` 信封。信封包含事件 ID、类型、来源、标的、业务发生时间、系统接收时间、关联 ID 和类型安全载荷；策略检测得到的条件则使用 `MarketSignal`，避免把“进入系统的事实”和“由策略推导的信号”混为一类。
+
+```text
+OKX WebSocket ─┐
+REST decision ─┼─> TradingEventPublisher
+REST fallback ─┤       -> bounded BlockingDeque
+REST history ──┘          -> isolated TradingEventHandler(s)
+                                  -> OkxMarketDataStore -> MyBatis -> database
+```
+
+生命周期和失败边界：
+
+1. 事件消费者是应用级基础设施，Spring 初始化后即启动，因此 HTTP 回测和 REST 采集不依赖后台交易任务是否运行。交易任务只启停 WebSocket 生产者；应用退出时 `TradingMarketDataRuntime` 先停止生产者，再在超时范围内排空已接收事件。
+2. 队列只允许固定容量。`DROP_OLDEST` 保留更新行情，`DROP_LATEST` 保留队列顺序，`BLOCK` 最多等待配置的发布超时；任何策略都不会无界扩容。
+3. 每个 handler 独立捕获异常，单次数据库失败只计数和告警，不终止消费线程，也不回抛到 WebSocket 回调或策略采集流程。
+4. `trade.trading.events.*` Micrometer 指标覆盖队列深度/容量、发布结果、丢弃原因、排队延迟、handler 结果和耗时；低成本运行快照由 `/api/trading/runtime/events` 提供。
+5. 历史 K 线写库同样异步，但会把本次 REST 响应与已有缓存合并后直接返回，从而保留回测调用方的读后取数语义。
+
 ## 5. 分层示例：Weibo
 
 ```text

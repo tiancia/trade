@@ -3,7 +3,7 @@ package com.trade.trading.market;
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.config.TradingProperties;
-import com.trade.trading.model.TradingEvent;
+import com.trade.trading.model.MarketSignal;
 import com.trade.trading.model.TradingState;
 import com.trade.common.support.TradingMath;
 import org.springframework.stereotype.Component;
@@ -28,8 +28,8 @@ public class TradingEventDetector {
         this.properties = properties;
     }
 
-    public List<TradingEvent> detect(TickerResp ticker, List<CandleResp> oneMinuteCandles, TradingState state) {
-        List<TradingEvent> events = new ArrayList<>();
+    public List<MarketSignal> detect(TickerResp ticker, List<CandleResp> oneMinuteCandles, TradingState state) {
+        List<MarketSignal> events = new ArrayList<>();
         // OKX may include the still-forming current candle; trigger logic uses
         // only confirmed candles to avoid reacting to incomplete volume/price.
         List<CandleResp> confirmedCandles = confirmed(oneMinuteCandles);
@@ -42,7 +42,7 @@ public class TradingEventDetector {
         return events;
     }
 
-    private void detectPriceMove(List<TradingEvent> events, BigDecimal lastPrice, List<CandleResp> confirmedCandles) {
+    private void detectPriceMove(List<MarketSignal> events, BigDecimal lastPrice, List<CandleResp> confirmedCandles) {
         if (lastPrice.signum() <= 0 || confirmedCandles.size() < 5) {
             return;
         }
@@ -55,11 +55,11 @@ public class TradingEventDetector {
             details.put("fiveMinuteBasePrice", fiveMinuteBase);
             details.put("changePercent", change);
             details.put("thresholdPercent", properties.getPriceMoveTriggerPercent());
-            events.add(new TradingEvent("PRICE_MOVE_5M", "5 minute price move threshold reached", details));
+            events.add(new MarketSignal("PRICE_MOVE_5M", "5 minute price move threshold reached", details));
         }
     }
 
-    private void detectVolumeSpike(List<TradingEvent> events, List<CandleResp> confirmedCandles) {
+    private void detectVolumeSpike(List<MarketSignal> events, List<CandleResp> confirmedCandles) {
         if (confirmedCandles.size() < 21) {
             return;
         }
@@ -81,11 +81,11 @@ public class TradingEventDetector {
             details.put("previousTwentyAverageQuoteVolume", average);
             details.put("ratio", ratio);
             details.put("thresholdMultiplier", properties.getVolumeSpikeMultiplier());
-            events.add(new TradingEvent("VOLUME_SPIKE", "1 minute quote volume spike threshold reached", details));
+            events.add(new MarketSignal("VOLUME_SPIKE", "1 minute quote volume spike threshold reached", details));
         }
     }
 
-    private void detectFloatingLoss(List<TradingEvent> events, BigDecimal lastPrice, TradingState state) {
+    private void detectFloatingLoss(List<MarketSignal> events, BigDecimal lastPrice, TradingState state) {
         if (state == null || !state.hasTrackedPosition() || lastPrice.signum() <= 0) {
             return;
         }
@@ -99,7 +99,7 @@ public class TradingEventDetector {
             details.put("trackedBaseAmount", state.getTrackedBaseAmount());
             details.put("unrealizedPnlPercent", pnlPercent);
             details.put("lossThresholdPercent", lossThreshold);
-            events.add(new TradingEvent("FLOATING_LOSS", "Tracked position floating loss threshold reached", details));
+            events.add(new MarketSignal("FLOATING_LOSS", "Tracked position floating loss threshold reached", details));
         }
     }
 

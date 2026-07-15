@@ -3,7 +3,7 @@ package com.trade.trading.market;
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.config.TradingProperties;
-import com.trade.trading.model.TradingEvent;
+import com.trade.trading.model.MarketSignal;
 import com.trade.trading.model.TradingState;
 import org.junit.jupiter.api.Test;
 
@@ -36,7 +36,7 @@ class TradingEventDetectorTest {
                 .setTrackedBaseAmount(new BigDecimal("0.1"))
                 .setAverageCost(new BigDecimal("100"));
 
-        List<TradingEvent> events = detector.detect(ticker, candles, state);
+        List<MarketSignal> events = detector.detect(ticker, candles, state);
 
         assertEquals(3, events.size());
         assertTrue(events.stream().anyMatch(event -> event.type().equals("PRICE_MOVE_5M")));

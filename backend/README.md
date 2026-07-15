@@ -39,6 +39,8 @@ cd backend
 | `ai` | 跨业务的 AI 解析失败审计契约与持久化 | `AiResponseParseErrorSink` | 内部能力 |
 | `common` | 无业务归属的纯工具 | `TradingMath` | 内部能力 |
 
+交易行情由 REST/WebSocket 生产者发布到模块级有界事件队列，再由独立消费者持久化；生产线程不直接访问数据库。运行状态可通过 `GET /api/trading/runtime/events` 查看，队列深度、发布/丢弃/消费结果及处理耗时可通过 Actuator `/actuator/metrics` 查询。
+
 ## 目录速览
 
 ```text
@@ -79,6 +81,8 @@ backend/
 只打开自动启动并不等于允许真实下单；真实资金开关也不应在缺少风控参数、API 权限或地域检查时启用。
 
 常用环境变量示例见 `.env.example`。密钥、令牌和运行时状态不得提交到 Git；本地状态写入已忽略的 `data/trading-state.json`，仓库只保留示例文件。
+
+`trade.trading.event-queue.full-policy` 支持 `drop-oldest`、`drop-latest` 和 `block`。实时行情默认使用 `drop-oldest` 保留更新数据；选择 `block` 时，生产者最多等待 `publish-timeout-ms`，适合不允许静默丢弃且上游能够承受阻塞的场景。
 
 ## 数据库
 

@@ -7,7 +7,7 @@ import com.trade.trading.config.TradingProperties;
 import com.trade.trading.market.MarketContextCollector;
 import com.trade.trading.market.OkxMarketDataWebSocketFeed;
 import com.trade.trading.market.TradingEventDetector;
-import com.trade.trading.model.TradingEvent;
+import com.trade.trading.model.MarketSignal;
 import com.trade.trading.model.TradingTrigger;
 import com.trade.trading.persistence.TradingStateRepository;
 import org.slf4j.Logger;
@@ -67,7 +67,7 @@ public class TradingScheduler {
         try {
             List<CandleResp> candles = eventCandles();
             TickerResp ticker = eventTicker();
-            List<TradingEvent> events = eventDetector.detect(ticker, candles, stateRepository.getState());
+            List<MarketSignal> events = eventDetector.detect(ticker, candles, stateRepository.getState());
             if (events.isEmpty()) {
                 return;
             }

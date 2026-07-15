@@ -317,12 +317,15 @@ trade:
       stale-timeout-ms: 120000
       # 本地保留的 1 分钟 K 线缓存数量，用于事件检测。
       candle-cache-limit: 100
-      # Bounded queue between OKX callbacks and MyBatis persistence.
-      persistence-queue-capacity: ${TRADE_TRADING_WEBSOCKET_PERSISTENCE_QUEUE_CAPACITY:1024}
-      # drop-oldest keeps fresher market data; drop-latest preserves queued ordering.
-      persistence-queue-full-policy: ${TRADE_TRADING_WEBSOCKET_PERSISTENCE_QUEUE_FULL_POLICY:drop-oldest}
-      # Stop accepting callbacks, then wait up to this duration for queued writes to drain.
-      persistence-shutdown-timeout-ms: ${TRADE_TRADING_WEBSOCKET_PERSISTENCE_SHUTDOWN_TIMEOUT_MS:5000}
+    # REST/WebSocket 行情生产者与事件消费者共享的有界队列。
+    event-queue:
+      capacity: ${TRADE_TRADING_EVENT_QUEUE_CAPACITY:1024}
+      # drop-oldest 保留新行情；block 对生产者施加限时阻塞背压。
+      full-policy: ${TRADE_TRADING_EVENT_QUEUE_FULL_POLICY:drop-oldest}
+      publish-timeout-ms: ${TRADE_TRADING_EVENT_QUEUE_PUBLISH_TIMEOUT_MS:100}
+      poll-timeout-ms: ${TRADE_TRADING_EVENT_QUEUE_POLL_TIMEOUT_MS:100}
+      # 停止生产者后，排空已接收事件的最长等待时间。
+      shutdown-timeout-ms: ${TRADE_TRADING_EVENT_QUEUE_SHUTDOWN_TIMEOUT_MS:5000}
     # 公共市场数据数据库落库配置；数据库异常只告警，不阻断交易决策。
     market-data-persistence:
       # 是否启用 ticker、order book 和 K 线持久化。

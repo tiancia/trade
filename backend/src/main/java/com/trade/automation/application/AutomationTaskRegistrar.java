@@ -7,8 +7,8 @@ import com.trade.polymarket.config.AiPolymarketProperties;
 import com.trade.polymarket.scheduler.AiPolymarketScheduler;
 import com.trade.story.config.AiStoryProperties;
 import com.trade.story.scheduler.AiStoryScheduler;
+import com.trade.trading.application.TradingMarketDataRuntime;
 import com.trade.trading.config.TradingProperties;
-import com.trade.trading.market.OkxMarketDataWebSocketFeed;
 import com.trade.trading.scheduler.TradingScheduler;
 import org.springframework.stereotype.Component;
 
@@ -30,7 +30,7 @@ public class AutomationTaskRegistrar {
             AutomationProperties automationProperties,
             TradingScheduler tradingScheduler,
             TradingProperties tradingProperties,
-            OkxMarketDataWebSocketFeed marketDataWebSocketFeed,
+            TradingMarketDataRuntime tradingMarketDataRuntime,
             AiPolymarketScheduler polymarketScheduler,
             AiPolymarketProperties polymarketProperties,
             AiStoryScheduler storyScheduler,
@@ -40,8 +40,8 @@ public class AutomationTaskRegistrar {
                 "trading",
                 "OKX strategy trading",
                 automationProperties.getTrading().isAutoStart(),
-                marketDataWebSocketFeed::start,
-                marketDataWebSocketFeed::stop,
+                tradingMarketDataRuntime::start,
+                tradingMarketDataRuntime::stop,
                 List.of(
                         new AutomationLoopDefinition(
                                 "decision",
