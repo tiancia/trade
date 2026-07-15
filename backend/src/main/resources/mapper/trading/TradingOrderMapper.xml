@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.trading.persistence.TradingOrderMapper">
+    <resultMap id="tradingOrderResult" type="com.trade.trading.order.TradingOrder">
+        <id property="id" column="id"/>
+        <result property="idempotencyKey" column="idempotency_key"/>
+        <result property="clientOrderId" column="client_order_id"/>
+        <result property="exchangeOrderId" column="exchange_order_id"/>
+        <result property="decisionId" column="decision_id"/>
+        <result property="strategyId" column="strategy_id"/>
+        <result property="instId" column="inst_id"/>
+        <result property="action" column="action"/>
+        <result property="side" column="side"/>
+        <result property="tdMode" column="td_mode"/>
+        <result property="orderType" column="order_type"/>
+        <result property="targetCurrency" column="target_currency"/>
+        <result property="requestedSize" column="requested_size"/>
+        <result property="status" column="status" javaType="com.trade.trading.order.OrderStatus"/>
+        <result property="version" column="version"/>
+        <result property="filledBaseAmount" column="filled_base_amount"/>
+        <result property="averageFillPrice" column="average_fill_price"/>
+        <result property="fee" column="fee"/>
+        <result property="feeCcy" column="fee_ccy"/>
+        <result property="failureCode" column="failure_code"/>
+        <result property="failureMessage" column="failure_message"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="submittedAt" column="submitted_at"/>
+        <result property="completedAt" column="completed_at"/>
+    </resultMap>
+
+    <insert id="insertIfAbsent" parameterType="com.trade.trading.order.TradingOrder">
+        INSERT INTO okx_orders (
+            idempotency_key,
+            client_order_id,
+            decision_id,
+            strategy_id,
+            inst_id,
+            action,
+            side,
+            td_mode,
+            order_type,
+            target_currency,
+            requested_size,
+            status,
+            version,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{idempotencyKey},
+            #{clientOrderId},
+            #{decisionId},
+            #{strategyId},
+            #{instId},
+            #{action},
+            #{side},
+            #{tdMode},
+            #{orderType},
+            #{targetCurrency},
+            #{requestedSize},
+            #{status},
+            #{version},
+            #{createdAt},
+            #{updatedAt}
+        )
+        ON DUPLICATE KEY UPDATE
+            idempotency_key = VALUES(idempotency_key)
+    </insert>
+
+    <select id="findByIdempotencyKey" resultMap="tradingOrderResult">
+        SELECT
+            id,
+            idempotency_key,
+            client_order_id,
+            exchange_order_id,
+            decision_id,
+            strategy_id,
+            inst_id,
+            action,
+            side,
+            td_mode,
+            order_type,
+            target_currency,
+            requested_size,
+            status,
+            version,
+            filled_base_amount,
+            average_fill_price,
+            fee,
+            fee_ccy,
+            failure_code,
+            failure_message,
+            created_at,
+            updated_at,
+            submitted_at,
+            completed_at
+        FROM okx_orders
+        WHERE idempotency_key = #{idempotencyKey}
+    </select>
+
+    <update id="compareAndSet">
+        UPDATE okx_orders
+        SET
+            exchange_order_id = #{next.exchangeOrderId},
+            status = #{next.status},
+            version = #{next.version},
+            filled_base_amount = #{next.filledBaseAmount},
+            average_fill_price = #{next.averageFillPrice},
+            fee = #{next.fee},
+            fee_ccy = #{next.feeCcy},
+            failure_code = #{next.failureCode},
+            failure_message = #{next.failureMessage},
+            updated_at = #{next.updatedAt},
+            submitted_at = #{next.submittedAt},
+            completed_at = #{next.completedAt}
+        WHERE id = #{current.id}
+          AND status = #{current.status}
+          AND version = #{current.version}
+    </update>
+
+    <insert id="insertStatusHistory">
+        INSERT INTO okx_order_status_history (
+            order_id,
+            from_status,
+            to_status,
+            version,
+            reason
+        ) VALUES (
+            #{orderId},
+            #{fromStatus},
+            #{toStatus},
+            #{version},
+            #{reason}
+        )
+    </insert>
+</mapper>

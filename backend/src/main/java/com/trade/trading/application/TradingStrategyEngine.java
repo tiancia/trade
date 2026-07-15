@@ -92,8 +92,10 @@ public class TradingStrategyEngine {
                 try {
                     broker.execute(decision, marketContext, record);
                 } catch (Exception e) {
-                    record.setExecutionStatus("FAILED")
-                            .setError(e.getMessage());
+                    if (record.getOrderStatus() == null) {
+                        record.setExecutionStatus("FAILED");
+                    }
+                    record.setError(e.getMessage());
                     throw e;
                 } finally {
                     persistDecisionRecord(record);

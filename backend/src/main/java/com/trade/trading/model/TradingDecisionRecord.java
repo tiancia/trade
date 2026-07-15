@@ -36,6 +36,10 @@ public class TradingDecisionRecord {
     private String skipReason;
     private String orderId;
     private String clientOrderId;
+    private String idempotencyKey;
+    private String orderStatus;
+    private Long orderStatusVersion;
+    private boolean idempotentReplay;
     private String orderSize;
     private BigDecimal filledBaseAmount;
     private BigDecimal averageFillPrice;

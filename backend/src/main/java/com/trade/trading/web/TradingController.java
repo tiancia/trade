@@ -7,7 +7,10 @@ import com.trade.trading.backtest.BacktestRun;
 import com.trade.trading.backtest.BacktestService;
 import com.trade.trading.config.TradingProperties;
 import com.trade.trading.execution.BacktestBroker;
+import com.trade.trading.order.OrderLifecycleService;
+import com.trade.trading.order.TradingOrder;
 import com.trade.trading.strategy.TradingStrategyRegistry;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -15,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
@@ -31,15 +35,18 @@ public class TradingController {
     private final TradingStrategyRegistry strategyRegistry;
     private final TradingStrategyEngine tradingStrategyEngine;
     private final BacktestService backtestService;
+    private final OrderLifecycleService orderLifecycleService;
 
     public TradingController(
             TradingStrategyRegistry strategyRegistry,
             TradingStrategyEngine tradingStrategyEngine,
-            BacktestService backtestService
+            BacktestService backtestService,
+            OrderLifecycleService orderLifecycleService
     ) {
         this.strategyRegistry = strategyRegistry;
         this.tradingStrategyEngine = tradingStrategyEngine;
         this.backtestService = backtestService;
+        this.orderLifecycleService = orderLifecycleService;
     }
 
     @GetMapping("/strategies")
@@ -50,6 +57,12 @@ public class TradingController {
     @GetMapping("/runtime/status")
     public TradingRuntimeStatus runtimeStatus() {
         return tradingStrategyEngine.status();
+    }
+
+    @GetMapping("/orders/{idempotencyKey}")
+    public TradingOrder order(@PathVariable String idempotencyKey) {
+        return orderLifecycleService.find(idempotencyKey)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found"));
     }
 
     @PostMapping("/backtests")

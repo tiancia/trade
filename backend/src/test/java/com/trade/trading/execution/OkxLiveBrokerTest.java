@@ -15,8 +15,13 @@ import com.trade.trading.model.StrategyDecision;
 import com.trade.trading.model.TradingAction;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingDecisionRecord;
+import com.trade.trading.order.InMemoryTradingOrderRepository;
+import com.trade.trading.order.OrderIdempotencyKeyFactory;
+import com.trade.trading.order.OrderLifecycleService;
+import com.trade.trading.order.OrderStatus;
 import com.trade.trading.persistence.TradingStateRepository;
 import com.trade.trading.risk.RiskControlService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -26,6 +31,8 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OkxLiveBrokerTest {
     @TempDir
@@ -61,17 +68,77 @@ class OkxLiveBrokerTest {
         assertEquals("quote_ccy", okxApi.orderReq.getTgtCcy());
         assertEquals("100", okxApi.orderReq.getSz());
         assertEquals("FILLED", record.getExecutionStatus());
+        assertEquals(OrderStatus.FILLED.name(), record.getOrderStatus());
+        assertEquals(32, record.getClientOrderId().length());
+    }
+
+    @Test
+    void sameBusinessOrderIsSubmittedOnlyOnce() {
+        TradingProperties properties = liveProperties();
+        FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        InMemoryTradingOrderRepository orders = new InMemoryTradingOrderRepository();
+        OkxLiveBroker broker = broker(properties, okxApi, orders);
+        TradingDecisionRecord first = new TradingDecisionRecord().setDecisionId("same-decision");
+        TradingDecisionRecord replay = new TradingDecisionRecord().setDecisionId("same-decision");
+
+        broker.execute(buyDecision(), context("0", "1000"), first);
+        broker.execute(buyDecision(), context("0", "1000"), replay);
+
+        assertEquals(1, okxApi.placeOrderCount);
+        assertEquals(first.getIdempotencyKey(), replay.getIdempotencyKey());
+        assertEquals(first.getClientOrderId(), replay.getClientOrderId());
+        assertTrue(replay.isIdempotentReplay());
+        assertEquals(OrderStatus.FILLED.name(), replay.getOrderStatus());
+    }
+
+    @Test
+    void ambiguousSubmitIsReconciledWithoutSecondPlaceOrder() {
+        TradingProperties properties = liveProperties();
+        FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        okxApi.failNextPlace = true;
+        InMemoryTradingOrderRepository orders = new InMemoryTradingOrderRepository();
+        OkxLiveBroker broker = broker(properties, okxApi, orders);
+        TradingDecisionRecord first = new TradingDecisionRecord().setDecisionId("timeout-decision");
+
+        assertThrows(IllegalStateException.class,
+                () -> broker.execute(buyDecision(), context("0", "1000"), first));
+        assertEquals(OrderStatus.SUBMIT_UNKNOWN.name(), first.getOrderStatus());
+
+        TradingDecisionRecord replay = new TradingDecisionRecord().setDecisionId("timeout-decision");
+        broker.execute(buyDecision(), context("0", "1000"), replay);
+
+        assertEquals(1, okxApi.placeOrderCount);
+        assertTrue(replay.isIdempotentReplay());
+        assertEquals(OrderStatus.FILLED.name(), replay.getOrderStatus());
     }
 
     private OkxLiveBroker broker(TradingProperties properties, OkxApi okxApi) {
+        return broker(properties, okxApi, new InMemoryTradingOrderRepository());
+    }
+
+    private OkxLiveBroker broker(
+            TradingProperties properties,
+            OkxApi okxApi,
+            InMemoryTradingOrderRepository orders
+    ) {
         TradingStateRepository stateRepository = new TradingStateRepository(tempDir.resolve("state-" + System.nanoTime() + ".json"));
         return new OkxLiveBroker(
                 okxApi,
                 new OrderSizingService(properties),
                 stateRepository,
                 properties,
-                new RiskControlService(properties, stateRepository)
+                new RiskControlService(properties, stateRepository),
+                new OrderLifecycleService(orders, new SimpleMeterRegistry()),
+                new OrderIdempotencyKeyFactory()
         );
+    }
+
+    private static TradingProperties liveProperties() {
+        TradingProperties properties = properties();
+        properties.setExecutionMode(TradingProperties.ExecutionMode.LIVE);
+        properties.setLiveEnabled(true);
+        properties.setMaxBuyQuoteAmount(new BigDecimal("100"));
+        return properties;
     }
 
     private static TradingProperties properties() {
@@ -126,6 +193,8 @@ class OkxLiveBrokerTest {
     private static class FakeOkxApi extends OkxApi {
         private final OrderInfoResp orderInfoResp;
         private PlaceOrderReq orderReq;
+        private int placeOrderCount;
+        private boolean failNextPlace;
 
         FakeOkxApi(OrderInfoResp orderInfoResp) {
             super(new NoopOkxRestClient());
@@ -134,7 +203,12 @@ class OkxLiveBrokerTest {
 
         @Override
         public OkxResponse<OrderActionResp> placeOrder(PlaceOrderReq req) {
+            placeOrderCount++;
             this.orderReq = req;
+            if (failNextPlace) {
+                failNextPlace = false;
+                throw new IllegalStateException("simulated response timeout");
+            }
             OrderActionResp resp = new OrderActionResp();
             resp.setOrdId("1");
             resp.setClOrdId(req.getClOrdId());
@@ -144,6 +218,8 @@ class OkxLiveBrokerTest {
 
         @Override
         public OkxResponse<OrderInfoResp> getOrder(OrderQueryReq req) {
+            orderInfoResp.setOrdId(req.getOrdId() == null ? "1" : req.getOrdId());
+            orderInfoResp.setClOrdId(req.getClOrdId());
             return OkxResponse.success(List.of(orderInfoResp));
         }
     }
