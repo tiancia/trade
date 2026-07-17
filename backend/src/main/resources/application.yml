@@ -9,6 +9,14 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:mysql://127.0.0.1:3306/ai_trade?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
     username: ${SPRING_DATASOURCE_USERNAME:root}
     password: ${SPRING_DATASOURCE_PASSWORD:}
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:127.0.0.1}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      database: ${SPRING_DATA_REDIS_DATABASE:0}
+      password: ${SPRING_DATA_REDIS_PASSWORD:}
+      connect-timeout: ${SPRING_DATA_REDIS_CONNECT_TIMEOUT:1s}
+      timeout: ${SPRING_DATA_REDIS_TIMEOUT:1s}
   sql:
     init:
       mode: always
@@ -338,6 +346,14 @@ trade:
       candle-enabled: true
       # WebSocket ticker 最小写库间隔，避免高频行情产生过多快照，单位毫秒。
       websocket-ticker-min-interval-ms: 5000
+    # Redis stores the latest shared snapshots and bounded recent candle sets.
+    hot-market-data-cache:
+      enabled: ${TRADE_TRADING_HOT_MARKET_CACHE_ENABLED:true}
+      key-prefix: ${TRADE_TRADING_HOT_MARKET_CACHE_KEY_PREFIX:trade:trading:hot-market}
+      snapshot-ttl-ms: ${TRADE_TRADING_HOT_MARKET_CACHE_SNAPSHOT_TTL_MS:120000}
+      candle-ttl-ms: ${TRADE_TRADING_HOT_MARKET_CACHE_CANDLE_TTL_MS:10800000}
+      candle-limit: ${TRADE_TRADING_HOT_MARKET_CACHE_CANDLE_LIMIT:200}
+      failure-retry-interval-ms: ${TRADE_TRADING_HOT_MARKET_CACHE_RETRY_INTERVAL_MS:5000}
     # 5 分钟价格变化触发 AI 决策的阈值比例，0.02 表示 2%。
     price-move-trigger-percent: "0.02"
     # 1 分钟成交量相对前 20 分钟均量的放大倍数阈值。

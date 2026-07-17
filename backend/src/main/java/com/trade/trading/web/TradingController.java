@@ -2,6 +2,7 @@ package com.trade.trading.web;
 
 import com.trade.trading.application.TradingRuntimeStatus;
 import com.trade.trading.application.TradingStrategyEngine;
+import com.trade.trading.backtest.BacktestEquityPoint;
 import com.trade.trading.backtest.BacktestRequest;
 import com.trade.trading.backtest.BacktestRun;
 import com.trade.trading.backtest.BacktestService;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -66,13 +68,30 @@ public class TradingController {
     }
 
     @PostMapping("/backtests")
+    @ResponseStatus(HttpStatus.ACCEPTED)
     public BacktestRun startBacktest(@RequestBody BacktestRequest request) {
-        return backtestService.start(request);
+        try {
+            return backtestService.start(request);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage(), e);
+        }
     }
 
     @GetMapping("/backtests/{runId}")
     public BacktestRun backtest(@PathVariable String runId) {
-        return backtestService.get(runId);
+        try {
+            return backtestService.get(runId);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage(), e);
+        }
+    }
+
+    @GetMapping("/backtests")
+    public List<BacktestRun> backtests(
+            @RequestParam(defaultValue = "0") int offset,
+            @RequestParam(defaultValue = "100") int limit
+    ) {
+        return backtestService.list(offset, limit);
     }
 
     @GetMapping("/backtests/{runId}/trades")
@@ -81,6 +100,23 @@ public class TradingController {
             @RequestParam(defaultValue = "0") int offset,
             @RequestParam(defaultValue = "100") int limit
     ) {
-        return backtestService.trades(runId, offset, limit);
+        try {
+            return backtestService.trades(runId, offset, limit);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage(), e);
+        }
+    }
+
+    @GetMapping("/backtests/{runId}/equity")
+    public List<BacktestEquityPoint> backtestEquity(
+            @PathVariable String runId,
+            @RequestParam(defaultValue = "0") int offset,
+            @RequestParam(defaultValue = "500") int limit
+    ) {
+        try {
+            return backtestService.equityCurve(runId, offset, limit);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage(), e);
+        }
     }
 }

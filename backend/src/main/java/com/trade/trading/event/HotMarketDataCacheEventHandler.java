@@ -1,22 +1,22 @@
 package com.trade.trading.event;
 
-import com.trade.trading.persistence.OkxMarketDataStore;
+import com.trade.trading.market.HotMarketDataCache;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
-/** Persists market events on the consumer thread, never on a producer thread. */
+/** Updates Redis hot data on the event consumer thread. */
 @Component
-@Order(0)
-public class MarketDataPersistenceEventHandler implements TradingEventHandler {
-    private final OkxMarketDataStore marketDataStore;
+@Order(10)
+public class HotMarketDataCacheEventHandler implements TradingEventHandler {
+    private final HotMarketDataCache hotMarketDataCache;
 
-    public MarketDataPersistenceEventHandler(OkxMarketDataStore marketDataStore) {
-        this.marketDataStore = marketDataStore;
+    public HotMarketDataCacheEventHandler(HotMarketDataCache hotMarketDataCache) {
+        this.hotMarketDataCache = hotMarketDataCache;
     }
 
     @Override
     public String name() {
-        return "market-data-persistence";
+        return "hot-market-data-cache";
     }
 
     @Override
@@ -27,16 +27,15 @@ public class MarketDataPersistenceEventHandler implements TradingEventHandler {
 
     @Override
     public TradingEventHandlingResult handle(TradingEvent event) {
-        OkxMarketDataStore.SaveResult result;
+        HotMarketDataCache.CacheWriteResult result;
         if (event.payload() instanceof MarketSnapshotPayload snapshot) {
-            result = marketDataStore.saveSnapshotWithResult(
+            result = hotMarketDataCache.putSnapshot(
                     event.instrumentId(),
-                    event.source().persistenceValue(),
                     snapshot.ticker(),
                     snapshot.orderBook()
             );
         } else if (event.payload() instanceof CandleBatchPayload candleBatch) {
-            result = marketDataStore.saveCandlesWithResult(
+            result = hotMarketDataCache.putCandles(
                     event.instrumentId(),
                     candleBatch.bar(),
                     candleBatch.candles()
@@ -45,7 +44,7 @@ public class MarketDataPersistenceEventHandler implements TradingEventHandler {
             return TradingEventHandlingResult.SKIPPED;
         }
         return switch (result) {
-            case SAVED -> TradingEventHandlingResult.PROCESSED;
+            case CACHED -> TradingEventHandlingResult.PROCESSED;
             case SKIPPED -> TradingEventHandlingResult.SKIPPED;
             case FAILED -> TradingEventHandlingResult.FAILED;
         };

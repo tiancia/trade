@@ -51,6 +51,8 @@ public class TradingProperties {
     private EventQueueProperties eventQueue = new EventQueueProperties();
     /** Database persistence settings for public market data. */
     private MarketDataPersistenceProperties marketDataPersistence = new MarketDataPersistenceProperties();
+    /** Redis-backed cache settings for frequently read public market data. */
+    private HotMarketDataCacheProperties hotMarketDataCache = new HotMarketDataCacheProperties();
     /** Price-change ratio that triggers an event decision. */
     private BigDecimal priceMoveTriggerPercent = new BigDecimal("0.02");
     /** Current-volume multiple over lookback average that triggers an event. */
@@ -175,6 +177,22 @@ public class TradingProperties {
         private boolean candleEnabled = true;
         /** Minimum interval between WebSocket ticker inserts, in milliseconds. */
         private long websocketTickerMinIntervalMs = 5_000L;
+    }
+
+    @Data
+    public static class HotMarketDataCacheProperties {
+        /** Enables best-effort Redis caching for public market data. */
+        private boolean enabled = true;
+        /** Namespace used for every trading market-data key. */
+        private String keyPrefix = "trade:trading:hot-market";
+        /** TTL for latest ticker and order-book snapshots, in milliseconds. */
+        private long snapshotTtlMs = 120_000L;
+        /** TTL for each instrument/bar candle sorted set, in milliseconds. */
+        private long candleTtlMs = 10_800_000L;
+        /** Maximum number of recent candles retained per instrument and bar. */
+        private int candleLimit = 200;
+        /** Cooldown before retrying Redis after a connection or command failure. */
+        private long failureRetryIntervalMs = 5_000L;
     }
 
     @Data

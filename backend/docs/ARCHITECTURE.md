@@ -1,5 +1,7 @@
 # 后端架构说明
 
+本页描述当前有效的代码边界；模块入口与资源归属见 [模块目录](MODULES.md)，采用该结构的原因和取舍见 [ADR-0001](adr/0001-domain-first-modular-monolith.md)。
+
 ## 1. 组织原则
 
 后端采用“业务域优先，域内再分层”的结构。一个需求涉及的 Controller、用例、模型和持久化代码尽量放在同一个业务域下，避免在全局 `controller/`、`service/`、`mapper/` 目录之间来回查找。
@@ -167,6 +169,8 @@ weibo/
 - 测试包路径镜像生产包路径；移动类时同步移动测试，避免物理目录和 `package` 声明不一致。
 - 结构移动后必须运行 `.\mvnw.cmd clean test`，防止 `target/` 中旧 class 掩盖遗漏。
 - MyBatis Mapper 或 Row 改包时，同时检查 XML 的 `namespace`、`parameterType` 和 `resultType`。
+
+`PackageArchitectureTest` 自动保护以下稳定边界：源码路径与 package 一致、一级模块根目录不散落未分层类、每个一级模块具有 package 文档、共享包不反向依赖业务域、业务域之间不直接 import、非 Web 层不依赖 Web、Web 不暴露 persistence 类型，以及 model/domain 不依赖 Web 或持久化类型。供应商 client 依赖采用精确技术债基线：当前仅允许测试中列出的历史 import，不能新增；旧依赖移除后必须同步缩小基线。新增规则前应先确认它代表当前共识，而不是用测试强制一次性改写历史代码。
 
 ## 9. Resources 约定
 

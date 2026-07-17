@@ -2,7 +2,7 @@
 
 基于 Spring Boot 4 和 Java 21 的后端服务，包含 OKX 策略交易、Polymarket AI 决策、AI 小说生成、文字游戏、二手集市、微博发布以及后台任务编排。
 
-如果是第一次接触项目，建议先看本页的模块导航，再阅读 [后端架构说明](docs/ARCHITECTURE.md)。代码采用“业务域优先、域内分层”的组织方式，不按 Controller、Service、Mapper 建立全局大目录。
+如果是第一次接触项目，建议先看本页的模块导航，再进入 [项目文档导航](docs/README.md)。代码采用“业务域优先、域内分层”的模块化单体结构，不按 Controller、Service、Mapper 建立全局大目录。
 
 ## 快速启动
 
@@ -10,6 +10,7 @@
 
 - JDK 21；
 - 可连接的 MySQL 数据库；
+- Redis（可选，仅用于热行情缓存；未部署时关闭对应开关）；
 - 在 `backend/` 目录运行命令，确保状态文件、小说输出目录和 Python 脚本的相对路径正确。
 
 以下命令从仓库根目录执行；如果终端已经位于 `backend/`，跳过第一行：
@@ -39,14 +40,21 @@ cd backend
 | `ai` | 跨业务的 AI 解析失败审计契约与持久化 | `AiResponseParseErrorSink` | 内部能力 |
 | `common` | 无业务归属的纯工具 | `TradingMath` | 内部能力 |
 
-交易行情由 REST/WebSocket 生产者发布到模块级有界事件队列，再由独立消费者持久化；生产线程不直接访问数据库。运行状态可通过 `GET /api/trading/runtime/events` 查看，队列深度、发布/丢弃/消费结果及处理耗时可通过 Actuator `/actuator/metrics` 查询。
+交易行情由 REST/WebSocket 生产者发布到模块级有界事件队列，再由独立消费者持久化；生产线程不直接访问数据库。运行状态可通过 `GET /api/trading/runtime/events` 查看，队列深度、发布/丢弃/消费结果及处理耗时可通过 Actuator `/actuator/metrics` 查询。回测的请求、成交和指标口径见 [Trading 回测说明](docs/TRADING_BACKTEST.md)。
 
 ## 目录速览
 
 ```text
 backend/
+├─ AGENTS.md                    # AI 编码助手的仓库约束
+├─ CONTRIBUTING.md              # 开发、测试和评审规范
 ├─ docs/
-│  └─ ARCHITECTURE.md          # 分层、依赖方向和扩展规则
+│  ├─ README.md                 # 文档索引和事实来源边界
+│  ├─ ARCHITECTURE.md           # 分层、依赖方向和扩展规则
+│  ├─ MODULES.md                # 模块职责、入口、配置和数据归属
+│  ├─ OPERATIONS.md             # 启停、观测、迁移和故障处理
+│  ├─ TRADING_BACKTEST.md       # 回测 API、成交与指标口径
+│  └─ adr/                      # 只追加的架构决策记录
 ├─ data/
 │  └─ trading-state.example.json
 ├─ src/main/java/com/trade/
@@ -69,6 +77,8 @@ backend/
 ```
 
 详细的标准域目录、允许依赖和典型调用链见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+
+维护者应同时阅读 [贡献指南](CONTRIBUTING.md)；使用 AI 介入开发时，先让工具读取根目录 [AGENTS.md](AGENTS.md)。模块定位、运维和值守分别以 [模块目录](docs/MODULES.md) 和 [运维手册](docs/OPERATIONS.md) 为准。
 
 ## 配置与安全开关
 

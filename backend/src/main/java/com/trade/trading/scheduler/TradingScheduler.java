@@ -4,6 +4,7 @@ import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.application.TradingStrategyEngine;
 import com.trade.trading.config.TradingProperties;
+import com.trade.trading.market.HotMarketDataCache;
 import com.trade.trading.market.MarketContextCollector;
 import com.trade.trading.market.OkxMarketDataWebSocketFeed;
 import com.trade.trading.market.TradingEventDetector;
@@ -34,6 +35,7 @@ public class TradingScheduler {
     private final TradingStrategyEngine tradingEngine;
     private final MarketContextCollector marketContextCollector;
     private final OkxMarketDataWebSocketFeed marketDataWebSocketFeed;
+    private final HotMarketDataCache hotMarketDataCache;
     private final TradingEventDetector eventDetector;
     private final TradingStateRepository stateRepository;
     private final TradingProperties properties;
@@ -43,6 +45,7 @@ public class TradingScheduler {
             TradingStrategyEngine tradingEngine,
             MarketContextCollector marketContextCollector,
             OkxMarketDataWebSocketFeed marketDataWebSocketFeed,
+            HotMarketDataCache hotMarketDataCache,
             TradingEventDetector eventDetector,
             TradingStateRepository stateRepository,
             TradingProperties properties
@@ -50,6 +53,7 @@ public class TradingScheduler {
         this.tradingEngine = tradingEngine;
         this.marketContextCollector = marketContextCollector;
         this.marketDataWebSocketFeed = marketDataWebSocketFeed;
+        this.hotMarketDataCache = hotMarketDataCache;
         this.eventDetector = eventDetector;
         this.stateRepository = stateRepository;
         this.properties = properties;
@@ -95,11 +99,20 @@ public class TradingScheduler {
         if (hasEnoughCandlesForEventDetection(candles)) {
             return candles;
         }
+        candles = hotMarketDataCache.recentCandles(
+                properties.getInstId(),
+                "1m",
+                properties.getOneMinuteCandleLimit()
+        );
+        if (hasEnoughCandlesForEventDetection(candles)) {
+            return candles;
+        }
         return marketContextCollector.getOneMinuteCandles();
     }
 
     private TickerResp eventTicker() {
         return marketDataWebSocketFeed.latestTicker()
+                .or(() -> hotMarketDataCache.latestTicker(properties.getInstId()))
                 .orElseGet(marketContextCollector::getTicker);
     }
 
