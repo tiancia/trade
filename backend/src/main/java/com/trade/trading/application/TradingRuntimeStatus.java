@@ -14,6 +14,9 @@ public class TradingRuntimeStatus {
     private TradingProperties.ExecutionMode executionMode;
     private boolean liveEnabled;
     private List<String> runningStrategyIds;
+    private String activeStrategyId;
+    private long activeStrategyRevision;
+    private Instant activeStrategyChangedAt;
     private TradingDecisionRecord lastDecision;
     private String lastError;
     private Instant lastRunStartedAt;

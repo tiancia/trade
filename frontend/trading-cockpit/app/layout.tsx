@@ -22,19 +22,19 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     metadataBase,
     title: "Orbit Trading Cockpit",
-    description: "面向自动化交易系统的实时运行、策略、事件背压与回测驾驶舱。",
+    description: "面向自动化交易系统的实时 K 线、策略切换、事件背压与回测驾驶舱。",
     openGraph: {
       type: "website",
       locale: "zh_CN",
       title: "Orbit Trading Cockpit",
-      description: "把交易系统的每一个决策、事件和安全门变得可见。",
-      images: [{ url: "/og.png", width: 1536, height: 1024, alt: "Orbit Trading Cockpit" }],
+      description: "实时观察 K 线，在后端安全门内切换当前策略。",
+      images: [{ url: "/og-live-strategy.png", width: 1536, height: 1024, alt: "Orbit Trading Cockpit 实时 K 线与策略切换" }],
     },
     twitter: {
       card: "summary_large_image",
       title: "Orbit Trading Cockpit",
-      description: "A command center for explainable automated trading.",
-      images: ["/og.png"],
+      description: "Live candlesticks and controlled strategy switching for automated trading.",
+      images: ["/og-live-strategy.png"],
     },
   };
 }

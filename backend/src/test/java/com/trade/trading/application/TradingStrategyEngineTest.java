@@ -34,7 +34,7 @@ class TradingStrategyEngineTest {
     Path tempDir;
 
     @Test
-    void evaluatesStrategiesInConfigOrderAndExecutesOnlyFirstNonHold() {
+    void evaluatesOnlyThePersistedActiveStrategy() {
         TradingProperties properties = properties(List.of(
                 strategyConfig("first", "hold"),
                 strategyConfig("second", "buy"),
@@ -42,6 +42,7 @@ class TradingStrategyEngineTest {
         ));
         CapturingBroker broker = new CapturingBroker();
         TradingStateRepository repository = new TradingStateRepository(tempDir.resolve("engine-state.json"));
+        repository.selectActiveStrategy("second", null);
 
         engine(properties, broker, repository).runDecision(TradingTrigger.scheduled());
 
@@ -51,18 +52,20 @@ class TradingStrategyEngineTest {
     }
 
     @Test
-    void strategyExceptionIsRecordedAsHoldAndDoesNotStopNextStrategy() {
+    void activeStrategyExceptionIsRecordedAsHoldWithoutRunningAnotherStrategy() {
         TradingProperties properties = properties(List.of(
                 strategyConfig("first", "throw"),
                 strategyConfig("second", "buy")
         ));
         CapturingBroker broker = new CapturingBroker();
+        TradingStateRepository repository = new TradingStateRepository(tempDir.resolve("engine-error-state.json"));
+        repository.selectActiveStrategy("first", null);
 
-        engine(properties, broker, new TradingStateRepository(tempDir.resolve("engine-error-state.json")))
+        engine(properties, broker, repository)
                 .runDecision(TradingTrigger.scheduled());
 
-        assertEquals(1, broker.executeCount);
-        assertEquals("second", broker.lastDecision.getStrategyId());
+        assertEquals(0, broker.executeCount);
+        assertEquals("first", repository.getState().getRecentDecisions().getFirst().getStrategyId());
     }
 
     private TradingStrategyEngine engine(
@@ -71,9 +74,10 @@ class TradingStrategyEngineTest {
             TradingStateRepository repository
     ) {
         TradingStrategyRegistry registry = new TradingStrategyRegistry(List.of(new TestStrategy()), properties);
+        TradingStrategySelectionService selectionService = new TradingStrategySelectionService(registry, repository);
         return new TradingStrategyEngine(
                 new FakeMarketContextCollector(context()),
-                registry,
+                selectionService,
                 broker,
                 repository,
                 properties,

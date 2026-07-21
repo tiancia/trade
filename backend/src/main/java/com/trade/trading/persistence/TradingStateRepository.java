@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.ConcurrentModificationException;
 import java.util.List;
 
 /**
@@ -67,6 +68,9 @@ public class TradingStateRepository {
                 .setTrackedBaseAmount(newBase)
                 .setAverageCost(newCost)
                 .setUpdatedAt(Instant.now().toString())
+                .setActiveStrategyId(current.getActiveStrategyId())
+                .setActiveStrategyRevision(current.getActiveStrategyRevision())
+                .setActiveStrategyChangedAt(current.getActiveStrategyChangedAt())
                 .setStrategyState(copyStrategyState(current.getStrategyState()))
                 .setRiskState(copyRiskState(current.getRiskState()))
                 .setRecentDecisions(copyRecentDecisions(current.getRecentDecisions()));
@@ -92,6 +96,9 @@ public class TradingStateRepository {
                 .setTrackedBaseAmount(remaining)
                 .setAverageCost(averageCost)
                 .setUpdatedAt(Instant.now().toString())
+                .setActiveStrategyId(current.getActiveStrategyId())
+                .setActiveStrategyRevision(current.getActiveStrategyRevision())
+                .setActiveStrategyChangedAt(current.getActiveStrategyChangedAt())
                 .setStrategyState(copyStrategyState(current.getStrategyState()))
                 .setRiskState(copyRiskState(current.getRiskState()))
                 .setRecentDecisions(copyRecentDecisions(current.getRecentDecisions()));
@@ -117,6 +124,9 @@ public class TradingStateRepository {
                 .setTrackedBaseAmount(nullToZero(current.getTrackedBaseAmount()))
                 .setAverageCost(nullToZero(current.getAverageCost()))
                 .setUpdatedAt(current.getUpdatedAt())
+                .setActiveStrategyId(current.getActiveStrategyId())
+                .setActiveStrategyRevision(current.getActiveStrategyRevision())
+                .setActiveStrategyChangedAt(current.getActiveStrategyChangedAt())
                 .setStrategyState(copyStrategyState(current.getStrategyState()))
                 .setRiskState(copyRiskState(current.getRiskState()))
                 .setRecentDecisions(recent);
@@ -142,6 +152,9 @@ public class TradingStateRepository {
                 .setTrackedBaseAmount(nullToZero(current.getTrackedBaseAmount()))
                 .setAverageCost(nullToZero(current.getAverageCost()))
                 .setUpdatedAt(current.getUpdatedAt())
+                .setActiveStrategyId(current.getActiveStrategyId())
+                .setActiveStrategyRevision(current.getActiveStrategyRevision())
+                .setActiveStrategyChangedAt(current.getActiveStrategyChangedAt())
                 .setStrategyState(nextStrategyState)
                 .setRiskState(copyRiskState(current.getRiskState()))
                 .setRecentDecisions(copyRecentDecisions(current.getRecentDecisions()));
@@ -158,10 +171,51 @@ public class TradingStateRepository {
                 .setTrackedBaseAmount(nullToZero(current.getTrackedBaseAmount()))
                 .setAverageCost(nullToZero(current.getAverageCost()))
                 .setUpdatedAt(current.getUpdatedAt())
+                .setActiveStrategyId(current.getActiveStrategyId())
+                .setActiveStrategyRevision(current.getActiveStrategyRevision())
+                .setActiveStrategyChangedAt(current.getActiveStrategyChangedAt())
                 .setStrategyState(copyStrategyState(current.getStrategyState()))
                 .setRiskState(copyRiskState(riskState))
                 .setRecentDecisions(copyRecentDecisions(current.getRecentDecisions()));
         writeState(state);
+    }
+
+    /**
+     * Atomically changes the strategy used by scheduled decisions.
+     *
+     * <p>The optional revision prevents two operator screens from silently
+     * overwriting each other. Re-selecting the current strategy is idempotent
+     * and does not advance the revision.</p>
+     */
+    public synchronized TradingState selectActiveStrategy(String strategyId, Long expectedRevision) {
+        if (strategyId == null || strategyId.isBlank()) {
+            throw new IllegalArgumentException("strategyId is required");
+        }
+
+        TradingState current = state == null ? readState() : state;
+        if (expectedRevision != null && expectedRevision.longValue() != current.getActiveStrategyRevision()) {
+            throw new ConcurrentModificationException(
+                    "Active strategy revision changed from " + expectedRevision
+                            + " to " + current.getActiveStrategyRevision()
+            );
+        }
+        String normalized = strategyId.trim();
+        if (normalized.equals(current.getActiveStrategyId())) {
+            return copy(current);
+        }
+
+        state = new TradingState()
+                .setTrackedBaseAmount(nullToZero(current.getTrackedBaseAmount()))
+                .setAverageCost(nullToZero(current.getAverageCost()))
+                .setUpdatedAt(current.getUpdatedAt())
+                .setActiveStrategyId(normalized)
+                .setActiveStrategyRevision(current.getActiveStrategyRevision() + 1L)
+                .setActiveStrategyChangedAt(Instant.now().toString())
+                .setStrategyState(copyStrategyState(current.getStrategyState()))
+                .setRiskState(copyRiskState(current.getRiskState()))
+                .setRecentDecisions(copyRecentDecisions(current.getRecentDecisions()));
+        writeState(state);
+        return copy(state);
     }
 
     private TradingState readState() {
@@ -209,6 +263,9 @@ public class TradingStateRepository {
                 .setTrackedBaseAmount(nullToZero(source.getTrackedBaseAmount()))
                 .setAverageCost(nullToZero(source.getAverageCost()))
                 .setUpdatedAt(source.getUpdatedAt())
+                .setActiveStrategyId(source.getActiveStrategyId())
+                .setActiveStrategyRevision(source.getActiveStrategyRevision())
+                .setActiveStrategyChangedAt(source.getActiveStrategyChangedAt())
                 .setStrategyState(copyStrategyState(source.getStrategyState()))
                 .setRiskState(copyRiskState(source.getRiskState()))
                 .setRecentDecisions(copyRecentDecisions(source.getRecentDecisions()));

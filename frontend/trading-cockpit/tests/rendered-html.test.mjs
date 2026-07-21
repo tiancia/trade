@@ -44,3 +44,18 @@ test("removes starter-only assets and metadata", async () => {
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("app/_sites-preview/SkeletonPreview.tsx", root)));
 });
+
+test("wires strategy activation and live candle streaming to the trading backend", async () => {
+  const [page, worker] = await Promise.all([
+    readFile(new URL("app/page.tsx", root), "utf8"),
+    readFile(new URL("worker/index.ts", root), "utf8"),
+  ]);
+
+  assert.match(page, /\/api\/trading\/strategies\/active/);
+  assert.match(page, /method:\s*"PUT"/);
+  assert.match(page, /new EventSource\(streamUrl\)/);
+  assert.match(page, /\/api\/trading\/market\/candles\/stream/);
+  assert.match(page, /实时推送已连接/);
+  assert.match(worker, /env\.TRADE_API_URL/);
+  assert.match(worker, /url\.pathname\.startsWith\("\/api\/"\)/);
+});

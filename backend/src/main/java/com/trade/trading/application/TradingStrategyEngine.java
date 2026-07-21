@@ -12,7 +12,6 @@ import com.trade.trading.model.TradingTrigger;
 import com.trade.trading.persistence.TradingStateRepository;
 import com.trade.trading.strategy.ConfiguredTradingStrategy;
 import com.trade.trading.strategy.StrategyEvaluationContext;
-import com.trade.trading.strategy.TradingStrategyRegistry;
 import com.trade.common.support.TradingMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,7 +37,7 @@ public class TradingStrategyEngine {
     private static final Logger log = LoggerFactory.getLogger(TradingStrategyEngine.class);
 
     private final MarketContextCollector contextCollector;
-    private final TradingStrategyRegistry strategyRegistry;
+    private final TradingStrategySelectionService strategySelectionService;
     private final TradingBroker broker;
     private final TradingStateRepository stateRepository;
     private final TradingProperties properties;
@@ -51,14 +50,14 @@ public class TradingStrategyEngine {
 
     public TradingStrategyEngine(
             MarketContextCollector contextCollector,
-            TradingStrategyRegistry strategyRegistry,
+            TradingStrategySelectionService strategySelectionService,
             @Qualifier("tradingBrokerRouter") TradingBroker broker,
             TradingStateRepository stateRepository,
             TradingProperties properties,
             OkxMarketDataWebSocketFeed marketDataWebSocketFeed
     ) {
         this.contextCollector = contextCollector;
-        this.strategyRegistry = strategyRegistry;
+        this.strategySelectionService = strategySelectionService;
         this.broker = broker;
         this.stateRepository = stateRepository;
         this.properties = properties;
@@ -80,7 +79,7 @@ public class TradingStrategyEngine {
         try {
             TradingDecisionContext marketContext = contextCollector.collect(trigger);
             TradingDecisionRecord finalRecord = null;
-            for (ConfiguredTradingStrategy<?> configured : strategyRegistry.configuredStrategies()) {
+            for (ConfiguredTradingStrategy<?> configured : strategySelectionService.activeStrategies()) {
                 StrategyDecision decision = evaluate(configured, trigger, marketContext);
                 TradingDecisionRecord record = decisionRecord(decision, trigger, marketContext);
                 finalRecord = record;
@@ -120,18 +119,24 @@ public class TradingStrategyEngine {
     }
 
     public TradingRuntimeStatus status() {
+        ActiveStrategySelection selection;
         List<String> strategyIds;
         try {
-            strategyIds = strategyRegistry.configuredStrategies().stream()
-                    .map(ConfiguredTradingStrategy::id)
-                    .toList();
+            selection = strategySelectionService.current();
+            strategyIds = selection.strategyId() == null
+                    ? List.of()
+                    : List.of(selection.strategyId());
         } catch (Exception e) {
+            selection = new ActiveStrategySelection(null, 0L, null);
             strategyIds = List.of();
         }
         return new TradingRuntimeStatus()
                 .setExecutionMode(properties.getExecutionMode())
                 .setLiveEnabled(properties.isLiveEnabled())
                 .setRunningStrategyIds(strategyIds)
+                .setActiveStrategyId(selection.strategyId())
+                .setActiveStrategyRevision(selection.revision())
+                .setActiveStrategyChangedAt(selection.changedAt())
                 .setLastDecision(lastDecision)
                 .setLastError(lastError)
                 .setLastRunStartedAt(lastRunStartedAt)

@@ -4,6 +4,8 @@ import handler from "vinext/server/app-router-entry";
 
 interface Env {
   ASSETS: Fetcher;
+  /** Optional runtime backend origin used by deployed Sites builds. */
+  TRADE_API_URL?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -37,6 +39,23 @@ const worker = {
           return result.response();
         },
       }, allowedWidths);
+    }
+
+    if (url.pathname.startsWith("/api/") && env.TRADE_API_URL) {
+      const upstream = new URL(env.TRADE_API_URL);
+      upstream.pathname = `${upstream.pathname.replace(/\/$/, "")}${url.pathname}`;
+      upstream.search = url.search;
+      const headers = new Headers(request.headers);
+      headers.delete("host");
+      headers.delete("origin");
+      headers.set("x-forwarded-host", url.host);
+      headers.set("x-forwarded-proto", url.protocol.replace(":", ""));
+      return fetch(upstream, {
+        method: request.method,
+        headers,
+        body: request.method === "GET" || request.method === "HEAD" ? null : request.body,
+        redirect: "manual",
+      });
     }
 
     return handler.fetch(request, env, ctx);

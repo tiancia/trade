@@ -46,6 +46,9 @@ type RuntimeStatus = {
   executionMode: "PAPER" | "LIVE" | string;
   liveEnabled: boolean;
   runningStrategyIds: string[];
+  activeStrategyId?: string | null;
+  activeStrategyRevision?: number;
+  activeStrategyChangedAt?: string | null;
   lastDecision?: {
     decisionId?: string;
     strategyId?: string;
@@ -121,16 +124,55 @@ type Snapshot = {
   backtests: BacktestRun[];
 };
 
+type Candle = {
+  ts: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  vol?: string;
+  volCcy?: string;
+  volCcyQuote?: string;
+  confirm?: string;
+};
+
+type CandleSeries = {
+  instrumentId: string;
+  bar: string;
+  source: string;
+  asOf: string;
+  candles: Candle[];
+};
+
+type CandleStreamUpdate = {
+  eventId: string;
+  instrumentId: string;
+  bar: string;
+  receivedAt: string;
+  candles: Candle[];
+};
+
+type ActiveStrategySelection = {
+  strategyId: string;
+  revision: number;
+  changedAt?: string | null;
+};
+
+type StreamState = "connecting" | "live" | "polling" | "demo";
+
 const API_BASE = (process.env.NEXT_PUBLIC_TRADE_API_URL ?? "").replace(/\/$/, "");
 
 const demoSnapshot: Snapshot = {
   runtime: {
     executionMode: "PAPER",
     liveEnabled: false,
-    runningStrategyIds: ["btc-threshold-v2", "momentum-15m"],
+    runningStrategyIds: ["threshold-event-default"],
+    activeStrategyId: "threshold-event-default",
+    activeStrategyRevision: 3,
+    activeStrategyChangedAt: new Date(Date.now() - 3_600_000).toISOString(),
     lastDecision: {
       decisionId: "dec-7f4c91",
-      strategyId: "btc-threshold-v2",
+      strategyId: "threshold-event-default",
       timestamp: new Date(Date.now() - 84_000).toISOString(),
       action: "HOLD",
       reason:
@@ -158,9 +200,9 @@ const demoSnapshot: Snapshot = {
     failed: 2,
   },
   strategies: [
-    { id: "btc-threshold-v2", type: "threshold", enabled: true, bar: "1m" },
-    { id: "momentum-15m", type: "momentum", enabled: true, bar: "15m" },
-    { id: "mean-reversion-lab", type: "mean-reversion", enabled: false, bar: "5m" },
+    { id: "threshold-event-default", type: "threshold-event", enabled: true, bar: "1m", params: { "price-move-trigger-percent": "0.02", "volume-spike-multiplier": "3" } },
+    { id: "threshold-event-defensive", type: "threshold-event", enabled: true, bar: "5m", params: { "price-move-trigger-percent": "0.03", "volume-spike-multiplier": "4" } },
+    { id: "threshold-event-reactive", type: "threshold-event", enabled: true, bar: "1m", params: { "price-move-trigger-percent": "0.01", "volume-spike-multiplier": "2" } },
   ],
   tasks: [
     {
@@ -190,7 +232,7 @@ const demoSnapshot: Snapshot = {
     {
       runId: "bt_20260717_01",
       status: "COMPLETED",
-      request: { strategyId: "btc-threshold-v2", instId: "BTC-USDT", bar: "1m" },
+      request: { strategyId: "threshold-event-default", instId: "BTC-USDT", bar: "1m" },
       createdAt: new Date(Date.now() - 3_900_000).toISOString(),
       totalReturn: 0.1268,
       maxDrawdown: 0.0431,
@@ -202,7 +244,7 @@ const demoSnapshot: Snapshot = {
     {
       runId: "bt_20260716_04",
       status: "COMPLETED",
-      request: { strategyId: "momentum-15m", instId: "BTC-USDT", bar: "15m" },
+      request: { strategyId: "threshold-event-defensive", instId: "BTC-USDT", bar: "5m" },
       createdAt: new Date(Date.now() - 86_400_000).toISOString(),
       totalReturn: 0.0842,
       maxDrawdown: 0.0618,
@@ -214,15 +256,34 @@ const demoSnapshot: Snapshot = {
   ],
 };
 
-const candles = [
-  [52, 78, 57, 72], [45, 70, 63, 50], [49, 81, 54, 75], [36, 69, 61, 42],
-  [31, 60, 39, 53], [23, 56, 48, 30], [18, 52, 24, 45], [27, 63, 55, 34],
-  [34, 71, 41, 64], [29, 62, 57, 36], [22, 53, 29, 47], [15, 45, 38, 21],
-  [19, 57, 25, 51], [26, 64, 55, 32], [33, 73, 40, 67], [28, 61, 53, 35],
-  [17, 54, 24, 48], [10, 43, 36, 17], [14, 51, 20, 45], [21, 58, 50, 28],
-  [27, 68, 34, 61], [19, 55, 48, 26], [12, 47, 18, 40], [16, 60, 23, 53],
-  [23, 64, 55, 30], [17, 49, 42, 23], [10, 42, 16, 36], [7, 36, 29, 13],
-] as const;
+const demoCloses = [
+  67280, 67335, 67294, 67420, 67515, 67470, 67602, 67740, 67665, 67790,
+  67855, 67782, 67920, 68010, 67940, 67866, 67972, 68088, 68142, 68072,
+  68190, 68238, 68134, 68292, 68345, 68260, 68318, 68412, 68378, 68452,
+];
+
+const demoCandles: Candle[] = demoCloses.map((close, index) => {
+  const open = index === 0 ? close - 34 : demoCloses[index - 1];
+  const spread = 42 + (index % 5) * 11;
+  return {
+    ts: String(Date.UTC(2026, 6, 21, 12, index)),
+    open: String(open),
+    high: String(Math.max(open, close) + spread),
+    low: String(Math.min(open, close) - spread * 0.8),
+    close: String(close),
+    vol: String(18 + index * 0.7),
+    volCcyQuote: String((18 + index * 0.7) * close),
+    confirm: index === demoCloses.length - 1 ? "0" : "1",
+  };
+});
+
+const demoMarket: CandleSeries = {
+  instrumentId: "BTC-USDT",
+  bar: "1m",
+  source: "DEMO",
+  asOf: new Date().toISOString(),
+  candles: demoCandles,
+};
 
 const navItems: Array<{ id: View; label: string; icon: typeof LayoutDashboard }> = [
   { id: "overview", label: "总览", icon: LayoutDashboard },
@@ -257,6 +318,32 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function number(value?: string | number, digits = 1) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed)
+    ? new Intl.NumberFormat("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(parsed)
+    : "—";
+}
+
+function mergeCandles(current: CandleSeries, update: CandleStreamUpdate): CandleSeries {
+  const byTimestamp = new Map(current.candles.map((candle) => [candle.ts, candle]));
+  update.candles.forEach((candle) => byTimestamp.set(candle.ts, candle));
+  const candles = Array.from(byTimestamp.values())
+    .sort((left, right) => Number(left.ts) - Number(right.ts))
+    .slice(-80);
+  return {
+    instrumentId: update.instrumentId,
+    bar: update.bar,
+    source: "SSE",
+    asOf: update.receivedAt,
+    candles,
+  };
+}
+
+function eventData<T>(event: Event): T {
+  return JSON.parse((event as MessageEvent<string>).data) as T;
+}
+
 export default function Home() {
   const [activeView, setActiveView] = useState<View>("overview");
   const [snapshot, setSnapshot] = useState<Snapshot>(demoSnapshot);
@@ -269,6 +356,10 @@ export default function Home() {
   const [clock, setClock] = useState(new Date());
   const [taskPending, setTaskPending] = useState(false);
   const [backtestPending, setBacktestPending] = useState(false);
+  const [strategyPending, setStrategyPending] = useState<string | null>(null);
+  const [chartBar, setChartBar] = useState("1m");
+  const [market, setMarket] = useState<CandleSeries>(demoMarket);
+  const [streamState, setStreamState] = useState<StreamState>("demo");
   const [query, setQuery] = useState("");
 
   const refresh = useCallback(async (quiet = false) => {
@@ -299,6 +390,18 @@ export default function Home() {
     setRefreshing(false);
   }, []);
 
+  const loadMarket = useCallback(async (bar: string) => {
+    try {
+      const series = await request<CandleSeries>(`/api/trading/market/candles?instId=BTC-USDT&bar=${encodeURIComponent(bar)}&limit=80`);
+      setMarket(series);
+      setStreamState((current) => current === "live" ? current : "polling");
+      return true;
+    } catch {
+      setStreamState("demo");
+      return false;
+    }
+  }, []);
+
   useEffect(() => {
     refresh(true);
     const clockTimer = window.setInterval(() => setClock(new Date()), 1000);
@@ -308,6 +411,42 @@ export default function Home() {
       window.clearInterval(refreshTimer);
     };
   }, [refresh]);
+
+  useEffect(() => {
+    let active = true;
+    setStreamState("connecting");
+    void loadMarket(chartBar).then((connected) => {
+      if (!active) return;
+      if (!connected) {
+        setMarket({ ...demoMarket, bar: chartBar, asOf: new Date().toISOString() });
+      }
+    });
+
+    const streamUrl = `${API_BASE}/api/trading/market/candles/stream?instId=BTC-USDT&bar=${encodeURIComponent(chartBar)}&limit=80`;
+    const source = new EventSource(streamUrl);
+    source.addEventListener("snapshot", (event) => {
+      if (!active) return;
+      setMarket(eventData<CandleSeries>(event));
+      setStreamState("live");
+    });
+    source.addEventListener("candle", (event) => {
+      if (!active) return;
+      const update = eventData<CandleStreamUpdate>(event);
+      setMarket((current) => mergeCandles(current.bar === update.bar ? current : { ...current, candles: [] }, update));
+      setStreamState("live");
+    });
+    source.onopen = () => active && setStreamState("live");
+    source.onerror = () => active && setStreamState((current) => current === "demo" ? "demo" : "polling");
+
+    const pollTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadMarket(chartBar);
+    }, 15_000);
+    return () => {
+      active = false;
+      source.close();
+      window.clearInterval(pollTimer);
+    };
+  }, [chartBar, loadMarket]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -335,6 +474,29 @@ export default function Home() {
   const eventLoop = task?.loops.find((loop) => loop.id === "event-scan");
   const queueUtilization = Math.min(100, (snapshot.events.queueDepth / Math.max(1, snapshot.events.queueCapacity)) * 100);
   const decision = snapshot.runtime.lastDecision;
+  const chart = useMemo(() => {
+    const items = market.candles.slice(-48).map((candle) => ({
+      candle,
+      open: Number(candle.open),
+      high: Number(candle.high),
+      low: Number(candle.low),
+      close: Number(candle.close),
+    })).filter((item) => [item.open, item.high, item.low, item.close].every(Number.isFinite));
+    const fallback = { items: [], latest: null as Candle | null, change: 0, min: 0, max: 1, range: 1, priceScale: [0], priceTop: 50, times: [] as string[], quoteVolume: 0 };
+    if (!items.length) return fallback;
+    const min = Math.min(...items.map((item) => item.low));
+    const max = Math.max(...items.map((item) => item.high));
+    const range = Math.max(max - min, 1);
+    const latest = items.at(-1)!.candle;
+    const firstClose = items[0].close;
+    const change = firstClose === 0 ? 0 : ((items.at(-1)!.close - firstClose) / firstClose) * 100;
+    const priceScale = Array.from({ length: 5 }, (_, index) => max - (range * index / 4));
+    const priceTop = Math.min(96, Math.max(2, ((max - items.at(-1)!.close) / range) * 100));
+    const timeIndexes = [0, .25, .5, .75, 1].map((ratio) => Math.round((items.length - 1) * ratio));
+    const times = timeIndexes.map((index) => new Date(Number(items[index].candle.ts)).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }));
+    const quoteVolume = items.reduce((sum, item) => sum + Number(item.candle.volCcyQuote ?? 0), 0);
+    return { items, latest, change, min, max, range, priceScale, priceTop, times, quoteVolume };
+  }, [market]);
 
   const filteredCommands = useMemo(() => {
     const commands = [
@@ -371,6 +533,49 @@ export default function Home() {
       setToast("演示快照已切换，不会触发真实交易");
     }
     setTaskPending(false);
+  };
+
+  const activateStrategy = async (strategyId: string) => {
+    if (strategyId === snapshot.runtime.activeStrategyId || strategyPending) return;
+    setStrategyPending(strategyId);
+    if (dataMode === "live") {
+      try {
+        const selection = await request<ActiveStrategySelection>("/api/trading/strategies/active", {
+          method: "PUT",
+          body: JSON.stringify({
+            strategyId,
+            expectedRevision: snapshot.runtime.activeStrategyRevision ?? 0,
+          }),
+        });
+        setSnapshot((current) => ({
+          ...current,
+          runtime: {
+            ...current.runtime,
+            activeStrategyId: selection.strategyId,
+            activeStrategyRevision: selection.revision,
+            activeStrategyChangedAt: selection.changedAt,
+            runningStrategyIds: [selection.strategyId],
+          },
+        }));
+        setToast(`当前策略已切换为 ${selection.strategyId}`);
+      } catch {
+        setToast("策略切换失败，状态可能已被其他操作员更新");
+        await refresh(true);
+      }
+    } else {
+      setSnapshot((current) => ({
+        ...current,
+        runtime: {
+          ...current.runtime,
+          activeStrategyId: strategyId,
+          activeStrategyRevision: (current.runtime.activeStrategyRevision ?? 0) + 1,
+          activeStrategyChangedAt: new Date().toISOString(),
+          runningStrategyIds: [strategyId],
+        },
+      }));
+      setToast("演示策略已切换，不会触发真实交易");
+    }
+    setStrategyPending(null);
   };
 
   const submitBacktest = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -498,32 +703,34 @@ export default function Home() {
                 <div className="panel-heading market-heading">
                   <div className="instrument-title">
                     <div className="coin-mark">₿</div>
-                    <div><h2>BTC / USDT</h2><p>OKX · 永续合约 · 1m</p></div>
+                    <div><h2>BTC / USDT</h2><p>OKX · 现货 · {market.bar}</p></div>
                   </div>
-                  <div className="market-price"><strong>$67,842.1</strong><span><ArrowUpRight size={13} /> 2.41%</span></div>
+                  <div className="market-price"><strong>${number(chart.latest?.close)}</strong><span className={chart.change < 0 ? "market-down" : ""}><ArrowUpRight size={13} /> {chart.change >= 0 ? "+" : ""}{chart.change.toFixed(2)}%</span></div>
                 </div>
                 <div className="chart-toolbar">
-                  <div><button className="active">1m</button><button>5m</button><button>15m</button><button>1H</button><button>4H</button></div>
-                  <div className="ohlc"><span>O 67,714.2</span><span>H 68,014.7</span><span>L 67,592.0</span><span className="up">C 67,842.1</span></div>
+                  <div>{["1m", "5m", "15m", "1H", "4H"].map((bar) => <button key={bar} className={chartBar === bar ? "active" : ""} onClick={() => setChartBar(bar)}>{bar}</button>)}</div>
+                  <div className="ohlc"><span>O {number(chart.latest?.open)}</span><span>H {number(chart.latest?.high)}</span><span>L {number(chart.latest?.low)}</span><span className="up">C {number(chart.latest?.close)}</span></div>
                 </div>
-                <div className="chart" aria-label="BTC USDT 模拟 K 线图">
+                <div className="chart" aria-label={`BTC USDT ${market.bar} 实时 K 线图`}>
                   <div className="chart-grid-lines"><span /><span /><span /><span /><span /></div>
-                  <div className="price-scale"><span>68,400</span><span>68,100</span><span>67,800</span><span>67,500</span><span>67,200</span></div>
+                  <div className="price-scale">{chart.priceScale.map((price, index) => <span key={index}>{number(price, 0)}</span>)}</div>
                   <div className="candles">
-                    {candles.map(([high, low, open, close], index) => {
-                      const rising = close < open;
-                      const bodyTop = Math.min(open, close);
-                      const bodyHeight = Math.max(4, Math.abs(close - open));
-                      return <span key={index} className={`candle ${rising ? "rise" : "fall"}`} style={{ "--wick-top": `${high}%`, "--wick-height": `${low - high}%`, "--body-top": `${bodyTop}%`, "--body-height": `${bodyHeight}%` } as React.CSSProperties} />;
+                    {chart.items.map(({ candle, open, high, low, close }) => {
+                      const rising = close >= open;
+                      const wickTop = ((chart.max - high) / chart.range) * 100;
+                      const wickBottom = ((chart.max - low) / chart.range) * 100;
+                      const bodyTop = ((chart.max - Math.max(open, close)) / chart.range) * 100;
+                      const bodyHeight = Math.max(1.4, (Math.abs(close - open) / chart.range) * 100);
+                      return <span key={candle.ts} className={`candle ${rising ? "rise" : "fall"}`} title={`${new Date(Number(candle.ts)).toLocaleString("zh-CN")} O ${candle.open} H ${candle.high} L ${candle.low} C ${candle.close}`} style={{ "--wick-top": `${wickTop}%`, "--wick-height": `${Math.max(1, wickBottom - wickTop)}%`, "--body-top": `${bodyTop}%`, "--body-height": `${bodyHeight}%` } as React.CSSProperties} />;
                     })}
                   </div>
-                  <div className="current-price-line"><span>67,842.1</span></div>
-                  <div className="chart-time"><span>18:00</span><span>19:00</span><span>20:00</span><span>21:00</span><span>22:00</span></div>
+                  {chart.latest && <div className="current-price-line" style={{ top: `${chart.priceTop}%` }}><span>{number(chart.latest.close)}</span></div>}
+                  <div className="chart-time">{chart.times.map((time, index) => <span key={`${time}-${index}`}>{time}</span>)}</div>
                 </div>
                 <div className="market-footer">
-                  <span><i className="healthy" /> 行情数据新鲜</span>
-                  <span>24h Vol <b>18.4K BTC</b></span>
-                  <span>Funding <b className="positive-text">0.0100%</b></span>
+                  <span><i className={streamState === "live" ? "healthy" : streamState === "demo" ? "neutral" : "warning"} /> {streamState === "live" ? "实时推送已连接" : streamState === "polling" ? "实时流重连中 · 15 秒轮询" : streamState === "connecting" ? "正在连接实时行情" : "安全演示 K 线"}</span>
+                  <span>窗口成交额 <b>{compact(chart.quoteVolume)} USDT</b></span>
+                  <span>数据源 <b className={streamState === "live" ? "positive-text" : ""}>{market.source}</b></span>
                 </div>
               </section>
 
@@ -565,7 +772,7 @@ export default function Home() {
           </>
         )}
 
-        {activeView === "strategies" && <StrategiesView snapshot={snapshot} />}
+        {activeView === "strategies" && <StrategiesView snapshot={snapshot} onActivate={activateStrategy} pendingId={strategyPending} dataMode={dataMode} />}
         {activeView === "events" && <EventsView events={snapshot.events} queueUtilization={queueUtilization} />}
         {activeView === "backtests" && <BacktestsView runs={snapshot.backtests} onCreate={() => setBacktestOpen(true)} />}
       </section>
@@ -659,8 +866,8 @@ function ActivityItem({ color, title, detail }: { color: string; title: string; 
   return <div className="activity-item"><span className={color} /><div><strong>{title}</strong><small>{detail}</small></div></div>;
 }
 
-function StrategiesView({ snapshot }: { snapshot: Snapshot }) {
-  return <div className="detail-layout"><section className="panel detail-hero"><div><span className="panel-kicker"><BrainCircuit size={13} /> STRATEGY REGISTRY</span><h2>{snapshot.runtime.runningStrategyIds.length} 个策略正在参与决策</h2><p>注册与运行分离；只有启用且进入运行时的策略才会影响交易决策。</p></div><div className="hero-stat"><span>当前执行模式</span><strong>{snapshot.runtime.executionMode}</strong><small>{snapshot.runtime.liveEnabled ? "实盘门已开启" : "实盘门保持关闭"}</small></div></section><section className="strategy-grid">{snapshot.strategies.map((strategy, index) => { const running = snapshot.runtime.runningStrategyIds.includes(strategy.id); return <article className="panel strategy-detail-card" key={strategy.id}><div className="strategy-detail-top"><span className={`strategy-glyph glyph-${(index % 3) + 1}`}><Layers3 size={18} /></span><span className={`status-badge ${running ? "healthy" : "idle"}`}>{running ? "RUNNING" : strategy.enabled ? "READY" : "DISABLED"}</span></div><h3>{strategy.id}</h3><p>{strategy.type} strategy</p><div className="strategy-metadata"><div><span>时间周期</span><strong>{strategy.bar}</strong></div><div><span>配置参数</span><strong>{Object.keys(strategy.params ?? {}).length}</strong></div><div><span>决策参与</span><strong>{running ? "是" : "否"}</strong></div></div><button>查看配置 <ChevronRight size={14} /></button></article>; })}</section></div>;
+function StrategiesView({ snapshot, onActivate, pendingId, dataMode }: { snapshot: Snapshot; onActivate: (strategyId: string) => void; pendingId: string | null; dataMode: "live" | "demo" }) {
+  return <div className="detail-layout"><section className="panel detail-hero"><div><span className="panel-kicker"><BrainCircuit size={13} /> STRATEGY REGISTRY</span><h2>当前策略：{snapshot.runtime.activeStrategyId ?? "尚未选择"}</h2><p>在这里更换下一轮定时决策使用的策略。选择会由后端持久化并用版本号保护；回测仍可独立选择任意已启用策略。</p></div><div className="hero-stat"><span>当前执行模式</span><strong>{snapshot.runtime.executionMode}</strong><small>{snapshot.runtime.liveEnabled ? "实盘门已开启" : `实盘门保持关闭 · rev ${snapshot.runtime.activeStrategyRevision ?? 0}`}</small></div></section><section className="strategy-grid">{snapshot.strategies.map((strategy, index) => { const running = snapshot.runtime.activeStrategyId === strategy.id; const pending = pendingId === strategy.id; return <article className={`panel strategy-detail-card ${running ? "active-strategy" : ""}`} key={strategy.id}><div className="strategy-detail-top"><span className={`strategy-glyph glyph-${(index % 3) + 1}`}><Layers3 size={18} /></span><span className={`status-badge ${running ? "healthy" : "idle"}`}>{running ? "ACTIVE" : strategy.enabled ? "READY" : "DISABLED"}</span></div><h3>{strategy.id}</h3><p>{strategy.type} strategy</p><div className="strategy-metadata"><div><span>时间周期</span><strong>{strategy.bar}</strong></div><div><span>配置参数</span><strong>{Object.keys(strategy.params ?? {}).length}</strong></div><div><span>决策参与</span><strong>{running ? "当前" : "候选"}</strong></div></div><button className="strategy-activate" disabled={!strategy.enabled || running || Boolean(pendingId)} onClick={() => onActivate(strategy.id)}>{pending ? <LoaderCircle size={14} className="spin" /> : running ? <Check size={14} /> : <Zap size={14} />}{running ? "当前策略" : dataMode === "live" ? "设为当前策略" : "演示切换"}</button></article>; })}</section></div>;
 }
 
 function EventsView({ events, queueUtilization }: { events: EventBusStatus; queueUtilization: number }) {

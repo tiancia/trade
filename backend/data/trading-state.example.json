@@ -2,6 +2,9 @@
   "trackedBaseAmount": 0,
   "averageCost": 0,
   "updatedAt": "1970-01-01T00:00:00Z",
+  "activeStrategyId": "threshold-event-default",
+  "activeStrategyRevision": 1,
+  "activeStrategyChangedAt": "1970-01-01T00:00:00Z",
   "strategyState": {},
   "riskState": {},
   "recentDecisions": []

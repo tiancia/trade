@@ -13,6 +13,9 @@ public class TradingState {
     private BigDecimal trackedBaseAmount = BigDecimal.ZERO;
     private BigDecimal averageCost = BigDecimal.ZERO;
     private String updatedAt;
+    private String activeStrategyId;
+    private long activeStrategyRevision;
+    private String activeStrategyChangedAt;
     private TradingStrategyState strategyState = new TradingStrategyState();
     private TradingRiskState riskState = new TradingRiskState();
     private List<TradingDecisionRecord> recentDecisions = new ArrayList<>();

@@ -159,6 +159,7 @@ kbd { align-items: center; background: #171d24; border: 1px solid #27313b; borde
 .market-price { align-items: flex-end; display: flex; flex-direction: column; }
 .market-price strong { font-family: var(--font-mono-ui); font-size: 18px; font-weight: 500; }
 .market-price span { align-items: center; color: var(--green); display: flex; font-family: var(--font-mono-ui); font-size: 9px; margin-top: 3px; }
+.market-price span.market-down { color: var(--red); }
 .chart-toolbar { align-items: center; display: flex; justify-content: space-between; padding: 10px 14px 5px; }
 .chart-toolbar button { background: transparent; border: 0; border-radius: 4px; color: var(--dim); cursor: pointer; font-family: var(--font-mono-ui); font-size: 8px; margin-right: 4px; padding: 4px 6px; }
 .chart-toolbar button.active { background: rgba(101, 243, 189, 0.08); color: var(--green); }
@@ -286,6 +287,7 @@ i.neutral { background: var(--dim); }
 .hero-stat strong { color: var(--green); font-family: var(--font-mono-ui); font-size: 24px; font-weight: 500; margin: 8px 0 4px; }
 .strategy-grid { display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .strategy-detail-card { padding: 17px; }
+.strategy-detail-card.active-strategy { border-color: rgba(101, 243, 189, .38); box-shadow: inset 0 0 0 1px rgba(101, 243, 189, .06), 0 12px 34px rgba(0, 0, 0, .18); }
 .strategy-detail-top { align-items: center; display: flex; justify-content: space-between; }
 .strategy-detail-card h3 { font-family: var(--font-mono-ui); font-size: 13px; margin: 15px 0 4px; }
 .strategy-detail-card > p { color: var(--dim); font-size: 8px; margin: 0 0 17px; }
@@ -294,6 +296,9 @@ i.neutral { background: var(--dim); }
 .strategy-metadata > div:last-child { border-right: 0; }
 .strategy-metadata span, .strategy-metadata strong { display: block; }.strategy-metadata span { color: var(--dim); font-size: 7px; }.strategy-metadata strong { font-family: var(--font-mono-ui); font-size: 10px; margin-top: 5px; }
 .strategy-detail-card > button { align-items: center; background: transparent; border: 0; color: var(--green); cursor: pointer; display: flex; font-size: 8px; gap: 3px; margin-top: 12px; padding: 0; }
+.strategy-detail-card > button.strategy-activate { background: rgba(101, 243, 189, .06); border: 1px solid rgba(101, 243, 189, .14); border-radius: 7px; justify-content: center; min-height: 34px; padding: 8px 10px; width: 100%; }
+.strategy-detail-card > button.strategy-activate:hover:not(:disabled) { background: rgba(101, 243, 189, .11); }
+.strategy-detail-card > button.strategy-activate:disabled { color: var(--dim); cursor: default; opacity: .75; }
 .event-flow { padding-bottom: 24px; }
 .flow-diagram { align-items: center; display: flex; justify-content: center; padding: 18px 24px 8px; }
 .flow-step-wrap { align-items: center; display: flex; flex: 1; }

@@ -29,6 +29,8 @@ public class TradingProperties {
     private ExecutionMode executionMode = ExecutionMode.PAPER;
     /** Explicit second guard required before live orders are allowed. */
     private boolean liveEnabled = false;
+    /** Browser origins allowed to call the trading operator API. */
+    private List<String> frontendAllowedOriginPatterns = List.of("http://localhost:*");
     /** Maximum quote-currency amount for one spot buy. */
     private BigDecimal maxBuyQuoteAmount = new BigDecimal("10");
     /** Maximum fraction of the available base balance for one spot sell. */

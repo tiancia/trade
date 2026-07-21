@@ -249,6 +249,8 @@ trade:
     execution-mode: paper
     # 真实下单二次保险开关；只有 execution-mode=live 且此项为 true 才允许发单。
     live-enabled: false
+    # 独立前端可访问 trading API 的来源；线上部署时通过环境变量显式追加站点域名。
+    frontend-allowed-origin-patterns: ${TRADE_TRADING_FRONTEND_ALLOWED_ORIGIN_PATTERNS:http://localhost:*}
     # 单次买入最多使用多少计价币种金额。
     max-buy-quote-amount: 10
     # 单次卖出最多占可用基础币种持仓的比例，1 表示最多全部卖出。
@@ -307,6 +309,32 @@ trade:
           # 计算历史均量时使用的 K 线根数。
           volume-lookback-candles: 20
           # 是否只使用 OKX 已确认收盘的 K 线。
+          require-confirmed-candle: true
+      # 更保守的 5 分钟策略；提高价格与成交量门槛，减少交易频率。
+      - id: threshold-event-defensive
+        type: threshold-event
+        enabled: true
+        bar: 5m
+        params:
+          price-move-trigger-percent: "0.03"
+          volume-spike-multiplier: "4"
+          floating-loss-trigger-percent: "0.06"
+          buy-quote-amount: "8"
+          price-move-window-candles: 5
+          volume-lookback-candles: 20
+          require-confirmed-candle: true
+      # 更灵敏的 1 分钟策略；仍受统一风控、PAPER/LIVE 与实盘二次门禁约束。
+      - id: threshold-event-reactive
+        type: threshold-event
+        enabled: true
+        bar: 1m
+        params:
+          price-move-trigger-percent: "0.01"
+          volume-spike-multiplier: "2"
+          floating-loss-trigger-percent: "0.08"
+          buy-quote-amount: "6"
+          price-move-window-candles: 3
+          volume-lookback-candles: 12
           require-confirmed-candle: true
     # 常规定时策略评估的执行间隔，单位毫秒。
     decision-fixed-delay-ms: 1800000

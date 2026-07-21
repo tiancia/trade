@@ -11,9 +11,11 @@ import org.junit.jupiter.api.io.TempDir;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ConcurrentModificationException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class TradingStateRepositoryTest {
     @TempDir
@@ -128,6 +130,25 @@ class TradingStateRepositoryTest {
                 .setStrategyBias("LONG")
                 .setStrategyThesis("trend continuation"));
         assertRiskStatePreserved(new TradingStateRepository(stateFile).getState().getRiskState());
+    }
+
+    @Test
+    void persistsActiveStrategyAndRejectsStaleOperatorRevision() {
+        Path stateFile = tempDir.resolve("active-strategy.json");
+        TradingStateRepository repository = new TradingStateRepository(stateFile);
+
+        TradingState first = repository.selectActiveStrategy("balanced", 0L);
+        assertEquals("balanced", first.getActiveStrategyId());
+        assertEquals(1L, first.getActiveStrategyRevision());
+        assertNotNull(first.getActiveStrategyChangedAt());
+
+        repository.recordDecision(decision("1", TradingAction.HOLD), 2);
+        TradingState reloaded = new TradingStateRepository(stateFile).getState();
+        assertEquals("balanced", reloaded.getActiveStrategyId());
+        assertEquals(1L, reloaded.getActiveStrategyRevision());
+
+        assertThrows(ConcurrentModificationException.class,
+                () -> repository.selectActiveStrategy("defensive", 0L));
     }
 
     private static void assertDecimal(String expected, BigDecimal actual) {
