@@ -39,7 +39,7 @@ OKX 真实下单还要求 `trade.trading.execution-mode=live` 与 `live-enabled=
 5. 若启用 Redis，确认缓存写入成功且没有持续连接重试；
 6. 再按任务逐个启用业务开关和 auto-start，避免一次打开多个外部副作用。
 
-Actuator 当前只暴露 health 和 metrics。automation 启停 API 是运维控制面，应用内尚未提供统一运维鉴权；部署时必须由内网、网关或等价访问控制保护，不能直接暴露到公网。
+Actuator 当前暴露 health、info、metrics 和 prometheus。automation 启停 API 是运维控制面，应用内尚未提供统一运维鉴权；部署时必须由内网、网关或等价访问控制保护，不能直接暴露到公网。
 
 ## 后台任务操作
 
@@ -67,6 +67,8 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/automation/tasks/tradin
 | 订单追踪 | `/api/trading/orders/{idempotencyKey}` | 幂等提交与状态历史定位 |
 
 告警应优先覆盖：任务连续失败、事件队列持续接近容量、丢弃率上升、数据库/Redis handler 连续失败、订单长期停留在中间态，以及应用关闭时未在超时内排空。
+
+仓库已提供 Prometheus、Grafana、自动 provisioning 的 trading 仪表盘和 Prometheus 规则。具体启动、指标口径、规则清单和排障步骤见 [Trading 可观测性](OBSERVABILITY.md)。
 
 ## 优雅停机
 
@@ -112,4 +114,3 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/automation/tasks/tradin
 - [ ] health、metrics、控制面 API 有网络访问控制；
 - [ ] 已准备回滚版本、停机步骤和外部订单处置方案；
 - [ ] 发布后按“启动后检查”逐项验收。
-

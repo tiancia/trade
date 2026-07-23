@@ -23,10 +23,29 @@ spring:
       schema-locations: classpath:db/ai_trade_mysql_schema.sql
 
 management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
   endpoints:
     web:
       exposure:
-        include: health,metrics
+        include: health,info,metrics,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      environment: ${TRADE_METRICS_ENVIRONMENT:local}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        trade.trading.decisions.duration: true
+        trade.trading.events.queue.latency: true
+        trade.trading.events.handler.duration: true
+      slo:
+        http.server.requests: 100ms,250ms,500ms,1s,2s,5s
+        trade.trading.decisions.duration: 100ms,500ms,1s,5s,15s,30s,60s
+        trade.trading.events.queue.latency: 10ms,50ms,100ms,250ms,500ms,1s,5s
+        trade.trading.events.handler.duration: 10ms,50ms,100ms,250ms,500ms,1s,5s
 
 mybatis:
   mapper-locations: classpath*:mapper/**/*.xml

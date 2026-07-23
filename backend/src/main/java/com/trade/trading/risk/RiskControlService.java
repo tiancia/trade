@@ -6,6 +6,8 @@ import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingRiskState;
 import com.trade.trading.model.TradingState;
 import com.trade.trading.persistence.TradingStateRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -16,6 +18,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Evaluates application-side risk rules before a strategy decision can place orders.
@@ -29,14 +32,23 @@ public class RiskControlService {
     private final TradingStateRepository stateRepository;
     private final Clock clock;
     private final List<RiskRule> rules;
+    private final MeterRegistry meterRegistry;
 
     @Autowired
+    public RiskControlService(
+            TradingProperties properties,
+            TradingStateRepository stateRepository,
+            MeterRegistry meterRegistry
+    ) {
+        this(properties, stateRepository, Clock.systemUTC(), defaultRules(), meterRegistry);
+    }
+
     public RiskControlService(TradingProperties properties, TradingStateRepository stateRepository) {
-        this(properties, stateRepository, Clock.systemUTC(), defaultRules());
+        this(properties, stateRepository, Clock.systemUTC(), defaultRules(), null);
     }
 
     public RiskControlService(TradingProperties properties, TradingStateRepository stateRepository, Clock clock) {
-        this(properties, stateRepository, clock, defaultRules());
+        this(properties, stateRepository, clock, defaultRules(), null);
     }
 
     public RiskControlService(
@@ -45,10 +57,21 @@ public class RiskControlService {
             Clock clock,
             List<RiskRule> rules
     ) {
+        this(properties, stateRepository, clock, rules, null);
+    }
+
+    RiskControlService(
+            TradingProperties properties,
+            TradingStateRepository stateRepository,
+            Clock clock,
+            List<RiskRule> rules,
+            MeterRegistry meterRegistry
+    ) {
         this.properties = properties;
         this.stateRepository = stateRepository;
         this.clock = clock == null ? Clock.systemUTC() : clock;
         this.rules = rules == null ? defaultRules() : List.copyOf(rules);
+        this.meterRegistry = meterRegistry;
     }
 
     public RiskAssessment evaluate(StrategyDecision decision, TradingDecisionContext decisionContext) {
@@ -75,11 +98,13 @@ public class RiskControlService {
             rule.evaluate(context).ifPresent(violations::add);
         }
         if (violations.isEmpty()) {
+            recordAssessment("allowed", "none", violations);
             return RiskAssessment.allowed(riskState, currentEquity);
         }
 
         riskState.setLastRiskReason(violations.getFirst().getReason());
         stateRepository.recordRiskState(riskState);
+        recordAssessment("blocked", metricValue(violations.getFirst().getCode()), violations);
         return RiskAssessment.blocked(riskState, currentEquity, violations);
     }
 
@@ -181,6 +206,34 @@ public class RiskControlService {
             properties.setRisk(new TradingProperties.RiskProperties());
         }
         return properties.getRisk();
+    }
+
+    private void recordAssessment(String outcome, String primaryRule, List<RiskViolation> violations) {
+        if (meterRegistry == null) {
+            return;
+        }
+        Counter.builder("trade.trading.risk.assessments")
+                .description("Trading risk assessment outcomes")
+                .tag("outcome", outcome)
+                .tag("primary_rule", primaryRule)
+                .register(meterRegistry)
+                .increment();
+        for (RiskViolation violation : violations) {
+            Counter.builder("trade.trading.risk.violations")
+                    .description("Trading risk rule violations")
+                    .tag("rule", metricValue(violation == null ? null : violation.getCode()))
+                    .register(meterRegistry)
+                    .increment();
+        }
+    }
+
+    private static String metricValue(String value) {
+        if (value == null || value.isBlank()) {
+            return "unknown";
+        }
+        return value.trim()
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9_]+", "_");
     }
 
     private static List<RiskRule> defaultRules() {

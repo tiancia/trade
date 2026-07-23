@@ -78,7 +78,7 @@ backend/
 
 详细的标准域目录、允许依赖和典型调用链见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
-维护者应同时阅读 [贡献指南](CONTRIBUTING.md)；使用 AI 介入开发时，先让工具读取根目录 [AGENTS.md](AGENTS.md)。模块定位、运维和值守分别以 [模块目录](docs/MODULES.md) 和 [运维手册](docs/OPERATIONS.md) 为准。
+维护者应同时阅读 [贡献指南](CONTRIBUTING.md)；使用 AI 介入开发时，先让工具读取根目录 [AGENTS.md](AGENTS.md)。模块定位、运维和值守分别以 [模块目录](docs/MODULES.md) 和 [运维手册](docs/OPERATIONS.md) 为准。Prometheus、Grafana 和 trading 告警的本地搭建见 [Trading 可观测性](docs/OBSERVABILITY.md)。
 
 ## 配置与安全开关
 

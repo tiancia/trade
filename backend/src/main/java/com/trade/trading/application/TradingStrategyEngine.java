@@ -13,6 +13,10 @@ import com.trade.trading.persistence.TradingStateRepository;
 import com.trade.trading.strategy.ConfiguredTradingStrategy;
 import com.trade.trading.strategy.StrategyEvaluationContext;
 import com.trade.common.support.TradingMath;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -21,6 +25,7 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -42,6 +47,7 @@ public class TradingStrategyEngine {
     private final TradingStateRepository stateRepository;
     private final TradingProperties properties;
     private final OkxMarketDataWebSocketFeed marketDataWebSocketFeed;
+    private final MeterRegistry meterRegistry;
     private final ReentrantLock decisionLock = new ReentrantLock();
     private volatile TradingDecisionRecord lastDecision;
     private volatile String lastError;
@@ -54,7 +60,8 @@ public class TradingStrategyEngine {
             @Qualifier("tradingBrokerRouter") TradingBroker broker,
             TradingStateRepository stateRepository,
             TradingProperties properties,
-            OkxMarketDataWebSocketFeed marketDataWebSocketFeed
+            OkxMarketDataWebSocketFeed marketDataWebSocketFeed,
+            MeterRegistry meterRegistry
     ) {
         this.contextCollector = contextCollector;
         this.strategySelectionService = strategySelectionService;
@@ -62,18 +69,27 @@ public class TradingStrategyEngine {
         this.stateRepository = stateRepository;
         this.properties = properties;
         this.marketDataWebSocketFeed = marketDataWebSocketFeed;
+        this.meterRegistry = meterRegistry;
+        Gauge.builder("trade.trading.decisions.running", decisionLock, lock -> lock.isLocked() ? 1 : 0)
+                .description("Whether a trading strategy decision is currently running")
+                .register(meterRegistry);
     }
 
     public boolean runDecision(TradingTrigger trigger) {
+        String triggerType = metricValue(trigger == null ? null : trigger.type());
         if (!properties.isEnabled()) {
+            recordRun(triggerType, "disabled", null);
             log.info("OKX strategy trading is disabled, skip trigger={}", trigger);
             return false;
         }
         if (!decisionLock.tryLock()) {
+            recordRun(triggerType, "busy", null);
             log.info("Strategy decision is already running, skip trigger={}", trigger);
             return false;
         }
 
+        Timer.Sample runTimer = Timer.start(meterRegistry);
+        String runOutcome = "failed";
         lastRunStartedAt = Instant.now();
         lastError = null;
         try {
@@ -85,6 +101,7 @@ public class TradingStrategyEngine {
                 finalRecord = record;
                 if (decision == null || decision.isHold()) {
                     record.setExecutionStatus("HELD");
+                    recordDecision(decision, record);
                     continue;
                 }
 
@@ -99,7 +116,9 @@ public class TradingStrategyEngine {
                 } finally {
                     persistDecisionRecord(record);
                     lastDecision = record;
+                    recordDecision(decision, record);
                 }
+                runOutcome = "completed";
                 return true;
             }
 
@@ -107,6 +126,7 @@ public class TradingStrategyEngine {
                 persistDecisionRecord(finalRecord);
                 lastDecision = finalRecord;
             }
+            runOutcome = "completed";
             return true;
         } catch (Exception e) {
             lastError = e.getMessage();
@@ -114,6 +134,7 @@ public class TradingStrategyEngine {
             return false;
         } finally {
             lastRunCompletedAt = Instant.now();
+            recordRun(triggerType, runOutcome, runTimer);
             decisionLock.unlock();
         }
     }
@@ -206,6 +227,46 @@ public class TradingStrategyEngine {
         } catch (Exception e) {
             log.warn("Persist strategy decision record failed: {}", e.getMessage(), e);
         }
+    }
+
+    private void recordRun(String trigger, String outcome, Timer.Sample timerSample) {
+        Counter.builder("trade.trading.decisions.runs")
+                .description("Trading strategy decision run outcomes")
+                .tag("trigger", trigger)
+                .tag("outcome", outcome)
+                .register(meterRegistry)
+                .increment();
+        if (timerSample != null) {
+            timerSample.stop(Timer.builder("trade.trading.decisions.duration")
+                    .description("Trading strategy decision run duration")
+                    .tag("trigger", trigger)
+                    .tag("outcome", outcome)
+                    .register(meterRegistry));
+        }
+    }
+
+    private void recordDecision(StrategyDecision decision, TradingDecisionRecord record) {
+        String action = decision == null || decision.getAction() == null
+                ? "unknown"
+                : metricValue(decision.getAction().name());
+        String executionStatus = record == null
+                ? "unknown"
+                : metricValue(record.getExecutionStatus());
+        Counter.builder("trade.trading.decisions.actions")
+                .description("Strategy decisions by action and execution status")
+                .tag("action", action)
+                .tag("execution_status", executionStatus)
+                .register(meterRegistry)
+                .increment();
+    }
+
+    private static String metricValue(String value) {
+        if (value == null || value.isBlank()) {
+            return "unknown";
+        }
+        return value.trim()
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9_]+", "_");
     }
 
     private static BigDecimal available(BalanceDetail detail) {

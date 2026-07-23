@@ -1,0 +1,164 @@
+groups:
+  - name: trade-backend-availability
+    rules:
+      - alert: TradeBackendDown
+        expr: up{job="trade-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: trade-backend
+        annotations:
+          summary: Trade backend is not scrapeable
+          description: Prometheus has failed to scrape {{ $labels.instance }} for more than one minute.
+
+      - alert: TradeBackendHighHttp5xxRate
+        expr: |
+          sum by (instance) (
+            rate(http_server_requests_seconds_count{job="trade-backend",status=~"5.."}[5m])
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: trade-backend
+        annotations:
+          summary: Trade backend HTTP 5xx rate is elevated
+          description: Instance {{ $labels.instance }} has served more than 0.05 HTTP 5xx responses per second for five minutes.
+
+  - name: trading-event-pipeline
+    rules:
+      - alert: TradingEventQueueNearCapacity
+        expr: |
+          max by (instance) (trade_trading_events_queue_depth{job="trade-backend"})
+          /
+          clamp_min(max by (instance) (trade_trading_events_queue_capacity{job="trade-backend"}), 1)
+          > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: trade-backend
+        annotations:
+          summary: Trading event queue is near capacity
+          description: Queue utilization on {{ $labels.instance }} has stayed above 80 percent for five minutes.
+
+      - alert: TradingEventsDropped
+        expr: |
+          sum by (instance, reason) (
+            increase(trade_trading_events_dropped_total{job="trade-backend"}[5m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: trade-backend
+        annotations:
+          summary: Trading events are being dropped
+          description: Instance {{ $labels.instance }} dropped trading events because of {{ $labels.reason }}.
+
+      - alert: TradingEventHandlerFailures
+        expr: |
+          sum by (instance, handler) (
+            increase(trade_trading_events_handled_total{
+              job="trade-backend",
+              outcome=~"failed|supports_failed"
+            }[5m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: trade-backend
+        annotations:
+          summary: Trading event handler is failing
+          description: Handler {{ $labels.handler }} on {{ $labels.instance }} failed while processing trading events.
+
+      - alert: TradingEventQueueLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (instance, le) (
+              rate(trade_trading_events_queue_latency_seconds_bucket{job="trade-backend"}[5m])
+            )
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: trade-backend
+        annotations:
+          summary: Trading event queue latency is high
+          description: The p95 queue latency on {{ $labels.instance }} has exceeded one second for five minutes.
+
+  - name: trading-decisions-risk-orders
+    rules:
+      - alert: TradingDecisionRunsFailing
+        expr: |
+          sum by (instance) (
+            increase(trade_trading_decisions_runs_total{
+              job="trade-backend",
+              outcome="failed"
+            }[10m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: trade-backend
+        annotations:
+          summary: Trading strategy decision run failed
+          description: At least one trading decision run failed on {{ $labels.instance }} in the last ten minutes.
+
+      - alert: TradingOrderSubmitUnknown
+        expr: |
+          sum by (instance) (
+            increase(trade_trading_orders_transitions_total{
+              job="trade-backend",
+              to="SUBMIT_UNKNOWN"
+            }[5m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: trade-backend
+        annotations:
+          summary: Trading order submission result is unknown
+          description: An order on {{ $labels.instance }} requires exchange reconciliation before any retry.
+
+      - alert: TradingOrderCasConflictsHigh
+        expr: |
+          sum by (instance) (
+            increase(trade_trading_orders_cas_conflicts_total{job="trade-backend"}[10m])
+          ) > 5
+        for: 2m
+        labels:
+          severity: warning
+          service: trade-backend
+        annotations:
+          summary: Trading order optimistic-lock conflicts are elevated
+          description: More than five order state CAS conflicts occurred on {{ $labels.instance }} in ten minutes.
+
+  - name: trading-cache-stream
+    rules:
+      - alert: TradingRedisHotCacheFailures
+        expr: |
+          sum by (instance, operation) (
+            increase(trade_trading_hot_market_cache_operations_total{
+              job="trade-backend",
+              outcome=~"failed|retry_deferred"
+            }[5m])
+          ) > 0
+        for: 2m
+        labels:
+          severity: warning
+          service: trade-backend
+        annotations:
+          summary: Redis hot-market cache is degraded
+          description: Cache operation {{ $labels.operation }} is failing or deferred on {{ $labels.instance }}.
+
+      - alert: TradingCandleStreamDrops
+        expr: |
+          sum by (instance) (
+            increase(trade_trading_candles_stream_dropped_total{job="trade-backend"}[5m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: trade-backend
+        annotations:
+          summary: Browser candle stream is dropping updates
+          description: SSE backpressure dropped candle updates on {{ $labels.instance }}.

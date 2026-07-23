@@ -8,6 +8,7 @@ import com.trade.trading.model.TradingAction;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingRiskState;
 import com.trade.trading.persistence.TradingStateRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -136,6 +137,38 @@ class RiskControlServiceTest {
 
         assertFalse(assessment.isAllowed());
         assertTrue(assessment.skipReason().startsWith("RISK_SINGLE_OPEN_EXPOSURE:"));
+    }
+
+    @Test
+    void recordsRiskAssessmentAndViolationMetrics() {
+        TradingProperties properties = properties();
+        properties.getRisk().setMaxDailyLossRatio(BigDecimal.ONE);
+        TradingStateRepository repository = repository();
+        repository.recordRiskState(new TradingRiskState()
+                .setCurrentEquity(new BigDecimal("1000"))
+                .setEquityHighWatermark(new BigDecimal("1000"))
+                .setDayStartEquity(new BigDecimal("1000"))
+                .setDayStartDate("2026-05-17"));
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        RiskControlService service = new RiskControlService(
+                properties,
+                repository,
+                Clock.fixed(NOW, ZoneOffset.UTC),
+                null,
+                meterRegistry
+        );
+
+        RiskAssessment assessment = service.evaluate(openDecision(TradingAction.BUY), context("800"));
+
+        assertFalse(assessment.isAllowed());
+        assertEquals(1.0, meterRegistry.get("trade.trading.risk.assessments")
+                .tags("outcome", "blocked", "primary_rule", "risk_max_drawdown")
+                .counter()
+                .count());
+        assertEquals(1.0, meterRegistry.get("trade.trading.risk.violations")
+                .tag("rule", "risk_max_drawdown")
+                .counter()
+                .count());
     }
 
     private RiskControlService service(TradingProperties properties, TradingStateRepository repository, Instant now) {

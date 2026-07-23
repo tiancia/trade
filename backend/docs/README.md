@@ -22,6 +22,7 @@
 ### 部署、值守或排障
 
 - [运维手册](OPERATIONS.md)：安全启动、任务启停、观测、停机和故障处理；
+- [Trading 可观测性](OBSERVABILITY.md)：Prometheus 抓取、Grafana 仪表盘、告警规则和排障；
 - [数据库迁移说明](../src/main/resources/db/migration/README.md)：基线与手工迁移；
 - `.env.example`：环境变量清单，不包含真实凭据；
 - `application.yml`：配置默认值的唯一代码级事实来源。
@@ -39,4 +40,3 @@
 | `adr/*.md` | 为什么做出一项长期架构选择 | 会被后续决策覆盖的“最新版说明” |
 
 新增文档前先判断是否能更新现有事实来源，避免同一配置或流程在多处复制后发生漂移。
-

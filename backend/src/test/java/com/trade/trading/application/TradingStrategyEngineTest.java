@@ -19,6 +19,8 @@ import com.trade.trading.strategy.StrategyConfig;
 import com.trade.trading.strategy.StrategyEvaluationContext;
 import com.trade.trading.strategy.TradingStrategy;
 import com.trade.trading.strategy.TradingStrategyRegistry;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import lombok.Data;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -68,10 +70,44 @@ class TradingStrategyEngineTest {
         assertEquals("first", repository.getState().getRecentDecisions().getFirst().getStrategyId());
     }
 
+    @Test
+    void recordsDecisionOutcomeActionAndDurationMetrics() {
+        TradingProperties properties = properties(List.of(strategyConfig("first", "buy")));
+        CapturingBroker broker = new CapturingBroker();
+        TradingStateRepository repository = new TradingStateRepository(tempDir.resolve("engine-metrics-state.json"));
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+
+        engine(properties, broker, repository, meterRegistry)
+                .runDecision(TradingTrigger.scheduled());
+
+        assertEquals(1.0, meterRegistry.get("trade.trading.decisions.runs")
+                .tags("trigger", "scheduled", "outcome", "completed")
+                .counter()
+                .count());
+        assertEquals(1.0, meterRegistry.get("trade.trading.decisions.actions")
+                .tags("action", "buy", "execution_status", "test_filled")
+                .counter()
+                .count());
+        assertEquals(1L, meterRegistry.get("trade.trading.decisions.duration")
+                .tags("trigger", "scheduled", "outcome", "completed")
+                .timer()
+                .count());
+        assertEquals(0.0, meterRegistry.get("trade.trading.decisions.running").gauge().value());
+    }
+
     private TradingStrategyEngine engine(
             TradingProperties properties,
             CapturingBroker broker,
             TradingStateRepository repository
+    ) {
+        return engine(properties, broker, repository, new SimpleMeterRegistry());
+    }
+
+    private TradingStrategyEngine engine(
+            TradingProperties properties,
+            CapturingBroker broker,
+            TradingStateRepository repository,
+            MeterRegistry meterRegistry
     ) {
         TradingStrategyRegistry registry = new TradingStrategyRegistry(List.of(new TestStrategy()), properties);
         TradingStrategySelectionService selectionService = new TradingStrategySelectionService(registry, repository);
@@ -85,7 +121,8 @@ class TradingStrategyEngineTest {
                         new OkxApi(new NoopOkxRestClient()),
                         properties,
                         event -> TradingEventPublishResult.ACCEPTED
-                )
+                ),
+                meterRegistry
         );
     }
 
