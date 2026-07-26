@@ -3,6 +3,7 @@ package com.trade.trading.web;
 import com.trade.trading.application.OrderReconciliationService;
 import com.trade.trading.application.TradingStrategyEngine;
 import com.trade.trading.application.TradingStrategySelectionService;
+import com.trade.trading.application.TradingLeadershipService;
 import com.trade.trading.backtest.BacktestService;
 import com.trade.trading.config.TradingProperties;
 import com.trade.trading.order.OrderLifecycleService;
@@ -75,10 +76,47 @@ class TradingControllerFundSafetyTest {
         verifyNoInteractions(reconciliationService);
     }
 
+    @Test
+    void followerRejectsManualReconciliationWithoutRunningIt() {
+        TradingProperties properties = new TradingProperties();
+        properties.getFundSafety().setOperatorToken("long-random-operator-secret");
+        FundSafetyService fundSafetyService = mock(FundSafetyService.class);
+        OrderReconciliationService reconciliationService = mock(OrderReconciliationService.class);
+        TradingLeadershipService leadershipService = mock(TradingLeadershipService.class);
+        TradingController controller = controller(
+                properties,
+                fundSafetyService,
+                reconciliationService,
+                leadershipService
+        );
+
+        ResponseStatusException conflict = assertThrows(
+                ResponseStatusException.class,
+                () -> controller.reconcileNow("long-random-operator-secret")
+        );
+
+        assertEquals(HttpStatus.CONFLICT, conflict.getStatusCode());
+        verifyNoInteractions(reconciliationService);
+    }
+
     private static TradingController controller(
             TradingProperties properties,
             FundSafetyService fundSafetyService,
             OrderReconciliationService reconciliationService
+    ) {
+        return controller(
+                properties,
+                fundSafetyService,
+                reconciliationService,
+                mock(TradingLeadershipService.class)
+        );
+    }
+
+    private static TradingController controller(
+            TradingProperties properties,
+            FundSafetyService fundSafetyService,
+            OrderReconciliationService reconciliationService,
+            TradingLeadershipService leadershipService
     ) {
         return new TradingController(
                 mock(TradingStrategyRegistry.class),
@@ -88,7 +126,8 @@ class TradingControllerFundSafetyTest {
                 mock(OrderLifecycleService.class),
                 fundSafetyService,
                 properties,
-                reconciliationService
+                reconciliationService,
+                leadershipService
         );
     }
 }

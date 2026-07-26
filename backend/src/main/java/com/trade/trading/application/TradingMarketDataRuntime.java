@@ -12,14 +12,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class TradingMarketDataRuntime implements SmartLifecycle {
     private final BoundedTradingEventBus eventBus;
     private final OkxMarketDataWebSocketFeed webSocketFeed;
+    private final TradingLeadershipService leadershipService;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     public TradingMarketDataRuntime(
             BoundedTradingEventBus eventBus,
-            OkxMarketDataWebSocketFeed webSocketFeed
+            OkxMarketDataWebSocketFeed webSocketFeed,
+            TradingLeadershipService leadershipService
     ) {
         this.eventBus = eventBus;
         this.webSocketFeed = webSocketFeed;
+        this.leadershipService = leadershipService;
     }
 
     public synchronized void start() {
@@ -28,8 +31,10 @@ public class TradingMarketDataRuntime implements SmartLifecycle {
         }
         eventBus.start();
         try {
+            leadershipService.start();
             webSocketFeed.start();
         } catch (RuntimeException e) {
+            leadershipService.stop();
             running.set(false);
             throw e;
         }
@@ -40,6 +45,7 @@ public class TradingMarketDataRuntime implements SmartLifecycle {
         // The event bus is application-scoped because HTTP backtests and REST
         // collectors can publish while the scheduled trading task is stopped.
         webSocketFeed.stop();
+        leadershipService.stop();
         running.set(false);
     }
 

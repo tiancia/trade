@@ -23,6 +23,7 @@ public class TradingRuntimeStatus {
     private Instant lastRunStartedAt;
     private Instant lastRunCompletedAt;
     private boolean marketDataStale;
+    private TradingLeadershipStatus leadership;
     private FundSafetyState fundSafety;
     private OrderReconciliationStatus reconciliation;
 }

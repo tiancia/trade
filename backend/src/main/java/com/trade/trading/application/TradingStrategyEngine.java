@@ -51,6 +51,7 @@ public class TradingStrategyEngine {
     private final MeterRegistry meterRegistry;
     private final FundSafetyService fundSafetyService;
     private final OrderReconciliationService orderReconciliationService;
+    private final TradingLeadershipService leadershipService;
     private final ReentrantLock decisionLock = new ReentrantLock();
     private volatile TradingDecisionRecord lastDecision;
     private volatile String lastError;
@@ -66,6 +67,7 @@ public class TradingStrategyEngine {
             OkxMarketDataWebSocketFeed marketDataWebSocketFeed,
             FundSafetyService fundSafetyService,
             OrderReconciliationService orderReconciliationService,
+            TradingLeadershipService leadershipService,
             MeterRegistry meterRegistry
     ) {
         this.contextCollector = contextCollector;
@@ -76,6 +78,7 @@ public class TradingStrategyEngine {
         this.marketDataWebSocketFeed = marketDataWebSocketFeed;
         this.fundSafetyService = fundSafetyService;
         this.orderReconciliationService = orderReconciliationService;
+        this.leadershipService = leadershipService;
         this.meterRegistry = meterRegistry;
         Gauge.builder("trade.trading.decisions.running", decisionLock, lock -> lock.isLocked() ? 1 : 0)
                 .description("Whether a trading strategy decision is currently running")
@@ -171,6 +174,7 @@ public class TradingStrategyEngine {
                 .setLastRunCompletedAt(lastRunCompletedAt)
                 .setMarketDataStale(marketDataWebSocketFeed.latestTicker().isEmpty()
                         || marketDataWebSocketFeed.recentOneMinuteCandles(1).isEmpty())
+                .setLeadership(leadershipService.status())
                 .setFundSafety(fundSafetyService.state())
                 .setReconciliation(orderReconciliationService.status());
     }

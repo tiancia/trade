@@ -10,6 +10,7 @@ import com.trade.client.okx.dto.OrderInfoResp;
 import com.trade.client.okx.dto.OrderQueryReq;
 import com.trade.client.okx.dto.PlaceOrderReq;
 import com.trade.client.okx.dto.TickerResp;
+import com.trade.trading.application.TradingLeadershipService;
 import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.StrategyDecision;
 import com.trade.trading.model.TradingAction;
@@ -36,6 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 
 class OkxLiveBrokerTest {
@@ -136,6 +138,56 @@ class OkxLiveBrokerTest {
     }
 
     @Test
+    void liveSubmissionFailsClosedWithoutDatabaseLeadership() {
+        TradingProperties properties = liveProperties();
+        FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        TradingLeadershipService leadershipService = mock(TradingLeadershipService.class);
+        doThrow(new TradingLeadershipService.TradingLeadershipUnavailableException(
+                "Live OKX order blocked: trading lease unavailable"
+        )).when(leadershipService).requireLiveLeadership();
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(
+                properties,
+                okxApi,
+                new InMemoryTradingOrderRepository(),
+                mock(FundSafetyService.class),
+                leadershipService
+        ).execute(buyDecision(), context("0", "1000"), record);
+
+        assertNull(okxApi.orderReq);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertTrue(record.getSkipReason().contains("trading lease unavailable"));
+    }
+
+    @Test
+    void leadershipLostAfterReservationIsRejectedWithoutAmbiguousSubmit() {
+        TradingProperties properties = liveProperties();
+        FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        TradingLeadershipService leadershipService = mock(TradingLeadershipService.class);
+        doNothing()
+                .doThrow(new TradingLeadershipService.TradingLeadershipUnavailableException(
+                        "Live OKX order blocked: lease transferred"
+                ))
+                .when(leadershipService)
+                .requireLiveLeadership();
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(
+                properties,
+                okxApi,
+                new InMemoryTradingOrderRepository(),
+                mock(FundSafetyService.class),
+                leadershipService
+        ).execute(buyDecision(), context("0", "1000"), record);
+
+        assertNull(okxApi.orderReq);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertEquals(OrderStatus.REJECTED.name(), record.getOrderStatus());
+        assertTrue(record.getSkipReason().contains("lease transferred"));
+    }
+
+    @Test
     void ambiguousSubmitIsReconciledWithoutSecondPlaceOrder() {
         TradingProperties properties = liveProperties();
         FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
@@ -174,6 +226,22 @@ class OkxLiveBrokerTest {
             InMemoryTradingOrderRepository orders,
             FundSafetyService fundSafetyService
     ) {
+        return broker(
+                properties,
+                okxApi,
+                orders,
+                fundSafetyService,
+                mock(TradingLeadershipService.class)
+        );
+    }
+
+    private OkxLiveBroker broker(
+            TradingProperties properties,
+            OkxApi okxApi,
+            InMemoryTradingOrderRepository orders,
+            FundSafetyService fundSafetyService,
+            TradingLeadershipService leadershipService
+    ) {
         TradingStateRepository stateRepository = new TradingStateRepository(tempDir.resolve("state-" + System.nanoTime() + ".json"));
         RiskControlService riskControlService = new RiskControlService(properties, stateRepository);
         OrderLifecycleService lifecycleService = new OrderLifecycleService(orders, new SimpleMeterRegistry());
@@ -183,6 +251,7 @@ class OkxLiveBrokerTest {
                 properties,
                 riskControlService,
                 fundSafetyService,
+                leadershipService,
                 lifecycleService,
                 new OrderSettlementService(
                         lifecycleService,

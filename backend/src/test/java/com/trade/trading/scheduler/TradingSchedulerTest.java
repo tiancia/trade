@@ -4,6 +4,7 @@ import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.application.TradingStrategyEngine;
 import com.trade.trading.application.OrderReconciliationService;
+import com.trade.trading.application.TradingLeadershipService;
 import com.trade.trading.config.TradingProperties;
 import com.trade.trading.market.HotMarketDataCache;
 import com.trade.trading.market.MarketContextCollector;
@@ -21,6 +22,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 
 class TradingSchedulerTest {
 
@@ -39,6 +42,12 @@ class TradingSchedulerTest {
         ticker.setLast("50000");
         List<CandleResp> candles = confirmedCandles(21);
         TradingState state = new TradingState();
+        TradingLeadershipService leadershipService = mock(TradingLeadershipService.class);
+        when(leadershipService.runIfLeader(anyString(), any(Runnable.class)))
+                .thenAnswer(invocation -> {
+                    invocation.<Runnable>getArgument(1).run();
+                    return true;
+                });
 
         when(webSocketFeed.recentOneMinuteCandles(25)).thenReturn(List.of());
         when(webSocketFeed.latestTicker()).thenReturn(Optional.empty());
@@ -50,6 +59,7 @@ class TradingSchedulerTest {
         new TradingScheduler(
                 tradingEngine,
                 mock(OrderReconciliationService.class),
+                leadershipService,
                 collector,
                 webSocketFeed,
                 hotCache,

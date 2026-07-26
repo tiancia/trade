@@ -40,7 +40,7 @@ cd backend
 | `ai` | 跨业务的 AI 解析失败审计契约与持久化 | `AiResponseParseErrorSink` | 内部能力 |
 | `common` | 无业务归属的纯工具 | `TradingMath` | 内部能力 |
 
-交易行情由 REST/WebSocket 生产者发布到模块级有界事件队列，再由独立消费者持久化；生产线程不直接访问数据库。LIVE 订单由后台对账循环持续收敛，订单状态、累计成交、仓位/成本、风险和资金停止状态以 MySQL 为权威。运行状态可通过 `GET /api/trading/runtime/events` 和 `GET /api/trading/runtime/status` 查看。驾驶舱通过 `GET /api/trading/market/candles` 读取 K 线快照，并通过 `/api/trading/market/candles/stream` 的 SSE 流接收增量；`PUT /api/trading/strategies/active` 会以乐观版本号持久化切换当前策略。回测的请求、成交和指标口径见 [Trading 回测说明](docs/TRADING_BACKTEST.md)。
+交易行情由 REST/WebSocket 生产者发布到模块级有界事件队列，再由独立消费者持久化；生产线程不直接访问数据库。LIVE 订单由后台对账循环持续收敛，订单状态、累计成交、仓位/成本、风险和资金停止状态以 MySQL 为权威。多实例部署可启用数据库领导租约，保证同一 OKX 账户只有一个实例执行决策、对账和真实下单。运行状态可通过 `GET /api/trading/runtime/events` 和 `GET /api/trading/runtime/status` 查看。驾驶舱通过 `GET /api/trading/market/candles` 读取 K 线快照，并通过 `/api/trading/market/candles/stream` 的 SSE 流接收增量；`PUT /api/trading/strategies/active` 会以乐观版本号持久化切换当前策略。回测的请求、成交和指标口径见 [Trading 回测说明](docs/TRADING_BACKTEST.md)。
 
 ## 目录速览
 

@@ -80,6 +80,7 @@ Micrometer 的点号名称在 Prometheus 中转换为下划线；Counter 还会�
 | 事件耗时 | `trade_trading_events_queue_latency_seconds_*`、`trade_trading_events_handler_duration_seconds_*` | type、handler；已开启直方图 |
 | 订单状态机 | `trade_trading_orders_reservations_total`、`trade_trading_orders_transitions_total`、`trade_trading_orders_cas_conflicts_total` | 幂等重放、from/to、乐观锁冲突 |
 | 订单对账 | `trade_trading_reconciliation_runs_total`、`trade_trading_reconciliation_duration_seconds_*`、`trade_trading_reconciliation_running` | completed/failed/busy、连续失败与耗时 |
+| 多实例领导权 | `trade_trading_leadership_enabled`、`trade_trading_leadership_active`、`trade_trading_leadership_operations_total` | 每个资金集群应恰好一个 leader；outcome、trigger |
 | 资金停止 | `trade_trading_fund_safety_status`、`trade_trading_fund_safety_actions_total` | status：-1 未知、0 ACTIVE、1 HALTED；动作：halted/resumed/cancel_failed |
 | Redis 热行情 | `trade_trading_hot_market_cache_operations_total` | operation、kind、hit/miss/failed/retry_deferred |
 | K 线 SSE | `trade_trading_candles_stream_clients`、`trade_trading_candles_stream_queue_depth`、`*_dropped_total`、`*_failed_total` | 客户端、I/O 队列和背压 |
@@ -114,6 +115,7 @@ Micrometer 的点号名称在 Prometheus 中转换为下划线；Counter 还会�
 - 策略决策失败；
 - 订单进入 `SUBMIT_UNKNOWN`、CAS 冲突异常升高；
 - 订单对账失败、资金状态为 HALTED/未知、停止后的撤单失败；
+- 已启用租约但集群无 leader、出现多个 leader、租约刷新失败；
 - Redis 热行情缓存降级；
 - K 线 SSE 更新被背压丢弃。
 

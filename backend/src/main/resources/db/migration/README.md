@@ -23,6 +23,7 @@
 | --- | --- |
 | `migration_add_okx_order_idempotency_state_machine.sql` | OKX order idempotency, optimistic-lock state machine, and transition history |
 | `migration_add_okx_financial_safety_state.sql` | MySQL-authoritative position/cost/risk, cumulative fill ledger, and persistent fund stop |
+| `migration_add_okx_trading_leader_lease.sql` | Multi-instance trading leader lease and ownership fencing token |
 | `migration_add_okx_market_data_tables.sql` | OKX 行情快照和 K 线缓存 |
 | `migration_add_okx_strategy_backtest_tables.sql` | 策略运行与回测表 |
 | `migration_add_okx_strategy_decision_fields.sql` | OKX 决策的策略字段 |

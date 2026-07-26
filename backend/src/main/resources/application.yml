@@ -467,6 +467,17 @@ trade:
       # managed-only 允许同账户存在人工仓位；dedicated-account 要求交易所总仓位与本进程账本完全一致。
       position-ownership: ${TRADE_TRADING_POSITION_OWNERSHIP:managed-only}
       position-mismatch-tolerance: ${TRADE_TRADING_POSITION_MISMATCH_TOLERANCE:0.00000001}
+    # 多实例单写租约。存量库先执行 leader-lease migration，再显式启用。
+    # PAPER 可保持关闭；LIVE 下单默认强制要求本实例持有有效租约。
+    leadership:
+      enabled: ${TRADE_TRADING_LEADERSHIP_ENABLED:false}
+      # 同一 OKX 资金账户的所有实例必须使用相同 lease-name。
+      lease-name: ${TRADE_TRADING_LEADERSHIP_LEASE_NAME:okx-primary-account}
+      # 留空时按主机、PID 和随机后缀生成；容器部署建议注入 Pod/Task ID。
+      instance-id: ${TRADE_TRADING_INSTANCE_ID:}
+      lease-duration-ms: ${TRADE_TRADING_LEADERSHIP_LEASE_DURATION_MS:30000}
+      heartbeat-interval-ms: ${TRADE_TRADING_LEADERSHIP_HEARTBEAT_INTERVAL_MS:5000}
+      required-for-live: ${TRADE_TRADING_LEADERSHIP_REQUIRED_FOR_LIVE:true}
     fund-safety:
       # 留空时 HTTP stop/resume 端点保持禁用；内部硬风控仍可触发持久化停止。
       operator-token: ${TRADE_TRADING_OPERATOR_TOKEN:}

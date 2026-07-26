@@ -6,6 +6,7 @@ import com.trade.trading.application.TradingStrategySelectionService;
 import com.trade.trading.application.TradingStrategyEngine;
 import com.trade.trading.application.OrderReconciliationService;
 import com.trade.trading.application.OrderReconciliationStatus;
+import com.trade.trading.application.TradingLeadershipService;
 import com.trade.trading.backtest.BacktestEquityPoint;
 import com.trade.trading.backtest.BacktestRequest;
 import com.trade.trading.backtest.BacktestRun;
@@ -53,6 +54,7 @@ public class TradingController {
     private final FundSafetyService fundSafetyService;
     private final TradingProperties tradingProperties;
     private final OrderReconciliationService orderReconciliationService;
+    private final TradingLeadershipService leadershipService;
 
     public TradingController(
             TradingStrategyRegistry strategyRegistry,
@@ -62,7 +64,8 @@ public class TradingController {
             OrderLifecycleService orderLifecycleService,
             FundSafetyService fundSafetyService,
             TradingProperties tradingProperties,
-            OrderReconciliationService orderReconciliationService
+            OrderReconciliationService orderReconciliationService,
+            TradingLeadershipService leadershipService
     ) {
         this.strategyRegistry = strategyRegistry;
         this.tradingStrategyEngine = tradingStrategyEngine;
@@ -72,6 +75,7 @@ public class TradingController {
         this.fundSafetyService = fundSafetyService;
         this.tradingProperties = tradingProperties;
         this.orderReconciliationService = orderReconciliationService;
+        this.leadershipService = leadershipService;
     }
 
     @GetMapping("/strategies")
@@ -151,8 +155,19 @@ public class TradingController {
     ) {
         requireOperatorToken(operatorToken);
         try {
-            orderReconciliationService.reconcileOnce();
+            boolean executed = leadershipService.runIfLeader(
+                    "manual-reconciliation",
+                    orderReconciliationService::reconcileOnce
+            );
+            if (!executed) {
+                throw new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Manual reconciliation must be sent to the current trading leader"
+                );
+            }
             return orderReconciliationService.status();
+        } catch (ResponseStatusException e) {
+            throw e;
         } catch (RuntimeException e) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,

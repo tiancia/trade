@@ -93,6 +93,8 @@ public class TradingProperties {
     private RiskProperties risk = new RiskProperties();
     /** Continuous local/exchange order and position convergence settings. */
     private ReconciliationProperties reconciliation = new ReconciliationProperties();
+    /** Database-backed single-writer controls for multi-instance deployments. */
+    private LeadershipProperties leadership = new LeadershipProperties();
     /** Persistent capital-level stop controls. */
     private FundSafetyProperties fundSafety = new FundSafetyProperties();
 
@@ -304,6 +306,25 @@ public class TradingProperties {
         MANAGED_ONLY,
         /** The complete exchange position is expected to equal the managed position. */
         DEDICATED_ACCOUNT
+    }
+
+    @Data
+    public static class LeadershipProperties {
+        /**
+         * Enables database-backed leader election for scheduled trading work.
+         * Existing single-instance PAPER deployments can leave this disabled.
+         */
+        private boolean enabled = false;
+        /** Stable lease name shared by every instance that can access the same exchange account. */
+        private String leaseName = "okx-primary-account";
+        /** Optional stable instance identifier; blank generates a process-unique value. */
+        private String instanceId;
+        /** Lease lifetime; must be comfortably longer than the heartbeat interval. */
+        private long leaseDurationMs = 30_000L;
+        /** Interval between database lease renewals and follower acquisition attempts. */
+        private long heartbeatIntervalMs = 5_000L;
+        /** Fails closed before a real order when database leadership is disabled or unavailable. */
+        private boolean requiredForLive = true;
     }
 
     @Data

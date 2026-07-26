@@ -4,6 +4,7 @@ import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.application.TradingStrategyEngine;
 import com.trade.trading.application.OrderReconciliationService;
+import com.trade.trading.application.TradingLeadershipService;
 import com.trade.trading.config.TradingProperties;
 import com.trade.trading.market.HotMarketDataCache;
 import com.trade.trading.market.MarketContextCollector;
@@ -35,6 +36,7 @@ public class TradingScheduler {
 
     private final TradingStrategyEngine tradingEngine;
     private final OrderReconciliationService orderReconciliationService;
+    private final TradingLeadershipService leadershipService;
     private final MarketContextCollector marketContextCollector;
     private final OkxMarketDataWebSocketFeed marketDataWebSocketFeed;
     private final HotMarketDataCache hotMarketDataCache;
@@ -46,6 +48,7 @@ public class TradingScheduler {
     public TradingScheduler(
             TradingStrategyEngine tradingEngine,
             OrderReconciliationService orderReconciliationService,
+            TradingLeadershipService leadershipService,
             MarketContextCollector marketContextCollector,
             OkxMarketDataWebSocketFeed marketDataWebSocketFeed,
             HotMarketDataCache hotMarketDataCache,
@@ -55,6 +58,7 @@ public class TradingScheduler {
     ) {
         this.tradingEngine = tradingEngine;
         this.orderReconciliationService = orderReconciliationService;
+        this.leadershipService = leadershipService;
         this.marketContextCollector = marketContextCollector;
         this.marketDataWebSocketFeed = marketDataWebSocketFeed;
         this.hotMarketDataCache = hotMarketDataCache;
@@ -64,14 +68,24 @@ public class TradingScheduler {
     }
 
     public void runScheduledDecision() {
-        tradingEngine.runDecision(TradingTrigger.scheduled());
+        leadershipService.runIfLeader(
+                "scheduled-decision",
+                () -> tradingEngine.runDecision(TradingTrigger.scheduled())
+        );
     }
 
     public void reconcileOrders() {
-        orderReconciliationService.reconcileOnce();
+        leadershipService.runIfLeader(
+                "order-reconciliation",
+                orderReconciliationService::reconcileOnce
+        );
     }
 
     public void scanEventTriggers() {
+        leadershipService.runIfLeader("event-scan", this::scanEventTriggersAsLeader);
+    }
+
+    private void scanEventTriggersAsLeader() {
         if (!properties.isEnabled()) {
             return;
         }

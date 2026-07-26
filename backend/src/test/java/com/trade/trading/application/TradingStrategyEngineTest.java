@@ -126,6 +126,7 @@ class TradingStrategyEngineTest {
                 ),
                 mock(FundSafetyService.class),
                 mock(OrderReconciliationService.class),
+                mock(TradingLeadershipService.class),
                 meterRegistry
         );
     }

@@ -148,6 +148,52 @@ groups:
           summary: Trading order reconciliation is failing
           description: Live order or position convergence failed on {{ $labels.instance }}.
 
+      - alert: TradingLeadershipUnavailable
+        expr: |
+          max by (application, environment) (
+            trade_trading_leadership_enabled{job="trade-backend"}
+          ) == 1
+          and on (application, environment)
+          sum by (application, environment) (
+            trade_trading_leadership_active{job="trade-backend"}
+          ) == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: trade-backend
+        annotations:
+          summary: Trading cluster has no active leader
+          description: Database leadership is enabled but no instance owns the trading lease.
+
+      - alert: TradingMultipleLeaders
+        expr: |
+          sum by (application, environment) (
+            trade_trading_leadership_active{job="trade-backend"}
+          ) > 1
+        for: 15s
+        labels:
+          severity: critical
+          service: trade-backend
+        annotations:
+          summary: Trading cluster reports multiple leaders
+          description: More than one backend instance reports active trading leadership.
+
+      - alert: TradingLeadershipRefreshFailing
+        expr: |
+          sum by (instance) (
+            increase(trade_trading_leadership_operations_total{
+              job="trade-backend",
+              outcome="refresh.failed"
+            }[5m])
+          ) > 0
+        for: 30s
+        labels:
+          severity: critical
+          service: trade-backend
+        annotations:
+          summary: Trading leadership refresh is failing
+          description: Instance {{ $labels.instance }} cannot acquire or renew its database lease.
+
       - alert: TradingFundSafetyNotActive
         expr: trade_trading_fund_safety_status{job="trade-backend"} != 0
         for: 30s

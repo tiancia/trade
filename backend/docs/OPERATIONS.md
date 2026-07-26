@@ -62,6 +62,34 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/automation/tasks/tradin
 
 automation `stop` 只阻止后续循环并停止域运行时，不代表资金级停止。真实资金异常应使用下节的持久化停止；该动作会先阻止新单，再尽力撤销挂单，但不会自动市价平仓。
 
+## 多实例单写租约
+
+同一 OKX 资金账户运行多个后端实例时，必须先执行
+`db/migration/migration_add_okx_trading_leader_lease.sql`，再在所有实例启用：
+
+```powershell
+$env:TRADE_TRADING_LEADERSHIP_ENABLED="true"
+$env:TRADE_TRADING_LEADERSHIP_LEASE_NAME="okx-primary-account"
+$env:TRADE_TRADING_INSTANCE_ID="replace-with-pod-or-task-id"
+$env:TRADE_TRADING_LEADERSHIP_LEASE_DURATION_MS="30000"
+$env:TRADE_TRADING_LEADERSHIP_HEARTBEAT_INTERVAL_MS="5000"
+```
+
+访问同一账户的实例必须使用相同 `lease-name`，每个实例必须使用不同且在该进程生命周期内稳定的
+`instance-id`。租约时长至少是心跳间隔的三倍。领导心跳使用数据库时间并独立于决策循环运行；
+正常停止会主动释放，进程崩溃后 follower 在租约到期后接管，`fencingToken` 在每次所有权转移时递增。
+
+启用后查看每个实例的 `GET /api/trading/runtime/status`：
+
+- 集群中必须恰好一个实例 `leadership.leader=true`；
+- follower 的决策、事件扫描和对账循环会跳过；
+- 手工对账发到 follower 会返回 HTTP 409，应转发到当前 leader；
+- LIVE 下单在预留订单前和调用 OKX 前都会重新验证数据库租约。
+
+`TRADE_TRADING_LEADERSHIP_REQUIRED_FOR_LIVE` 默认是 `true`。因此即使误开
+`execution-mode=live + live-enabled=true`，未启用租约或数据库租约不可用时也不会调用 OKX 下单。
+不要为了绕过迁移把该门禁改成 `false`；单实例 PAPER 环境可继续保持 leadership disabled。
+
 ## 资金级停止与恢复
 
 先在部署环境设置长随机值 `TRADE_TRADING_OPERATOR_TOKEN`；留空时 HTTP stop/resume 端点返回 503，内部硬风控和对账仍能自动停止。不要把 token 放进 URL、日志或仓库。
@@ -112,6 +140,7 @@ Invoke-RestMethod -Method Post `
 | 应用存活 | `/actuator/health` | 数据库和应用上下文是否可用 |
 | 后台循环 | `/api/automation/tasks` | running、nextRunAt、lastRunSuccessful、lastError |
 | Trading 运行状态 | `/api/trading/runtime/status` | 模式、开关和策略运行信息 |
+| 多实例领导权 | `/api/trading/runtime/status` | leadership.leader、currentOwnerId、leaseUntil、fencingToken、lastError |
 | 资金停止 | `/api/trading/safety` | ACTIVE/HALTED、reason、revision、lastActionError |
 | 事件管道 | `/api/trading/runtime/events` | 队列深度、容量、发布/消费快照 |
 | 指标 | `/actuator/metrics` | 队列丢弃、handler 失败、耗时和积压趋势 |
@@ -149,7 +178,8 @@ Invoke-RestMethod -Method Post `
 
 本次真实资金闭环升级至少需要先有
 `migration_add_okx_order_idempotency_state_machine.sql`，再执行
-`migration_add_okx_financial_safety_state.sql`。首次启动时，若目标
+`migration_add_okx_financial_safety_state.sql`，多实例部署随后执行
+`migration_add_okx_trading_leader_lease.sql`。首次启动时，若目标
 `account_scope + inst_id` 尚无 MySQL 行，应用会从旧
 `data/trading-state.json` 兼容导入一次仓位、成本和风险；导入后应立即
 执行对账并核对 `okx_position_state`、`okx_risk_state`。后续 JSON 中的
@@ -173,6 +203,8 @@ Invoke-RestMethod -Method Post `
 | 订单结果未知 | idempotencyKey、订单账本、OKX 查询 | 先对账再推进状态，禁止直接再次提交 |
 | 资金状态 HALTED | `/api/trading/safety`、`lastActionError`、OKX 挂单 | 保持停止，完成人工对账后走带 revision 的 resume |
 | 对账连续失败 | automation reconciliation loop、`okx_risk_state` | 不重提订单；修复 API/数据库后先核对中间态和仓位 |
+| 没有 trading leader | runtime leadership、租约表、数据库时间 | 保持 LIVE 新单关闭，修复数据库/配置；不要在多个实例上关闭领导门禁 |
+| 出现多个 trading leader | leadership 指标、lease-name、数据库是否相同 | 立即资金级停止；确认所有实例指向同一库和同一 lease-name |
 
 ## 发布检查清单
 

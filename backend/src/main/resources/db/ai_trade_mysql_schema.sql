@@ -206,6 +206,18 @@ WHERE NOT EXISTS (
     SELECT 1 FROM `okx_fund_safety_state` WHERE `account_scope` = 'live'
 );
 
+-- Database-backed single-writer ownership for multi-instance trading. The
+-- fencing token advances on every ownership transfer.
+CREATE TABLE IF NOT EXISTS `okx_trading_leader_lease` (
+    `lease_name` varchar(128) NOT NULL PRIMARY KEY,
+    `owner_id` varchar(128) NOT NULL,
+    `lease_until` datetime(6) NOT NULL,
+    `fencing_token` bigint NOT NULL DEFAULT 1,
+    `created_at` datetime(6) NOT NULL,
+    `updated_at` datetime(6) NOT NULL,
+    KEY `idx_okx_trading_leader_lease_expiry` (`lease_until`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- One cumulative checkpoint per order makes partial-fill and crash replay
 -- idempotent. The checkpoint and position projection are updated together.
 CREATE TABLE IF NOT EXISTS `okx_order_fill_ledger` (

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.trading.persistence.TradingLeaderLeaseMapper">
+    <resultMap id="leaderLeaseResult" type="com.trade.trading.persistence.TradingLeaderLeaseRow">
+        <id property="leaseName" column="lease_name"/>
+        <result property="ownerId" column="owner_id"/>
+        <result property="leaseUntil" column="lease_until"/>
+        <result property="fencingToken" column="fencing_token"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <select id="currentTime" resultType="java.sql.Timestamp">
+        SELECT CURRENT_TIMESTAMP
+    </select>
+
+    <insert id="insertIfAbsent" parameterType="com.trade.trading.persistence.TradingLeaderLeaseRow">
+        INSERT INTO okx_trading_leader_lease (
+            lease_name, owner_id, lease_until, fencing_token, created_at, updated_at
+        ) VALUES (
+            #{leaseName}, #{ownerId}, #{leaseUntil}, #{fencingToken}, #{createdAt}, #{updatedAt}
+        )
+        ON DUPLICATE KEY UPDATE lease_name = VALUES(lease_name)
+    </insert>
+
+    <update id="acquireOrRenew">
+        UPDATE okx_trading_leader_lease
+        SET fencing_token = CASE
+                WHEN owner_id = #{ownerId} THEN fencing_token
+                ELSE fencing_token + 1
+            END,
+            owner_id = #{ownerId},
+            lease_until = #{leaseUntil},
+            updated_at = #{now}
+        WHERE lease_name = #{leaseName}
+          AND (owner_id = #{ownerId} OR lease_until &lt;= #{now})
+    </update>
+
+    <select id="find" resultMap="leaderLeaseResult">
+        SELECT *
+        FROM okx_trading_leader_lease
+        WHERE lease_name = #{leaseName}
+    </select>
+
+    <update id="release">
+        UPDATE okx_trading_leader_lease
+        SET lease_until = #{now},
+            updated_at = #{now}
+        WHERE lease_name = #{leaseName}
+          AND owner_id = #{ownerId}
+    </update>
+</mapper>

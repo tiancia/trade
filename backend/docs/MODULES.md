@@ -61,6 +61,10 @@ AutomationTaskManager
     -> OrderReconciliationService -> OKX order/account query
       -> OrderSettlementService -> order + fill ledger + position/risk transaction
 
+  -> database leadership heartbeat
+    -> one leader runs decision/event/reconciliation loops
+      -> OkxLiveBroker revalidates leadership immediately before placeOrder
+
 REST / WebSocket market data
   -> TradingEventPublisher -> bounded queue
     -> isolated handlers -> MySQL / Redis
