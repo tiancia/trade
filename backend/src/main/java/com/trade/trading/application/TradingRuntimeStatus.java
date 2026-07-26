@@ -2,6 +2,7 @@ package com.trade.trading.application;
 
 import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.TradingDecisionRecord;
+import com.trade.trading.risk.FundSafetyState;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
@@ -22,4 +23,6 @@ public class TradingRuntimeStatus {
     private Instant lastRunStartedAt;
     private Instant lastRunCompletedAt;
     private boolean marketDataStale;
+    private FundSafetyState fundSafety;
+    private OrderReconciliationStatus reconciliation;
 }

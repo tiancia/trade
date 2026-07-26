@@ -134,7 +134,13 @@ public class MarketplaceAuthService {
         if (user == null) {
             throw new MarketplaceUnauthorizedException("marketplace session user no longer exists");
         }
-        mapper.touchSession(hash, Timestamp.from(now));
+        Instant touchBefore = now.minus(
+                Math.max(1, properties.getSessionTouchIntervalMinutes()),
+                ChronoUnit.MINUTES
+        );
+        if (session.getLastSeenAt() == null || session.getLastSeenAt().toInstant().isBefore(touchBefore)) {
+            mapper.touchSession(hash, Timestamp.from(now));
+        }
         return new MarketplacePrincipal(user.getId(), user.getUsername(), user.getDisplayName());
     }
 

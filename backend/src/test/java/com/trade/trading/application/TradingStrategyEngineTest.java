@@ -15,6 +15,7 @@ import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingDecisionRecord;
 import com.trade.trading.model.TradingTrigger;
 import com.trade.trading.persistence.TradingStateRepository;
+import com.trade.trading.risk.FundSafetyService;
 import com.trade.trading.strategy.StrategyConfig;
 import com.trade.trading.strategy.StrategyEvaluationContext;
 import com.trade.trading.strategy.TradingStrategy;
@@ -30,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.mock;
 
 class TradingStrategyEngineTest {
     @TempDir
@@ -122,6 +124,8 @@ class TradingStrategyEngineTest {
                         properties,
                         event -> TradingEventPublishResult.ACCEPTED
                 ),
+                mock(FundSafetyService.class),
+                mock(OrderReconciliationService.class),
                 meterRegistry
         );
     }

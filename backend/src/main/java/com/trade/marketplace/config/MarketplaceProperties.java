@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "trade.marketplace")
 public class MarketplaceProperties {
     private int sessionRetentionDays = 30;
+    private int sessionTouchIntervalMinutes = 5;
     private OssProperties oss = new OssProperties();
 
     @Data

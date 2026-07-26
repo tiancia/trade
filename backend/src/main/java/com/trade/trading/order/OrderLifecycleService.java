@@ -5,6 +5,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.math.BigDecimal;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
 
@@ -62,22 +64,52 @@ public class OrderLifecycleService {
 
     public OrderTransitionResult markFilled(String idempotencyKey, String exchangeOrderId, OrderFill fill) {
         return transition(idempotencyKey, OrderStatus.FILLED,
-                next -> applyFill(next, exchangeOrderId, fill).setCompletedAt(Instant.now()),
+                next -> {
+                    applyFill(next, exchangeOrderId, fill);
+                    if (next.getCompletedAt() == null) {
+                        next.setCompletedAt(Instant.now());
+                    }
+                },
                 "exchange reported full fill");
     }
 
     public OrderTransitionResult markCanceled(String idempotencyKey, String exchangeOrderId, OrderFill fill) {
         return transition(idempotencyKey, OrderStatus.CANCELED,
-                next -> applyFill(next, exchangeOrderId, fill).setCompletedAt(Instant.now()),
+                next -> {
+                    applyFill(next, exchangeOrderId, fill);
+                    if (next.getCompletedAt() == null) {
+                        next.setCompletedAt(Instant.now());
+                    }
+                },
                 "exchange reported cancellation");
     }
 
     public OrderTransitionResult markRejected(String idempotencyKey, String message) {
         return transition(idempotencyKey, OrderStatus.REJECTED,
-                next -> next.setFailureCode("EXCHANGE_REJECTED")
-                        .setFailureMessage(message)
-                        .setCompletedAt(Instant.now()),
+                next -> {
+                    next.setFailureCode("EXCHANGE_REJECTED")
+                            .setFailureMessage(message);
+                    if (next.getCompletedAt() == null) {
+                        next.setCompletedAt(Instant.now());
+                    }
+                },
                 "exchange rejected order");
+    }
+
+    public OrderTransitionResult markSubmissionBlocked(
+            String idempotencyKey,
+            String code,
+            String message
+    ) {
+        return transition(idempotencyKey, OrderStatus.REJECTED,
+                next -> {
+                    next.setFailureCode(code)
+                            .setFailureMessage(message);
+                    if (next.getCompletedAt() == null) {
+                        next.setCompletedAt(Instant.now());
+                    }
+                },
+                "local safety gate blocked external submission");
     }
 
     public OrderTransitionResult markSubmitUnknown(String idempotencyKey, String message) {
@@ -96,16 +128,19 @@ public class OrderLifecycleService {
         for (int attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
             TradingOrder current = repository.findByIdempotencyKey(idempotencyKey)
                     .orElseThrow(() -> new IllegalStateException("Order not found: " + idempotencyKey));
-            if (current.getStatus() == target) {
-                return new OrderTransitionResult(current, false);
+            boolean sameStatus = current.getStatus() == target;
+            if (!sameStatus) {
+                OrderStateMachine.requireTransition(current.getStatus(), target);
             }
 
-            OrderStateMachine.requireTransition(current.getStatus(), target);
             TradingOrder next = copy(current)
                     .setStatus(target)
                     .setVersion(current.getVersion() + 1)
                     .setUpdatedAt(Instant.now());
             mutation.accept(next);
+            if (sameStatus && hasSameExchangeState(current, next)) {
+                return new OrderTransitionResult(current, false);
+            }
             if (repository.compareAndSet(current, next, reason)) {
                 Counter.builder("trade.trading.orders.transitions")
                         .description("Successful durable order state transitions")
@@ -121,6 +156,24 @@ public class OrderLifecycleService {
                     .increment();
         }
         throw new IllegalStateException("Concurrent order update did not converge: " + idempotencyKey);
+    }
+
+    private static boolean hasSameExchangeState(TradingOrder left, TradingOrder right) {
+        return Objects.equals(left.getExchangeOrderId(), right.getExchangeOrderId())
+                && decimalEquals(left.getFilledBaseAmount(), right.getFilledBaseAmount())
+                && decimalEquals(left.getAverageFillPrice(), right.getAverageFillPrice())
+                && decimalEquals(left.getFee(), right.getFee())
+                && Objects.equals(left.getFeeCcy(), right.getFeeCcy())
+                && Objects.equals(left.getFailureCode(), right.getFailureCode())
+                && Objects.equals(left.getFailureMessage(), right.getFailureMessage())
+                && Objects.equals(left.getCompletedAt(), right.getCompletedAt());
+    }
+
+    private static boolean decimalEquals(BigDecimal left, BigDecimal right) {
+        if (left == null || right == null) {
+            return left == right;
+        }
+        return left.compareTo(right) == 0;
     }
 
     private Counter reservationCounter(String outcome) {

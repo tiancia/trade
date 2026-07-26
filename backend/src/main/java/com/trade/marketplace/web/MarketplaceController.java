@@ -45,12 +45,13 @@ public class MarketplaceController {
             @RequestParam(required = false) Long categoryId,
             @RequestParam(required = false) String q,
             @RequestParam(defaultValue = "false") boolean mine,
+            @RequestParam(required = false) Integer limit,
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization
     ) {
         MarketplacePrincipal currentUser = mine
                 ? authService.requireUser(authorization)
                 : authService.optionalUser(authorization);
-        return itemService.listItems(categoryId, q, mine, currentUser);
+        return itemService.listItems(categoryId, q, mine, currentUser, limit);
     }
 
     @GetMapping("/items/{id}")

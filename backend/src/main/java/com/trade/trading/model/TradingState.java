@@ -12,6 +12,10 @@ import java.util.List;
 public class TradingState {
     private BigDecimal trackedBaseAmount = BigDecimal.ZERO;
     private BigDecimal averageCost = BigDecimal.ZERO;
+    private BigDecimal exchangeBaseAmount;
+    private String financialAccountScope;
+    private long positionVersion;
+    private String positionLastReconciledAt;
     private String updatedAt;
     private String activeStrategyId;
     private long activeStrategyRevision;

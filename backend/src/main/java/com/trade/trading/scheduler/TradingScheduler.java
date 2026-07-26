@@ -3,6 +3,7 @@ package com.trade.trading.scheduler;
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.application.TradingStrategyEngine;
+import com.trade.trading.application.OrderReconciliationService;
 import com.trade.trading.config.TradingProperties;
 import com.trade.trading.market.HotMarketDataCache;
 import com.trade.trading.market.MarketContextCollector;
@@ -33,6 +34,7 @@ public class TradingScheduler {
     private static final Logger log = LoggerFactory.getLogger(TradingScheduler.class);
 
     private final TradingStrategyEngine tradingEngine;
+    private final OrderReconciliationService orderReconciliationService;
     private final MarketContextCollector marketContextCollector;
     private final OkxMarketDataWebSocketFeed marketDataWebSocketFeed;
     private final HotMarketDataCache hotMarketDataCache;
@@ -43,6 +45,7 @@ public class TradingScheduler {
 
     public TradingScheduler(
             TradingStrategyEngine tradingEngine,
+            OrderReconciliationService orderReconciliationService,
             MarketContextCollector marketContextCollector,
             OkxMarketDataWebSocketFeed marketDataWebSocketFeed,
             HotMarketDataCache hotMarketDataCache,
@@ -51,6 +54,7 @@ public class TradingScheduler {
             TradingProperties properties
     ) {
         this.tradingEngine = tradingEngine;
+        this.orderReconciliationService = orderReconciliationService;
         this.marketContextCollector = marketContextCollector;
         this.marketDataWebSocketFeed = marketDataWebSocketFeed;
         this.hotMarketDataCache = hotMarketDataCache;
@@ -61,6 +65,10 @@ public class TradingScheduler {
 
     public void runScheduledDecision() {
         tradingEngine.runDecision(TradingTrigger.scheduled());
+    }
+
+    public void reconcileOrders() {
+        orderReconciliationService.reconcileOnce();
     }
 
     public void scanEventTriggers() {

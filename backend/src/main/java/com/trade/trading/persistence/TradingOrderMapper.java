@@ -4,11 +4,18 @@ import com.trade.trading.order.TradingOrder;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
+import java.util.List;
+
 @Mapper
 public interface TradingOrderMapper {
     int insertIfAbsent(TradingOrder order);
 
     TradingOrder findByIdempotencyKey(String idempotencyKey);
+
+    List<TradingOrder> findReconciliationCandidates(
+            @Param("instId") String instId,
+            @Param("limit") int limit
+    );
 
     int compareAndSet(
             @Param("current") TradingOrder current,

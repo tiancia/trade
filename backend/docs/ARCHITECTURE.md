@@ -102,6 +102,23 @@ Story / Polymarket Application Service
     <- ai.persistence.MyBatisAiResponseParseErrorRepository
 ```
 
+### Trading 真实资金闭环
+
+真实下单先在 `okx_orders` 预创建幂等账本并取得提交所有权，再调用 OKX。订单接受后的即时查询与后台 `OrderReconciliationService` 共用 `OrderSettlementService`：
+
+```text
+OKX order snapshot
+  -> OrderSettlementService (@Transactional)
+    -> OrderLifecycleService -> okx_orders + status history
+    -> cumulative fill checkpoint -> okx_order_fill_ledger
+    -> position/cost projection -> okx_position_state
+    -> executed-action risk state -> okx_risk_state
+```
+
+累计成交值只应用与上次 checkpoint 的差量，因此重复 REST 查询、崩溃重放和部分成交刷新不会重复加仓。LIVE、PAPER 使用不同 `account_scope`，模拟交易不会污染真实资金账本。旧 JSON 中的仓位/成本/风险只在目标 MySQL 行为空时做一次兼容初始化；之后 JSON 仅保留非资金策略记忆。
+
+`okx_fund_safety_state` 是重启后仍有效的资金级停止门。触发顺序固定为：先提交 `HALTED`，再撤销 OKX 挂单并设置 cancel-all-after；每次真实提交在取得订单提交所有权后再次读取该门。恢复必须使用期望 revision、明确确认词，且本地无待对账订单、交易所无挂单。
+
 ### Trading 行情事件管道
 
 实时和批量行情统一使用 `trading/event/TradingEvent` 信封。信封包含事件 ID、类型、来源、标的、业务发生时间、系统接收时间、关联 ID 和类型安全载荷；策略检测得到的条件则使用 `MarketSignal`，避免把“进入系统的事实”和“由策略推导的信号”混为一类。

@@ -40,7 +40,7 @@ cd backend
 | `ai` | 跨业务的 AI 解析失败审计契约与持久化 | `AiResponseParseErrorSink` | 内部能力 |
 | `common` | 无业务归属的纯工具 | `TradingMath` | 内部能力 |
 
-交易行情由 REST/WebSocket 生产者发布到模块级有界事件队列，再由独立消费者持久化；生产线程不直接访问数据库。运行状态可通过 `GET /api/trading/runtime/events` 查看，队列深度、发布/丢弃/消费结果及处理耗时可通过 Actuator `/actuator/metrics` 查询。驾驶舱通过 `GET /api/trading/market/candles` 读取 K 线快照，并通过 `/api/trading/market/candles/stream` 的 SSE 流接收增量；`PUT /api/trading/strategies/active` 会以乐观版本号持久化切换当前策略。回测的请求、成交和指标口径见 [Trading 回测说明](docs/TRADING_BACKTEST.md)。
+交易行情由 REST/WebSocket 生产者发布到模块级有界事件队列，再由独立消费者持久化；生产线程不直接访问数据库。LIVE 订单由后台对账循环持续收敛，订单状态、累计成交、仓位/成本、风险和资金停止状态以 MySQL 为权威。运行状态可通过 `GET /api/trading/runtime/events` 和 `GET /api/trading/runtime/status` 查看。驾驶舱通过 `GET /api/trading/market/candles` 读取 K 线快照，并通过 `/api/trading/market/candles/stream` 的 SSE 流接收增量；`PUT /api/trading/strategies/active` 会以乐观版本号持久化切换当前策略。回测的请求、成交和指标口径见 [Trading 回测说明](docs/TRADING_BACKTEST.md)。
 
 ## 目录速览
 
@@ -90,7 +90,11 @@ backend/
 
 只打开自动启动并不等于允许真实下单；真实资金开关也不应在缺少风控参数、API 权限或地域检查时启用。
 
-常用环境变量示例见 `.env.example`。密钥、令牌和运行时状态不得提交到 Git；本地状态写入已忽略的 `data/trading-state.json`，仓库只保留示例文件。
+新的 `live` 资金域会以 `HALTED` 初始化。首次上线或迁移后应保持
+`live-enabled=false`，完成一次成功对账，再通过受保护的 resume 流程显式放行。
+当前 LIVE 资金结算仅开放 SPOT 市价单；衍生品保留只读恢复能力，但新单会安全阻断。
+
+常用环境变量示例见 `.env.example`。密钥、令牌和运行时状态不得提交到 Git；`data/trading-state.json` 只保存非资金策略记忆，仓位、成本、风险和资金停止状态保存于 MySQL，仓库只保留示例文件。
 
 `trade.trading.event-queue.full-policy` 支持 `drop-oldest`、`drop-latest` 和 `block`。实时行情默认使用 `drop-oldest` 保留更新数据；选择 `block` 时，生产者最多等待 `publish-timeout-ms`，适合不允许静默丢弃且上游能够承受阻塞的场景。
 

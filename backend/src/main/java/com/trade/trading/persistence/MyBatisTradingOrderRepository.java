@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 @Component
@@ -51,6 +52,11 @@ public class MyBatisTradingOrderRepository implements TradingOrderRepository {
     @Override
     public Optional<TradingOrder> findByIdempotencyKey(String idempotencyKey) {
         return Optional.ofNullable(mapper.findByIdempotencyKey(idempotencyKey));
+    }
+
+    @Override
+    public List<TradingOrder> findReconciliationCandidates(String instId, int limit) {
+        return mapper.findReconciliationCandidates(instId, Math.max(1, limit));
     }
 
     @Override

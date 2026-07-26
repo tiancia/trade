@@ -18,9 +18,11 @@ import com.trade.trading.model.TradingDecisionRecord;
 import com.trade.trading.order.InMemoryTradingOrderRepository;
 import com.trade.trading.order.OrderIdempotencyKeyFactory;
 import com.trade.trading.order.OrderLifecycleService;
+import com.trade.trading.order.OrderSettlementService;
 import com.trade.trading.order.OrderStatus;
 import com.trade.trading.persistence.TradingStateRepository;
 import com.trade.trading.risk.RiskControlService;
+import com.trade.trading.risk.FundSafetyService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -33,6 +35,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doThrow;
 
 class OkxLiveBrokerTest {
     @TempDir
@@ -73,6 +77,24 @@ class OkxLiveBrokerTest {
     }
 
     @Test
+    void liveDerivativeOrderFailsClosedUntilItsFinancialLedgerIsImplemented() {
+        TradingProperties properties = liveProperties();
+        properties.setInstType("SWAP");
+        FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "1", "50000"));
+        TradingDecisionRecord record = new TradingDecisionRecord();
+        StrategyDecision decision = new StrategyDecision()
+                .setStrategyId("test")
+                .setAction(TradingAction.OPEN_LONG)
+                .setOrderSize(BigDecimal.ONE);
+
+        broker(properties, okxApi).execute(decision, context("0", "1000"), record);
+
+        assertNull(okxApi.orderReq);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertTrue(record.getSkipReason().startsWith("Live derivative order blocked"));
+    }
+
+    @Test
     void sameBusinessOrderIsSubmittedOnlyOnce() {
         TradingProperties properties = liveProperties();
         FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
@@ -89,6 +111,28 @@ class OkxLiveBrokerTest {
         assertEquals(first.getClientOrderId(), replay.getClientOrderId());
         assertTrue(replay.isIdempotentReplay());
         assertEquals(OrderStatus.FILLED.name(), replay.getOrderStatus());
+    }
+
+    @Test
+    void persistentFundStopBlocksLiveSubmission() {
+        TradingProperties properties = liveProperties();
+        FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        FundSafetyService fundSafetyService = mock(FundSafetyService.class);
+        doThrow(new FundSafetyService.TradingFundsHaltedException("Live trading halted: test"))
+                .when(fundSafetyService)
+                .requireActive();
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(
+                properties,
+                okxApi,
+                new InMemoryTradingOrderRepository(),
+                fundSafetyService
+        ).execute(buyDecision(), context("0", "1000"), record);
+
+        assertNull(okxApi.orderReq);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertEquals("Live trading halted: test", record.getSkipReason());
     }
 
     @Test
@@ -121,14 +165,31 @@ class OkxLiveBrokerTest {
             OkxApi okxApi,
             InMemoryTradingOrderRepository orders
     ) {
+        return broker(properties, okxApi, orders, mock(FundSafetyService.class));
+    }
+
+    private OkxLiveBroker broker(
+            TradingProperties properties,
+            OkxApi okxApi,
+            InMemoryTradingOrderRepository orders,
+            FundSafetyService fundSafetyService
+    ) {
         TradingStateRepository stateRepository = new TradingStateRepository(tempDir.resolve("state-" + System.nanoTime() + ".json"));
+        RiskControlService riskControlService = new RiskControlService(properties, stateRepository);
+        OrderLifecycleService lifecycleService = new OrderLifecycleService(orders, new SimpleMeterRegistry());
         return new OkxLiveBroker(
                 okxApi,
                 new OrderSizingService(properties),
-                stateRepository,
                 properties,
-                new RiskControlService(properties, stateRepository),
-                new OrderLifecycleService(orders, new SimpleMeterRegistry()),
+                riskControlService,
+                fundSafetyService,
+                lifecycleService,
+                new OrderSettlementService(
+                        lifecycleService,
+                        stateRepository,
+                        riskControlService,
+                        properties
+                ),
                 new OrderIdempotencyKeyFactory()
         );
     }

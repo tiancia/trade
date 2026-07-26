@@ -54,6 +54,12 @@ public class AutomationTaskRegistrar {
                                 millis(tradingProperties.getEventInitialDelayMs()),
                                 millis(tradingProperties.getEventScanFixedDelayMs()),
                                 tradingScheduler::scanEventTriggers
+                        ),
+                        new AutomationLoopDefinition(
+                                "reconciliation",
+                                millis(tradingProperties.getReconciliation().getInitialDelayMs()),
+                                millis(tradingProperties.getReconciliation().getFixedDelayMs()),
+                                tradingScheduler::reconcileOrders
                         )
                 )
         ));

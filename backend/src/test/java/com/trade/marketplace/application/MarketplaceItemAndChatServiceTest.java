@@ -86,6 +86,27 @@ class MarketplaceItemAndChatServiceTest {
         assertEquals(second.body(), chatService.listConversations(seller).conversations().getFirst().lastMessage().body());
     }
 
+    @Test
+    void initialMessagePageReturnsTheMostRecentMessagesInChronologicalOrder() {
+        MarketplaceApi.Item item = itemService.createItem(seller, new MarketplaceApi.CreateItemRequest(
+                "尼康相机", "带原装电池", digital.getId(), "https://cdn.example.com/camera.jpg", new BigDecimal("1200")
+        ));
+        MarketplaceApi.Conversation conversation = chatService.createConversation(buyer, item.id());
+        for (int index = 1; index <= 60; index++) {
+            chatService.sendMessage(
+                    index % 2 == 0 ? seller : buyer,
+                    conversation.id(),
+                    new MarketplaceApi.SendMessageRequest("消息 " + index)
+            );
+        }
+
+        MarketplaceApi.Messages recent = chatService.listMessages(buyer, conversation.id(), null, 50);
+
+        assertEquals(50, recent.messages().size());
+        assertEquals("消息 11", recent.messages().getFirst().body());
+        assertEquals("消息 60", recent.messages().getLast().body());
+    }
+
     private MarketplacePrincipal user(String username, String displayName) {
         MarketplaceUserRow row = new MarketplaceUserRow()
                 .setUsername(username)

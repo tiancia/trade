@@ -13,24 +13,22 @@ import com.trade.trading.model.StrategyDecision;
 import com.trade.trading.model.TradingAction;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingDecisionRecord;
-import com.trade.trading.order.OrderFill;
 import com.trade.trading.order.OrderIdempotencyKeyFactory;
 import com.trade.trading.order.OrderLifecycleService;
 import com.trade.trading.order.OrderReservation;
+import com.trade.trading.order.OrderSettlementResult;
+import com.trade.trading.order.OrderSettlementService;
 import com.trade.trading.order.OrderStatus;
 import com.trade.trading.order.OrderSubmission;
-import com.trade.trading.order.OrderTransitionResult;
 import com.trade.trading.order.TradingOrder;
-import com.trade.trading.persistence.TradingStateRepository;
 import com.trade.trading.risk.RiskAssessment;
 import com.trade.trading.risk.RiskControlService;
-import com.trade.common.support.TradingMath;
+import com.trade.trading.risk.FundSafetyService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.Optional;
 
 @Component
@@ -39,27 +37,30 @@ public class OkxLiveBroker implements TradingBroker {
 
     private final OkxApi okxApi;
     private final OrderSizingService orderSizingService;
-    private final TradingStateRepository stateRepository;
     private final TradingProperties properties;
     private final RiskControlService riskControlService;
+    private final FundSafetyService fundSafetyService;
     private final OrderLifecycleService orderLifecycleService;
+    private final OrderSettlementService orderSettlementService;
     private final OrderIdempotencyKeyFactory idempotencyKeyFactory;
 
     public OkxLiveBroker(
             OkxApi okxApi,
             OrderSizingService orderSizingService,
-            TradingStateRepository stateRepository,
             TradingProperties properties,
             RiskControlService riskControlService,
+            FundSafetyService fundSafetyService,
             OrderLifecycleService orderLifecycleService,
+            OrderSettlementService orderSettlementService,
             OrderIdempotencyKeyFactory idempotencyKeyFactory
     ) {
         this.okxApi = okxApi;
         this.orderSizingService = orderSizingService;
-        this.stateRepository = stateRepository;
         this.properties = properties;
         this.riskControlService = riskControlService;
+        this.fundSafetyService = fundSafetyService;
         this.orderLifecycleService = orderLifecycleService;
+        this.orderSettlementService = orderSettlementService;
         this.idempotencyKeyFactory = idempotencyKeyFactory;
     }
 
@@ -74,9 +75,25 @@ public class OkxLiveBroker implements TradingBroker {
                     .setSkipReason("Live OKX order blocked: execution-mode=live and live-enabled=true are both required");
             return;
         }
+        if (!properties.isSpotInstrument()) {
+            decisionRecord.setExecutionStatus("SKIPPED")
+                    .setSkipReason(
+                            "Live derivative order blocked: contract, margin, and funding settlement "
+                                    + "must be ledgered before real derivative submissions are enabled"
+                    );
+            return;
+        }
+        try {
+            fundSafetyService.requireActive();
+        } catch (FundSafetyService.TradingFundsHaltedException e) {
+            decisionRecord.setExecutionStatus("SKIPPED")
+                    .setSkipReason(e.getMessage());
+            return;
+        }
 
         RiskAssessment riskAssessment = riskControlService.evaluate(decision, context);
         if (!riskAssessment.isAllowed()) {
+            fundSafetyService.haltForHardRisk(riskAssessment);
             decisionRecord.setExecutionStatus("SKIPPED")
                     .setSkipReason(riskAssessment.skipReason());
             log.info("{}", riskAssessment.skipReason());
@@ -121,7 +138,7 @@ public class OkxLiveBroker implements TradingBroker {
                 .setSz(sizing.getSize())
                 .setTag("strategyTrade");
         decisionRecord.setOrderSize(sizing.getSize());
-        executeOrder(decision, context, decisionRecord, req, "buy");
+        executeOrder(decision, context, decisionRecord, req);
     }
 
     private void executeDerivative(
@@ -163,7 +180,7 @@ public class OkxLiveBroker implements TradingBroker {
             req.setReduceOnly("true");
         }
         decisionRecord.setOrderSize(sizing.getSize());
-        executeOrder(decision, context, decisionRecord, req, null);
+        executeOrder(decision, context, decisionRecord, req);
     }
 
     private void executeSell(
@@ -192,15 +209,14 @@ public class OkxLiveBroker implements TradingBroker {
                 .setSz(sizing.getSize())
                 .setTag("strategyTrade");
         decisionRecord.setOrderSize(sizing.getSize());
-        executeOrder(decision, context, decisionRecord, req, "sell");
+        executeOrder(decision, context, decisionRecord, req);
     }
 
     private void executeOrder(
             StrategyDecision decision,
             TradingDecisionContext context,
             TradingDecisionRecord record,
-            PlaceOrderReq request,
-            String spotSide
+            PlaceOrderReq request
     ) {
         String idempotencyKey = idempotencyKeyFactory.create(
                 properties,
@@ -231,13 +247,25 @@ public class OkxLiveBroker implements TradingBroker {
         OrderReservation reservation = orderLifecycleService.reserve(submission);
         applyOrder(record, reservation.order(), !reservation.acquired());
         if (!reservation.acquired()) {
-            reconcileReplay(record, reservation.order(), spotSide);
+            reconcileReplay(record, reservation.order());
             return;
         }
 
         OrderActionResp actionResp;
         try {
+            // Re-read the persistent stop after acquiring submission ownership;
+            // this narrows the race with an operator or automatic fund halt.
+            fundSafetyService.requireActive();
             actionResp = placeOrder(request);
+        } catch (FundSafetyService.TradingFundsHaltedException e) {
+            TradingOrder rejected = orderLifecycleService.markSubmissionBlocked(
+                    idempotencyKey,
+                    "FUND_SAFETY_HALTED",
+                    e.getMessage()
+            ).order();
+            applyOrder(record, rejected, false);
+            record.setExecutionStatus("SKIPPED").setSkipReason(e.getMessage());
+            return;
         } catch (OrderRejectedException e) {
             TradingOrder rejected = orderLifecycleService.markRejected(idempotencyKey, e.getMessage()).order();
             applyOrder(record, rejected, false);
@@ -252,7 +280,6 @@ public class OkxLiveBroker implements TradingBroker {
 
         TradingOrder accepted = orderLifecycleService.markAccepted(idempotencyKey, actionResp.getOrdId()).order();
         applyOrder(record, accepted, false);
-        riskControlService.recordExecutedAction(decision, context);
 
         try {
             Optional<OrderInfoResp> orderInfo = queryOrder(actionResp.getOrdId(), actionResp.getClOrdId());
@@ -260,7 +287,7 @@ public class OkxLiveBroker implements TradingBroker {
                 record.setExecutionStatus("FILL_UNCONFIRMED");
                 return;
             }
-            applyExchangeOrder(record, orderInfo.get(), spotSide);
+            applyExchangeOrder(record, orderInfo.get());
         } catch (RuntimeException e) {
             // The order is already accepted. A read-side failure must never turn
             // into another submit attempt; a replay reconciles by deterministic clOrdId.
@@ -270,14 +297,14 @@ public class OkxLiveBroker implements TradingBroker {
         }
     }
 
-    private void reconcileReplay(TradingDecisionRecord record, TradingOrder order, String spotSide) {
+    private void reconcileReplay(TradingDecisionRecord record, TradingOrder order) {
         if (order.getStatus().isTerminal()) {
             return;
         }
         try {
             Optional<OrderInfoResp> orderInfo = queryOrder(order.getExchangeOrderId(), order.getClientOrderId());
             if (orderInfo.isPresent()) {
-                applyExchangeOrder(record, orderInfo.get(), spotSide);
+                applyExchangeOrder(record, orderInfo.get());
             }
         } catch (RuntimeException e) {
             // Another worker may still be between SUBMITTING and ACCEPTED. The
@@ -289,48 +316,13 @@ public class OkxLiveBroker implements TradingBroker {
 
     private void applyExchangeOrder(
             TradingDecisionRecord record,
-            OrderInfoResp exchangeOrder,
-            String spotSide
+            OrderInfoResp exchangeOrder
     ) {
-        String idempotencyKey = record.getIdempotencyKey();
-        FillSummary summary = fillSummary(exchangeOrder).orElse(null);
-        OrderFill fill = summary == null ? null : new OrderFill(
-                summary.filledBaseAmount(),
-                summary.averagePrice(),
-                summary.fee(),
-                summary.feeCcy()
-        );
-        String exchangeOrderId = firstText(exchangeOrder.getOrdId(), record.getOrderId());
-        String exchangeState = exchangeOrder.getState() == null
-                ? ""
-                : exchangeOrder.getState().trim().toLowerCase();
-
-        OrderTransitionResult transition;
-        switch (exchangeState) {
-            case "filled" -> {
-                transition = orderLifecycleService.markFilled(idempotencyKey, exchangeOrderId, fill);
-                if (transition.changed() && summary != null && spotSide != null) {
-                    applySpotFill(exchangeOrder, spotSide, summary);
-                }
-                record.setExecutionStatus(OrderStatus.FILLED.name());
-            }
-            case "partially_filled" -> {
-                transition = orderLifecycleService.markPartiallyFilled(idempotencyKey, exchangeOrderId, fill);
-                record.setExecutionStatus(OrderStatus.PARTIALLY_FILLED.name());
-            }
-            case "canceled", "mmp_canceled" -> {
-                transition = orderLifecycleService.markCanceled(idempotencyKey, exchangeOrderId, fill);
-                if (transition.changed() && summary != null && spotSide != null) {
-                    applySpotFill(exchangeOrder, spotSide, summary);
-                }
-                record.setExecutionStatus(OrderStatus.CANCELED.name());
-            }
-            default -> {
-                transition = orderLifecycleService.markAccepted(idempotencyKey, exchangeOrderId);
-                record.setExecutionStatus("FILL_UNCONFIRMED");
-            }
-        }
-        applyOrder(record, transition.order(), record.isIdempotentReplay());
+        TradingOrder localOrder = orderLifecycleService.find(record.getIdempotencyKey())
+                .orElseThrow(() -> new IllegalStateException("Order not found: " + record.getIdempotencyKey()));
+        OrderSettlementResult settlement = orderSettlementService.applyExchangeSnapshot(localOrder, exchangeOrder);
+        record.setExecutionStatus(settlement.executionStatus());
+        applyOrder(record, settlement.order(), record.isIdempotentReplay());
     }
 
     private static void applyOrder(TradingDecisionRecord record, TradingOrder order, boolean replay) {
@@ -369,35 +361,6 @@ public class OkxLiveBroker implements TradingBroker {
                 + ", clOrdId=" + (actionResp == null ? null : actionResp.getClOrdId());
     }
 
-    private Optional<FillSummary> fillSummary(OrderInfoResp order) {
-        BigDecimal filledBase = fillBaseAmount(order);
-        BigDecimal averagePrice = fillAveragePrice(order);
-        BigDecimal fee = TradingMath.decimal(order.getFee());
-        String feeCcy = order.getFeeCcy();
-        if (filledBase.signum() <= 0) {
-            return Optional.empty();
-        }
-        return Optional.of(new FillSummary(filledBase, averagePrice, fee, feeCcy));
-    }
-
-    private void applySpotFill(OrderInfoResp order, String side, FillSummary summary) {
-        BigDecimal filledBase = summary.filledBaseAmount();
-        BigDecimal averagePrice = summary.averagePrice();
-        if ("buy".equals(side)) {
-            if (averagePrice.signum() <= 0) {
-                return;
-            }
-            BigDecimal netBase = buyBaseAfterFee(order, filledBase);
-            if (netBase.signum() <= 0) {
-                return;
-            }
-            BigDecimal averageCostAfterFee = buyAverageCostAfterFee(order, filledBase, averagePrice, netBase);
-            stateRepository.recordBuy(netBase, averageCostAfterFee);
-        } else {
-            stateRepository.recordSell(sellBaseReductionAfterFee(order, filledBase));
-        }
-    }
-
     private Optional<OrderInfoResp> queryOrder(String orderId, String clientOrderId) {
         OrderInfoResp lastObserved = null;
         for (int i = 0; i < properties.getOrderFillQueryAttempts(); i++) {
@@ -434,57 +397,6 @@ public class OkxLiveBroker implements TradingBroker {
         }
     }
 
-    private static BigDecimal fillBaseAmount(OrderInfoResp order) {
-        BigDecimal accFill = TradingMath.decimal(order.getAccFillSz());
-        if (accFill.signum() > 0) {
-            return accFill;
-        }
-        return TradingMath.decimal(order.getFillSz());
-    }
-
-    private static BigDecimal fillAveragePrice(OrderInfoResp order) {
-        BigDecimal avg = TradingMath.decimal(order.getAvgPx());
-        if (avg.signum() > 0) {
-            return avg;
-        }
-        return TradingMath.decimal(order.getFillPx());
-    }
-
-    private BigDecimal buyBaseAfterFee(OrderInfoResp order, BigDecimal filledBase) {
-        if (sameCurrency(order.getFeeCcy(), properties.getBaseCcy())) {
-            return filledBase.subtract(TradingMath.decimal(order.getFee()).abs());
-        }
-        return filledBase;
-    }
-
-    private BigDecimal buyAverageCostAfterFee(
-            OrderInfoResp order,
-            BigDecimal filledBase,
-            BigDecimal averagePrice,
-            BigDecimal netBase
-    ) {
-        BigDecimal quoteCost = filledBase.multiply(averagePrice);
-        if (sameCurrency(order.getFeeCcy(), properties.getQuoteCcy())) {
-            quoteCost = quoteCost.add(TradingMath.decimal(order.getFee()).abs());
-        }
-        return quoteCost.divide(netBase, 18, RoundingMode.HALF_UP);
-    }
-
-    private BigDecimal sellBaseReductionAfterFee(OrderInfoResp order, BigDecimal filledBase) {
-        if (sameCurrency(order.getFeeCcy(), properties.getBaseCcy())) {
-            return filledBase.add(TradingMath.decimal(order.getFee()).abs());
-        }
-        return filledBase;
-    }
-
-    private static boolean sameCurrency(String left, String right) {
-        return left != null && right != null && left.equalsIgnoreCase(right);
-    }
-
-    private static String firstText(String first, String fallback) {
-        return first != null && !first.isBlank() ? first : fallback;
-    }
-
     private static DerivativeOrder derivativeOrder(TradingAction action) {
         return switch (action) {
             case OPEN_LONG -> new DerivativeOrder("buy", "long", false);
@@ -493,14 +405,6 @@ public class OkxLiveBroker implements TradingBroker {
             case CLOSE_SHORT -> new DerivativeOrder("buy", "short", true);
             default -> throw new IllegalArgumentException("Unsupported derivative action: " + action);
         };
-    }
-
-    private record FillSummary(
-            BigDecimal filledBaseAmount,
-            BigDecimal averagePrice,
-            BigDecimal fee,
-            String feeCcy
-    ) {
     }
 
     private record DerivativeOrder(

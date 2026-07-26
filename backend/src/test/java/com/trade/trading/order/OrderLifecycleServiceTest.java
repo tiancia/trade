@@ -35,6 +35,30 @@ class OrderLifecycleServiceTest {
         }
     }
 
+    @Test
+    void cumulativePartialFillRefreshAdvancesVersionWithinSameStatus() {
+        InMemoryTradingOrderRepository repository = new InMemoryTradingOrderRepository();
+        OrderLifecycleService service = new OrderLifecycleService(repository, new SimpleMeterRegistry());
+        OrderSubmission submission = submission("partial-refresh");
+        service.reserve(submission);
+        service.markAccepted(submission.idempotencyKey(), "exchange-1");
+        service.markPartiallyFilled(
+                submission.idempotencyKey(),
+                "exchange-1",
+                new OrderFill(new BigDecimal("0.001"), new BigDecimal("50000"), BigDecimal.ZERO, "USDT")
+        );
+
+        OrderTransitionResult refreshed = service.markPartiallyFilled(
+                submission.idempotencyKey(),
+                "exchange-1",
+                new OrderFill(new BigDecimal("0.002"), new BigDecimal("50010"), BigDecimal.ZERO, "USDT")
+        );
+
+        assertEquals(true, refreshed.changed());
+        assertEquals(0, new BigDecimal("0.002").compareTo(refreshed.order().getFilledBaseAmount()));
+        assertEquals(4L, refreshed.order().getVersion());
+    }
+
     private static OrderSubmission submission(String key) {
         return new OrderSubmission(
                 key,

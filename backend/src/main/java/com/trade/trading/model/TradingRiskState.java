@@ -17,4 +17,7 @@ public class TradingRiskState {
     private String lastTradeTime;
     private int consecutiveOpenActions;
     private String lastRiskReason;
+    private int consecutiveReconciliationFailures;
+    private String lastReconciliationAt;
+    private String lastReconciliationError;
 }

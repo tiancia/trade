@@ -3,6 +3,7 @@ package com.trade.trading.scheduler;
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.application.TradingStrategyEngine;
+import com.trade.trading.application.OrderReconciliationService;
 import com.trade.trading.config.TradingProperties;
 import com.trade.trading.market.HotMarketDataCache;
 import com.trade.trading.market.MarketContextCollector;
@@ -48,6 +49,7 @@ class TradingSchedulerTest {
 
         new TradingScheduler(
                 tradingEngine,
+                mock(OrderReconciliationService.class),
                 collector,
                 webSocketFeed,
                 hotCache,

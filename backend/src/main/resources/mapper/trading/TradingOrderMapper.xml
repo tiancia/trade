@@ -71,33 +71,73 @@
 
     <select id="findByIdempotencyKey" resultMap="tradingOrderResult">
         SELECT
-            id,
-            idempotency_key,
-            client_order_id,
-            exchange_order_id,
-            decision_id,
-            strategy_id,
-            inst_id,
-            action,
-            side,
-            td_mode,
-            order_type,
-            target_currency,
-            requested_size,
-            status,
-            version,
-            filled_base_amount,
-            average_fill_price,
-            fee,
-            fee_ccy,
-            failure_code,
-            failure_message,
-            created_at,
-            updated_at,
-            submitted_at,
-            completed_at
-        FROM okx_orders
-        WHERE idempotency_key = #{idempotencyKey}
+            o.id,
+            o.idempotency_key,
+            o.client_order_id,
+            o.exchange_order_id,
+            o.decision_id,
+            o.strategy_id,
+            o.inst_id,
+            o.action,
+            o.side,
+            o.td_mode,
+            o.order_type,
+            o.target_currency,
+            o.requested_size,
+            o.status,
+            o.version,
+            o.filled_base_amount,
+            o.average_fill_price,
+            o.fee,
+            o.fee_ccy,
+            o.failure_code,
+            o.failure_message,
+            o.created_at,
+            o.updated_at,
+            o.submitted_at,
+            o.completed_at
+        FROM okx_orders o
+        WHERE o.idempotency_key = #{idempotencyKey}
+    </select>
+
+    <select id="findReconciliationCandidates" resultMap="tradingOrderResult">
+        SELECT
+            o.id,
+            o.idempotency_key,
+            o.client_order_id,
+            o.exchange_order_id,
+            o.decision_id,
+            o.strategy_id,
+            o.inst_id,
+            o.action,
+            o.side,
+            o.td_mode,
+            o.order_type,
+            o.target_currency,
+            o.requested_size,
+            o.status,
+            o.version,
+            o.filled_base_amount,
+            o.average_fill_price,
+            o.fee,
+            o.fee_ccy,
+            o.failure_code,
+            o.failure_message,
+            o.created_at,
+            o.updated_at,
+            o.submitted_at,
+            o.completed_at
+        FROM okx_orders o
+        WHERE o.inst_id = #{instId}
+          AND o.status IN (
+              'SUBMITTING',
+              'SUBMIT_UNKNOWN',
+              'ACCEPTED',
+              'PARTIALLY_FILLED',
+              'CANCEL_PENDING'
+          )
+        ORDER BY o.updated_at ASC, o.id ASC
+        LIMIT #{limit}
     </select>
 
     <update id="compareAndSet">

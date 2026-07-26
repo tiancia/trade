@@ -1,5 +1,6 @@
 package com.trade.marketplace.application;
 
+import com.trade.marketplace.config.MarketplaceProperties;
 import com.trade.marketplace.exception.MarketplaceForbiddenException;
 import com.trade.marketplace.exception.MarketplaceNotFoundException;
 import com.trade.marketplace.exception.MarketplaceUnauthorizedException;
@@ -8,21 +9,33 @@ import com.trade.marketplace.model.MarketplacePrincipal;
 import com.trade.marketplace.persistence.MarketplaceCategoryRow;
 import com.trade.marketplace.persistence.MarketplaceItemRow;
 import com.trade.marketplace.persistence.MarketplaceMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.net.URI;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Owns listing queries, creation validation, and seller-only delisting.
  */
 @Service
 public class MarketplaceItemService {
+    private static final int DEFAULT_ITEM_LIMIT = 60;
+    private static final int MAX_ITEM_LIMIT = 100;
     private final MarketplaceMapper mapper;
+    private final MarketplaceProperties properties;
 
-    public MarketplaceItemService(MarketplaceMapper mapper) {
+    @Autowired
+    public MarketplaceItemService(MarketplaceMapper mapper, MarketplaceProperties properties) {
         this.mapper = mapper;
+        this.properties = properties;
+    }
+
+    MarketplaceItemService(MarketplaceMapper mapper) {
+        this(mapper, null);
     }
 
     public MarketplaceApi.Categories categories() {
@@ -33,15 +46,32 @@ public class MarketplaceItemService {
     }
 
     public MarketplaceApi.Items listItems(Long categoryId, String q, boolean mine, MarketplacePrincipal currentUser) {
+        return listItems(categoryId, q, mine, currentUser, DEFAULT_ITEM_LIMIT);
+    }
+
+    public MarketplaceApi.Items listItems(
+            Long categoryId,
+            String q,
+            boolean mine,
+            MarketplacePrincipal currentUser,
+            Integer limit
+    ) {
         if (mine && currentUser == null) {
             throw new MarketplaceUnauthorizedException("login is required to view your items");
         }
         if (categoryId != null && mapper.findCategoryById(categoryId) == null) {
             throw new MarketplaceNotFoundException("category does not exist");
         }
-        String query = q == null || q.isBlank() ? null : "%" + q.trim().toLowerCase() + "%";
+        String cleanedQuery = q == null ? "" : q.trim();
+        if (cleanedQuery.length() > 80) {
+            throw new IllegalArgumentException("search query must be at most 80 characters");
+        }
+        String query = cleanedQuery.isBlank() ? null : "%" + cleanedQuery.toLowerCase(Locale.ROOT) + "%";
         Long sellerId = mine ? currentUser.id() : null;
-        List<MarketplaceApi.Item> items = mapper.listItems(categoryId, query, sellerId, mine).stream()
+        int normalizedLimit = limit == null
+                ? DEFAULT_ITEM_LIMIT
+                : Math.max(1, Math.min(MAX_ITEM_LIMIT, limit));
+        List<MarketplaceApi.Item> items = mapper.listItems(categoryId, query, sellerId, mine, normalizedLimit).stream()
                 .map(MarketplaceViews::item)
                 .toList();
         return new MarketplaceApi.Items(items);
@@ -66,6 +96,7 @@ public class MarketplaceItemService {
         if (!imageUrl.startsWith("http://") && !imageUrl.startsWith("https://")) {
             throw new IllegalArgumentException("imageUrl must be an absolute URL");
         }
+        validateImageUrl(seller, imageUrl);
         Long categoryId = request == null ? null : request.categoryId();
         if (categoryId == null) {
             throw new IllegalArgumentException("categoryId is required");
@@ -125,6 +156,28 @@ public class MarketplaceItemService {
             return price.setScale(2, java.math.RoundingMode.HALF_UP);
         }
         return price;
+    }
+
+    private void validateImageUrl(MarketplacePrincipal seller, String imageUrl) {
+        URI uri;
+        try {
+            uri = URI.create(imageUrl);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("imageUrl must be a valid URL");
+        }
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null) {
+            throw new IllegalArgumentException("imageUrl must use HTTPS");
+        }
+        if (properties == null || properties.getOss().getPublicBaseUrl() == null
+                || properties.getOss().getPublicBaseUrl().isBlank()) {
+            return;
+        }
+        String expectedPrefix = properties.getOss().normalizedPublicBaseUrl()
+                + "/" + properties.getOss().normalizedKeyPrefix()
+                + "/users/" + seller.id() + "/";
+        if (!imageUrl.startsWith(expectedPrefix)) {
+            throw new IllegalArgumentException("imageUrl must reference an uploaded marketplace image");
+        }
     }
 
     private static String requiredText(String value, String message, int min, int max) {

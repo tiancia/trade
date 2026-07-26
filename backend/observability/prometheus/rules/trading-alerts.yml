@@ -132,6 +132,48 @@ groups:
           summary: Trading order optimistic-lock conflicts are elevated
           description: More than five order state CAS conflicts occurred on {{ $labels.instance }} in ten minutes.
 
+      - alert: TradingOrderReconciliationFailing
+        expr: |
+          sum by (instance) (
+            increase(trade_trading_reconciliation_runs_total{
+              job="trade-backend",
+              outcome="failed"
+            }[5m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: trade-backend
+        annotations:
+          summary: Trading order reconciliation is failing
+          description: Live order or position convergence failed on {{ $labels.instance }}.
+
+      - alert: TradingFundSafetyNotActive
+        expr: trade_trading_fund_safety_status{job="trade-backend"} != 0
+        for: 30s
+        labels:
+          severity: critical
+          service: trade-backend
+        annotations:
+          summary: Trading fund safety is halted or unreadable
+          description: Fund safety status on {{ $labels.instance }} is {{ $value }} (-1 unknown, 1 halted).
+
+      - alert: TradingFundStopCancellationFailed
+        expr: |
+          sum by (instance) (
+            increase(trade_trading_fund_safety_actions_total{
+              job="trade-backend",
+              outcome="cancel_failed"
+            }[5m])
+          ) > 0
+        for: 30s
+        labels:
+          severity: critical
+          service: trade-backend
+        annotations:
+          summary: Trading fund stop could not cancel exchange orders
+          description: The persistent stop is active but OKX cancellation failed on {{ $labels.instance }}.
+
   - name: trading-cache-stream
     rules:
       - alert: TradingRedisHotCacheFailures

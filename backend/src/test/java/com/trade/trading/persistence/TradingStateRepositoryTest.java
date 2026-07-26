@@ -15,6 +15,7 @@ import java.util.ConcurrentModificationException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class TradingStateRepositoryTest {
@@ -24,22 +25,23 @@ class TradingStateRepositoryTest {
     @Test
     void persistsWeightedAverageCostAndSellReduction() {
         Path stateFile = tempDir.resolve("trading-state.json");
-        TradingStateRepository repository = new TradingStateRepository(stateFile);
+        InMemoryTradingFinancialStateStore financialStore = new InMemoryTradingFinancialStateStore();
+        TradingStateRepository repository = repository(stateFile, financialStore);
 
         repository.recordBuy(new BigDecimal("0.1"), new BigDecimal("50000"));
         repository.recordBuy(new BigDecimal("0.1"), new BigDecimal("60000"));
 
-        TradingState loaded = new TradingStateRepository(stateFile).getState();
+        TradingState loaded = repository(stateFile, financialStore).getState();
         assertDecimal("0.2", loaded.getTrackedBaseAmount());
         assertDecimal("55000", loaded.getAverageCost());
 
         repository.recordSell(new BigDecimal("0.05"));
-        TradingState afterPartialSell = new TradingStateRepository(stateFile).getState();
+        TradingState afterPartialSell = repository(stateFile, financialStore).getState();
         assertDecimal("0.15", afterPartialSell.getTrackedBaseAmount());
         assertDecimal("55000", afterPartialSell.getAverageCost());
 
         repository.recordSell(new BigDecimal("1"));
-        TradingState afterFullSell = new TradingStateRepository(stateFile).getState();
+        TradingState afterFullSell = repository(stateFile, financialStore).getState();
         assertDecimal("0", afterFullSell.getTrackedBaseAmount());
         assertDecimal("0", afterFullSell.getAverageCost());
     }
@@ -102,9 +104,35 @@ class TradingStateRepositoryTest {
     }
 
     @Test
+    void importsLegacyFinancialValuesOnceAndRewritesOnlyStrategyMemory() throws Exception {
+        Path stateFile = tempDir.resolve("legacy-financial-state.json");
+        Files.writeString(stateFile, """
+                {
+                  "trackedBaseAmount": 0.25,
+                  "averageCost": 42000,
+                  "riskState": {"currentEquity": 900},
+                  "recentDecisions": []
+                }
+                """);
+        InMemoryTradingFinancialStateStore financialStore = new InMemoryTradingFinancialStateStore();
+        TradingStateRepository repository = repository(stateFile, financialStore);
+
+        assertDecimal("0.25", repository.getState().getTrackedBaseAmount());
+        assertDecimal("900", repository.getState().getRiskState().getCurrentEquity());
+        repository.recordDecision(decision("1", TradingAction.HOLD), 2);
+
+        String rewritten = Files.readString(stateFile);
+        assertFalse(rewritten.contains("trackedBaseAmount"));
+        assertFalse(rewritten.contains("averageCost"));
+        assertFalse(rewritten.contains("riskState"));
+        assertDecimal("0.25", repository(stateFile, financialStore).getState().getTrackedBaseAmount());
+    }
+
+    @Test
     void preservesRiskStateAcrossRepositoryMutations() {
         Path stateFile = tempDir.resolve("risk-state-preserved.json");
-        TradingStateRepository repository = new TradingStateRepository(stateFile);
+        InMemoryTradingFinancialStateStore financialStore = new InMemoryTradingFinancialStateStore();
+        TradingStateRepository repository = repository(stateFile, financialStore);
         TradingRiskState riskState = new TradingRiskState()
                 .setCurrentEquity(new BigDecimal("1000"))
                 .setEquityHighWatermark(new BigDecimal("1200"))
@@ -118,18 +146,18 @@ class TradingStateRepositoryTest {
 
         repository.recordRiskState(riskState);
         repository.recordBuy(new BigDecimal("0.1"), new BigDecimal("50000"));
-        assertRiskStatePreserved(new TradingStateRepository(stateFile).getState().getRiskState());
+        assertRiskStatePreserved(repository(stateFile, financialStore).getState().getRiskState());
 
         repository.recordSell(new BigDecimal("0.05"));
-        assertRiskStatePreserved(new TradingStateRepository(stateFile).getState().getRiskState());
+        assertRiskStatePreserved(repository(stateFile, financialStore).getState().getRiskState());
 
         repository.recordDecision(decision("1", TradingAction.HOLD), 2);
-        assertRiskStatePreserved(new TradingStateRepository(stateFile).getState().getRiskState());
+        assertRiskStatePreserved(repository(stateFile, financialStore).getState().getRiskState());
 
         repository.recordStrategyState("2", new AiTradingDecision()
                 .setStrategyBias("LONG")
                 .setStrategyThesis("trend continuation"));
-        assertRiskStatePreserved(new TradingStateRepository(stateFile).getState().getRiskState());
+        assertRiskStatePreserved(repository(stateFile, financialStore).getState().getRiskState());
     }
 
     @Test
@@ -153,6 +181,13 @@ class TradingStateRepositoryTest {
 
     private static void assertDecimal(String expected, BigDecimal actual) {
         assertEquals(0, new BigDecimal(expected).compareTo(actual));
+    }
+
+    private static TradingStateRepository repository(
+            Path stateFile,
+            TradingFinancialStateStore financialStore
+    ) {
+        return new TradingStateRepository(stateFile, financialStore, "test", "BTC-USDT");
     }
 
     private static TradingDecisionRecord decision(String timestamp, TradingAction action) {

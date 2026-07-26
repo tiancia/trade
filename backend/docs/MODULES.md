@@ -7,7 +7,7 @@
 | 模块 | 类型 | 主要入口 | 配置前缀 / 数据 |
 | --- | --- | --- | --- |
 | `automation` | 跨域编排 | `AutomationTaskController`、`AutomationTaskRegistrar`、`AutomationTaskManager` | `trade.automation.*`；不拥有业务表 |
-| `trading` | 业务域 | `TradingController`、`TradingScheduler`、`TradingStrategyEngine` | `trade.trading.*`、`trade.okx.*`；OKX 行情、决策、订单和回测表，本地状态文件，Redis 热缓存 |
+| `trading` | 业务域 | `TradingController`、`TradingScheduler`、`TradingStrategyEngine` | `trade.trading.*`、`trade.okx.*`；OKX 行情、决策、订单、资金状态和回测表，本地策略记忆，Redis 热缓存 |
 | `polymarket` | 业务域 | `AiPolymarketScheduler`、`AiPolymarketService` | `trade.polymarket.*`；决策审计表 |
 | `story` | 业务域 | `AiStoryScheduler`、`AiStoryService` | `trade.story.*`；配置目录下的生成文件 |
 | `textgame` | 业务域 | `TextGameController`、`TextGameAdminController` | `trade.text-game.*`；故事、版本、会话和事件表 |
@@ -57,12 +57,16 @@ AutomationTaskManager
       -> strategy -> risk/sizing -> broker
         -> paper state 或 OkxLiveBroker -> OrderLifecycleService -> OKX
 
+  -> reconciliation loop
+    -> OrderReconciliationService -> OKX order/account query
+      -> OrderSettlementService -> order + fill ledger + position/risk transaction
+
 REST / WebSocket market data
   -> TradingEventPublisher -> bounded queue
     -> isolated handlers -> MySQL / Redis
 ```
 
-真实订单可靠性依赖持久化幂等键、确定性 `clOrdId`、状态机、乐观锁和状态历史；事件管道依赖固定容量、显式队满策略、handler 异常隔离、指标与优雅排空。修改这些路径前应先读对应测试。
+真实订单可靠性依赖持久化幂等键、确定性 `clOrdId`、状态机、乐观锁、状态历史和累计成交账本。仓位、成本、风险状态与资金级停止状态以 MySQL 为权威；`data/trading-state.json` 只保存策略选择、策略画像和有界决策记忆。事件管道依赖固定容量、显式队满策略、handler 异常隔离、指标与优雅排空。修改这些路径前应先读对应测试。
 
 ### polymarket 与 story
 
@@ -85,7 +89,6 @@ Weibo 是 application port 模式的参考实现：application service 依赖 `a
 | `db/migration/` | 存量数据库手工升级记录 |
 | `mapper/<domain>/` | 对应业务域的 MyBatis XML |
 | `textgame/stories/` | textgame 内置故事定义 |
-| `data/trading-state.example.json` | trading 本地状态格式示例 |
+| `data/trading-state.example.json` | trading 非资金策略记忆格式示例；仓位/成本/风险不在此保存 |
 
 模块入口、配置前缀或资源所有权变化时，必须同步更新本页、对应 `package-info.java` 和架构测试。
-

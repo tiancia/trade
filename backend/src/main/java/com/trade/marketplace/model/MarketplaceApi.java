@@ -58,7 +58,7 @@ public final class MarketplaceApi {
     ) {
     }
 
-    public record UploadIntentRequest(String fileName, String contentType) {
+    public record UploadIntentRequest(String fileName, String contentType, Long sizeBytes) {
     }
 
     public record UploadIntent(

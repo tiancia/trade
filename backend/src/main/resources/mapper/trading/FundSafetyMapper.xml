@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.trading.persistence.FundSafetyMapper">
+    <resultMap id="fundSafetyResult" type="com.trade.trading.persistence.FundSafetyStateRow">
+        <id property="accountScope" column="account_scope"/>
+        <result property="status" column="status" javaType="com.trade.trading.risk.FundSafetyStatus"/>
+        <result property="reason" column="reason"/>
+        <result property="source" column="source"/>
+        <result property="resumeReason" column="resume_reason"/>
+        <result property="lastActionError" column="last_action_error"/>
+        <result property="haltedAt" column="halted_at"/>
+        <result property="resumedAt" column="resumed_at"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="version" column="version"/>
+    </resultMap>
+
+    <insert id="insertIfAbsent" parameterType="com.trade.trading.persistence.FundSafetyStateRow">
+        INSERT INTO okx_fund_safety_state (
+            account_scope, status, reason, source, halted_at, updated_at, version
+        ) VALUES (
+            #{accountScope}, #{status}, #{reason}, #{source}, #{haltedAt}, #{updatedAt}, #{version}
+        )
+        ON DUPLICATE KEY UPDATE account_scope = VALUES(account_scope)
+    </insert>
+
+    <select id="find" resultMap="fundSafetyResult">
+        SELECT * FROM okx_fund_safety_state WHERE account_scope = #{accountScope}
+    </select>
+
+    <update id="halt">
+        UPDATE okx_fund_safety_state
+        SET status = 'HALTED',
+            reason = #{reason},
+            source = #{source},
+            resume_reason = NULL,
+            last_action_error = NULL,
+            halted_at = #{haltedAt},
+            updated_at = #{updatedAt},
+            version = version + 1
+        WHERE account_scope = #{accountScope}
+          AND status &lt;&gt; 'HALTED'
+    </update>
+
+    <update id="resume">
+        UPDATE okx_fund_safety_state
+        SET status = 'ACTIVE',
+            resume_reason = #{resumeReason},
+            last_action_error = NULL,
+            resumed_at = #{resumedAt},
+            updated_at = #{updatedAt},
+            version = version + 1
+        WHERE account_scope = #{accountScope}
+          AND status = 'HALTED'
+          AND version = #{expectedVersion}
+    </update>
+
+    <update id="recordActionError">
+        UPDATE okx_fund_safety_state
+        SET last_action_error = #{error},
+            updated_at = #{updatedAt}
+        WHERE account_scope = #{accountScope}
+    </update>
+</mapper>

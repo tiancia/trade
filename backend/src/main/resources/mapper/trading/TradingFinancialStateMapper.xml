@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.trading.persistence.TradingFinancialStateMapper">
+    <resultMap id="positionResult" type="com.trade.trading.persistence.TradingPositionRow">
+        <id property="accountScope" column="account_scope"/>
+        <id property="instId" column="inst_id"/>
+        <result property="positionSide" column="position_side"/>
+        <result property="quantity" column="quantity"/>
+        <result property="averageCost" column="average_cost"/>
+        <result property="exchangeQuantity" column="exchange_quantity"/>
+        <result property="lastReconciledAt" column="last_reconciled_at"/>
+        <result property="version" column="version"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <resultMap id="riskResult" type="com.trade.trading.persistence.TradingRiskStateRow">
+        <id property="accountScope" column="account_scope"/>
+        <result property="currentEquity" column="current_equity"/>
+        <result property="equityHighWatermark" column="equity_high_watermark"/>
+        <result property="dayStartEquity" column="day_start_equity"/>
+        <result property="dayStartDate" column="day_start_date"/>
+        <result property="consecutiveLosses" column="consecutive_losses"/>
+        <result property="lossCooldownUntil" column="loss_cooldown_until"/>
+        <result property="lastTradeTime" column="last_trade_time"/>
+        <result property="consecutiveOpenActions" column="consecutive_open_actions"/>
+        <result property="lastRiskReason" column="last_risk_reason"/>
+        <result property="consecutiveReconciliationFailures" column="consecutive_reconciliation_failures"/>
+        <result property="lastReconciliationAt" column="last_reconciliation_at"/>
+        <result property="lastReconciliationError" column="last_reconciliation_error"/>
+        <result property="version" column="version"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <resultMap id="fillLedgerResult" type="com.trade.trading.persistence.OrderFillLedgerRow">
+        <id property="orderId" column="order_id"/>
+        <result property="side" column="side"/>
+        <result property="cumulativeFilledSize" column="cumulative_filled_size"/>
+        <result property="appliedPositionQuantity" column="applied_position_quantity"/>
+        <result property="appliedQuoteCost" column="applied_quote_cost"/>
+        <result property="averageFillPrice" column="average_fill_price"/>
+        <result property="fee" column="fee"/>
+        <result property="feeCcy" column="fee_ccy"/>
+        <result property="exchangeState" column="exchange_state"/>
+        <result property="exchangeUpdatedAt" column="exchange_updated_at"/>
+        <result property="version" column="version"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <insert id="insertPositionIfAbsent" parameterType="com.trade.trading.persistence.TradingPositionRow">
+        INSERT INTO okx_position_state (
+            account_scope, inst_id, position_side, quantity, average_cost,
+            version, created_at, updated_at
+        ) VALUES (
+            #{accountScope}, #{instId}, #{positionSide}, #{quantity}, #{averageCost},
+            #{version}, #{createdAt}, #{updatedAt}
+        )
+        ON DUPLICATE KEY UPDATE account_scope = VALUES(account_scope)
+    </insert>
+
+    <select id="findPosition" resultMap="positionResult">
+        SELECT * FROM okx_position_state
+        WHERE account_scope = #{accountScope} AND inst_id = #{instId}
+    </select>
+
+    <select id="lockPosition" resultMap="positionResult">
+        SELECT * FROM okx_position_state
+        WHERE account_scope = #{accountScope} AND inst_id = #{instId}
+        FOR UPDATE
+    </select>
+
+    <update id="updatePosition" parameterType="com.trade.trading.persistence.TradingPositionRow">
+        UPDATE okx_position_state
+        SET quantity = #{quantity},
+            average_cost = #{averageCost},
+            exchange_quantity = #{exchangeQuantity},
+            last_reconciled_at = #{lastReconciledAt},
+            version = #{version},
+            updated_at = #{updatedAt}
+        WHERE account_scope = #{accountScope}
+          AND inst_id = #{instId}
+          AND version = #{version} - 1
+    </update>
+
+    <insert id="insertRiskStateIfAbsent" parameterType="com.trade.trading.persistence.TradingRiskStateRow">
+        INSERT INTO okx_risk_state (
+            account_scope, current_equity, equity_high_watermark, day_start_equity,
+            day_start_date, consecutive_losses, loss_cooldown_until, last_trade_time,
+            consecutive_open_actions, last_risk_reason,
+            consecutive_reconciliation_failures, last_reconciliation_at,
+            last_reconciliation_error, version, created_at, updated_at
+        ) VALUES (
+            #{accountScope}, #{currentEquity}, #{equityHighWatermark}, #{dayStartEquity},
+            #{dayStartDate}, #{consecutiveLosses}, #{lossCooldownUntil}, #{lastTradeTime},
+            #{consecutiveOpenActions}, #{lastRiskReason},
+            #{consecutiveReconciliationFailures}, #{lastReconciliationAt},
+            #{lastReconciliationError}, #{version}, #{createdAt}, #{updatedAt}
+        )
+        ON DUPLICATE KEY UPDATE account_scope = VALUES(account_scope)
+    </insert>
+
+    <select id="findRiskState" resultMap="riskResult">
+        SELECT * FROM okx_risk_state WHERE account_scope = #{accountScope}
+    </select>
+
+    <select id="lockRiskState" resultMap="riskResult">
+        SELECT * FROM okx_risk_state WHERE account_scope = #{accountScope} FOR UPDATE
+    </select>
+
+    <update id="updateRiskState" parameterType="com.trade.trading.persistence.TradingRiskStateRow">
+        UPDATE okx_risk_state
+        SET current_equity = #{currentEquity},
+            equity_high_watermark = #{equityHighWatermark},
+            day_start_equity = #{dayStartEquity},
+            day_start_date = #{dayStartDate},
+            consecutive_losses = #{consecutiveLosses},
+            loss_cooldown_until = #{lossCooldownUntil},
+            last_trade_time = #{lastTradeTime},
+            consecutive_open_actions = #{consecutiveOpenActions},
+            last_risk_reason = #{lastRiskReason},
+            version = #{version},
+            updated_at = #{updatedAt}
+        WHERE account_scope = #{accountScope}
+          AND version = #{version} - 1
+    </update>
+
+    <update id="recordReconciliationSuccess">
+        UPDATE okx_risk_state
+        SET consecutive_reconciliation_failures = 0,
+            last_reconciliation_at = #{reconciledAt},
+            last_reconciliation_error = NULL,
+            version = version + 1,
+            updated_at = #{updatedAt}
+        WHERE account_scope = #{accountScope}
+    </update>
+
+    <update id="recordReconciliationFailure">
+        UPDATE okx_risk_state
+        SET consecutive_reconciliation_failures = consecutive_reconciliation_failures + 1,
+            last_reconciliation_at = #{reconciledAt},
+            last_reconciliation_error = #{error},
+            version = version + 1,
+            updated_at = #{updatedAt}
+        WHERE account_scope = #{accountScope}
+    </update>
+
+    <insert id="insertFillLedgerIfAbsent" parameterType="com.trade.trading.persistence.OrderFillLedgerRow">
+        INSERT INTO okx_order_fill_ledger (
+            order_id, side, cumulative_filled_size, applied_position_quantity,
+            applied_quote_cost, version, created_at, updated_at
+        ) VALUES (
+            #{orderId}, #{side}, #{cumulativeFilledSize}, #{appliedPositionQuantity},
+            #{appliedQuoteCost}, #{version}, #{createdAt}, #{updatedAt}
+        )
+        ON DUPLICATE KEY UPDATE order_id = VALUES(order_id)
+    </insert>
+
+    <select id="lockFillLedger" resultMap="fillLedgerResult">
+        SELECT * FROM okx_order_fill_ledger WHERE order_id = #{orderId} FOR UPDATE
+    </select>
+
+    <update id="updateFillLedger" parameterType="com.trade.trading.persistence.OrderFillLedgerRow">
+        UPDATE okx_order_fill_ledger
+        SET cumulative_filled_size = #{cumulativeFilledSize},
+            applied_position_quantity = #{appliedPositionQuantity},
+            applied_quote_cost = #{appliedQuoteCost},
+            average_fill_price = #{averageFillPrice},
+            fee = #{fee},
+            fee_ccy = #{feeCcy},
+            exchange_state = #{exchangeState},
+            exchange_updated_at = #{exchangeUpdatedAt},
+            version = #{version},
+            updated_at = #{updatedAt}
+        WHERE order_id = #{orderId}
+          AND version = #{version} - 1
+    </update>
+</mapper>

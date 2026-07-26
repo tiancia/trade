@@ -2,6 +2,7 @@ package com.trade.trading.risk;
 
 import com.trade.trading.config.TradingProperties;
 import com.trade.trading.model.StrategyDecision;
+import com.trade.trading.model.TradingAction;
 import com.trade.trading.model.TradingDecisionContext;
 import com.trade.trading.model.TradingRiskState;
 import com.trade.trading.model.TradingState;
@@ -127,6 +128,27 @@ public class RiskControlService {
         if (decision.getAction().isOpenAction()) {
             riskState.setConsecutiveOpenActions(riskState.getConsecutiveOpenActions() + 1);
         } else if (decision.getAction().isCloseAction()) {
+            riskState.setConsecutiveOpenActions(0);
+        }
+        stateRepository.recordRiskState(riskState);
+    }
+
+    /**
+     * Records the first durably applied fill for a live order.
+     *
+     * <p>Unlike order acceptance, this method represents an actual capital
+     * change. The fill ledger calls it only on the first cumulative application
+     * so partial-fill refreshes do not inflate consecutive-action counters.</p>
+     */
+    public void recordReconciledAction(TradingAction action, Instant executedAt) {
+        if (action == null || !riskProperties().isEnabled()) {
+            return;
+        }
+        TradingRiskState riskState = copyRiskState(stateRepository.getState().getRiskState());
+        riskState.setLastTradeTime((executedAt == null ? Instant.now(clock) : executedAt).toString());
+        if (action.isOpenAction()) {
+            riskState.setConsecutiveOpenActions(riskState.getConsecutiveOpenActions() + 1);
+        } else if (action.isCloseAction()) {
             riskState.setConsecutiveOpenActions(0);
         }
         stateRepository.recordRiskState(riskState);
@@ -260,7 +282,10 @@ public class RiskControlService {
                 .setLossCooldownUntil(source.getLossCooldownUntil())
                 .setLastTradeTime(source.getLastTradeTime())
                 .setConsecutiveOpenActions(source.getConsecutiveOpenActions())
-                .setLastRiskReason(source.getLastRiskReason());
+                .setLastRiskReason(source.getLastRiskReason())
+                .setConsecutiveReconciliationFailures(source.getConsecutiveReconciliationFailures())
+                .setLastReconciliationAt(source.getLastReconciliationAt())
+                .setLastReconciliationError(source.getLastReconciliationError());
     }
 
     private static Instant parseInstant(String value) {

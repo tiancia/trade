@@ -27,6 +27,7 @@ import java.util.UUID;
 @Service
 public class MarketplaceUploadService {
     private static final String PUBLIC_READ_ACL = "public-read";
+    private static final long MAX_IMAGE_SIZE_BYTES = 10L * 1024 * 1024;
     private static final List<String> ALLOWED_CONTENT_TYPES = List.of(
             "image/jpeg",
             "image/png",
@@ -68,6 +69,7 @@ public class MarketplaceUploadService {
             throw new MarketplaceUnauthorizedException("login is required to upload images");
         }
         String contentType = cleanContentType(request == null ? null : request.contentType());
+        validateSize(request == null ? null : request.sizeBytes());
         String objectKey = objectKey(user, request == null ? null : request.fileName(), contentType);
         MarketplaceProperties.OssProperties oss = properties.getOss();
         try {
@@ -123,6 +125,12 @@ public class MarketplaceUploadService {
             throw new IllegalArgumentException("only jpeg, png, webp, and gif images can be uploaded");
         }
         return contentType;
+    }
+
+    private static void validateSize(Long sizeBytes) {
+        if (sizeBytes == null || sizeBytes <= 0 || sizeBytes > MAX_IMAGE_SIZE_BYTES) {
+            throw new IllegalArgumentException("image size must be between 1 byte and 10 MB");
+        }
     }
 
     private static String extension(String fileName, String contentType) {

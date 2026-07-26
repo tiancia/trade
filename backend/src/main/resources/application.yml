@@ -41,11 +41,13 @@ management:
         trade.trading.decisions.duration: true
         trade.trading.events.queue.latency: true
         trade.trading.events.handler.duration: true
+        trade.trading.reconciliation.duration: true
       slo:
         http.server.requests: 100ms,250ms,500ms,1s,2s,5s
         trade.trading.decisions.duration: 100ms,500ms,1s,5s,15s,30s,60s
         trade.trading.events.queue.latency: 10ms,50ms,100ms,250ms,500ms,1s,5s
         trade.trading.events.handler.duration: 10ms,50ms,100ms,250ms,500ms,1s,5s
+        trade.trading.reconciliation.duration: 100ms,500ms,1s,2s,5s,10s,30s
 
 mybatis:
   mapper-locations: classpath*:mapper/**/*.xml
@@ -68,6 +70,7 @@ trade:
     seed-enabled: ${TRADE_TEXT_GAME_SEED_ENABLED:true}
   marketplace:
     session-retention-days: ${TRADE_MARKETPLACE_SESSION_RETENTION_DAYS:30}
+    session-touch-interval-minutes: ${TRADE_MARKETPLACE_SESSION_TOUCH_INTERVAL_MINUTES:5}
     oss:
       access-key-id: ${ALIBABA_CLOUD_ACCESS_KEY_ID:}
       access-key-secret: ${ALIBABA_CLOUD_ACCESS_KEY_SECRET:}
@@ -265,9 +268,9 @@ trade:
     # OKX 合约持仓模式；long_short 会发送 posSide=long/short，net 会省略 posSide。
     position-mode: long_short
     # 策略执行模式：paper 为模拟成交，live 为真实下单，backtest 为历史回测。
-    execution-mode: paper
+    execution-mode: ${TRADE_TRADING_EXECUTION_MODE:paper}
     # 真实下单二次保险开关；只有 execution-mode=live 且此项为 true 才允许发单。
-    live-enabled: false
+    live-enabled: ${TRADE_TRADING_LIVE_ENABLED:false}
     # 独立前端可访问 trading API 的来源；线上部署时通过环境变量显式追加站点域名。
     frontend-allowed-origin-patterns: ${TRADE_TRADING_FRONTEND_ALLOWED_ORIGIN_PATTERNS:http://localhost:*}
     # 单次买入最多使用多少计价币种金额。
@@ -411,7 +414,7 @@ trade:
     taker-fee-rate: "0.001"
     # Required expected net edge after fee and spread. 0.001 means 0.1%.
     min-expected-net-edge-percent: "0.001"
-    # 本地交易状态文件路径，用于记录 AI 买入后的持仓成本等信息。
+    # 本地非资金策略记忆文件；持仓、成本和风险状态以 MySQL 为准。
     state-file: "data/trading-state.json"
     # 本地状态中保留的近期策略决策数量。
     recent-decision-memory-limit: 20
@@ -453,3 +456,20 @@ trade:
       max-single-open-equity-ratio: "0.10"
       # 小于该比例的权益变化视为数值噪声。
       equity-noise-ratio: "0.0001"
+    # LIVE 账户订单恢复与仓位核对。execution-mode=live 即可运行；
+    # live-enabled 仍可保持 false 来阻断新单。该循环绝不重新下单。
+    reconciliation:
+      enabled: ${TRADE_TRADING_RECONCILIATION_ENABLED:true}
+      initial-delay-ms: ${TRADE_TRADING_RECONCILIATION_INITIAL_DELAY_MS:5000}
+      fixed-delay-ms: ${TRADE_TRADING_RECONCILIATION_FIXED_DELAY_MS:15000}
+      batch-size: ${TRADE_TRADING_RECONCILIATION_BATCH_SIZE:100}
+      max-consecutive-failures: ${TRADE_TRADING_RECONCILIATION_MAX_FAILURES:3}
+      # managed-only 允许同账户存在人工仓位；dedicated-account 要求交易所总仓位与本进程账本完全一致。
+      position-ownership: ${TRADE_TRADING_POSITION_OWNERSHIP:managed-only}
+      position-mismatch-tolerance: ${TRADE_TRADING_POSITION_MISMATCH_TOLERANCE:0.00000001}
+    fund-safety:
+      # 留空时 HTTP stop/resume 端点保持禁用；内部硬风控仍可触发持久化停止。
+      operator-token: ${TRADE_TRADING_OPERATOR_TOKEN:}
+      # 停止后设置 OKX cancel-all-after；对账循环会持续重申，进程失联后由交易所超时撤单。
+      dead-man-timeout-seconds: ${TRADE_TRADING_DEAD_MAN_TIMEOUT_SECONDS:10}
+      resume-confirmation: RESUME_LIVE_TRADING

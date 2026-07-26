@@ -28,7 +28,7 @@ class MarketplaceUploadServiceTest {
 
         MarketplaceApi.UploadIntent intent = service.createIntent(
                 new MarketplacePrincipal(42L, "alice", "Alice"),
-                new MarketplaceApi.UploadIntentRequest("phone.png", "image/png")
+                new MarketplaceApi.UploadIntentRequest("phone.png", "image/png", 1024L)
         );
 
         assertEquals("bucket", intent.bucket());
@@ -53,7 +53,26 @@ class MarketplaceUploadServiceTest {
 
         assertThrows(IllegalArgumentException.class, () -> service.createIntent(
                 new MarketplacePrincipal(1L, "alice", "Alice"),
-                new MarketplaceApi.UploadIntentRequest("notes.txt", "text/plain")
+                new MarketplaceApi.UploadIntentRequest("notes.txt", "text/plain", 1024L)
+        ));
+    }
+
+    @Test
+    void rejectsEmptyAndOversizedImages() {
+        MarketplaceUploadService service = new MarketplaceUploadService(
+                new MarketplaceProperties(),
+                new FakeStsClient(),
+                new ObjectMapper()
+        );
+        MarketplacePrincipal user = new MarketplacePrincipal(1L, "alice", "Alice");
+
+        assertThrows(IllegalArgumentException.class, () -> service.createIntent(
+                user,
+                new MarketplaceApi.UploadIntentRequest("empty.png", "image/png", 0L)
+        ));
+        assertThrows(IllegalArgumentException.class, () -> service.createIntent(
+                user,
+                new MarketplaceApi.UploadIntentRequest("large.png", "image/png", 10L * 1024 * 1024 + 1)
         ));
     }
 

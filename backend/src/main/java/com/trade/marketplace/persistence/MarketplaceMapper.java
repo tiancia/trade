@@ -30,7 +30,8 @@ public interface MarketplaceMapper {
             @Param("categoryId") Long categoryId,
             @Param("q") String q,
             @Param("sellerId") Long sellerId,
-            @Param("mine") boolean mine
+            @Param("mine") boolean mine,
+            @Param("limit") int limit
     );
 
     MarketplaceItemRow findItemById(@Param("id") long id);

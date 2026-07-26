@@ -128,24 +128,25 @@ describe('marketplace app', () => {
     setup({ session: null });
 
     await screen.findAllByText('iPhone 15');
-    fireEvent.click(screen.getByRole('button', { name: /^发布$/ }));
+    fireEvent.click(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', { name: /发布闲置/ }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('请先登录后再发布商品');
+    expect(await screen.findByText('登录后即可发布')).toBeVisible();
     expect(api.createUploadIntent).not.toHaveBeenCalled();
   });
 
   it('publishes an item after uploading through an OSS intent', async () => {
     setup({ session: sellerSession, items: [] });
 
-    await screen.findByText('@seller');
-    fireEvent.change(screen.getByLabelText('标题'), { target: { value: '机械键盘' } });
+    await screen.findByRole('button', { name: /卖家/ });
+    fireEvent.click(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', { name: /发布闲置/ }));
+    fireEvent.change(screen.getByLabelText('商品标题'), { target: { value: '机械键盘' } });
     fireEvent.change(screen.getByLabelText('分类'), { target: { value: '1' } });
     fireEvent.change(screen.getByLabelText('价格'), { target: { value: '199' } });
-    fireEvent.change(screen.getByLabelText('描述'), { target: { value: '青轴，配件齐全' } });
-    fireEvent.change(screen.getByLabelText(/选择图片/), {
+    fireEvent.change(screen.getByLabelText(/^商品描述/), { target: { value: '青轴，配件齐全' } });
+    fireEvent.change(screen.getByLabelText('选择商品图片'), {
       target: { files: [new File(['image'], 'keyboard.png', { type: 'image/png' })] },
     });
-    fireEvent.click(screen.getByRole('button', { name: /发布$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /确认发布/ }));
 
     await waitFor(() => expect(api.createUploadIntent).toHaveBeenCalled());
     expect(api.uploadFileToOss).toHaveBeenCalled();
@@ -213,11 +214,24 @@ describe('marketplace app', () => {
     expect(screen.getAllByText('尼康相机').length).toBeGreaterThan(0);
 
     await act(async () => {
-      vi.advanceTimersByTime(3000);
+      vi.advanceTimersByTime(4000);
       await Promise.resolve();
       await Promise.resolve();
     });
 
     expect(screen.getByText('今天可取。')).toBeVisible();
+  });
+
+  it('rejects oversized images before requesting upload credentials', async () => {
+    setup({ session: sellerSession, items: [] });
+
+    await screen.findByRole('button', { name: /卖家/ });
+    fireEvent.click(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', { name: /发布闲置/ }));
+    const oversized = new File(['image'], 'large.png', { type: 'image/png' });
+    Object.defineProperty(oversized, 'size', { value: 10 * 1024 * 1024 + 1 });
+    fireEvent.change(screen.getByLabelText('选择商品图片'), { target: { files: [oversized] } });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('图片大小需要在 10 MB 以内');
+    expect(api.createUploadIntent).not.toHaveBeenCalled();
   });
 });

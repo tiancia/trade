@@ -2,6 +2,7 @@ package com.trade.trading.order;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
@@ -43,6 +44,16 @@ public class InMemoryTradingOrderRepository implements TradingOrderRepository {
     @Override
     public synchronized Optional<TradingOrder> findByIdempotencyKey(String idempotencyKey) {
         return Optional.ofNullable(orders.get(idempotencyKey)).map(InMemoryTradingOrderRepository::copy);
+    }
+
+    @Override
+    public synchronized List<TradingOrder> findReconciliationCandidates(String instId, int limit) {
+        return orders.values().stream()
+                .filter(order -> order.getInstId().equals(instId))
+                .filter(order -> !order.getStatus().isTerminal())
+                .limit(Math.max(1, limit))
+                .map(InMemoryTradingOrderRepository::copy)
+                .toList();
     }
 
     @Override

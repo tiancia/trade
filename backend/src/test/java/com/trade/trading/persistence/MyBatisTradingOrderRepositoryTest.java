@@ -5,27 +5,33 @@ import com.trade.trading.order.OrderLifecycleService;
 import com.trade.trading.order.OrderReservation;
 import com.trade.trading.order.OrderStatus;
 import com.trade.trading.order.OrderSubmission;
+import com.trade.trading.order.TradingOrderRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.Test;
+import org.mybatis.spring.SqlSessionFactoryBean;
+import org.mybatis.spring.mapper.MapperFactoryBean;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.test.context.jdbc.Sql;
+import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
 
+import javax.sql.DataSource;
 import java.math.BigDecimal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@SpringBootTest(properties = {
-        "trade.trading.enabled=false",
-        "spring.datasource.driver-class-name=org.h2.Driver",
-        "spring.datasource.url=jdbc:h2:mem:order_state;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
-        "spring.datasource.username=sa",
-        "spring.datasource.password=",
-        "spring.sql.init.mode=never",
-        "trade.text-game.seed-enabled=false"
-})
+@SpringJUnitConfig(MyBatisTradingOrderRepositoryTest.PersistenceTestConfiguration.class)
 @Sql(statements = {
         "DROP TABLE IF EXISTS okx_order_status_history",
         "DROP TABLE IF EXISTS okx_orders",
@@ -87,5 +93,67 @@ class MyBatisTradingOrderRepositoryTest {
         assertEquals(1, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_orders", Integer.class));
         assertEquals(3, jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM okx_order_status_history", Integer.class));
+    }
+
+    /** Focused MyBatis slice for the order ledger and its transaction boundary. */
+    @Configuration(proxyBeanMethods = false)
+    @EnableTransactionManagement
+    static class PersistenceTestConfiguration {
+        @Bean
+        DataSource dataSource() {
+            JdbcDataSource dataSource = new JdbcDataSource();
+            dataSource.setURL(
+                    "jdbc:h2:mem:order_state;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
+            );
+            dataSource.setUser("sa");
+            dataSource.setPassword("");
+            return dataSource;
+        }
+
+        @Bean
+        SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+            SqlSessionFactoryBean factory = new SqlSessionFactoryBean();
+            factory.setDataSource(dataSource);
+            factory.setMapperLocations(
+                    new ClassPathResource("mapper/trading/TradingOrderMapper.xml")
+            );
+            return factory.getObject();
+        }
+
+        @Bean
+        MapperFactoryBean<TradingOrderMapper> tradingOrderMapper(SqlSessionFactory sqlSessionFactory) {
+            MapperFactoryBean<TradingOrderMapper> factory =
+                    new MapperFactoryBean<>(TradingOrderMapper.class);
+            factory.setSqlSessionFactory(sqlSessionFactory);
+            return factory;
+        }
+
+        @Bean
+        TradingOrderRepository tradingOrderRepository(TradingOrderMapper mapper) {
+            return new MyBatisTradingOrderRepository(mapper);
+        }
+
+        @Bean
+        MeterRegistry meterRegistry() {
+            return new SimpleMeterRegistry();
+        }
+
+        @Bean
+        OrderLifecycleService orderLifecycleService(
+                TradingOrderRepository repository,
+                MeterRegistry meterRegistry
+        ) {
+            return new OrderLifecycleService(repository, meterRegistry);
+        }
+
+        @Bean
+        JdbcTemplate jdbcTemplate(DataSource dataSource) {
+            return new JdbcTemplate(dataSource);
+        }
+
+        @Bean
+        PlatformTransactionManager transactionManager(DataSource dataSource) {
+            return new DataSourceTransactionManager(dataSource);
+        }
     }
 }

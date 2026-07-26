@@ -65,7 +65,7 @@ public class TradingProperties {
     private BigDecimal takerFeeRate = new BigDecimal("0.001");
     /** Minimum expected net edge ratio after spread and fees. */
     private BigDecimal minExpectedNetEdgePercent = new BigDecimal("0.001");
-    /** JSON file used for local strategy and risk state. */
+    /** JSON file used only for non-financial strategy memory. */
     private String stateFile = "data/trading-state.json";
     /** Maximum number of recent decisions retained in local state. */
     private int recentDecisionMemoryLimit = 20;
@@ -91,6 +91,10 @@ public class TradingProperties {
     private List<StrategyInstanceProperties> strategies = List.of(defaultThresholdStrategy());
     /** Application-side risk control thresholds. */
     private RiskProperties risk = new RiskProperties();
+    /** Continuous local/exchange order and position convergence settings. */
+    private ReconciliationProperties reconciliation = new ReconciliationProperties();
+    /** Persistent capital-level stop controls. */
+    private FundSafetyProperties fundSafety = new FundSafetyProperties();
 
     public boolean isSpotInstrument() {
         return "SPOT".equalsIgnoreCase(instType);
@@ -113,6 +117,18 @@ public class TradingProperties {
 
     public boolean isLiveExecutionAllowed() {
         return executionMode == ExecutionMode.LIVE && liveEnabled;
+    }
+
+    /**
+     * Selects the real exchange account for read-side recovery and emergency
+     * cancellation. The separate live-enabled flag still gates new orders.
+     */
+    public boolean isLiveAccountSelected() {
+        return executionMode == ExecutionMode.LIVE;
+    }
+
+    public String financialAccountScope() {
+        return executionMode.name().toLowerCase(java.util.Locale.ROOT);
     }
 
     private static StrategyInstanceProperties defaultThresholdStrategy() {
@@ -263,5 +279,40 @@ public class TradingProperties {
         private BigDecimal maxSingleOpenEquityRatio = new BigDecimal("0.10");
         /** Ratio below which equity changes are ignored as numerical noise. */
         private BigDecimal equityNoiseRatio = new BigDecimal("0.0001");
+    }
+
+    @Data
+    public static class ReconciliationProperties {
+        /** Enables the reconciliation loop registered under the trading task. */
+        private boolean enabled = true;
+        /** Delay before the first recovery pass. */
+        private long initialDelayMs = 5_000L;
+        /** Delay between completed reconciliation passes. */
+        private long fixedDelayMs = 15_000L;
+        /** Maximum unresolved local orders processed in one pass. */
+        private int batchSize = 100;
+        /** Consecutive failed passes that activate the persistent fund stop. */
+        private int maxConsecutiveFailures = 3;
+        /** Defines whether this process owns the entire configured exchange position. */
+        private PositionOwnership positionOwnership = PositionOwnership.MANAGED_ONLY;
+        /** Allowed dedicated-account position drift before the fund stop activates. */
+        private BigDecimal positionMismatchTolerance = new BigDecimal("0.00000001");
+    }
+
+    public enum PositionOwnership {
+        /** Only fills submitted by this process are included in managed quantity. */
+        MANAGED_ONLY,
+        /** The complete exchange position is expected to equal the managed position. */
+        DEDICATED_ACCOUNT
+    }
+
+    @Data
+    public static class FundSafetyProperties {
+        /** Token required by HTTP stop/resume mutations; blank disables those endpoints. */
+        private String operatorToken;
+        /** OKX cancel-all-after timeout armed when the fund stop activates. */
+        private int deadManTimeoutSeconds = 10;
+        /** Exact acknowledgement required by the resume endpoint. */
+        private String resumeConfirmation = "RESUME_LIVE_TRADING";
     }
 }

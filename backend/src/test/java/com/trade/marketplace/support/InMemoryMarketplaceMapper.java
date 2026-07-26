@@ -29,6 +29,11 @@ public class InMemoryMarketplaceMapper implements MarketplaceMapper {
     private long itemSequence;
     private long conversationSequence;
     private long messageSequence;
+    private int sessionTouchCount;
+
+    public int getSessionTouchCount() {
+        return sessionTouchCount;
+    }
 
     public MarketplaceCategoryRow addCategory(String name, String slug, int sortOrder) {
         MarketplaceCategoryRow row = new MarketplaceCategoryRow()
@@ -94,6 +99,7 @@ public class InMemoryMarketplaceMapper implements MarketplaceMapper {
             return 0;
         }
         row.setLastSeenAt(lastSeenAt);
+        sessionTouchCount++;
         return 1;
     }
 
@@ -112,12 +118,13 @@ public class InMemoryMarketplaceMapper implements MarketplaceMapper {
     }
 
     @Override
-    public List<MarketplaceItemRow> listItems(Long categoryId, String q, Long sellerId, boolean mine) {
+    public List<MarketplaceItemRow> listItems(Long categoryId, String q, Long sellerId, boolean mine, int limit) {
         return items.values().stream()
                 .filter(row -> mine ? Objects.equals(row.getSellerId(), sellerId) : "LISTED".equals(row.getStatus()))
                 .filter(row -> categoryId == null || Objects.equals(row.getCategoryId(), categoryId))
                 .filter(row -> q == null || contains(row.getTitle(), q) || contains(row.getDescription(), q))
                 .sorted(Comparator.comparing(MarketplaceItemRow::getCreatedAt).thenComparing(MarketplaceItemRow::getId).reversed())
+                .limit(limit)
                 .map(this::enrich)
                 .toList();
     }
@@ -196,11 +203,13 @@ public class InMemoryMarketplaceMapper implements MarketplaceMapper {
 
     @Override
     public List<MarketplaceMessageRow> listMessages(long conversationId, Long afterId, int limit) {
-        return messages.values().stream()
+        List<MarketplaceMessageRow> matching = messages.values().stream()
                 .filter(row -> Objects.equals(row.getConversationId(), conversationId))
                 .filter(row -> afterId == null || row.getId() > afterId)
                 .sorted(Comparator.comparing(MarketplaceMessageRow::getId))
-                .limit(limit)
+                .toList();
+        int fromIndex = afterId == null ? Math.max(0, matching.size() - limit) : 0;
+        return matching.subList(fromIndex, Math.min(matching.size(), fromIndex + limit)).stream()
                 .map(this::enrich)
                 .toList();
     }

@@ -98,6 +98,7 @@
             AND (LOWER(i.title) LIKE #{q} OR LOWER(i.description) LIKE #{q})
         </if>
         ORDER BY i.created_at DESC, i.id DESC
+        LIMIT #{limit}
     </select>
 
     <select id="findItemById" resultType="com.trade.marketplace.persistence.MarketplaceItemRow">
@@ -182,15 +183,31 @@
     </update>
 
     <select id="listMessages" resultType="com.trade.marketplace.persistence.MarketplaceMessageRow">
-        SELECT m.id, m.conversation_id, m.sender_id, sender.username AS sender_username,
-               sender.display_name AS sender_display_name, m.body, m.created_at
-        FROM marketplace_messages m
-        JOIN marketplace_users sender ON sender.id = m.sender_id
-        WHERE m.conversation_id = #{conversationId}
-        <if test="afterId != null">
-            AND m.id &gt; #{afterId}
-        </if>
-        ORDER BY m.id
-        LIMIT #{limit}
+        <choose>
+            <when test="afterId != null">
+                SELECT m.id, m.conversation_id, m.sender_id, sender.username AS sender_username,
+                       sender.display_name AS sender_display_name, m.body, m.created_at
+                FROM marketplace_messages m
+                JOIN marketplace_users sender ON sender.id = m.sender_id
+                WHERE m.conversation_id = #{conversationId}
+                  AND m.id &gt; #{afterId}
+                ORDER BY m.id
+                LIMIT #{limit}
+            </when>
+            <otherwise>
+                SELECT recent.id, recent.conversation_id, recent.sender_id,
+                       sender.username AS sender_username, sender.display_name AS sender_display_name,
+                       recent.body, recent.created_at
+                FROM (
+                    SELECT m.id, m.conversation_id, m.sender_id, m.body, m.created_at
+                    FROM marketplace_messages m
+                    WHERE m.conversation_id = #{conversationId}
+                    ORDER BY m.id DESC
+                    LIMIT #{limit}
+                ) recent
+                JOIN marketplace_users sender ON sender.id = recent.sender_id
+                ORDER BY recent.id
+            </otherwise>
+        </choose>
     </select>
 </mapper>

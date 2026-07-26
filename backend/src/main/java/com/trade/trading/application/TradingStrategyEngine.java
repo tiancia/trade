@@ -12,6 +12,7 @@ import com.trade.trading.model.TradingTrigger;
 import com.trade.trading.persistence.TradingStateRepository;
 import com.trade.trading.strategy.ConfiguredTradingStrategy;
 import com.trade.trading.strategy.StrategyEvaluationContext;
+import com.trade.trading.risk.FundSafetyService;
 import com.trade.common.support.TradingMath;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
@@ -48,6 +49,8 @@ public class TradingStrategyEngine {
     private final TradingProperties properties;
     private final OkxMarketDataWebSocketFeed marketDataWebSocketFeed;
     private final MeterRegistry meterRegistry;
+    private final FundSafetyService fundSafetyService;
+    private final OrderReconciliationService orderReconciliationService;
     private final ReentrantLock decisionLock = new ReentrantLock();
     private volatile TradingDecisionRecord lastDecision;
     private volatile String lastError;
@@ -61,6 +64,8 @@ public class TradingStrategyEngine {
             TradingStateRepository stateRepository,
             TradingProperties properties,
             OkxMarketDataWebSocketFeed marketDataWebSocketFeed,
+            FundSafetyService fundSafetyService,
+            OrderReconciliationService orderReconciliationService,
             MeterRegistry meterRegistry
     ) {
         this.contextCollector = contextCollector;
@@ -69,6 +74,8 @@ public class TradingStrategyEngine {
         this.stateRepository = stateRepository;
         this.properties = properties;
         this.marketDataWebSocketFeed = marketDataWebSocketFeed;
+        this.fundSafetyService = fundSafetyService;
+        this.orderReconciliationService = orderReconciliationService;
         this.meterRegistry = meterRegistry;
         Gauge.builder("trade.trading.decisions.running", decisionLock, lock -> lock.isLocked() ? 1 : 0)
                 .description("Whether a trading strategy decision is currently running")
@@ -163,7 +170,9 @@ public class TradingStrategyEngine {
                 .setLastRunStartedAt(lastRunStartedAt)
                 .setLastRunCompletedAt(lastRunCompletedAt)
                 .setMarketDataStale(marketDataWebSocketFeed.latestTicker().isEmpty()
-                        || marketDataWebSocketFeed.recentOneMinuteCandles(1).isEmpty());
+                        || marketDataWebSocketFeed.recentOneMinuteCandles(1).isEmpty())
+                .setFundSafety(fundSafetyService.state())
+                .setReconciliation(orderReconciliationService.status());
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})

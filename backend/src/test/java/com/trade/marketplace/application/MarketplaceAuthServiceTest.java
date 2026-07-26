@@ -70,4 +70,25 @@ class MarketplaceAuthServiceTest {
         );
         assertThrows(MarketplaceUnauthorizedException.class, () -> afterExpiry.me("Bearer " + shortLived.token()));
     }
+
+    @Test
+    void throttlesSessionLastSeenWritesForFrequentAuthenticatedPolling() {
+        MarketplaceApi.AuthResponse registered = service.register(
+                new MarketplaceApi.RegisterRequest("dora", "password-123", "Dora")
+        );
+
+        service.me("Bearer " + registered.token());
+        service.me("Bearer " + registered.token());
+        assertEquals(0, mapper.getSessionTouchCount());
+
+        MarketplaceAuthService afterTouchInterval = new MarketplaceAuthService(
+                mapper,
+                new BCryptPasswordEncoder(),
+                properties,
+                Clock.fixed(clock.instant().plusSeconds(6 * 60), ZoneOffset.UTC)
+        );
+        afterTouchInterval.me("Bearer " + registered.token());
+        afterTouchInterval.me("Bearer " + registered.token());
+        assertEquals(1, mapper.getSessionTouchCount());
+    }
 }
