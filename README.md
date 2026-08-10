@@ -6,6 +6,7 @@
 
 ```text
 backend/             Spring Boot 后端：交易决策、调度、外部客户端、持久化、HTTP API
+compose.yaml         MySQL、Redis、Prometheus、Grafana 的统一 Docker 入口
 frontend/text-game/  React + Vite 文字游戏前端：浏览器交互和界面状态
 frontend/market/     React + Vite 二手集市前端：商品发布、筛选、会话和图片上传
 tools/polymarket/    Polymarket Python 工具：CLOB 下单桥接、凭证调试、样例 payload
@@ -17,6 +18,11 @@ story/               AI 小说生成输出和素材，属于运行产物
 ## 常用命令
 
 从仓库根目录执行：
+
+```powershell
+Copy-Item .env.example .env  # 首次执行；本地开发密码默认均为 123456
+docker compose up -d
+```
 
 ```powershell
 cd backend

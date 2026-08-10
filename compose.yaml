@@ -1,0 +1,4 @@
+name: trade-infrastructure
+
+include:
+  - backend/infrastructure/compose.yaml
