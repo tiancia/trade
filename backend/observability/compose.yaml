@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: "123456"
-      MYSQL_DATABASE: trade
+      MYSQL_DATABASE: trade_system
     ports:
       - "127.0.0.1:3306:3306"
     volumes:
