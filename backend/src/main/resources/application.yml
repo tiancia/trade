@@ -6,9 +6,9 @@ spring:
       preferred-json-mapper: jackson2
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://127.0.0.1:3306/ai_trade?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://127.0.0.1:3306/trade_system}
     username: ${SPRING_DATASOURCE_USERNAME:root}
-    password: ${SPRING_DATASOURCE_PASSWORD:}
+    password: ${SPRING_DATASOURCE_PASSWORD:123456}
   data:
     redis:
       host: ${SPRING_DATA_REDIS_HOST:127.0.0.1}
