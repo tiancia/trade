@@ -1,6 +1,29 @@
 name: trade-observability
 
 services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: "123456"
+      MYSQL_DATABASE: trade
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - observability
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - observability
+
   prometheus:
     image: prom/prometheus:v3.12.0
     restart: unless-stopped
@@ -43,5 +66,7 @@ networks:
   observability:
 
 volumes:
+  mysql-data:
+  redis-data:
   prometheus-data:
   grafana-data:
