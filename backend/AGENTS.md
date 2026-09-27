@@ -5,9 +5,9 @@
 ## 项目事实
 
 - 技术栈：Java 21、Spring Boot 4、Maven Wrapper、MyBatis、MySQL；Redis 只承担可关闭的热行情缓存。
-- 架构形态：按业务域组织的模块化单体，域内再按 `web`、`application`、`model/domain`、`persistence`、`config` 等职责分层。
+- 架构形态：按业务域组织的模块化单体，域内统一先分 `interfaces`、`application`、`domain`、`infrastructure`，再按能力细分。
 - 应用入口：`src/main/java/com/trade/TradeApplication.java`。
-- 后台任务入口：`automation/application/AutomationTaskRegistrar.java`；`register()` 只登记任务，真正启动由 `ApplicationReadyEvent + auto-start` 或任务管理 API 触发。
+- 后台任务入口：`automation/application/task/AutomationTaskRegistrar.java`；`register()` 只登记任务，真正启动由 `ApplicationReadyEvent + auto-start` 或任务管理 API 触发。
 - 危险能力默认关闭。不要为通过测试或方便调试而打开自动任务、真实下单或真实发布开关。
 
 ## 开始修改前
@@ -21,18 +21,23 @@
 
 | 内容 | 放置位置 |
 | --- | --- |
-| HTTP 映射、鉴权、请求响应转换 | `<domain>/web` |
-| 用例编排、事务边界 | `<domain>/application` |
+| HTTP 映射、鉴权、请求响应转换 | `<domain>/interfaces/web` |
+| 用例编排、事务边界 | `<domain>/application/<能力>`，小模块使用 `service` |
 | 用例需要的出站接口 | `<domain>/application/port`，确有替换价值时再引入 |
-| 纯业务值与规则 | `<domain>/model` 或 `<domain>/domain` |
-| MyBatis、Row、Repository/Store 实现 | `<domain>/persistence` |
-| Prompt、AI 响应解析与校验 | `<domain>/decision` |
-| 定时触发 | `<domain>/scheduler`，保持为薄入口 |
+| 纯业务值与规则 | `<domain>/domain/model` 或 `domain/<能力>` |
+| 共享业务异常 | `<domain>/domain/exception` |
+| MyBatis、Row、Repository/Store 实现 | `<domain>/infrastructure/persistence` |
+| Broker、外部执行器实现 | `<domain>/infrastructure/broker`，契约放 `application/port` |
+| 配置绑定、Bean 装配 | `<domain>/infrastructure/config` |
+| Prompt、AI 响应解析与校验 | `<domain>/application/decision` |
+| 定时触发 | `<domain>/interfaces/scheduler`，保持为薄入口 |
 | 外部协议、签名、供应商 DTO | `client/<provider>` |
 | 跨域任务启停和状态汇总 | `automation` |
 | 真正无业务归属的纯函数 | `common/support` |
 
 不要创建全局 `controller`、`service`、`mapper` 或泛化 `utils` 大目录。业务域之间不得直接 import；跨域生命周期由 `automation` 编排。`client`、`ai`、`common` 不得反向依赖业务域，`web` 不得直接暴露持久化 Row 或 Mapper。
+
+领域模型不得反向依赖 application、interfaces 或 infrastructure；application/port 不得依赖实现。业务域根目录不再平铺 market、execution、persistence 等能力包。`client` 按供应商组织，`common` 保留纯函数，不强制创建空层。
 
 ## 高风险变更
 
@@ -66,4 +71,3 @@ AI 完成任务时应说明：
 - 是否保留了任务开始前已存在的未提交改动。
 
 只修改文档也要检查链接、命令、路径和配置名是否与当前仓库一致。
-

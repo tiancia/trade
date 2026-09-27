@@ -2,9 +2,9 @@
 <!DOCTYPE mapper
         PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.trade.ai.persistence.AiResponseParseErrorMapper">
+<mapper namespace="com.trade.ai.infrastructure.persistence.AiResponseParseErrorMapper">
     <insert id="insert"
-            parameterType="com.trade.ai.persistence.AiResponseParseErrorRow"
+            parameterType="com.trade.ai.infrastructure.persistence.AiResponseParseErrorRow"
             useGeneratedKeys="true"
             keyProperty="id"
             keyColumn="id">

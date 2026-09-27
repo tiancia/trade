@@ -2,8 +2,8 @@
 <!DOCTYPE mapper
         PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.trade.trading.persistence.OkxCandleCacheMapper">
-    <select id="findRange" resultType="com.trade.trading.persistence.OkxCandleCacheRow">
+<mapper namespace="com.trade.trading.infrastructure.persistence.OkxCandleCacheMapper">
+    <select id="findRange" resultType="com.trade.trading.infrastructure.persistence.OkxCandleCacheRow">
         SELECT
             inst_id,
             bar,
@@ -24,7 +24,7 @@
         ORDER BY ts ASC
     </select>
 
-    <insert id="upsert" parameterType="com.trade.trading.persistence.OkxCandleCacheRow">
+    <insert id="upsert" parameterType="com.trade.trading.infrastructure.persistence.OkxCandleCacheRow">
         INSERT INTO okx_candle_cache (
             inst_id,
             bar,

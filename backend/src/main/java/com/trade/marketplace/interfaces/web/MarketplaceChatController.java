@@ -1,0 +1,68 @@
+package com.trade.marketplace.interfaces.web;
+
+import com.trade.marketplace.application.service.MarketplaceAuthService;
+import com.trade.marketplace.application.service.MarketplaceChatService;
+import com.trade.marketplace.domain.model.MarketplaceApi;
+import com.trade.marketplace.domain.model.MarketplacePrincipal;
+import org.springframework.http.HttpHeaders;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * HTTP boundary for buyer-seller conversations and message polling.
+ */
+@RestController
+@RequestMapping("/api/marketplace")
+public class MarketplaceChatController {
+    private final MarketplaceAuthService authService;
+    private final MarketplaceChatService chatService;
+
+    public MarketplaceChatController(MarketplaceAuthService authService, MarketplaceChatService chatService) {
+        this.authService = authService;
+        this.chatService = chatService;
+    }
+
+    @PostMapping("/items/{itemId}/conversations")
+    public MarketplaceApi.Conversation createConversation(
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+            @PathVariable long itemId
+    ) {
+        MarketplacePrincipal user = authService.requireUser(authorization);
+        return chatService.createConversation(user, itemId);
+    }
+
+    @GetMapping("/conversations")
+    public MarketplaceApi.Conversations conversations(
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization
+    ) {
+        MarketplacePrincipal user = authService.requireUser(authorization);
+        return chatService.listConversations(user);
+    }
+
+    @GetMapping("/conversations/{id}/messages")
+    public MarketplaceApi.Messages messages(
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+            @PathVariable long id,
+            @RequestParam(required = false) Long afterId,
+            @RequestParam(required = false) Integer limit
+    ) {
+        MarketplacePrincipal user = authService.requireUser(authorization);
+        return chatService.listMessages(user, id, afterId, limit);
+    }
+
+    @PostMapping("/conversations/{id}/messages")
+    public MarketplaceApi.Message sendMessage(
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+            @PathVariable long id,
+            @RequestBody MarketplaceApi.SendMessageRequest request
+    ) {
+        MarketplacePrincipal user = authService.requireUser(authorization);
+        return chatService.sendMessage(user, id, request);
+    }
+}

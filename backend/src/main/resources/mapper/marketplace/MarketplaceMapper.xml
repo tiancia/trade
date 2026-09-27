@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.trade.marketplace.persistence.MarketplaceMapper">
+<mapper namespace="com.trade.marketplace.infrastructure.persistence.MarketplaceMapper">
     <sql id="itemColumns">
         i.id, i.seller_id, seller.username AS seller_username, seller.display_name AS seller_display_name,
         i.category_id, category.name AS category_name, category.slug AS category_slug,
@@ -24,30 +24,30 @@
         conv.created_at, conv.updated_at
     </sql>
 
-    <select id="findUserByUsername" resultType="com.trade.marketplace.persistence.MarketplaceUserRow">
+    <select id="findUserByUsername" resultType="com.trade.marketplace.infrastructure.persistence.MarketplaceUserRow">
         SELECT id, username, password_hash, display_name, created_at, updated_at
         FROM marketplace_users
         WHERE username = #{username}
     </select>
 
-    <select id="findUserById" resultType="com.trade.marketplace.persistence.MarketplaceUserRow">
+    <select id="findUserById" resultType="com.trade.marketplace.infrastructure.persistence.MarketplaceUserRow">
         SELECT id, username, password_hash, display_name, created_at, updated_at
         FROM marketplace_users
         WHERE id = #{id}
     </select>
 
-    <insert id="insertUser" parameterType="com.trade.marketplace.persistence.MarketplaceUserRow"
+    <insert id="insertUser" parameterType="com.trade.marketplace.infrastructure.persistence.MarketplaceUserRow"
             useGeneratedKeys="true" keyProperty="id" keyColumn="id">
         INSERT INTO marketplace_users (username, password_hash, display_name)
         VALUES (#{username}, #{passwordHash}, #{displayName})
     </insert>
 
-    <insert id="insertSession" parameterType="com.trade.marketplace.persistence.MarketplaceSessionRow">
+    <insert id="insertSession" parameterType="com.trade.marketplace.infrastructure.persistence.MarketplaceSessionRow">
         INSERT INTO marketplace_sessions (token_hash, user_id, expires_at, revoked_at, last_seen_at)
         VALUES (#{tokenHash}, #{userId}, #{expiresAt}, #{revokedAt}, #{lastSeenAt})
     </insert>
 
-    <select id="findSessionByTokenHash" resultType="com.trade.marketplace.persistence.MarketplaceSessionRow">
+    <select id="findSessionByTokenHash" resultType="com.trade.marketplace.infrastructure.persistence.MarketplaceSessionRow">
         SELECT token_hash, user_id, expires_at, revoked_at, last_seen_at, created_at
         FROM marketplace_sessions
         WHERE token_hash = #{tokenHash}
@@ -65,19 +65,19 @@
         WHERE token_hash = #{tokenHash}
     </update>
 
-    <select id="listCategories" resultType="com.trade.marketplace.persistence.MarketplaceCategoryRow">
+    <select id="listCategories" resultType="com.trade.marketplace.infrastructure.persistence.MarketplaceCategoryRow">
         SELECT id, name, slug, sort_order, created_at
         FROM marketplace_categories
         ORDER BY sort_order, id
     </select>
 
-    <select id="findCategoryById" resultType="com.trade.marketplace.persistence.MarketplaceCategoryRow">
+    <select id="findCategoryById" resultType="com.trade.marketplace.infrastructure.persistence.MarketplaceCategoryRow">
         SELECT id, name, slug, sort_order, created_at
         FROM marketplace_categories
         WHERE id = #{id}
     </select>
 
-    <select id="listItems" resultType="com.trade.marketplace.persistence.MarketplaceItemRow">
+    <select id="listItems" resultType="com.trade.marketplace.infrastructure.persistence.MarketplaceItemRow">
         SELECT <include refid="itemColumns"/>
         FROM marketplace_items i
         JOIN marketplace_users seller ON seller.id = i.seller_id
@@ -101,7 +101,7 @@
         LIMIT #{limit}
     </select>
 
-    <select id="findItemById" resultType="com.trade.marketplace.persistence.MarketplaceItemRow">
+    <select id="findItemById" resultType="com.trade.marketplace.infrastructure.persistence.MarketplaceItemRow">
         SELECT <include refid="itemColumns"/>
         FROM marketplace_items i
         JOIN marketplace_users seller ON seller.id = i.seller_id
@@ -109,7 +109,7 @@
         WHERE i.id = #{id}
     </select>
 
-    <insert id="insertItem" parameterType="com.trade.marketplace.persistence.MarketplaceItemRow"
+    <insert id="insertItem" parameterType="com.trade.marketplace.infrastructure.persistence.MarketplaceItemRow"
             useGeneratedKeys="true" keyProperty="id" keyColumn="id">
         INSERT INTO marketplace_items
             (seller_id, category_id, title, description, image_url, price, status)
@@ -123,7 +123,7 @@
         WHERE id = #{id} AND seller_id = #{sellerId} AND status = 'LISTED'
     </update>
 
-    <select id="findConversationForItemBuyer" resultType="com.trade.marketplace.persistence.MarketplaceConversationRow">
+    <select id="findConversationForItemBuyer" resultType="com.trade.marketplace.infrastructure.persistence.MarketplaceConversationRow">
         SELECT <include refid="conversationColumns"/>
         FROM marketplace_conversations conv
         JOIN marketplace_items item ON item.id = conv.item_id
@@ -137,7 +137,7 @@
         WHERE conv.item_id = #{itemId} AND conv.buyer_id = #{buyerId}
     </select>
 
-    <select id="findConversationById" resultType="com.trade.marketplace.persistence.MarketplaceConversationRow">
+    <select id="findConversationById" resultType="com.trade.marketplace.infrastructure.persistence.MarketplaceConversationRow">
         SELECT <include refid="conversationColumns"/>
         FROM marketplace_conversations conv
         JOIN marketplace_items item ON item.id = conv.item_id
@@ -151,13 +151,13 @@
         WHERE conv.id = #{id}
     </select>
 
-    <insert id="insertConversation" parameterType="com.trade.marketplace.persistence.MarketplaceConversationRow"
+    <insert id="insertConversation" parameterType="com.trade.marketplace.infrastructure.persistence.MarketplaceConversationRow"
             useGeneratedKeys="true" keyProperty="id" keyColumn="id">
         INSERT INTO marketplace_conversations (item_id, buyer_id, seller_id)
         VALUES (#{itemId}, #{buyerId}, #{sellerId})
     </insert>
 
-    <select id="listConversations" resultType="com.trade.marketplace.persistence.MarketplaceConversationRow">
+    <select id="listConversations" resultType="com.trade.marketplace.infrastructure.persistence.MarketplaceConversationRow">
         SELECT <include refid="conversationColumns"/>
         FROM marketplace_conversations conv
         JOIN marketplace_items item ON item.id = conv.item_id
@@ -172,7 +172,7 @@
         ORDER BY COALESCE(last_message.created_at, conv.updated_at) DESC, conv.id DESC
     </select>
 
-    <insert id="insertMessage" parameterType="com.trade.marketplace.persistence.MarketplaceMessageRow"
+    <insert id="insertMessage" parameterType="com.trade.marketplace.infrastructure.persistence.MarketplaceMessageRow"
             useGeneratedKeys="true" keyProperty="id" keyColumn="id">
         INSERT INTO marketplace_messages (conversation_id, sender_id, body, created_at)
         VALUES (#{conversationId}, #{senderId}, #{body}, #{createdAt})
@@ -182,7 +182,7 @@
         UPDATE marketplace_conversations SET updated_at = #{updatedAt} WHERE id = #{id}
     </update>
 
-    <select id="listMessages" resultType="com.trade.marketplace.persistence.MarketplaceMessageRow">
+    <select id="listMessages" resultType="com.trade.marketplace.infrastructure.persistence.MarketplaceMessageRow">
         <choose>
             <when test="afterId != null">
                 SELECT m.id, m.conversation_id, m.sender_id, sender.username AS sender_username,

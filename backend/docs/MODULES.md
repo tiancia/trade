@@ -19,34 +19,52 @@
 
 生产代码位于 `src/main/java/com/trade/<module>`；测试在 `src/test/java/com/trade/<module>` 镜像对应包路径。每个一级模块的 `package-info.java` 是离代码最近的职责说明。
 
+业务域先分为 `interfaces`、`application`、`domain`、`infrastructure`，再按能力细分。下表中的类名可从这些目录定位；完整职责规则见 [架构说明](ARCHITECTURE.md)。
+
 ## 关键模块
 
 ### automation
 
 `AutomationTaskRegistrar` 把 trading、polymarket、story 的循环定义登记到 `AutomationTaskManager`。登记不等于运行：只有应用就绪后的 `auto-start` 或 `/api/automation/tasks/{taskId}/start` 才会调用 `start()`。
 
+两者位于 `automation/application/task`；HTTP 入口在 `interfaces/web`，任务定义和快照在 `domain/model`，调度器装配在 `infrastructure/config`。
+
 同一任务内的多个循环共用互斥锁，避免同时修改同一外部账户或本地状态；每次执行完成后按 fixed delay 自调度。业务逻辑必须留在所属域，不能迁入 automation。
 
 ### trading
 
-Trading 是最复杂的业务域，内部按职责继续拆分：
+Trading 是最复杂的业务域，先按四层组织，再按业务与技术能力拆分：
 
 ```text
 trading/
-├─ web/           # HTTP 与运行状态入口
-├─ application/   # 策略用例和行情运行时编排
-├─ model/         # 决策、行情、订单输入等稳定值
-├─ strategy/      # 可注册策略与信号规则
-├─ risk/          # 资金与账户风险硬门禁
-├─ execution/     # paper/live/backtest broker 与数量计算
-├─ order/         # 幂等键、订单账本、状态机和 repository 契约
-├─ market/        # REST/WS 行情采集、历史 K 线与事件检测
-├─ event/         # 有界事件总线、handler、背压与指标
-├─ backtest/      # 回测编排、交易与权益结果
-├─ persistence/   # MyBatis、文件状态和 Redis adapter
-├─ scheduler/     # automation 触发的薄入口
-└─ config/        # Trading/OKX 属性与 Bean 组合
+├─ interfaces/
+│  ├─ web/                # HTTP、SSE、请求转换
+│  └─ scheduler/          # 定时触发
+├─ application/
+│  ├─ strategy/           # 策略选择、注册和评估
+│  ├─ order/              # 幂等、订单生命周期、结算与对账
+│  ├─ risk/               # 配置驱动风控、资金停止与恢复
+│  ├─ execution/          # 下单数量计算
+│  ├─ backtest/           # 回测编排
+│  ├─ runtime/            # 行情生命周期、领导租约
+│  ├─ market/             # 行情查询与信号检测
+│  ├─ decision/           # Prompt 与解析
+│  ├─ event/              # 技术事件信封、载荷与状态
+│  └─ port/               # Broker、存储、缓存、事件与审计契约
+├─ domain/
+│  ├─ model/              # 决策、策略记忆、运行快照、业务枚举
+│  ├─ order/              # 订单、成交与状态机
+│  ├─ risk/               # 风险评估结果与资金状态
+│  └─ backtest/           # 回测请求、状态、成交与权益结果
+└─ infrastructure/
+   ├─ broker/             # paper/live/backtest 执行实现与路由
+   ├─ persistence/        # MyBatis、文件状态与 Redis
+   ├─ market/             # REST/WS 接入与历史行情
+   ├─ event/              # 有界总线与处理器
+   └─ config/             # 属性绑定与 Bean 装配
 ```
+
+从 `application/strategy/TradingStrategyEngine` 阅读决策，从 `application/order/OrderReconciliationService` 阅读对账，从 `application/runtime` 阅读生命周期。数据定义从 `domain` 查找，外部实现从 `infrastructure` 查找。
 
 主要调用链：
 
@@ -76,13 +94,21 @@ REST / WebSocket market data
 
 两个域共享 `client.ai.AiTextClient`，但 Prompt、解析器、业务校验和审计仍归各自领域。Polymarket 的真实执行还必须经过 execution 开关、市场约束和 geoblock 检查；story 的输出由 `StoryFileRepository` 写入配置目录。
 
+用例在 `application/service`，Prompt 与解析在 `application/decision`，模型在 `domain/model`，触发器在 `interfaces/scheduler`。Polymarket 的订单编排在 `application/execution`，Python 下单及地域检查实现在 `infrastructure/broker`，行情在 `infrastructure/market`；story 的热点采集在 `infrastructure/trend`，文件输出在 `infrastructure/persistence`。
+
+共享 AI 审计接口在 `ai/application/port`，记录在 `ai/domain/model`，MyBatis 实现在 `ai/infrastructure/persistence`。
+
 ### textgame 与 marketplace
 
-这两个 HTTP 业务域已有清晰的 web/application/model/persistence 分包，但部分 application service 仍直接依赖 Mapper 或 Row。这是渐进重构区：新增可替换存储能力时优先引入 application port 和数据库无关模型，不要为了统一命名一次性改写所有接口。
+这两个 HTTP 业务域使用 `interfaces/web`、`application/service`、`domain/model`、`domain/exception`、`infrastructure/persistence` 和 `infrastructure/config`。文字游戏的纯规则额外放在 `domain/rule`；集市的 OSS 实现放在 `infrastructure/oss`，契约放在 `application/port`。部分 application service 仍直接依赖 Mapper 或 Row，后续随具体需求渐进收敛。
+
+文字游戏和集市的共享业务异常均位于各自的 `domain/exception`。`MarketplaceViews` 保留为 `application/service` 内部的 Row 转换助手。
 
 ### weibo
 
-Weibo 是 application port 模式的参考实现：application service 依赖 `application/port`，MyBatis adapter 位于 persistence，供应商 HTTP 协议位于 `client/weibo`。新增相似 OAuth 或发布模块时优先参考这一依赖方向。
+Weibo 是 application port 模式的参考实现：`application/service` 依赖 `application/port`，MyBatis adapter 位于 `infrastructure/persistence`，供应商 HTTP 协议位于 `client/weibo`。新增相似 OAuth 或发布模块时优先参考这一依赖方向。
+
+授权和发布用例异常位于 `weibo/domain/exception`；仅用于 HTTP 管理员鉴权的 `WeiboUnauthorizedException` 留在 `interfaces/web`。
 
 ## Resources 所有权
 

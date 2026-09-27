@@ -1,0 +1,148 @@
+package com.trade.polymarket.application.execution;
+
+import com.trade.polymarket.application.port.PolymarketOrderRunner;
+import com.trade.polymarket.domain.model.AiPolymarketDecision;
+import com.trade.polymarket.domain.model.PolymarketAction;
+import com.trade.polymarket.domain.model.PolymarketDecisionContext;
+import com.trade.polymarket.domain.model.PolymarketMarketSnapshot;
+import com.trade.polymarket.domain.model.PolymarketOrderRequest;
+import com.trade.polymarket.domain.model.PolymarketOrderResult;
+import com.trade.polymarket.domain.model.PolymarketOutcomeSnapshot;
+import com.trade.polymarket.infrastructure.config.AiPolymarketProperties;
+import org.junit.jupiter.api.Test;
+
+import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class PolymarketOrderExecutorTest {
+    @Test
+    void dryRunBuildsCappedBuyOrderWithoutCallingRunner() {
+        AiPolymarketProperties properties = new AiPolymarketProperties();
+        properties.setMaxOrderUsdc(new BigDecimal("5"));
+        properties.setMinOrderSize(new BigDecimal("1"));
+        properties.setMinWinConfidenceScore(new BigDecimal("0.45"));
+        RecordingRunner runner = new RecordingRunner();
+        PolymarketOrderExecutor executor = new PolymarketOrderExecutor(properties, runner, null);
+
+        PolymarketOrderResult result = executor.execute(buyDecision(), context());
+
+        assertTrue(result.isDryRun());
+        assertFalse(runner.called);
+        assertTrue(result.getResponseBody().contains("side=BUY"));
+        assertTrue(result.getResponseBody().contains("spendUsdc=5"));
+    }
+
+    @Test
+    void dryRunRoundsMarketBuyAmountsToPolymarketPrecision() {
+        AiPolymarketProperties properties = new AiPolymarketProperties();
+        properties.setMaxOrderUsdc(new BigDecimal("5.129"));
+        properties.setMinOrderSize(new BigDecimal("1"));
+        properties.setMinWinConfidenceScore(new BigDecimal("0.45"));
+        RecordingRunner runner = new RecordingRunner();
+        PolymarketOrderExecutor executor = new PolymarketOrderExecutor(properties, runner, null);
+
+        AiPolymarketDecision decision = buyDecision()
+                .setLimitPrice(new BigDecimal("0.93"))
+                .setMaxSpendUsdc(new BigDecimal("8"));
+        PolymarketOrderResult result = executor.execute(decision, context());
+
+        assertTrue(result.isDryRun());
+        assertTrue(result.getResponseBody().contains("spendUsdc=5.12"));
+        assertTrue(result.getResponseBody().contains("size=5.5053"));
+    }
+
+    @Test
+    void skipsWhenEdgeIsTooSmall() {
+        AiPolymarketProperties properties = new AiPolymarketProperties();
+        properties.setMinExpectedEdge(new BigDecimal("0.10"));
+        properties.setMinWinConfidenceScore(new BigDecimal("0.45"));
+        PolymarketOrderExecutor executor = new PolymarketOrderExecutor(properties, new RecordingRunner(), null);
+
+        AiPolymarketDecision decision = buyDecision().setEstimatedEdge(new BigDecimal("0.04"));
+        PolymarketOrderResult result = executor.execute(decision, context());
+
+        assertEquals("SKIPPED", result.getStatus());
+        assertEquals("estimatedEdge below configured minimum", result.getSkipReason());
+    }
+
+    @Test
+    void skipsWhenWinConfidenceScoreIsTooSmall() {
+        AiPolymarketProperties properties = new AiPolymarketProperties();
+        properties.setMinWinConfidenceScore(new BigDecimal("0.50"));
+        PolymarketOrderExecutor executor = new PolymarketOrderExecutor(properties, new RecordingRunner(), null);
+
+        AiPolymarketDecision decision = buyDecision()
+                .setWinProbability(new BigDecimal("0.60"))
+                .setConfidence(new BigDecimal("0.70"));
+        PolymarketOrderResult result = executor.execute(decision, context());
+
+        assertEquals("SKIPPED", result.getStatus());
+        assertEquals("winProbability * confidence below configured minimum", result.getSkipReason());
+    }
+
+    @Test
+    void skipsWhenMarketResolvesBeyondTurnoverWindow() {
+        AiPolymarketProperties properties = new AiPolymarketProperties();
+        properties.setMinWinConfidenceScore(new BigDecimal("0.45"));
+        properties.setRequireMarketEndDate(true);
+        properties.setMaxTimeToResolutionHours(72);
+        PolymarketOrderExecutor executor = new PolymarketOrderExecutor(properties, new RecordingRunner(), null);
+
+        PolymarketOrderResult result = executor.execute(
+                buyDecision(),
+                contextWithEndDate(Instant.now().plus(Duration.ofDays(7)).toString())
+        );
+
+        assertEquals("SKIPPED", result.getStatus());
+        assertEquals("market resolves beyond configured short-term window", result.getSkipReason());
+    }
+
+    private static AiPolymarketDecision buyDecision() {
+        return new AiPolymarketDecision()
+                .setAction(PolymarketAction.BUY)
+                .setReason("edge")
+                .setTokenId("token-1")
+                .setOutcome("Yes")
+                .setLimitPrice(new BigDecimal("0.50"))
+                .setMaxSpendUsdc(new BigDecimal("8"))
+                .setWinProbability(new BigDecimal("0.60"))
+                .setConfidence(new BigDecimal("0.75"))
+                .setEstimatedProbability(new BigDecimal("0.60"))
+                .setEstimatedEdge(new BigDecimal("0.10"));
+    }
+
+    private static PolymarketDecisionContext context() {
+        return contextWithEndDate(null);
+    }
+
+    private static PolymarketDecisionContext contextWithEndDate(String endDate) {
+        PolymarketOutcomeSnapshot outcome = new PolymarketOutcomeSnapshot()
+                .setOutcome("Yes")
+                .setTokenId("token-1")
+                .setMinOrderSize("1");
+        PolymarketMarketSnapshot market = new PolymarketMarketSnapshot()
+                .setSlug("market")
+                .setQuestion("Question?")
+                .setEndDate(endDate)
+                .setAcceptingOrders(true)
+                .setEnableOrderBook(true)
+                .setOutcomes(List.of(outcome));
+        return new PolymarketDecisionContext().setMarkets(List.of(market));
+    }
+
+    private static class RecordingRunner implements PolymarketOrderRunner {
+        private boolean called;
+
+        @Override
+        public String placeOrder(PolymarketOrderRequest request) {
+            called = true;
+            return "{}";
+        }
+    }
+}

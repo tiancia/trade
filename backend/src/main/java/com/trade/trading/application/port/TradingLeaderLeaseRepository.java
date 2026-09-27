@@ -1,6 +1,6 @@
 package com.trade.trading.application.port;
 
-import com.trade.trading.application.TradingLeaderLease;
+import com.trade.trading.domain.model.TradingLeaderLease;
 
 import java.time.Duration;
 

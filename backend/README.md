@@ -76,7 +76,7 @@ backend/
 └─ src/test/java/com/trade/    # 与生产包路径镜像的测试
 ```
 
-详细的标准域目录、允许依赖和典型调用链见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+业务模块内部统一按 `interfaces`（HTTP/定时入口）、`application`（用例和 port）、`domain`（数据和纯规则）、`infrastructure`（persistence、broker、market、event、config 等实现）四层组织，再按能力细分。详细目录、允许依赖和典型调用链见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 维护者应同时阅读 [贡献指南](CONTRIBUTING.md)；使用 AI 介入开发时，先让工具读取根目录 [AGENTS.md](AGENTS.md)。模块定位、运维和值守分别以 [模块目录](docs/MODULES.md) 和 [运维手册](docs/OPERATIONS.md) 为准。Prometheus、Grafana 和 trading 告警的本地搭建见 [Trading 可观测性](docs/OBSERVABILITY.md)。
 
@@ -110,6 +110,6 @@ backend/
 .\mvnw.cmd clean test
 ```
 
-单元测试和集成测试应放在与生产代码一致的包路径中。例如修改 `com.trade.weibo.application` 时，相应测试应位于 `src/test/java/com/trade/weibo/application/`。
+单元测试和集成测试应放在与生产代码一致的包路径中。例如修改 `com.trade.weibo.application.service` 时，相应测试应位于 `src/test/java/com/trade/weibo/application/service/`。
 
 默认测试套件不会真实下单；需要外部凭据的 OKX 集成测试会按条件跳过。

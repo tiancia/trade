@@ -2,6 +2,6 @@
  * Outbound interfaces required by Weibo application services.
  *
  * <p>Infrastructure adapters implement these ports from the
- * {@code com.trade.weibo.persistence} package.</p>
+ * {@code com.trade.weibo.infrastructure.persistence} package.</p>
  */
 package com.trade.weibo.application.port;

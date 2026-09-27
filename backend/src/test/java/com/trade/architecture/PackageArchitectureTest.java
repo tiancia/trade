@@ -41,17 +41,17 @@ class PackageArchitectureTest {
             SHARED_PACKAGES.stream()
     ).toList();
     private static final Set<String> LEGACY_MODEL_CLIENT_IMPORTS = Set.of(
-            "com.trade.polymarket.model.PolymarketOutcomeSnapshot -> "
+            "com.trade.polymarket.domain.model.PolymarketOutcomeSnapshot -> "
                     + "com.trade.client.polymarket.dto.PolymarketOrderBookLevel",
-            "com.trade.trading.model.TradingDecisionContext -> com.trade.client.okx.dto.AccountBalanceResp",
-            "com.trade.trading.model.TradingDecisionContext -> com.trade.client.okx.dto.BalanceDetail",
-            "com.trade.trading.model.TradingDecisionContext -> com.trade.client.okx.dto.CandleResp",
-            "com.trade.trading.model.TradingDecisionContext -> com.trade.client.okx.dto.FillResp",
-            "com.trade.trading.model.TradingDecisionContext -> com.trade.client.okx.dto.InstrumentInfoResp",
-            "com.trade.trading.model.TradingDecisionContext -> com.trade.client.okx.dto.OrderBookResp",
-            "com.trade.trading.model.TradingDecisionContext -> com.trade.client.okx.dto.OrderInfoResp",
-            "com.trade.trading.model.TradingDecisionContext -> com.trade.client.okx.dto.PositionResp",
-            "com.trade.trading.model.TradingDecisionContext -> com.trade.client.okx.dto.TickerResp"
+            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.AccountBalanceResp",
+            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.BalanceDetail",
+            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.CandleResp",
+            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.FillResp",
+            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.InstrumentInfoResp",
+            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.OrderBookResp",
+            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.OrderInfoResp",
+            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.PositionResp",
+            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.TickerResp"
     );
 
     private final Path projectRoot = locateProjectRoot();
@@ -170,6 +170,84 @@ class PackageArchitectureTest {
     }
 
     @Test
+    void applicationRootsKeepDataTypesAndSharedExceptionsOut() throws IOException {
+        Pattern dataDeclaration = Pattern.compile(
+                "(?m)^public\\s+(?:record|enum)\\s|^@Data\\b|"
+                        + "^public\\s+(?:final\\s+)?class\\s+\\w+\\s+extends\\s+RuntimeException\\b"
+        );
+        for (String domain : LAYERED_TOP_LEVEL_PACKAGES) {
+            Path application = mainJava.resolve("com/trade").resolve(domain).resolve("application");
+            try (Stream<Path> files = Files.list(application)) {
+                for (Path source : files.filter(Files::isRegularFile)
+                        .filter(path -> path.toString().endsWith(".java")).toList()) {
+                    assertFalse(dataDeclaration.matcher(Files.readString(source)).find(),
+                            () -> "application root owns behavior; move shared data/enums to model "
+                                    + "and use-case failures to exception: " + source);
+                }
+            }
+        }
+    }
+
+    @Test
+    void modulesExposeOnlyFourLayerDirectories() throws IOException {
+        Set<String> layers = Set.of("interfaces", "application", "domain", "infrastructure");
+        for (String module : Stream.concat(LAYERED_TOP_LEVEL_PACKAGES.stream(), Stream.of("ai")).toList()) {
+            Path moduleRoot = mainJava.resolve("com/trade").resolve(module);
+            for (Path source : javaSources(moduleRoot)) {
+                Path relative = moduleRoot.relativize(source);
+                if (relative.getNameCount() == 1) {
+                    assertEquals("package-info.java", relative.toString());
+                } else {
+                    assertTrue(layers.contains(relative.getName(0).toString()),
+                            () -> "module must group capabilities under the four layers: " + source);
+                }
+            }
+        }
+    }
+
+    @Test
+    void applicationPortsDoNotDependOnImplementations() throws IOException {
+        for (Path source : javaSources(mainJava.resolve("com/trade"))) {
+            if (!source.toString().replace('\\', '/').contains("/application/port/")) {
+                continue;
+            }
+            for (String importedType : imports(source)) {
+                assertFalse(importedType.contains(".infrastructure.") || importedType.contains(".interfaces."),
+                        () -> "outbound contracts must not depend on adapters: " + source + " -> " + importedType);
+            }
+        }
+    }
+
+    @Test
+    void innerLayersDoNotDependOnInboundAdapters() throws IOException {
+        for (String module : Stream.concat(BUSINESS_DOMAINS.stream(), Stream.of("ai")).toList()) {
+            for (Path source : javaSources(mainJava.resolve("com/trade").resolve(module))) {
+                if (belongsToLayer(source, "interfaces")) {
+                    continue;
+                }
+                for (String importedType : imports(source)) {
+                    assertFalse(importedType.contains(".interfaces."),
+                            () -> "inner layers must not depend on HTTP/scheduler adapters: " + source);
+                }
+            }
+        }
+    }
+
+    @Test
+    void mapperXmlReferencesResolveAfterPackageMoves() throws Exception {
+        Pattern typeAttribute = Pattern.compile("(?:namespace|type|resultType|parameterType)=\"(com\\.trade\\.[^\"]+)\"");
+        Path mapperRoot = projectRoot.resolve("src/main/resources/mapper");
+        try (Stream<Path> files = Files.walk(mapperRoot)) {
+            for (Path xml : files.filter(path -> path.toString().endsWith(".xml")).toList()) {
+                Matcher references = typeAttribute.matcher(Files.readString(xml));
+                while (references.find()) {
+                    Class.forName(references.group(1), false, getClass().getClassLoader());
+                }
+            }
+        }
+    }
+
+    @Test
     void domainModelsDoNotDependOnAdapters() throws IOException {
         Set<String> observedLegacyImports = new HashSet<>();
         for (Path source : javaSources(mainJava.resolve("com/trade"))) {
@@ -185,7 +263,11 @@ class PackageArchitectureTest {
                 }
                 assertFalse(
                         importedType.contains(".web.")
+                                || importedType.contains(".interfaces.")
+                                || importedType.contains(".infrastructure.")
                                 || importedType.contains(".persistence.")
+                                || importedType.contains(".application.")
+                                || importedType.contains(".config.")
                                 || importedType.startsWith("com.trade.client.") && !legacyClientImport,
                         () -> "domain model must stay adapter-neutral: " + source + " -> " + importedType
                 );

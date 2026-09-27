@@ -2,9 +2,9 @@
 <!DOCTYPE mapper
         PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.trade.polymarket.persistence.PolymarketDecisionAuditMapper">
+<mapper namespace="com.trade.polymarket.infrastructure.persistence.PolymarketDecisionAuditMapper">
     <insert id="insertDecisionRun"
-            parameterType="com.trade.polymarket.persistence.PolymarketDecisionAuditRow"
+            parameterType="com.trade.polymarket.infrastructure.persistence.PolymarketDecisionAuditRow"
             useGeneratedKeys="true"
             keyProperty="id"
             keyColumn="id">
@@ -55,7 +55,7 @@
         )
     </insert>
 
-    <update id="updateDecisionRun" parameterType="com.trade.polymarket.persistence.PolymarketDecisionAuditRow">
+    <update id="updateDecisionRun" parameterType="com.trade.polymarket.infrastructure.persistence.PolymarketDecisionAuditRow">
         UPDATE polymarket_decision_runs
         SET
             started_at = #{startedAt},
@@ -82,7 +82,7 @@
         WHERE id = #{id}
     </update>
 
-    <insert id="upsertAiRequest" parameterType="com.trade.polymarket.persistence.PolymarketDecisionAuditRow">
+    <insert id="upsertAiRequest" parameterType="com.trade.polymarket.infrastructure.persistence.PolymarketDecisionAuditRow">
         INSERT INTO polymarket_ai_requests (
             decision_run_id,
             prompt_text,
@@ -97,7 +97,7 @@
             ai_parameters_json = VALUES(ai_parameters_json)
     </insert>
 
-    <insert id="upsertAiResponse" parameterType="com.trade.polymarket.persistence.PolymarketDecisionAuditRow">
+    <insert id="upsertAiResponse" parameterType="com.trade.polymarket.infrastructure.persistence.PolymarketDecisionAuditRow">
         INSERT INTO polymarket_ai_responses (
             decision_run_id,
             received_at,
@@ -151,7 +151,7 @@
             parsed_estimated_edge = VALUES(parsed_estimated_edge)
     </insert>
 
-    <insert id="upsertOrderExecution" parameterType="com.trade.polymarket.persistence.PolymarketDecisionAuditRow">
+    <insert id="upsertOrderExecution" parameterType="com.trade.polymarket.infrastructure.persistence.PolymarketDecisionAuditRow">
         INSERT INTO polymarket_order_executions (
             decision_run_id,
             execution_status,

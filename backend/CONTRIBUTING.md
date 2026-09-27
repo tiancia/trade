@@ -18,21 +18,21 @@
 ```text
 <domain>/
 ├─ package-info.java
-├─ web/
+├─ interfaces/
+│  └─ web/、scheduler/
 ├─ application/
-│  └─ port/
-├─ model/ 或 domain/
-├─ decision/、strategy/、risk/
-├─ persistence/
-├─ scheduler/
-└─ config/
+│  └─ service/ 或能力包、port/
+├─ domain/
+│  └─ model/、exception/ 或能力包
+└─ infrastructure/
+   └─ persistence/、broker/、market/、event/、config/ 等
 ```
 
 必须遵守以下边界：
 
 - Controller 只处理协议和鉴权，业务流程下沉到 application service；
-- model/domain 不依赖 Web、持久化类型或供应商 client；
-- persistence 可以实现 application port，但不能依赖 web；
+- domain 不依赖 interfaces、application、infrastructure；供应商 client 历史依赖仅允许架构测试列举的基线；
+- infrastructure 实现 application port，port 不得反向依赖具体实现；
 - 业务域之间不直接调用；共享代码不能反向依赖业务域；
 - scheduler 只负责触发，不能复制用例逻辑；
 - 只有至少两个业务域已经稳定复用的纯能力才考虑进入 `common`。
@@ -96,4 +96,3 @@
 - [ ] 文档、示例配置和代码保持一致；
 - [ ] 未提交凭据、生成物、日志或本地状态；
 - [ ] `clean test` 通过，或明确记录未执行原因。
-

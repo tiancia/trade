@@ -16,6 +16,7 @@
 - [架构说明](ARCHITECTURE.md)：判断代码应该放在哪里；
 - [模块目录](MODULES.md)：快速定位调用链和测试；
 - [ADR-0001](adr/0001-domain-first-modular-monolith.md)：理解为什么采用模块化单体；
+- [ADR-0002](adr/0002-four-layer-module-layout.md)：理解为什么业务域内部统一四层，再按能力细分；
 - [Trading 回测说明](TRADING_BACKTEST.md)：回测请求、成交模型和指标口径；
 - [AI 开发约定](../AGENTS.md)：AI 编码助手必须遵守的边界与交付格式。
 

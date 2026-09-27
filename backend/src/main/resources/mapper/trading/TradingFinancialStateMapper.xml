@@ -2,8 +2,8 @@
 <!DOCTYPE mapper
         PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.trade.trading.persistence.TradingFinancialStateMapper">
-    <resultMap id="positionResult" type="com.trade.trading.persistence.TradingPositionRow">
+<mapper namespace="com.trade.trading.infrastructure.persistence.TradingFinancialStateMapper">
+    <resultMap id="positionResult" type="com.trade.trading.infrastructure.persistence.TradingPositionRow">
         <id property="accountScope" column="account_scope"/>
         <id property="instId" column="inst_id"/>
         <result property="positionSide" column="position_side"/>
@@ -16,7 +16,7 @@
         <result property="updatedAt" column="updated_at"/>
     </resultMap>
 
-    <resultMap id="riskResult" type="com.trade.trading.persistence.TradingRiskStateRow">
+    <resultMap id="riskResult" type="com.trade.trading.infrastructure.persistence.TradingRiskStateRow">
         <id property="accountScope" column="account_scope"/>
         <result property="currentEquity" column="current_equity"/>
         <result property="equityHighWatermark" column="equity_high_watermark"/>
@@ -35,7 +35,7 @@
         <result property="updatedAt" column="updated_at"/>
     </resultMap>
 
-    <resultMap id="fillLedgerResult" type="com.trade.trading.persistence.OrderFillLedgerRow">
+    <resultMap id="fillLedgerResult" type="com.trade.trading.infrastructure.persistence.OrderFillLedgerRow">
         <id property="orderId" column="order_id"/>
         <result property="side" column="side"/>
         <result property="cumulativeFilledSize" column="cumulative_filled_size"/>
@@ -51,7 +51,7 @@
         <result property="updatedAt" column="updated_at"/>
     </resultMap>
 
-    <insert id="insertPositionIfAbsent" parameterType="com.trade.trading.persistence.TradingPositionRow">
+    <insert id="insertPositionIfAbsent" parameterType="com.trade.trading.infrastructure.persistence.TradingPositionRow">
         INSERT INTO okx_position_state (
             account_scope, inst_id, position_side, quantity, average_cost,
             version, created_at, updated_at
@@ -73,7 +73,7 @@
         FOR UPDATE
     </select>
 
-    <update id="updatePosition" parameterType="com.trade.trading.persistence.TradingPositionRow">
+    <update id="updatePosition" parameterType="com.trade.trading.infrastructure.persistence.TradingPositionRow">
         UPDATE okx_position_state
         SET quantity = #{quantity},
             average_cost = #{averageCost},
@@ -86,7 +86,7 @@
           AND version = #{version} - 1
     </update>
 
-    <insert id="insertRiskStateIfAbsent" parameterType="com.trade.trading.persistence.TradingRiskStateRow">
+    <insert id="insertRiskStateIfAbsent" parameterType="com.trade.trading.infrastructure.persistence.TradingRiskStateRow">
         INSERT INTO okx_risk_state (
             account_scope, current_equity, equity_high_watermark, day_start_equity,
             day_start_date, consecutive_losses, loss_cooldown_until, last_trade_time,
@@ -111,7 +111,7 @@
         SELECT * FROM okx_risk_state WHERE account_scope = #{accountScope} FOR UPDATE
     </select>
 
-    <update id="updateRiskState" parameterType="com.trade.trading.persistence.TradingRiskStateRow">
+    <update id="updateRiskState" parameterType="com.trade.trading.infrastructure.persistence.TradingRiskStateRow">
         UPDATE okx_risk_state
         SET current_equity = #{currentEquity},
             equity_high_watermark = #{equityHighWatermark},
@@ -148,7 +148,7 @@
         WHERE account_scope = #{accountScope}
     </update>
 
-    <insert id="insertFillLedgerIfAbsent" parameterType="com.trade.trading.persistence.OrderFillLedgerRow">
+    <insert id="insertFillLedgerIfAbsent" parameterType="com.trade.trading.infrastructure.persistence.OrderFillLedgerRow">
         INSERT INTO okx_order_fill_ledger (
             order_id, side, cumulative_filled_size, applied_position_quantity,
             applied_quote_cost, version, created_at, updated_at
@@ -163,7 +163,7 @@
         SELECT * FROM okx_order_fill_ledger WHERE order_id = #{orderId} FOR UPDATE
     </select>
 
-    <update id="updateFillLedger" parameterType="com.trade.trading.persistence.OrderFillLedgerRow">
+    <update id="updateFillLedger" parameterType="com.trade.trading.infrastructure.persistence.OrderFillLedgerRow">
         UPDATE okx_order_fill_ledger
         SET cumulative_filled_size = #{cumulativeFilledSize},
             applied_position_quantity = #{appliedPositionQuantity},

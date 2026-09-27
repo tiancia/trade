@@ -2,8 +2,8 @@
 <!DOCTYPE mapper
         PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.trade.trading.persistence.TradingOrderMapper">
-    <resultMap id="tradingOrderResult" type="com.trade.trading.order.TradingOrder">
+<mapper namespace="com.trade.trading.infrastructure.persistence.TradingOrderMapper">
+    <resultMap id="tradingOrderResult" type="com.trade.trading.domain.order.TradingOrder">
         <id property="id" column="id"/>
         <result property="idempotencyKey" column="idempotency_key"/>
         <result property="clientOrderId" column="client_order_id"/>
@@ -17,7 +17,7 @@
         <result property="orderType" column="order_type"/>
         <result property="targetCurrency" column="target_currency"/>
         <result property="requestedSize" column="requested_size"/>
-        <result property="status" column="status" javaType="com.trade.trading.order.OrderStatus"/>
+        <result property="status" column="status" javaType="com.trade.trading.domain.order.OrderStatus"/>
         <result property="version" column="version"/>
         <result property="filledBaseAmount" column="filled_base_amount"/>
         <result property="averageFillPrice" column="average_fill_price"/>
@@ -31,7 +31,7 @@
         <result property="completedAt" column="completed_at"/>
     </resultMap>
 
-    <insert id="insertIfAbsent" parameterType="com.trade.trading.order.TradingOrder">
+    <insert id="insertIfAbsent" parameterType="com.trade.trading.domain.order.TradingOrder">
         INSERT INTO okx_orders (
             idempotency_key,
             client_order_id,
