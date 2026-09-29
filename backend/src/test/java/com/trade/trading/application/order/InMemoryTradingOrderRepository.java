@@ -25,23 +25,8 @@ public class InMemoryTradingOrderRepository implements TradingOrderRepository {
             return copy(existing);
         }
         Instant now = Instant.now();
-        TradingOrder created = new TradingOrder()
-                .setId(ids.incrementAndGet())
-                .setIdempotencyKey(submission.idempotencyKey())
-                .setClientOrderId(submission.clientOrderId())
-                .setDecisionId(submission.decisionId())
-                .setStrategyId(submission.strategyId())
-                .setInstId(submission.instId())
-                .setAction(submission.action())
-                .setSide(submission.side())
-                .setTdMode(submission.tdMode())
-                .setOrderType(submission.orderType())
-                .setTargetCurrency(submission.targetCurrency())
-                .setRequestedSize(submission.requestedSize())
-                .setStatus(OrderStatus.PENDING_SUBMIT)
-                .setVersion(0)
-                .setCreatedAt(now)
-                .setUpdatedAt(now);
+        TradingOrder created = TradingOrder.restore(TradingOrder.pending(submission, now).snapshot()
+                .toBuilder().id(ids.incrementAndGet()).build());
         orders.put(submission.idempotencyKey(), created);
         return copy(created);
     }
@@ -79,31 +64,6 @@ public class InMemoryTradingOrderRepository implements TradingOrderRepository {
     }
 
     private static TradingOrder copy(TradingOrder source) {
-        return new TradingOrder()
-                .setId(source.getId())
-                .setIdempotencyKey(source.getIdempotencyKey())
-                .setClientOrderId(source.getClientOrderId())
-                .setExchangeOrderId(source.getExchangeOrderId())
-                .setDecisionId(source.getDecisionId())
-                .setStrategyId(source.getStrategyId())
-                .setInstId(source.getInstId())
-                .setAction(source.getAction())
-                .setSide(source.getSide())
-                .setTdMode(source.getTdMode())
-                .setOrderType(source.getOrderType())
-                .setTargetCurrency(source.getTargetCurrency())
-                .setRequestedSize(source.getRequestedSize())
-                .setStatus(source.getStatus())
-                .setVersion(source.getVersion())
-                .setFilledBaseAmount(source.getFilledBaseAmount())
-                .setAverageFillPrice(source.getAverageFillPrice())
-                .setFee(source.getFee())
-                .setFeeCcy(source.getFeeCcy())
-                .setFailureCode(source.getFailureCode())
-                .setFailureMessage(source.getFailureMessage())
-                .setCreatedAt(source.getCreatedAt())
-                .setUpdatedAt(source.getUpdatedAt())
-                .setSubmittedAt(source.getSubmittedAt())
-                .setCompletedAt(source.getCompletedAt());
+        return source; // Orders are immutable.
     }
 }

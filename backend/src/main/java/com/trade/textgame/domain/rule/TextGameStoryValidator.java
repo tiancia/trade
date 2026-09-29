@@ -1,10 +1,8 @@
 package com.trade.textgame.domain.rule;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.trade.textgame.domain.model.StoryValidation;
 import com.trade.textgame.domain.model.StoryValidation.Issue;
 import com.trade.textgame.domain.model.StoryValidation.Result;
-import org.springframework.stereotype.Component;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -14,7 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-@Component
 public class TextGameStoryValidator {
     private static final Set<String> ROOT_FIELDS = Set.of("schemaVersion", "storyKey", "metadata", "initialState", "startNodeId", "nodes");
     private static final Set<String> METADATA_FIELDS = Set.of("title", "summary", "durationMinutes", "maxChoices", "chapterCount", "tags", "coverImage");

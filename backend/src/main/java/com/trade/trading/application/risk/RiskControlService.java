@@ -2,13 +2,22 @@ package com.trade.trading.application.risk;
 
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
-import com.trade.trading.domain.model.TradingDecisionContext;
+import com.trade.trading.application.market.TradingDecisionContext;
+import com.trade.trading.application.market.TradingMarketInputs;
 import com.trade.trading.domain.model.TradingRiskState;
-import com.trade.trading.domain.model.TradingState;
+import com.trade.trading.domain.risk.ConsecutiveOpenActionsRule;
+import com.trade.trading.domain.risk.DailyLossRule;
+import com.trade.trading.domain.risk.LossCooldownRule;
+import com.trade.trading.domain.risk.MaxDrawdownRule;
+import com.trade.trading.domain.risk.OpenIntervalRule;
 import com.trade.trading.domain.risk.RiskAssessment;
+import com.trade.trading.domain.risk.RiskContext;
+import com.trade.trading.domain.risk.RiskRule;
+import com.trade.trading.domain.risk.RiskStateTransitions;
+import com.trade.trading.domain.risk.SingleOpenExposureRule;
 import com.trade.trading.domain.risk.RiskViolation;
 import com.trade.trading.infrastructure.config.TradingProperties;
-import com.trade.trading.infrastructure.persistence.TradingStateRepository;
+import com.trade.trading.application.port.TradingStateStore;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,14 +26,12 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
 /**
- * Evaluates application-side risk rules before a strategy decision can place orders.
+ * Coordinates risk-state persistence, domain evaluation, and assessment metrics.
  *
  * <p>The first violation becomes the short skip reason while all violations
  * remain available on the assessment.</p>
@@ -32,7 +39,7 @@ import java.util.Locale;
 @Component
 public class RiskControlService {
     private final TradingProperties properties;
-    private final TradingStateRepository stateRepository;
+    private final TradingStateStore stateRepository;
     private final Clock clock;
     private final List<RiskRule> rules;
     private final MeterRegistry meterRegistry;
@@ -40,23 +47,23 @@ public class RiskControlService {
     @Autowired
     public RiskControlService(
             TradingProperties properties,
-            TradingStateRepository stateRepository,
+            TradingStateStore stateRepository,
             MeterRegistry meterRegistry
     ) {
         this(properties, stateRepository, Clock.systemUTC(), defaultRules(), meterRegistry);
     }
 
-    public RiskControlService(TradingProperties properties, TradingStateRepository stateRepository) {
+    public RiskControlService(TradingProperties properties, TradingStateStore stateRepository) {
         this(properties, stateRepository, Clock.systemUTC(), defaultRules(), null);
     }
 
-    public RiskControlService(TradingProperties properties, TradingStateRepository stateRepository, Clock clock) {
+    public RiskControlService(TradingProperties properties, TradingStateStore stateRepository, Clock clock) {
         this(properties, stateRepository, clock, defaultRules(), null);
     }
 
     public RiskControlService(
             TradingProperties properties,
-            TradingStateRepository stateRepository,
+            TradingStateStore stateRepository,
             Clock clock,
             List<RiskRule> rules
     ) {
@@ -65,7 +72,7 @@ public class RiskControlService {
 
     RiskControlService(
             TradingProperties properties,
-            TradingStateRepository stateRepository,
+            TradingStateStore stateRepository,
             Clock clock,
             List<RiskRule> rules,
             MeterRegistry meterRegistry
@@ -87,8 +94,11 @@ public class RiskControlService {
         Instant now = Instant.now(clock);
         RiskContext context = new RiskContext()
                 .setDecision(decision)
-                .setDecisionContext(decisionContext)
-                .setProperties(properties)
+                .setLastPrice(TradingMarketInputs.lastPrice(decisionContext))
+                .setPolicy(RiskInputs.policy(riskProperties))
+                .setSpotInstrument(properties.isSpotInstrument())
+                .setDerivativeInstrument(properties.isDerivativeInstrument())
+                .setShortEnabled(properties.isShortEnabled())
                 .setRiskState(riskState)
                 .setNow(now)
                 .setCurrentEquity(currentEquity);
@@ -116,22 +126,9 @@ public class RiskControlService {
             return;
         }
 
-        TradingState tradingState = stateRepository.getState();
-        TradingRiskState riskState = copyRiskState(tradingState.getRiskState());
-        BigDecimal currentEquity = RiskContext.estimateEquity(decisionContext);
-        if (currentEquity.signum() > 0) {
-            riskState.setCurrentEquity(currentEquity);
-            if (zeroIfNull(riskState.getEquityHighWatermark()).compareTo(currentEquity) < 0) {
-                riskState.setEquityHighWatermark(currentEquity);
-            }
-        }
-
-        riskState.setLastTradeTime(Instant.now(clock).toString());
-        if (decision.getAction().isOpenAction()) {
-            riskState.setConsecutiveOpenActions(riskState.getConsecutiveOpenActions() + 1);
-        } else if (decision.getAction().isCloseAction()) {
-            riskState.setConsecutiveOpenActions(0);
-        }
+        TradingRiskState riskState = transitions().executed(
+                stateRepository.getState().getRiskState(), decision.getAction(),
+                TradingMarketInputs.estimatedEquity(decisionContext), Instant.now(clock));
         stateRepository.recordRiskState(riskState);
     }
 
@@ -146,83 +143,24 @@ public class RiskControlService {
         if (action == null || !riskProperties().isEnabled()) {
             return;
         }
-        TradingRiskState riskState = copyRiskState(stateRepository.getState().getRiskState());
-        riskState.setLastTradeTime((executedAt == null ? Instant.now(clock) : executedAt).toString());
-        if (action.isOpenAction()) {
-            riskState.setConsecutiveOpenActions(riskState.getConsecutiveOpenActions() + 1);
-        } else if (action.isCloseAction()) {
-            riskState.setConsecutiveOpenActions(0);
-        }
+        TradingRiskState riskState = transitions().executed(
+                stateRepository.getState().getRiskState(), action, BigDecimal.ZERO,
+                executedAt == null ? Instant.now(clock) : executedAt);
         stateRepository.recordRiskState(riskState);
     }
 
     private TradingRiskState refreshRiskState(TradingDecisionContext decisionContext) {
-        TradingState tradingState = stateRepository.getState();
-        TradingRiskState riskState = copyRiskState(tradingState.getRiskState());
-        BigDecimal currentEquity = RiskContext.estimateEquity(decisionContext);
-        if (currentEquity.signum() <= 0) {
-            return riskState;
+        TradingRiskState source = stateRepository.getState().getRiskState();
+        BigDecimal equity = TradingMarketInputs.estimatedEquity(decisionContext);
+        TradingRiskState state = transitions().refresh(source, equity, Instant.now(clock));
+        if (equity.signum() > 0) {
+            stateRepository.recordRiskState(state);
         }
-
-        Instant now = Instant.now(clock);
-        applyDailyBoundary(riskState, currentEquity, now);
-        applyEquityLossState(riskState, currentEquity, now);
-        if (zeroIfNull(riskState.getEquityHighWatermark()).compareTo(currentEquity) < 0) {
-            riskState.setEquityHighWatermark(currentEquity);
-        }
-        riskState.setCurrentEquity(currentEquity);
-        stateRepository.recordRiskState(riskState);
-        return riskState;
+        return state;
     }
 
-    private void applyDailyBoundary(TradingRiskState riskState, BigDecimal currentEquity, Instant now) {
-        String today = LocalDate.ofInstant(now, dailyZone()).toString();
-        // A new risk day resets the reference equity used by daily loss checks.
-        if (riskState.getDayStartDate() == null
-                || !riskState.getDayStartDate().equals(today)
-                || zeroIfNull(riskState.getDayStartEquity()).signum() <= 0) {
-            riskState.setDayStartDate(today)
-                    .setDayStartEquity(currentEquity);
-        }
-    }
-
-    private void applyEquityLossState(TradingRiskState riskState, BigDecimal currentEquity, Instant now) {
-        TradingProperties.RiskProperties riskProperties = riskProperties();
-        BigDecimal previousEquity = zeroIfNull(riskState.getCurrentEquity());
-        if (previousEquity.signum() <= 0) {
-            riskState.setConsecutiveLosses(Math.max(0, riskState.getConsecutiveLosses()));
-            return;
-        }
-
-        BigDecimal noise = previousEquity.multiply(zeroIfNull(riskProperties.getEquityNoiseRatio()));
-        BigDecimal decline = previousEquity.subtract(currentEquity);
-        boolean hasLoss = decline.compareTo(noise) > 0;
-        Instant cooldownUntil = parseInstant(riskState.getLossCooldownUntil());
-        boolean activeCooldown = cooldownUntil != null && now.isBefore(cooldownUntil);
-        // Tiny equity movements below the noise ratio do not count as losses;
-        // this prevents fees or mark-price jitter from triggering cooldowns.
-        if (hasLoss) {
-            riskState.setConsecutiveLosses(riskState.getConsecutiveLosses() + 1);
-        } else if (!activeCooldown) {
-            riskState.setConsecutiveLosses(0);
-        }
-
-        if (hasLoss
-                && riskProperties.getMaxConsecutiveLosses() > 0
-                && riskState.getConsecutiveLosses() >= riskProperties.getMaxConsecutiveLosses()
-                && !activeCooldown) {
-            riskState.setLossCooldownUntil(now.plusMillis(riskProperties.getLossCooldownMs()).toString());
-        } else if (!activeCooldown) {
-            riskState.setLossCooldownUntil(null);
-        }
-    }
-
-    private ZoneId dailyZone() {
-        String zone = riskProperties().getDailyZone();
-        if (zone == null || zone.isBlank()) {
-            return ZoneId.of("Asia/Shanghai");
-        }
-        return ZoneId.of(zone);
+    private RiskStateTransitions transitions() {
+        return new RiskStateTransitions(RiskInputs.policy(riskProperties()));
     }
 
     private TradingProperties.RiskProperties riskProperties() {
@@ -269,36 +207,6 @@ public class RiskControlService {
                 new ConsecutiveOpenActionsRule(),
                 new SingleOpenExposureRule()
         );
-    }
-
-    private static TradingRiskState copyRiskState(TradingRiskState source) {
-        if (source == null) {
-            return new TradingRiskState();
-        }
-        return new TradingRiskState()
-                .setCurrentEquity(zeroIfNull(source.getCurrentEquity()))
-                .setEquityHighWatermark(zeroIfNull(source.getEquityHighWatermark()))
-                .setDayStartEquity(zeroIfNull(source.getDayStartEquity()))
-                .setDayStartDate(source.getDayStartDate())
-                .setConsecutiveLosses(source.getConsecutiveLosses())
-                .setLossCooldownUntil(source.getLossCooldownUntil())
-                .setLastTradeTime(source.getLastTradeTime())
-                .setConsecutiveOpenActions(source.getConsecutiveOpenActions())
-                .setLastRiskReason(source.getLastRiskReason())
-                .setConsecutiveReconciliationFailures(source.getConsecutiveReconciliationFailures())
-                .setLastReconciliationAt(source.getLastReconciliationAt())
-                .setLastReconciliationError(source.getLastReconciliationError());
-    }
-
-    private static Instant parseInstant(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        try {
-            return Instant.parse(value);
-        } catch (RuntimeException e) {
-            return null;
-        }
     }
 
     private static BigDecimal zeroIfNull(BigDecimal value) {

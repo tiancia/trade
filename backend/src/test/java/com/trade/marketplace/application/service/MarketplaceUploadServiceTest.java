@@ -1,6 +1,5 @@
 package com.trade.marketplace.application.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.marketplace.application.port.MarketplaceOssStsClient;
 import com.trade.marketplace.domain.model.MarketplaceApi;
 import com.trade.marketplace.domain.model.MarketplacePrincipal;
@@ -24,7 +23,7 @@ class MarketplaceUploadServiceTest {
         properties.getOss().setRegion("oss-cn-hangzhou");
         properties.getOss().setPublicBaseUrl("https://img.example.com/");
         FakeStsClient stsClient = new FakeStsClient();
-        MarketplaceUploadService service = new MarketplaceUploadService(properties, stsClient, new ObjectMapper());
+        MarketplaceUploadService service = new MarketplaceUploadService(properties, stsClient);
 
         MarketplaceApi.UploadIntent intent = service.createIntent(
                 new MarketplacePrincipal(42L, "alice", "Alice"),
@@ -38,17 +37,15 @@ class MarketplaceUploadServiceTest {
         assertEquals("https://img.example.com/" + intent.objectKey(), intent.publicUrl());
         assertEquals("public-read", intent.objectAcl());
         assertEquals("sts-ak", intent.credentials().accessKeyId());
-        assertTrue(stsClient.policy.contains("oss:PutObject"));
-        assertTrue(stsClient.policy.contains("oss:PutObjectAcl"));
-        assertTrue(stsClient.policy.contains("bucket/" + intent.objectKey()));
+        assertEquals("bucket", stsClient.bucket);
+        assertEquals(intent.objectKey(), stsClient.objectKey);
     }
 
     @Test
     void rejectsNonImageContentTypes() {
         MarketplaceUploadService service = new MarketplaceUploadService(
                 new MarketplaceProperties(),
-                new FakeStsClient(),
-                new ObjectMapper()
+                new FakeStsClient()
         );
 
         assertThrows(IllegalArgumentException.class, () -> service.createIntent(
@@ -61,8 +58,7 @@ class MarketplaceUploadServiceTest {
     void rejectsEmptyAndOversizedImages() {
         MarketplaceUploadService service = new MarketplaceUploadService(
                 new MarketplaceProperties(),
-                new FakeStsClient(),
-                new ObjectMapper()
+                new FakeStsClient()
         );
         MarketplacePrincipal user = new MarketplacePrincipal(1L, "alice", "Alice");
 
@@ -77,16 +73,19 @@ class MarketplaceUploadServiceTest {
     }
 
     private static class FakeStsClient implements MarketplaceOssStsClient {
-        private String policy;
+        private String bucket;
+        private String objectKey;
 
         @Override
-        public MarketplaceApi.OssCredentials assumeRole(
+        public MarketplaceApi.OssCredentials assumeUploadRole(
                 String roleArn,
                 String roleSessionName,
-                String policy,
+                String bucket,
+                String objectKey,
                 int durationSeconds
         ) {
-            this.policy = policy;
+            this.bucket = bucket;
+            this.objectKey = objectKey;
             return new MarketplaceApi.OssCredentials(
                     "sts-ak",
                     "sts-sk",

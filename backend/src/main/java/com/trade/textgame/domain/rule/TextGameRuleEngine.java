@@ -3,7 +3,6 @@ package com.trade.textgame.domain.rule;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.trade.textgame.domain.model.GameState;
-import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -11,7 +10,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-@Component
 public class TextGameRuleEngine {
     public boolean matches(JsonNode condition, GameState state) {
         if (condition == null || condition.isMissingNode() || condition.isNull() || condition.isEmpty()) {

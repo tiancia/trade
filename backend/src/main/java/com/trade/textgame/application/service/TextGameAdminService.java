@@ -1,5 +1,6 @@
 package com.trade.textgame.application.service;
 
+import com.trade.textgame.domain.rule.StoryPublicationPolicy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.textgame.domain.exception.TextGameConflictException;
@@ -71,7 +72,7 @@ public class TextGameAdminService {
         if (request == null || request.story() == null) {
             throw new IllegalArgumentException("story 不能为空");
         }
-        requireValidStory(storyKey, request.story());
+        new StoryPublicationPolicy(validator).requireValidStory(storyKey, request.story());
         StoryDocument document = StoryDocument.from(request.story());
         TextGameStoryRow story = mapper.findStoryByKey(storyKey);
         if (story == null) {
@@ -86,9 +87,8 @@ public class TextGameAdminService {
         int versionNumber = request.versionNumber() == null
                 ? mapper.listVersions(story.getId()).stream().mapToInt(TextGameVersionRow::getVersionNumber).max().orElse(0) + 1
                 : request.versionNumber();
-        if (versionNumber <= 0 || mapper.findVersion(story.getId(), versionNumber) != null) {
-            throw new TextGameConflictException("剧情版本号无效或已存在");
-        }
+        StoryPublicationPolicy.requireAvailableVersion(versionNumber,
+                versionNumber > 0 && mapper.findVersion(story.getId(), versionNumber) != null);
         String json = writeJson(request.story());
         TextGameVersionRow version = new TextGameVersionRow()
                 .setStoryId(story.getId())
@@ -110,7 +110,7 @@ public class TextGameAdminService {
         if (request == null || request.expectedRevision() == null || request.story() == null) {
             throw new IllegalArgumentException("expectedRevision 和 story 不能为空");
         }
-        requireValidStory(storyKey, request.story());
+        new StoryPublicationPolicy(validator).requireValidStory(storyKey, request.story());
         TextGameStoryRow story = requireStory(storyKey);
         TextGameVersionRow version = requireVersion(story, versionNumber);
         String json = writeJson(request.story());
@@ -131,10 +131,7 @@ public class TextGameAdminService {
         }
         TextGameStoryRow story = requireStory(storyKey);
         TextGameVersionRow version = requireVersion(story, versionNumber);
-        StoryValidation.Result validation = validator.validate(readJson(version.getStoryJson()));
-        if (!validation.valid()) {
-            throw new IllegalArgumentException("剧情校验失败: " + validation.errors().getFirst().message());
-        }
+        new StoryPublicationPolicy(validator).requirePublishable(readJson(version.getStoryJson()));
         mapper.archivePublished(story.getId());
         if (mapper.publishDraft(version.getId(), request.expectedRevision(), Timestamp.from(Instant.now())) != 1) {
             throw new TextGameConflictException("草稿已修改或该版本不能发布");
@@ -144,16 +141,6 @@ public class TextGameAdminService {
                 .setSummary(document.metadata().path("summary").asText());
         mapper.updateStoryMetadata(story);
         return document(mapper.findVersionById(version.getId()));
-    }
-
-    private void requireValidStory(String storyKey, JsonNode value) {
-        StoryValidation.Result result = validator.validate(value);
-        if (!result.valid()) {
-            throw new IllegalArgumentException("剧情校验失败: " + result.errors().getFirst().message());
-        }
-        if (!storyKey.equals(value.path("storyKey").asText())) {
-            throw new IllegalArgumentException("URL storyKey 与剧情 JSON 不一致");
-        }
     }
 
     private TextGameStoryRow requireStory(String storyKey) {

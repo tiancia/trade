@@ -1,5 +1,6 @@
 package com.trade.trading.application.risk;
 
+import com.trade.trading.domain.risk.FundSafetyPolicy;
 import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.OkxResponses;
 import com.trade.client.okx.dto.CancelAllAfterReq;
@@ -10,12 +11,10 @@ import com.trade.client.okx.dto.OrderInfoResp;
 import com.trade.client.okx.dto.PendingOrdersReq;
 import com.trade.trading.application.port.FundSafetyRepository;
 import com.trade.trading.application.port.TradingOrderRepository;
-import com.trade.trading.domain.model.TradingRiskState;
-import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.domain.risk.FundSafetyState;
 import com.trade.trading.domain.risk.RiskAssessment;
 import com.trade.trading.infrastructure.config.TradingProperties;
-import com.trade.trading.infrastructure.persistence.TradingStateRepository;
+import com.trade.trading.application.port.TradingStateStore;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -27,7 +26,6 @@ import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -41,14 +39,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Component
 public class FundSafetyService {
     private static final Logger log = LoggerFactory.getLogger(FundSafetyService.class);
-    private static final Set<String> HARD_RISK_CODES = Set.of(
-            "RISK_MAX_DRAWDOWN",
-            "RISK_DAILY_LOSS"
-    );
 
     private final FundSafetyRepository repository;
     private final TradingOrderRepository orderRepository;
-    private final TradingStateRepository stateRepository;
+    private final TradingStateStore stateRepository;
     private final OkxApi okxApi;
     private final TradingProperties properties;
     private final MeterRegistry meterRegistry;
@@ -58,7 +52,7 @@ public class FundSafetyService {
     public FundSafetyService(
             FundSafetyRepository repository,
             TradingOrderRepository orderRepository,
-            TradingStateRepository stateRepository,
+            TradingStateStore stateRepository,
             OkxApi okxApi,
             TradingProperties properties,
             MeterRegistry meterRegistry
@@ -137,14 +131,8 @@ public class FundSafetyService {
     }
 
     public FundSafetyState haltForHardRisk(RiskAssessment assessment) {
-        if (assessment == null || assessment.getViolations() == null) {
-            return state();
-        }
-        return assessment.getViolations().stream()
-                .filter(violation -> violation != null && HARD_RISK_CODES.contains(violation.getCode()))
-                .findFirst()
-                .map(violation -> halt("risk-control", violation.getReason()))
-                .orElseGet(this::state);
+        return FundSafetyPolicy.hardRiskReason(assessment)
+                .map(reason -> halt("risk-control", reason)).orElseGet(this::state);
     }
 
     public FundSafetyState resume(long expectedVersion, String reason, String confirmation) {
@@ -155,26 +143,15 @@ public class FundSafetyService {
             throw new IllegalArgumentException("Resume reason is required");
         }
         FundSafetyState current = state();
-        if (!current.isHalted()) {
-            throw new IllegalStateException("Fund safety is already ACTIVE");
-        }
-        if (current.getVersion() != expectedVersion) {
-            throw new java.util.ConcurrentModificationException(
-                    "Fund safety revision changed from " + expectedVersion + " to " + current.getVersion()
-            );
-        }
+        FundSafetyPolicy.requireResumeState(current, expectedVersion);
         if (properties.isLiveAccountSelected()) {
             List<OrderInfoResp> pending = pendingOrders();
-            if (!pending.isEmpty()) {
-                throw new IllegalStateException("Cannot resume while OKX still has pending orders");
-            }
-            if (!orderRepository.findReconciliationCandidates(
+            FundSafetyPolicy.requireNoPendingOrders(!pending.isEmpty(), false);
+            FundSafetyPolicy.requireNoPendingOrders(false, !orderRepository.findReconciliationCandidates(
                     properties.getInstId(),
                     properties.getReconciliation().getBatchSize()
-            ).isEmpty()) {
-                throw new IllegalStateException("Cannot resume while local orders still require reconciliation");
-            }
-            requireFreshSuccessfulReconciliation(current);
+            ).isEmpty());
+            FundSafetyPolicy.requireFreshSuccessfulReconciliation(current, stateRepository.getState());
             // Disarm the exchange timer before reopening local submissions. If
             // this call fails, the database row remains HALTED.
             requireActionOk(
@@ -191,24 +168,6 @@ public class FundSafetyService {
         observe(state);
         counter("resumed").increment();
         return state;
-    }
-
-    private void requireFreshSuccessfulReconciliation(FundSafetyState safetyState) {
-        TradingState tradingState = stateRepository.getState();
-        TradingRiskState riskState = tradingState.getRiskState();
-        Instant positionAt = parseInstant(tradingState.getPositionLastReconciledAt());
-        Instant riskAt = parseInstant(riskState == null ? null : riskState.getLastReconciliationAt());
-        Instant haltedAt = safetyState.getHaltedAt();
-        boolean stalePosition = positionAt == null || (haltedAt != null && positionAt.isBefore(haltedAt));
-        boolean staleRisk = riskAt == null || (haltedAt != null && riskAt.isBefore(haltedAt));
-        boolean failed = riskState == null
-                || riskState.getConsecutiveReconciliationFailures() != 0
-                || riskState.getLastReconciliationError() != null;
-        if (stalePosition || staleRisk || failed) {
-            throw new IllegalStateException(
-                    "Cannot resume before a successful order and position reconciliation after the fund stop"
-            );
-        }
     }
 
     private void cancelOutstandingOrders() {
@@ -272,17 +231,6 @@ public class FundSafetyService {
 
     private static String firstText(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value.trim();
-    }
-
-    private static Instant parseInstant(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        try {
-            return Instant.parse(value);
-        } catch (RuntimeException e) {
-            return null;
-        }
     }
 
     public static final class TradingFundsHaltedException extends IllegalStateException {

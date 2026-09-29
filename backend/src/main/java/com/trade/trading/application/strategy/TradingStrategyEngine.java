@@ -1,21 +1,20 @@
 package com.trade.trading.application.strategy;
 
-import com.trade.client.okx.dto.BalanceDetail;
-import com.trade.common.support.TradingMath;
+import com.trade.trading.application.market.TradingMarketInputs;
 import com.trade.trading.application.order.OrderReconciliationService;
 import com.trade.trading.application.port.TradingBroker;
 import com.trade.trading.application.risk.FundSafetyService;
 import com.trade.trading.application.runtime.TradingLeadershipService;
 import com.trade.trading.domain.model.ActiveStrategySelection;
 import com.trade.trading.domain.model.StrategyDecision;
-import com.trade.trading.domain.model.TradingDecisionContext;
+import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.domain.model.TradingDecisionRecord;
 import com.trade.trading.domain.model.TradingRuntimeStatus;
 import com.trade.trading.domain.model.TradingTrigger;
 import com.trade.trading.infrastructure.config.TradingProperties;
-import com.trade.trading.infrastructure.market.MarketContextCollector;
-import com.trade.trading.infrastructure.market.OkxMarketDataWebSocketFeed;
-import com.trade.trading.infrastructure.persistence.TradingStateRepository;
+import com.trade.trading.application.port.TradingMarketSource;
+import com.trade.trading.application.port.TradingMarketFeed;
+import com.trade.trading.application.port.TradingStateStore;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -25,7 +24,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
@@ -44,12 +42,12 @@ import java.util.concurrent.locks.ReentrantLock;
 public class TradingStrategyEngine {
     private static final Logger log = LoggerFactory.getLogger(TradingStrategyEngine.class);
 
-    private final MarketContextCollector contextCollector;
+    private final TradingMarketSource contextCollector;
     private final TradingStrategySelectionService strategySelectionService;
     private final TradingBroker broker;
-    private final TradingStateRepository stateRepository;
+    private final TradingStateStore stateRepository;
     private final TradingProperties properties;
-    private final OkxMarketDataWebSocketFeed marketDataWebSocketFeed;
+    private final TradingMarketFeed marketDataWebSocketFeed;
     private final MeterRegistry meterRegistry;
     private final FundSafetyService fundSafetyService;
     private final OrderReconciliationService orderReconciliationService;
@@ -61,12 +59,12 @@ public class TradingStrategyEngine {
     private volatile Instant lastRunCompletedAt;
 
     public TradingStrategyEngine(
-            MarketContextCollector contextCollector,
+            TradingMarketSource contextCollector,
             TradingStrategySelectionService strategySelectionService,
             @Qualifier("tradingBrokerRouter") TradingBroker broker,
-            TradingStateRepository stateRepository,
+            TradingStateStore stateRepository,
             TradingProperties properties,
-            OkxMarketDataWebSocketFeed marketDataWebSocketFeed,
+            TradingMarketFeed marketDataWebSocketFeed,
             FundSafetyService fundSafetyService,
             OrderReconciliationService orderReconciliationService,
             TradingLeadershipService leadershipService,
@@ -229,9 +227,9 @@ public class TradingStrategyEngine {
                 .setBuyQuoteAmountUsdt(safeDecision.getBuyQuoteAmount())
                 .setSellBaseAmountBtc(safeDecision.getSellBaseAmount())
                 .setRequestedOrderSize(safeDecision.getOrderSize())
-                .setLastPrice(lastPrice(context))
-                .setAvailableBase(available(context == null ? null : context.getBaseBalance()))
-                .setAvailableQuote(available(context == null ? null : context.getQuoteBalance()))
+                .setLastPrice(TradingMarketInputs.lastPrice(context))
+                .setAvailableBase(TradingMarketInputs.availableBalance(context == null ? null : context.getBaseBalance()))
+                .setAvailableQuote(TradingMarketInputs.availableBalance(context == null ? null : context.getQuoteBalance()))
                 .setExecutionStatus("EVALUATED")
                 .setMetadata(safeDecision.getMetadata());
     }
@@ -284,21 +282,4 @@ public class TradingStrategyEngine {
                 .replaceAll("[^a-z0-9_]+", "_");
     }
 
-    private static BigDecimal available(BalanceDetail detail) {
-        if (detail == null) {
-            return BigDecimal.ZERO;
-        }
-        BigDecimal availBal = TradingMath.decimal(detail.getAvailBal());
-        if (availBal.signum() > 0) {
-            return availBal;
-        }
-        return TradingMath.decimal(detail.getCashBal());
-    }
-
-    private static BigDecimal lastPrice(TradingDecisionContext context) {
-        if (context == null || context.getTicker() == null) {
-            return BigDecimal.ZERO;
-        }
-        return TradingMath.decimal(context.getTicker().getLast());
-    }
 }

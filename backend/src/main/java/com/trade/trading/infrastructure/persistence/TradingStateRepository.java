@@ -1,5 +1,6 @@
 package com.trade.trading.infrastructure.persistence;
 
+import com.trade.trading.application.port.TradingStateStore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,7 +35,7 @@ import java.util.List;
  * subsequent JSON writes omit those values.</p>
  */
 @Component
-public class TradingStateRepository {
+public class TradingStateRepository implements TradingStateStore {
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
             .setSerializationInclusion(JsonInclude.Include.NON_NULL);

@@ -31,7 +31,7 @@
 必须遵守以下边界：
 
 - Controller 只处理协议和鉴权，业务流程下沉到 application service；
-- domain 不依赖 interfaces、application、infrastructure；供应商 client 历史依赖仅允许架构测试列举的基线；
+- domain 不依赖 interfaces、application、infrastructure；不依赖供应商 client，原始 DTO 在应用/基础设施边界转换为领域输入；
 - infrastructure 实现 application port，port 不得反向依赖具体实现；
 - 业务域之间不直接调用；共享代码不能反向依赖业务域；
 - scheduler 只负责触发，不能复制用例逻辑；

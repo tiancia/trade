@@ -1,5 +1,6 @@
 package com.trade.marketplace.infrastructure.oss;
 
+import java.util.List;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.marketplace.application.port.MarketplaceOssStsClient;
@@ -53,10 +54,11 @@ public class AliyunMarketplaceOssStsClient implements MarketplaceOssStsClient {
     }
 
     @Override
-    public MarketplaceApi.OssCredentials assumeRole(
+    public MarketplaceApi.OssCredentials assumeUploadRole(
             String roleArn,
             String roleSessionName,
-            String policy,
+            String bucket,
+            String objectKey,
             int durationSeconds
     ) {
         MarketplaceProperties.OssProperties oss = properties.getOss();
@@ -65,7 +67,7 @@ public class AliyunMarketplaceOssStsClient implements MarketplaceOssStsClient {
         params.put("Action", "AssumeRole");
         params.put("DurationSeconds", String.valueOf(durationSeconds));
         params.put("Format", "JSON");
-        params.put("Policy", policy);
+        params.put("Policy", uploadPolicy(bucket, objectKey));
         params.put("RoleArn", roleArn);
         params.put("RoleSessionName", roleSessionName);
         params.put("SignatureMethod", "HMAC-SHA1");
@@ -98,6 +100,22 @@ public class AliyunMarketplaceOssStsClient implements MarketplaceOssStsClient {
             throw new MarketplaceUnavailableException("Aliyun STS request was interrupted", e);
         } catch (Exception e) {
             throw new MarketplaceUnavailableException("Aliyun STS request failed", e);
+        }
+    }
+
+    String uploadPolicy(String bucket, String objectKey) {
+        try {
+            Map<String, Object> statement = Map.of(
+                    "Effect", "Allow",
+                    "Action", List.of("oss:PutObject", "oss:PutObjectAcl", "oss:AbortMultipartUpload", "oss:ListParts"),
+                    "Resource", List.of("acs:oss:*:*:" + bucket + "/" + objectKey)
+            );
+            return objectMapper.writeValueAsString(Map.of(
+                    "Version", "1",
+                    "Statement", List.of(statement)
+            ));
+        } catch (Exception e) {
+            throw new IllegalStateException("failed to build OSS upload policy", e);
         }
     }
 

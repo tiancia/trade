@@ -1,6 +1,6 @@
 package com.trade.marketplace.application.service;
 
-import com.trade.marketplace.domain.exception.MarketplaceForbiddenException;
+import com.trade.marketplace.domain.rule.MarketplaceItemRules;
 import com.trade.marketplace.domain.exception.MarketplaceNotFoundException;
 import com.trade.marketplace.domain.exception.MarketplaceUnauthorizedException;
 import com.trade.marketplace.domain.model.MarketplaceApi;
@@ -14,7 +14,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.net.URI;
 import java.util.List;
 import java.util.Locale;
 
@@ -79,7 +78,7 @@ public class MarketplaceItemService {
 
     public MarketplaceApi.Item getItem(long id, MarketplacePrincipal currentUser) {
         MarketplaceItemRow item = requireItem(id);
-        if (!"LISTED".equals(item.getStatus()) && !isSeller(item, currentUser)) {
+        if (!MarketplaceItemRules.isVisible(item.getStatus(), item.getSellerId(), currentUser == null ? null : currentUser.id())) {
             throw new MarketplaceNotFoundException("item does not exist");
         }
         return MarketplaceViews.item(item);
@@ -105,7 +104,7 @@ public class MarketplaceItemService {
         if (category == null) {
             throw new MarketplaceNotFoundException("category does not exist");
         }
-        BigDecimal price = normalizePrice(request == null ? null : request.price());
+        BigDecimal price = MarketplaceItemRules.normalizePrice(request == null ? null : request.price());
         MarketplaceItemRow row = new MarketplaceItemRow()
                 .setSellerId(seller.id())
                 .setCategoryId(categoryId)
@@ -124,9 +123,7 @@ public class MarketplaceItemService {
             throw new MarketplaceUnauthorizedException("login is required to delist items");
         }
         MarketplaceItemRow item = requireItem(itemId);
-        if (!isSeller(item, seller)) {
-            throw new MarketplaceForbiddenException("only the seller can delist this item");
-        }
+        MarketplaceItemRules.requireSeller(item.getSellerId(), seller.id());
         if ("LISTED".equals(item.getStatus())) {
             mapper.delistItem(itemId, seller.id());
         }
@@ -141,43 +138,15 @@ public class MarketplaceItemService {
         return item;
     }
 
-    private static boolean isSeller(MarketplaceItemRow item, MarketplacePrincipal user) {
-        return user != null && item.getSellerId() != null && item.getSellerId().equals(user.id());
-    }
-
-    private static BigDecimal normalizePrice(BigDecimal price) {
-        if (price == null) {
-            return null;
-        }
-        if (price.signum() < 0) {
-            throw new IllegalArgumentException("price cannot be negative");
-        }
-        if (price.scale() > 2) {
-            return price.setScale(2, java.math.RoundingMode.HALF_UP);
-        }
-        return price;
-    }
-
     private void validateImageUrl(MarketplacePrincipal seller, String imageUrl) {
-        URI uri;
-        try {
-            uri = URI.create(imageUrl);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("imageUrl must be a valid URL");
+        String expectedPrefix = null;
+        if (properties != null && properties.getOss().getPublicBaseUrl() != null
+                && !properties.getOss().getPublicBaseUrl().isBlank()) {
+            expectedPrefix = properties.getOss().normalizedPublicBaseUrl()
+                    + "/" + properties.getOss().normalizedKeyPrefix()
+                    + "/users/" + seller.id() + "/";
         }
-        if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null) {
-            throw new IllegalArgumentException("imageUrl must use HTTPS");
-        }
-        if (properties == null || properties.getOss().getPublicBaseUrl() == null
-                || properties.getOss().getPublicBaseUrl().isBlank()) {
-            return;
-        }
-        String expectedPrefix = properties.getOss().normalizedPublicBaseUrl()
-                + "/" + properties.getOss().normalizedKeyPrefix()
-                + "/users/" + seller.id() + "/";
-        if (!imageUrl.startsWith(expectedPrefix)) {
-            throw new IllegalArgumentException("imageUrl must reference an uploaded marketplace image");
-        }
+        MarketplaceItemRules.validateImageUrl(imageUrl, expectedPrefix);
     }
 
     private static String requiredText(String value, String message, int min, int max) {

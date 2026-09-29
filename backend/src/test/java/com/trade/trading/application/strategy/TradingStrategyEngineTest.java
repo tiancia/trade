@@ -11,7 +11,7 @@ import com.trade.trading.application.risk.FundSafetyService;
 import com.trade.trading.application.runtime.TradingLeadershipService;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
-import com.trade.trading.domain.model.TradingDecisionContext;
+import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.domain.model.TradingDecisionRecord;
 import com.trade.trading.domain.model.TradingTrigger;
 import com.trade.trading.infrastructure.config.TradingProperties;

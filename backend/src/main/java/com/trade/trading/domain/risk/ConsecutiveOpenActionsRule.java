@@ -1,0 +1,26 @@
+package com.trade.trading.domain.risk;
+
+import java.util.Optional;
+
+public class ConsecutiveOpenActionsRule implements RiskRule {
+    @Override
+    public Optional<RiskViolation> evaluate(RiskContext context) {
+        if (!context.isExecutableOpenAction() || context.getRiskState() == null) {
+            return Optional.empty();
+        }
+
+        RiskPolicy riskProperties = context.getPolicy();
+        int limit = riskProperties.getMaxConsecutiveOpenActions();
+        if (limit <= 0 || context.getRiskState().getConsecutiveOpenActions() < limit) {
+            return Optional.empty();
+        }
+
+        return Optional.of(RiskViolation.of(
+                "RISK_CONSECUTIVE_OPEN_ACTIONS",
+                "RISK_CONSECUTIVE_OPEN_ACTIONS: consecutive open actions reached "
+                        + context.getRiskState().getConsecutiveOpenActions()
+                        + ", maximum is "
+                        + limit
+        ));
+    }
+}

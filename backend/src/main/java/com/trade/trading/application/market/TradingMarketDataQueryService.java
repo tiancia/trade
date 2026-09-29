@@ -9,7 +9,7 @@ import com.trade.trading.application.event.TradingEventSource;
 import com.trade.trading.application.port.HotMarketDataCache;
 import com.trade.trading.application.port.TradingEventPublisher;
 import com.trade.trading.infrastructure.config.TradingProperties;
-import com.trade.trading.infrastructure.market.OkxMarketDataWebSocketFeed;
+import com.trade.trading.application.port.TradingMarketFeed;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -36,14 +36,14 @@ public class TradingMarketDataQueryService {
 
     private final OkxApi okxApi;
     private final TradingProperties properties;
-    private final OkxMarketDataWebSocketFeed webSocketFeed;
+    private final TradingMarketFeed webSocketFeed;
     private final HotMarketDataCache hotMarketDataCache;
     private final TradingEventPublisher eventPublisher;
 
     public TradingMarketDataQueryService(
             OkxApi okxApi,
             TradingProperties properties,
-            OkxMarketDataWebSocketFeed webSocketFeed,
+            TradingMarketFeed webSocketFeed,
             HotMarketDataCache hotMarketDataCache,
             TradingEventPublisher eventPublisher
     ) {

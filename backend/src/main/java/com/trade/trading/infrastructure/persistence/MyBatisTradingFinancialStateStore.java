@@ -1,5 +1,6 @@
 package com.trade.trading.infrastructure.persistence;
 
+import com.trade.trading.domain.order.PositionAccounting;
 import com.trade.trading.application.port.TradingFinancialStateStore;
 import com.trade.trading.domain.model.TradingPositionState;
 import com.trade.trading.domain.model.TradingRiskState;
@@ -8,7 +9,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Instant;
 
 /**
@@ -85,17 +85,8 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
             Instant reconciledAt
     ) {
         TradingPositionRow row = lockPosition(accountScope, instId);
-        row.setExchangeQuantity(zeroIfNull(exchangeQuantity))
-                .setLastReconciledAt(reconciledAt == null ? Instant.now() : reconciledAt);
-        if (authoritativeQuantity != null) {
-            BigDecimal normalizedQuantity = authoritativeQuantity.max(BigDecimal.ZERO);
-            row.setQuantity(normalizedQuantity);
-            if (normalizedQuantity.signum() == 0) {
-                row.setAverageCost(BigDecimal.ZERO);
-            } else if (authoritativeAverageCost != null && authoritativeAverageCost.signum() > 0) {
-                row.setAverageCost(authoritativeAverageCost);
-            }
-        }
+        applyPosition(row, toPositionState(row).reconcile(exchangeQuantity, authoritativeQuantity,
+                authoritativeAverageCost, reconciledAt == null ? Instant.now() : reconciledAt));
         updatePosition(row);
         return toPositionState(row);
     }
@@ -208,31 +199,17 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
         BigDecimal appliedFill = zeroIfNull(ledger.getCumulativeFilledSize());
         BigDecimal appliedPosition = zeroIfNull(ledger.getAppliedPositionQuantity());
         BigDecimal appliedQuoteCost = zeroIfNull(ledger.getAppliedQuoteCost());
-        // Older WebSocket or REST observations are normal. They must never
-        // reverse a newer cumulative checkpoint.
-        if (observedFill.compareTo(appliedFill) < 0
-                || observedPosition.compareTo(appliedPosition) < 0
-                || observedQuoteCost.compareTo(appliedQuoteCost) < 0) {
-            return SpotFillApplication.unchanged();
-        }
-
-        BigDecimal positionDelta = observedPosition.subtract(appliedPosition);
-        BigDecimal quoteCostDelta = observedQuoteCost.subtract(appliedQuoteCost);
-        if (positionDelta.signum() == 0 && quoteCostDelta.signum() == 0) {
-            return SpotFillApplication.unchanged();
-        }
-
+        var delta = PositionAccounting.cumulativeDelta(observedFill, observedPosition, observedQuoteCost,
+                appliedFill, appliedPosition, appliedQuoteCost);
+        if (!delta.changed()) { return SpotFillApplication.unchanged(); }
+        BigDecimal positionDelta = delta.quantity();
+        BigDecimal quoteCostDelta = delta.quoteCost();
         TradingPositionRow position = lockPosition(accountScope, instId);
         boolean firstApplication = appliedPosition.signum() == 0;
+        PositionAccounting.requireMonotonicDelta(normalizedSide, positionDelta, quoteCostDelta);
         if ("buy".equals(normalizedSide)) {
-            if (positionDelta.signum() <= 0 || quoteCostDelta.signum() <= 0) {
-                throw new IllegalStateException("BUY cumulative fill did not advance monotonically");
-            }
             applyBuy(position, positionDelta, quoteCostDelta);
         } else {
-            if (positionDelta.signum() <= 0) {
-                throw new IllegalStateException("SELL cumulative fill did not advance monotonically");
-            }
             // A live ledger may not reduce more managed quantity than it owns.
             // Failing the transaction is safer than silently hiding a drift.
             applySell(position, positionDelta, true);
@@ -270,10 +247,9 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
             BigDecimal seedQuantity,
             BigDecimal seedAverageCost
     ) {
-        BigDecimal quantity = zeroIfNull(seedQuantity).max(BigDecimal.ZERO);
-        BigDecimal averageCost = quantity.signum() == 0
-                ? BigDecimal.ZERO
-                : zeroIfNull(seedAverageCost).max(BigDecimal.ZERO);
+        var seed = TradingPositionState.seed(accountScope, instId, seedQuantity, seedAverageCost);
+        BigDecimal quantity = seed.getQuantity();
+        BigDecimal averageCost = seed.getAverageCost();
         Instant now = Instant.now();
         mapper.insertPositionIfAbsent(new TradingPositionRow()
                 .setAccountScope(accountScope)
@@ -301,8 +277,7 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
     }
 
     private void updatePosition(TradingPositionRow row) {
-        row.setVersion(row.getVersion() + 1)
-                .setUpdatedAt(Instant.now());
+        row.setUpdatedAt(Instant.now());
         if (mapper.updatePosition(row) != 1) {
             throw new IllegalStateException(
                     "Trading position update lost: " + row.getAccountScope() + "/" + row.getInstId()
@@ -310,41 +285,24 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
         }
     }
 
-    private static void applyBuy(
-            TradingPositionRow row,
-            BigDecimal quantityDelta,
-            BigDecimal quoteCostDelta
-    ) {
-        BigDecimal oldQuantity = zeroIfNull(row.getQuantity());
-        BigDecimal oldCost = zeroIfNull(row.getAverageCost());
-        BigDecimal newQuantity = oldQuantity.add(quantityDelta);
-        BigDecimal totalCost = oldQuantity.multiply(oldCost).add(quoteCostDelta);
-        row.setQuantity(newQuantity)
-                .setAverageCost(totalCost.divide(newQuantity, 18, RoundingMode.HALF_UP));
+    private static void applyBuy(TradingPositionRow row, BigDecimal quantityDelta, BigDecimal quoteCostDelta) {
+        applyPosition(row, toPositionState(row).buy(quantityDelta, quoteCostDelta));
     }
 
     private static void applySell(TradingPositionRow row, BigDecimal quantityDelta, boolean strict) {
-        BigDecimal oldQuantity = zeroIfNull(row.getQuantity());
-        if (strict && quantityDelta.compareTo(oldQuantity) > 0) {
-            throw new IllegalStateException(
-                    "Reconciled SELL exceeds managed position: sell=" + quantityDelta + ", managed=" + oldQuantity
-            );
-        }
-        BigDecimal remaining = oldQuantity.subtract(quantityDelta).max(BigDecimal.ZERO);
-        row.setQuantity(remaining)
-                .setAverageCost(remaining.signum() == 0 ? BigDecimal.ZERO : zeroIfNull(row.getAverageCost()));
+        var current = toPositionState(row);
+        applyPosition(row, strict ? current.applySellFill(quantityDelta) : current.sell(quantityDelta));
     }
 
     private static TradingPositionState toPositionState(TradingPositionRow row) {
-        return new TradingPositionState()
-                .setAccountScope(row.getAccountScope())
-                .setInstId(row.getInstId())
-                .setPositionSide(row.getPositionSide())
-                .setQuantity(zeroIfNull(row.getQuantity()))
-                .setAverageCost(zeroIfNull(row.getAverageCost()))
-                .setExchangeQuantity(row.getExchangeQuantity())
-                .setLastReconciledAt(row.getLastReconciledAt())
-                .setVersion(row.getVersion());
+        return TradingPositionState.restore(row.getAccountScope(), row.getInstId(), row.getPositionSide(),
+                row.getQuantity(), row.getAverageCost(), row.getExchangeQuantity(), row.getLastReconciledAt(), row.getVersion());
+    }
+
+    private static void applyPosition(TradingPositionRow row, TradingPositionState next) {
+        row.setQuantity(next.getQuantity()).setAverageCost(next.getAverageCost())
+                .setExchangeQuantity(next.getExchangeQuantity()).setLastReconciledAt(next.getLastReconciledAt())
+                .setVersion(next.getVersion());
     }
 
     private TradingRiskState requiredRiskState(String accountScope) {

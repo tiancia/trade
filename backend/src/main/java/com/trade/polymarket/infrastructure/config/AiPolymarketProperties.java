@@ -64,4 +64,10 @@ public class AiPolymarketProperties {
         private boolean geoblockCheckEnabled = true;
         private String geoblockUrl = "https://polymarket.com/api/geoblock";
     }
+    /** Resolves configuration into adapter-neutral market eligibility limits. */
+    public com.trade.polymarket.domain.rule.MarketEligibilityPolicy marketEligibilityPolicy() {
+        return new com.trade.polymarket.domain.rule.MarketEligibilityPolicy(
+                requireMarketEndDate, minTimeToResolutionMinutes, maxTimeToResolutionHours,
+                minMarketVolume24hr, minMarketLiquidity, maxOutcomeSpread, minOutcomeAskLiquidityUsdc);
+    }
 }

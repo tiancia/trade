@@ -5,7 +5,7 @@ import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
-import com.trade.trading.domain.model.TradingDecisionContext;
+import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import org.junit.jupiter.api.Test;

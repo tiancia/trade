@@ -7,12 +7,13 @@ import com.trade.client.polymarket.dto.GammaMarket;
 import com.trade.client.polymarket.dto.PolymarketLastTradePrice;
 import com.trade.client.polymarket.dto.PolymarketOrderBook;
 import com.trade.client.polymarket.dto.PolymarketOrderBookLevel;
+import com.trade.polymarket.domain.model.MarketDepthLevel;
 import com.trade.client.polymarket.dto.PolymarketSamplingMarket;
 import com.trade.client.polymarket.dto.PolymarketSamplingMarketsPage;
 import com.trade.client.polymarket.dto.PolymarketSamplingToken;
 import com.trade.common.support.TradingMath;
 import com.trade.polymarket.application.support.PolymarketJsonLists;
-import com.trade.polymarket.application.support.PolymarketMarketFilters;
+import com.trade.polymarket.domain.rule.PolymarketMarketFilters;
 import com.trade.polymarket.domain.model.PolymarketDecisionContext;
 import com.trade.polymarket.domain.model.PolymarketMarketSnapshot;
 import com.trade.polymarket.domain.model.PolymarketOutcomeSnapshot;
@@ -302,7 +303,7 @@ public class PolymarketMarketContextCollector {
             }
         }
         return PolymarketMarketFilters.marketTurnoverSkipReason(
-                properties,
+                properties.marketEligibilityPolicy(),
                 market.getEndDate(),
                 firstText(market.getVolume24hr(), market.getVolumeNum(), market.getVolume()),
                 firstText(market.getLiquidityNum(), market.getLiquidity()),
@@ -327,7 +328,7 @@ public class PolymarketMarketContextCollector {
             }
         }
         return PolymarketMarketFilters.marketTurnoverSkipReason(
-                properties,
+                properties.marketEligibilityPolicy(),
                 market.getEndDateIso(),
                 null,
                 null,
@@ -457,8 +458,8 @@ public class PolymarketMarketContextCollector {
             PolymarketOrderBook orderBook = polymarketApi.getOrderBook(tokenId);
             List<PolymarketOrderBookLevel> bids = nullToEmpty(orderBook.getBids());
             List<PolymarketOrderBookLevel> asks = nullToEmpty(orderBook.getAsks());
-            List<PolymarketOrderBookLevel> topBids = trimLevels(bids);
-            List<PolymarketOrderBookLevel> topAsks = trimLevels(asks);
+            List<MarketDepthLevel> topBids = trimLevels(bids);
+            List<MarketDepthLevel> topAsks = trimLevels(asks);
             BigDecimal bestBid = bestBid(bids);
             BigDecimal bestAsk = bestAsk(asks);
             snapshot.setBestBid(bestBid)
@@ -597,12 +598,13 @@ public class PolymarketMarketContextCollector {
         }
     }
 
-    private List<PolymarketOrderBookLevel> trimLevels(List<PolymarketOrderBookLevel> levels) {
+    private List<MarketDepthLevel> trimLevels(List<PolymarketOrderBookLevel> levels) {
         if (levels == null || levels.isEmpty()) {
             return List.of();
         }
         return levels.stream()
                 .limit(Math.max(properties.getOrderBookDepth(), 0))
+                .map(level -> new MarketDepthLevel(level.getPrice(), level.getSize()))
                 .toList();
     }
 
@@ -611,7 +613,7 @@ public class PolymarketMarketContextCollector {
             String marketSlug,
             PolymarketOutcomeSnapshot outcome
     ) {
-        String skipReason = PolymarketMarketFilters.outcomeLiquiditySkipReason(properties, outcome);
+        String skipReason = PolymarketMarketFilters.outcomeLiquiditySkipReason(properties.marketEligibilityPolicy(), outcome);
         if (skipReason != null) {
             log.info(
                     "Skip Polymarket outcome candidate: marketSlug={}, outcome={}, tokenId={}, reason={}",
@@ -625,12 +627,12 @@ public class PolymarketMarketContextCollector {
         outcomes.add(outcome);
     }
 
-    private static BigDecimal liquidityUsdc(List<PolymarketOrderBookLevel> levels) {
+    private static BigDecimal liquidityUsdc(List<MarketDepthLevel> levels) {
         if (levels == null || levels.isEmpty()) {
             return BigDecimal.ZERO;
         }
         return levels.stream()
-                .map(level -> TradingMath.decimal(level.getPrice()).multiply(TradingMath.decimal(level.getSize())))
+                .map(MarketDepthLevel::quoteNotional)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .stripTrailingZeros();
     }

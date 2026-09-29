@@ -13,6 +13,14 @@ class AiTradingDecisionParserTest {
     private final AiTradingDecisionParser parser = new AiTradingDecisionParser();
 
     @Test
+    void holdDoesNotPopulateActionSpecificAmounts() {
+        var decision = parser.parse("{\"action\":\"HOLD\",\"reason\":\"wait\",\"buyQuoteAmountUsdt\":100,\"sellBaseAmountBtc\":2}");
+        assertEquals(TradingAction.HOLD, decision.getAction());
+        assertNull(decision.getBuyQuoteAmountUsdt());
+        assertNull(decision.getSellBaseAmountBtc());
+    }
+
+    @Test
     void parsesBuyDecisionFromJsonFence() {
         AiTradingDecision decision = parser.parse("""
                 ```json

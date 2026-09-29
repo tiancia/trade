@@ -1,5 +1,6 @@
 package com.trade.trading.infrastructure.market;
 
+import com.trade.trading.application.port.TradingMarketFeed;
 import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
@@ -35,7 +36,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * Database work is delegated to the bounded trading event pipeline.
  */
 @Component
-public class OkxMarketDataWebSocketFeed implements DisposableBean {
+public class OkxMarketDataWebSocketFeed implements TradingMarketFeed, DisposableBean {
     private static final Logger log = LoggerFactory.getLogger(OkxMarketDataWebSocketFeed.class);
 
     private final OkxApi okxApi;

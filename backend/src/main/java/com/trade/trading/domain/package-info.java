@@ -1,8 +1,12 @@
 /**
- * Trading values and pure business rules, grouped by model, order, risk, and backtest.
+ * Trading business rules and state: order identity, lifecycle, settlement and cost accounting;
+ * risk and account valuation; market signals and threshold decisions; simulated portfolio and statistics.
  *
- * <p>Domain types do not depend on use-case services or infrastructure implementations.
- * Provider DTO dependencies retained in the decision context are a documented legacy
- * boundary, not permission to introduce new adapter dependencies.</p>
+ * <p>Order and position snapshots expose named operations instead of mutable setters;
+ * persistence rehydration is separate from business transitions.</p>
+ *
+ * <p>Rules use resolved facts and do not depend on use-case services, framework components,
+ * persistence rows, configuration bindings or provider DTOs. Application adapters supply
+ * provider-independent facts to these rules.</p>
  */
 package com.trade.trading.domain;

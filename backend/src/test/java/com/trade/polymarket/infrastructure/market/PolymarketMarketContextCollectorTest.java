@@ -139,6 +139,28 @@ class PolymarketMarketContextCollectorTest {
         assertEquals("No", context.getMarkets().getFirst().getOutcomes().getFirst().getOutcome());
     }
 
+    @Test
+    void copiesDepthWithoutChangingJsonPrecisionOrLiquidity() {
+        var properties = new AiPolymarketProperties();
+        properties.setOrderBookDepth(1);
+        var book = orderBook("0.5000", "100.00", "0.5200", "100.00");
+        var original = book.getBids().getFirst();
+        var originalJson = OBJECT_MAPPER.valueToTree(original);
+        book.setBids(List.of(original, new PolymarketOrderBookLevel().setPrice("0.49").setSize("500")));
+        var api = new FakePolymarketApi(List.of(restrictedTradableMarket())) {
+            @Override public PolymarketOrderBook getOrderBook(String tokenId) { return book; }
+        };
+        var outcome = new PolymarketMarketContextCollector(api, properties).collect()
+                .getMarkets().getFirst().getOutcomes().getFirst();
+        original.setPrice("0.10").setSize("1");
+        assertEquals(1, outcome.getTopBids().size());
+        assertEquals(originalJson, OBJECT_MAPPER.valueToTree(outcome.getTopBids().getFirst()));
+        assertEquals(0, new BigDecimal("50").compareTo(outcome.getTopBidLiquidityUsdc()));
+        assertEquals(0, new BigDecimal("0.50").compareTo(outcome.getBestBid()));
+        org.junit.jupiter.api.Assertions.assertThrows(UnsupportedOperationException.class,
+                () -> outcome.getTopBids().clear());
+    }
+
     private static GammaMarket restrictedTradableMarket() {
         return tradableMarket("market-1", "restricted-but-tradable", "token-yes", "token-no")
                 .setRestricted(true);

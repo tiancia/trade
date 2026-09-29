@@ -1,10 +1,11 @@
 /**
- * Trading use-case orchestration and runtime lifecycle services.
+ * Trading use cases: strategy registration, execution, settlement transactions, CAS retries,
+ * reconciliation, history loading and runtime lifecycle.
+ * Raw provider collection and audit envelopes live here; TradingMarketInputs converts
+ * their values into provider-independent domain facts.
  *
- * <p>Start with {@link com.trade.trading.application.strategy.TradingStrategyEngine} for
- * decisions, {@link com.trade.trading.application.order.OrderReconciliationService}
- * for reconciliation, and {@link com.trade.trading.application.runtime.TradingLeadershipService}
- * for single-writer ownership. Data snapshots and business enums belong to
- * {@code com.trade.trading.domain.model}; outbound contracts belong to {@code application.port}.</p>
+ * <p>Business decisions and arithmetic are delegated to domain policies. Execution services
+ * coordinate safety checks and external calls through ports; adapters implement the
+ * OKX submission/query protocol. This layer owns I/O order, transaction boundaries and metrics.</p>
  */
 package com.trade.trading.application;

@@ -4,7 +4,7 @@ import com.trade.client.okx.dto.AccountBalanceResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
-import com.trade.trading.domain.model.TradingDecisionContext;
+import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.domain.model.TradingRiskState;
 import com.trade.trading.domain.risk.RiskAssessment;
 import com.trade.trading.infrastructure.config.TradingProperties;

@@ -1,5 +1,6 @@
 package com.trade.trading.infrastructure.event;
 
+import com.trade.trading.application.port.TradingEventPipeline;
 import com.trade.trading.application.event.TradingEvent;
 import com.trade.trading.application.event.TradingEventBusStatus;
 import com.trade.trading.application.event.TradingEventHandlingResult;
@@ -36,7 +37,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * consumer cannot terminate the pipeline.</p>
  */
 @Component
-public class BoundedTradingEventBus implements TradingEventPublisher, SmartLifecycle, DisposableBean {
+public class BoundedTradingEventBus implements TradingEventPipeline, TradingEventPublisher, SmartLifecycle, DisposableBean {
     private static final Logger log = LoggerFactory.getLogger(BoundedTradingEventBus.class);
 
     private final TradingProperties.EventQueueProperties config;

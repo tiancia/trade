@@ -1,7 +1,7 @@
 package com.trade.trading.application.runtime;
 
-import com.trade.trading.infrastructure.event.BoundedTradingEventBus;
-import com.trade.trading.infrastructure.market.OkxMarketDataWebSocketFeed;
+import com.trade.trading.application.port.TradingEventPipeline;
+import com.trade.trading.application.port.TradingMarketFeed;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
@@ -10,14 +10,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Coordinates producer and consumer order for start and graceful shutdown. */
 @Component
 public class TradingMarketDataRuntime implements SmartLifecycle {
-    private final BoundedTradingEventBus eventBus;
-    private final OkxMarketDataWebSocketFeed webSocketFeed;
+    private final TradingEventPipeline eventBus;
+    private final TradingMarketFeed webSocketFeed;
     private final TradingLeadershipService leadershipService;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     public TradingMarketDataRuntime(
-            BoundedTradingEventBus eventBus,
-            OkxMarketDataWebSocketFeed webSocketFeed,
+            TradingEventPipeline eventBus,
+            TradingMarketFeed webSocketFeed,
             TradingLeadershipService leadershipService
     ) {
         this.eventBus = eventBus;

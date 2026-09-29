@@ -1,6 +1,6 @@
 package com.trade.marketplace.application.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trade.marketplace.domain.rule.MarketplaceImageRules;
 import com.trade.marketplace.application.port.MarketplaceOssStsClient;
 import com.trade.marketplace.domain.exception.MarketplaceUnauthorizedException;
 import com.trade.marketplace.domain.exception.MarketplaceUnavailableException;
@@ -13,9 +13,7 @@ import org.springframework.stereotype.Service;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
-import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -27,37 +25,25 @@ import java.util.UUID;
 @Service
 public class MarketplaceUploadService {
     private static final String PUBLIC_READ_ACL = "public-read";
-    private static final long MAX_IMAGE_SIZE_BYTES = 10L * 1024 * 1024;
-    private static final List<String> ALLOWED_CONTENT_TYPES = List.of(
-            "image/jpeg",
-            "image/png",
-            "image/webp",
-            "image/gif"
-    );
-
     private final MarketplaceProperties properties;
     private final MarketplaceOssStsClient stsClient;
-    private final ObjectMapper objectMapper;
     private final Clock clock;
 
     @Autowired
     public MarketplaceUploadService(
             MarketplaceProperties properties,
-            MarketplaceOssStsClient stsClient,
-            ObjectMapper objectMapper
+            MarketplaceOssStsClient stsClient
     ) {
-        this(properties, stsClient, objectMapper, Clock.systemUTC());
+        this(properties, stsClient, Clock.systemUTC());
     }
 
     public MarketplaceUploadService(
             MarketplaceProperties properties,
             MarketplaceOssStsClient stsClient,
-            ObjectMapper objectMapper,
             Clock clock
     ) {
         this.properties = properties;
         this.stsClient = stsClient;
-        this.objectMapper = objectMapper;
         this.clock = clock == null ? Clock.systemUTC() : clock;
     }
 
@@ -68,16 +54,16 @@ public class MarketplaceUploadService {
         if (user == null) {
             throw new MarketplaceUnauthorizedException("login is required to upload images");
         }
-        String contentType = cleanContentType(request == null ? null : request.contentType());
-        validateSize(request == null ? null : request.sizeBytes());
+        String contentType = MarketplaceImageRules.cleanContentType(request == null ? null : request.contentType());
+        MarketplaceImageRules.validateSize(request == null ? null : request.sizeBytes());
         String objectKey = objectKey(user, request == null ? null : request.fileName(), contentType);
         MarketplaceProperties.OssProperties oss = properties.getOss();
         try {
-            String policy = uploadPolicy(oss.requiredBucket(), objectKey);
-            MarketplaceApi.OssCredentials credentials = stsClient.assumeRole(
+            MarketplaceApi.OssCredentials credentials = stsClient.assumeUploadRole(
                     oss.requiredRoleArn(),
                     "marketplace-user-" + user.id() + "-" + UUID.randomUUID().toString().substring(0, 8),
-                    policy,
+                    oss.requiredBucket(),
+                    objectKey,
                     oss.normalizedDurationSeconds()
             );
             return new MarketplaceApi.UploadIntent(
@@ -93,25 +79,9 @@ public class MarketplaceUploadService {
         }
     }
 
-    private String uploadPolicy(String bucket, String objectKey) {
-        try {
-            Map<String, Object> statement = Map.of(
-                    "Effect", "Allow",
-                    "Action", List.of("oss:PutObject", "oss:PutObjectAcl", "oss:AbortMultipartUpload", "oss:ListParts"),
-                    "Resource", List.of("acs:oss:*:*:" + bucket + "/" + objectKey)
-            );
-            return objectMapper.writeValueAsString(Map.of(
-                    "Version", "1",
-                    "Statement", List.of(statement)
-            ));
-        } catch (Exception e) {
-            throw new IllegalStateException("failed to build OSS upload policy", e);
-        }
-    }
-
     private String objectKey(MarketplacePrincipal user, String fileName, String contentType) {
         LocalDate date = LocalDate.now(clock.withZone(ZoneOffset.UTC));
-        String ext = extension(fileName, contentType);
+        String ext = MarketplaceImageRules.extension(fileName, contentType);
         return properties.getOss().normalizedKeyPrefix()
                 + "/users/" + user.id()
                 + "/" + date.getYear()
@@ -119,32 +89,4 @@ public class MarketplaceUploadService {
                 + "/" + UUID.randomUUID() + ext;
     }
 
-    private static String cleanContentType(String value) {
-        String contentType = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
-        if (!ALLOWED_CONTENT_TYPES.contains(contentType)) {
-            throw new IllegalArgumentException("only jpeg, png, webp, and gif images can be uploaded");
-        }
-        return contentType;
-    }
-
-    private static void validateSize(Long sizeBytes) {
-        if (sizeBytes == null || sizeBytes <= 0 || sizeBytes > MAX_IMAGE_SIZE_BYTES) {
-            throw new IllegalArgumentException("image size must be between 1 byte and 10 MB");
-        }
-    }
-
-    private static String extension(String fileName, String contentType) {
-        String lower = fileName == null ? "" : fileName.toLowerCase(Locale.ROOT);
-        for (String ext : List.of(".jpg", ".jpeg", ".png", ".webp", ".gif")) {
-            if (lower.endsWith(ext)) {
-                return ".jpeg".equals(ext) ? ".jpg" : ext;
-            }
-        }
-        return switch (contentType) {
-            case "image/png" -> ".png";
-            case "image/webp" -> ".webp";
-            case "image/gif" -> ".gif";
-            default -> ".jpg";
-        };
-    }
 }

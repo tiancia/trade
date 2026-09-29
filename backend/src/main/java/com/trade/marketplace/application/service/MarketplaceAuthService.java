@@ -1,5 +1,6 @@
 package com.trade.marketplace.application.service;
 
+import com.trade.marketplace.domain.rule.MarketplaceAccountRules;
 import com.trade.marketplace.domain.exception.MarketplaceConflictException;
 import com.trade.marketplace.domain.exception.MarketplaceUnauthorizedException;
 import com.trade.marketplace.domain.model.MarketplaceApi;
@@ -23,7 +24,6 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.HexFormat;
-import java.util.regex.Pattern;
 
 /**
  * Registers users and manages opaque, expiring marketplace sessions.
@@ -33,7 +33,7 @@ import java.util.regex.Pattern;
  */
 @Service
 public class MarketplaceAuthService {
-    private static final Pattern USERNAME = Pattern.compile("[A-Za-z0-9_.-]{3,32}");
+
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final MarketplaceMapper mapper;
@@ -64,9 +64,9 @@ public class MarketplaceAuthService {
 
     @Transactional
     public MarketplaceApi.AuthResponse register(MarketplaceApi.RegisterRequest request) {
-        String username = cleanUsername(request == null ? null : request.username());
-        String password = requiredPassword(request == null ? null : request.password());
-        String displayName = cleanDisplayName(request == null ? null : request.displayName(), username);
+        String username = MarketplaceAccountRules.cleanUsername(request == null ? null : request.username());
+        String password = MarketplaceAccountRules.requiredPassword(request == null ? null : request.password());
+        String displayName = MarketplaceAccountRules.cleanDisplayName(request == null ? null : request.displayName(), username);
         MarketplaceUserRow row = new MarketplaceUserRow()
                 .setUsername(username)
                 .setPasswordHash(passwordEncoder.encode(password))
@@ -81,7 +81,7 @@ public class MarketplaceAuthService {
 
     @Transactional
     public MarketplaceApi.AuthResponse login(MarketplaceApi.LoginRequest request) {
-        String username = cleanUsername(request == null ? null : request.username());
+        String username = MarketplaceAccountRules.cleanUsername(request == null ? null : request.username());
         String password = request == null || request.password() == null ? "" : request.password();
         MarketplaceUserRow row = mapper.findUserByUsername(username);
         if (row == null || !passwordEncoder.matches(password, row.getPasswordHash())) {
@@ -142,30 +142,6 @@ public class MarketplaceAuthService {
             mapper.touchSession(hash, Timestamp.from(now));
         }
         return new MarketplacePrincipal(user.getId(), user.getUsername(), user.getDisplayName());
-    }
-
-    private static String cleanUsername(String value) {
-        String username = value == null ? "" : value.trim();
-        if (!USERNAME.matcher(username).matches()) {
-            throw new IllegalArgumentException("username must be 3-32 letters, numbers, dots, dashes, or underscores");
-        }
-        return username;
-    }
-
-    private static String requiredPassword(String value) {
-        String password = value == null ? "" : value;
-        if (password.length() < 8 || password.length() > 128) {
-            throw new IllegalArgumentException("password must be 8-128 characters");
-        }
-        return password;
-    }
-
-    private static String cleanDisplayName(String value, String fallback) {
-        String displayName = value == null || value.isBlank() ? fallback : value.trim();
-        if (displayName.length() > 40) {
-            throw new IllegalArgumentException("displayName must be at most 40 characters");
-        }
-        return displayName;
     }
 
     private static String bearerToken(String authorization, boolean required) {

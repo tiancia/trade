@@ -5,7 +5,6 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -40,19 +39,6 @@ class PackageArchitectureTest {
             LAYERED_TOP_LEVEL_PACKAGES.stream(),
             SHARED_PACKAGES.stream()
     ).toList();
-    private static final Set<String> LEGACY_MODEL_CLIENT_IMPORTS = Set.of(
-            "com.trade.polymarket.domain.model.PolymarketOutcomeSnapshot -> "
-                    + "com.trade.client.polymarket.dto.PolymarketOrderBookLevel",
-            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.AccountBalanceResp",
-            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.BalanceDetail",
-            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.CandleResp",
-            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.FillResp",
-            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.InstrumentInfoResp",
-            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.OrderBookResp",
-            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.OrderInfoResp",
-            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.PositionResp",
-            "com.trade.trading.domain.model.TradingDecisionContext -> com.trade.client.okx.dto.TickerResp"
-    );
 
     private final Path projectRoot = locateProjectRoot();
     private final Path mainJava = projectRoot.resolve("src/main/java");
@@ -249,18 +235,11 @@ class PackageArchitectureTest {
 
     @Test
     void domainModelsDoNotDependOnAdapters() throws IOException {
-        Set<String> observedLegacyImports = new HashSet<>();
         for (Path source : javaSources(mainJava.resolve("com/trade"))) {
             if (!belongsToLayer(source, "model") && !belongsToLayer(source, "domain")) {
                 continue;
             }
-            String sourceType = declaredType(source);
             for (String importedType : imports(source)) {
-                String dependency = sourceType + " -> " + importedType;
-                boolean legacyClientImport = LEGACY_MODEL_CLIENT_IMPORTS.contains(dependency);
-                if (legacyClientImport) {
-                    observedLegacyImports.add(dependency);
-                }
                 assertFalse(
                         importedType.contains(".web.")
                                 || importedType.contains(".interfaces.")
@@ -268,16 +247,76 @@ class PackageArchitectureTest {
                                 || importedType.contains(".persistence.")
                                 || importedType.contains(".application.")
                                 || importedType.contains(".config.")
-                                || importedType.startsWith("com.trade.client.") && !legacyClientImport,
+                                || importedType.startsWith("com.trade.client."),
                         () -> "domain model must stay adapter-neutral: " + source + " -> " + importedType
                 );
             }
         }
-        assertEquals(
-                LEGACY_MODEL_CLIENT_IMPORTS,
-                observedLegacyImports,
-                "legacy model/client dependency baseline changed; remove resolved edges or review new coupling explicitly"
-        );
+    }
+
+    @Test
+    void domainRulesHaveNoRuntimeOrPersistenceFrameworkDependencies() throws IOException {
+        Pattern forbidden = Pattern.compile("(?m)^import (?:org\\.springframework\\.|org\\.apache\\.ibatis\\.|java\\.sql\\.)");
+        for (Path source : javaSources(mainJava.resolve("com/trade"))) {
+            if (belongsToLayer(source, "domain")) {
+                assertFalse(forbidden.matcher(Files.readString(source)).find(),
+                        () -> "domain rules must run independently of frameworks: " + source);
+            }
+        }
+    }
+
+    @Test
+    void tradingUseCasesDependOnStateMarketAndEventContracts() throws IOException {
+        Set<String> adapters = Set.of(
+                "com.trade.trading.infrastructure.persistence.TradingStateRepository",
+                "com.trade.trading.infrastructure.market.MarketContextCollector",
+                "com.trade.trading.infrastructure.market.OkxMarketDataWebSocketFeed",
+                "com.trade.trading.infrastructure.event.BoundedTradingEventBus");
+        for (String layer : List.of("application", "interfaces")) {
+            for (Path source : javaSources(mainJava.resolve("com/trade/trading").resolve(layer))) {
+                for (String importedType : imports(source)) {
+                    assertFalse(adapters.contains(importedType),
+                            () -> "use a use-case service or outbound port instead of a concrete adapter: " + source);
+                }
+            }
+        }
+    }
+
+    @Test
+    void tradingExecutionUseCasesDoNotImportBrokerImplementations() throws IOException {
+        for (Path source : javaSources(mainJava.resolve("com/trade/trading/application"))) {
+            for (String importedType : imports(source)) {
+                assertFalse(importedType.startsWith("com.trade.trading.infrastructure.broker."),
+                        () -> "execution and simulation use cases must use a domain model or outbound port: " + source);
+            }
+        }
+    }
+
+    @Test
+    void orderAndPositionRehydrationStayInsidePersistence() throws IOException {
+        Pattern restore = Pattern.compile("(?:TradingOrder|TradingPositionState)\\s*\\.\\s*restore\\s*\\(");
+        for (Path source : javaSources(mainJava.resolve("com/trade/trading"))) {
+            if (belongsToLayer(source, "application") || belongsToLayer(source, "interfaces")) {
+                String text = Files.readString(source);
+                assertFalse(restore.matcher(text).find(), () -> "use named domain operations, not rehydration: " + source);
+                assertFalse(text.contains("import static com.trade.trading.domain.order.TradingOrder.restore")
+                        || text.contains("import static com.trade.trading.domain.model.TradingPositionState.restore"));
+            }
+        }
+    }
+
+    @Test
+    void sessionUseCaseDoesNotHandlePersistenceRowsOrStoredJson() throws IOException {
+        for (String name : List.of("TextGameSessionService.java", "TextGameSessionViews.java")) {
+            Path source = mainJava.resolve("com/trade/textgame/application/service").resolve(name);
+            for (String type : imports(source)) {
+                assertFalse(type.contains(".persistence.") || type.startsWith("java.sql."));
+            }
+            String text = Files.readString(source);
+            assertFalse(text.contains("readValue(") || text.contains("writeValueAsString("));
+        }
+        String backtest = Files.readString(mainJava.resolve("com/trade/trading/application/backtest/BacktestService.java"));
+        assertFalse(backtest.contains("ThreadPoolExecutor") || backtest.contains("@PreDestroy"));
     }
 
     private static List<Path> javaSources(Path root) throws IOException {
@@ -296,15 +335,6 @@ class PackageArchitectureTest {
             imports.add(matcher.group(1));
         }
         return imports.build().toList();
-    }
-
-    private static String declaredType(Path source) throws IOException {
-        Matcher matcher = PACKAGE.matcher(Files.readString(source));
-        if (!matcher.find()) {
-            throw new IllegalArgumentException("missing package declaration: " + source);
-        }
-        String simpleName = source.getFileName().toString().replaceFirst("\\.java$", "");
-        return matcher.group(1) + "." + simpleName;
     }
 
     private static boolean importsPackage(String importedType, String topLevelPackage) {

@@ -2,7 +2,7 @@ package com.trade.trading.application.strategy;
 
 import com.trade.trading.domain.model.ActiveStrategySelection;
 import com.trade.trading.domain.model.TradingState;
-import com.trade.trading.infrastructure.persistence.TradingStateRepository;
+import com.trade.trading.application.port.TradingStateStore;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -16,11 +16,11 @@ import java.util.List;
 @Component
 public class TradingStrategySelectionService {
     private final TradingStrategyRegistry strategyRegistry;
-    private final TradingStateRepository stateRepository;
+    private final TradingStateStore stateRepository;
 
     public TradingStrategySelectionService(
             TradingStrategyRegistry strategyRegistry,
-            TradingStateRepository stateRepository
+            TradingStateStore stateRepository
     ) {
         this.strategyRegistry = strategyRegistry;
         this.stateRepository = stateRepository;

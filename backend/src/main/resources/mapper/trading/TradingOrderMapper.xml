@@ -3,7 +3,7 @@
         PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.trade.trading.infrastructure.persistence.TradingOrderMapper">
-    <resultMap id="tradingOrderResult" type="com.trade.trading.domain.order.TradingOrder">
+    <resultMap id="tradingOrderResult" type="com.trade.trading.infrastructure.persistence.TradingOrderRow">
         <id property="id" column="id"/>
         <result property="idempotencyKey" column="idempotency_key"/>
         <result property="clientOrderId" column="client_order_id"/>
@@ -31,7 +31,7 @@
         <result property="completedAt" column="completed_at"/>
     </resultMap>
 
-    <insert id="insertIfAbsent" parameterType="com.trade.trading.domain.order.TradingOrder">
+    <insert id="insertIfAbsent" parameterType="com.trade.trading.infrastructure.persistence.TradingOrderRow">
         INSERT INTO okx_orders (
             idempotency_key,
             client_order_id,

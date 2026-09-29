@@ -29,6 +29,7 @@ import javax.sql.DataSource;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @SpringJUnitConfig(MyBatisTradingFinancialStateStoreTest.PersistenceTestConfiguration.class)
 @Sql(statements = {
@@ -187,6 +188,18 @@ class MyBatisTradingFinancialStateStoreTest {
         var resumed = fundSafetyRepository.resume("live", halted.getVersion(), "operator checked", Instant.now());
         assertEquals(FundSafetyStatus.ACTIVE, resumed.getStatus());
         assertEquals(3L, resumed.getVersion());
+    }
+
+    @Test
+    void rejectedSellRollsBackLedgerAndLeavesManagedPositionUntouched() {
+        store.getOrCreatePosition("live", "BTC-USDT", BigDecimal.ONE, BigDecimal.TEN);
+        assertThrows(IllegalStateException.class, () -> store.applyCumulativeSpotFill(
+                1L, "live", "BTC-USDT", "sell", new BigDecimal("2"), new BigDecimal("2"), BigDecimal.ZERO,
+                BigDecimal.TEN, BigDecimal.ZERO, "USDT", "filled", Instant.now()));
+        var position = store.getOrCreatePosition("live", "BTC-USDT", BigDecimal.ZERO, BigDecimal.ZERO);
+        assertDecimal("1", position.getQuantity());
+        assertEquals(0, position.getVersion());
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_order_fill_ledger", Integer.class));
     }
 
     private static void assertDecimal(String expected, BigDecimal actual) {

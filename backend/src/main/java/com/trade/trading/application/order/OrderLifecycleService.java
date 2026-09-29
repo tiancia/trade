@@ -1,9 +1,9 @@
 package com.trade.trading.application.order;
 
+import com.trade.trading.domain.order.OrderChange;
 import com.trade.trading.application.port.TradingOrderRepository;
 import com.trade.trading.domain.order.OrderFill;
 import com.trade.trading.domain.order.OrderReservation;
-import com.trade.trading.domain.order.OrderStateMachine;
 import com.trade.trading.domain.order.OrderStatus;
 import com.trade.trading.domain.order.OrderSubmission;
 import com.trade.trading.domain.order.OrderTransitionResult;
@@ -12,11 +12,8 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.Objects;
 import java.util.Optional;
-import java.util.function.Consumer;
 
 /** Coordinates idempotent reservation and optimistic, audited state changes. */
 @Component
@@ -40,9 +37,7 @@ public class OrderLifecycleService {
 
         OrderTransitionResult result = transition(
                 submission.idempotencyKey(),
-                OrderStatus.SUBMITTING,
-                next -> next.setSubmittedAt(Instant.now()),
-                "submission ownership acquired"
+                OrderChange.submitting(Instant.now())
         );
         reservationCounter(result.changed() ? "acquired" : "replay").increment();
         return new OrderReservation(result.order(), result.changed());
@@ -53,11 +48,7 @@ public class OrderLifecycleService {
     }
 
     public OrderTransitionResult markAccepted(String idempotencyKey, String exchangeOrderId) {
-        return transition(idempotencyKey, OrderStatus.ACCEPTED,
-                next -> next.setExchangeOrderId(exchangeOrderId)
-                        .setFailureCode(null)
-                        .setFailureMessage(null),
-                "exchange accepted order");
+        return transition(idempotencyKey, OrderChange.markAccepted(exchangeOrderId, Instant.now()));
     }
 
     public OrderTransitionResult markPartiallyFilled(
@@ -65,43 +56,19 @@ public class OrderLifecycleService {
             String exchangeOrderId,
             OrderFill fill
     ) {
-        return transition(idempotencyKey, OrderStatus.PARTIALLY_FILLED,
-                next -> applyFill(next, exchangeOrderId, fill),
-                "exchange reported partial fill");
+        return transition(idempotencyKey, OrderChange.markPartiallyFilled(exchangeOrderId, fill, Instant.now()));
     }
 
     public OrderTransitionResult markFilled(String idempotencyKey, String exchangeOrderId, OrderFill fill) {
-        return transition(idempotencyKey, OrderStatus.FILLED,
-                next -> {
-                    applyFill(next, exchangeOrderId, fill);
-                    if (next.getCompletedAt() == null) {
-                        next.setCompletedAt(Instant.now());
-                    }
-                },
-                "exchange reported full fill");
+        return transition(idempotencyKey, OrderChange.markFilled(exchangeOrderId, fill, Instant.now()));
     }
 
     public OrderTransitionResult markCanceled(String idempotencyKey, String exchangeOrderId, OrderFill fill) {
-        return transition(idempotencyKey, OrderStatus.CANCELED,
-                next -> {
-                    applyFill(next, exchangeOrderId, fill);
-                    if (next.getCompletedAt() == null) {
-                        next.setCompletedAt(Instant.now());
-                    }
-                },
-                "exchange reported cancellation");
+        return transition(idempotencyKey, OrderChange.markCanceled(exchangeOrderId, fill, Instant.now()));
     }
 
     public OrderTransitionResult markRejected(String idempotencyKey, String message) {
-        return transition(idempotencyKey, OrderStatus.REJECTED,
-                next -> {
-                    next.setFailureCode("EXCHANGE_REJECTED")
-                            .setFailureMessage(message);
-                    if (next.getCompletedAt() == null) {
-                        next.setCompletedAt(Instant.now());
-                    }
-                },
-                "exchange rejected order");
+        return transition(idempotencyKey, OrderChange.markRejected(message, Instant.now()));
     }
 
     public OrderTransitionResult markSubmissionBlocked(
@@ -109,51 +76,28 @@ public class OrderLifecycleService {
             String code,
             String message
     ) {
-        return transition(idempotencyKey, OrderStatus.REJECTED,
-                next -> {
-                    next.setFailureCode(code)
-                            .setFailureMessage(message);
-                    if (next.getCompletedAt() == null) {
-                        next.setCompletedAt(Instant.now());
-                    }
-                },
-                "local safety gate blocked external submission");
+        return transition(idempotencyKey, OrderChange.markSubmissionBlocked(code, message, Instant.now()));
     }
 
     public OrderTransitionResult markSubmitUnknown(String idempotencyKey, String message) {
-        return transition(idempotencyKey, OrderStatus.SUBMIT_UNKNOWN,
-                next -> next.setFailureCode("SUBMIT_RESULT_UNKNOWN")
-                        .setFailureMessage(message),
-                "submission result is ambiguous and requires reconciliation");
+        return transition(idempotencyKey, OrderChange.markSubmitUnknown(message, Instant.now()));
     }
 
     private OrderTransitionResult transition(
-            String idempotencyKey,
-            OrderStatus target,
-            Consumer<TradingOrder> mutation,
-            String reason
+            String idempotencyKey, OrderChange change
     ) {
         for (int attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
             TradingOrder current = repository.findByIdempotencyKey(idempotencyKey)
                     .orElseThrow(() -> new IllegalStateException("Order not found: " + idempotencyKey));
-            boolean sameStatus = current.getStatus() == target;
-            if (!sameStatus) {
-                OrderStateMachine.requireTransition(current.getStatus(), target);
-            }
-
-            TradingOrder next = copy(current)
-                    .setStatus(target)
-                    .setVersion(current.getVersion() + 1)
-                    .setUpdatedAt(Instant.now());
-            mutation.accept(next);
-            if (sameStatus && hasSameExchangeState(current, next)) {
+            TradingOrder next = change.apply(current, Instant.now());
+            if (current.getStatus() == change.target() && OrderChange.hasSameExchangeState(current, next)) {
                 return new OrderTransitionResult(current, false);
             }
-            if (repository.compareAndSet(current, next, reason)) {
+            if (repository.compareAndSet(current, next, change.reason())) {
                 Counter.builder("trade.trading.orders.transitions")
                         .description("Successful durable order state transitions")
                         .tag("from", current.getStatus().name())
-                        .tag("to", target.name())
+                        .tag("to", change.target().name())
                         .register(meterRegistry)
                         .increment();
                 return new OrderTransitionResult(next, true);
@@ -166,24 +110,6 @@ public class OrderLifecycleService {
         throw new IllegalStateException("Concurrent order update did not converge: " + idempotencyKey);
     }
 
-    private static boolean hasSameExchangeState(TradingOrder left, TradingOrder right) {
-        return Objects.equals(left.getExchangeOrderId(), right.getExchangeOrderId())
-                && decimalEquals(left.getFilledBaseAmount(), right.getFilledBaseAmount())
-                && decimalEquals(left.getAverageFillPrice(), right.getAverageFillPrice())
-                && decimalEquals(left.getFee(), right.getFee())
-                && Objects.equals(left.getFeeCcy(), right.getFeeCcy())
-                && Objects.equals(left.getFailureCode(), right.getFailureCode())
-                && Objects.equals(left.getFailureMessage(), right.getFailureMessage())
-                && Objects.equals(left.getCompletedAt(), right.getCompletedAt());
-    }
-
-    private static boolean decimalEquals(BigDecimal left, BigDecimal right) {
-        if (left == null || right == null) {
-            return left == right;
-        }
-        return left.compareTo(right) == 0;
-    }
-
     private Counter reservationCounter(String outcome) {
         return Counter.builder("trade.trading.orders.reservations")
                 .description("Order idempotency reservation outcomes")
@@ -191,43 +117,4 @@ public class OrderLifecycleService {
                 .register(meterRegistry);
     }
 
-    private static TradingOrder applyFill(TradingOrder order, String exchangeOrderId, OrderFill fill) {
-        order.setExchangeOrderId(exchangeOrderId);
-        if (fill != null) {
-            order.setFilledBaseAmount(fill.filledBaseAmount())
-                    .setAverageFillPrice(fill.averageFillPrice())
-                    .setFee(fill.fee())
-                    .setFeeCcy(fill.feeCcy());
-        }
-        return order;
-    }
-
-    private static TradingOrder copy(TradingOrder source) {
-        return new TradingOrder()
-                .setId(source.getId())
-                .setIdempotencyKey(source.getIdempotencyKey())
-                .setClientOrderId(source.getClientOrderId())
-                .setExchangeOrderId(source.getExchangeOrderId())
-                .setDecisionId(source.getDecisionId())
-                .setStrategyId(source.getStrategyId())
-                .setInstId(source.getInstId())
-                .setAction(source.getAction())
-                .setSide(source.getSide())
-                .setTdMode(source.getTdMode())
-                .setOrderType(source.getOrderType())
-                .setTargetCurrency(source.getTargetCurrency())
-                .setRequestedSize(source.getRequestedSize())
-                .setStatus(source.getStatus())
-                .setVersion(source.getVersion())
-                .setFilledBaseAmount(source.getFilledBaseAmount())
-                .setAverageFillPrice(source.getAverageFillPrice())
-                .setFee(source.getFee())
-                .setFeeCcy(source.getFeeCcy())
-                .setFailureCode(source.getFailureCode())
-                .setFailureMessage(source.getFailureMessage())
-                .setCreatedAt(source.getCreatedAt())
-                .setUpdatedAt(source.getUpdatedAt())
-                .setSubmittedAt(source.getSubmittedAt())
-                .setCompletedAt(source.getCompletedAt());
-    }
 }

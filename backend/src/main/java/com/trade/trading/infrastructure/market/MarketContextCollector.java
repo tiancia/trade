@@ -1,5 +1,6 @@
 package com.trade.trading.infrastructure.market;
 
+import com.trade.trading.application.port.TradingMarketSource;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.client.okx.OkxApi;
@@ -26,7 +27,7 @@ import com.trade.common.support.TradingMath;
 import com.trade.trading.application.event.TradingEvent;
 import com.trade.trading.application.event.TradingEventSource;
 import com.trade.trading.application.port.TradingEventPublisher;
-import com.trade.trading.domain.model.TradingDecisionContext;
+import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.domain.model.TradingTrigger;
 import com.trade.trading.infrastructure.config.TradingProperties;
@@ -45,7 +46,7 @@ import java.util.UUID;
  * context. The same context is later reused by risk checks and execution.
  */
 @Component
-public class MarketContextCollector {
+public class MarketContextCollector implements TradingMarketSource {
     private final OkxApi okxApi;
     private final TradingProperties properties;
     private final TradingStateRepository stateRepository;

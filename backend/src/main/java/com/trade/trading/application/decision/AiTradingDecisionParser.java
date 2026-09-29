@@ -1,5 +1,6 @@
 package com.trade.trading.application.decision;
 
+import com.trade.trading.domain.rule.TradingDecisionRules;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.trading.domain.model.AiTradingDecision;
@@ -54,51 +55,15 @@ public class AiTradingDecisionParser {
                     .setRawResponse(rawResponse);
 
             if (action == TradingAction.BUY) {
-                String validationError = validateProbabilityFields(decision);
-                if (validationError != null) {
-                    return AiTradingDecision.hold(validationError, rawResponse);
-                }
-                BigDecimal amount = readPositiveDecimal(root, "buyQuoteAmountUsdt");
-                if (amount == null) {
-                    return AiTradingDecision.hold("Invalid AI decision: BUY requires positive buyQuoteAmountUsdt", rawResponse);
-                }
-                decision.setBuyQuoteAmountUsdt(amount);
+                decision.setBuyQuoteAmountUsdt(readPositiveDecimal(root, "buyQuoteAmountUsdt"));
             } else if (action == TradingAction.SELL) {
-                String validationError = validateProbabilityFields(decision);
-                if (validationError != null) {
-                    return AiTradingDecision.hold(validationError, rawResponse);
-                }
-                BigDecimal amount = readPositiveDecimal(root, "sellBaseAmountBtc");
-                if (amount == null) {
-                    return AiTradingDecision.hold("Invalid AI decision: SELL requires positive sellBaseAmountBtc", rawResponse);
-                }
-                decision.setSellBaseAmountBtc(amount);
-            } else if (action.isDerivativeAction()) {
-                String validationError = validateProbabilityFields(decision);
-                if (validationError != null) {
-                    return AiTradingDecision.hold(validationError, rawResponse);
-                }
-                BigDecimal amount = readPositiveDecimal(root, "orderSize");
-                if (amount == null) {
-                    return AiTradingDecision.hold("Invalid AI decision: " + action + " requires positive orderSize", rawResponse);
-                }
-                decision.setOrderSize(amount);
+                decision.setSellBaseAmountBtc(readPositiveDecimal(root, "sellBaseAmountBtc"));
             }
+            return TradingDecisionRules.validated(decision);
 
-            return decision;
         } catch (Exception e) {
             return AiTradingDecision.hold("Invalid AI decision: " + e.getMessage(), rawResponse);
         }
-    }
-
-    private static String validateProbabilityFields(AiTradingDecision decision) {
-        if (!isInUnitInterval(decision.getWinProbability())) {
-            return "Invalid AI decision: winProbability must be between 0 and 1 for non-HOLD actions";
-        }
-        if (!isInUnitInterval(decision.getConfidence())) {
-            return "Invalid AI decision: confidence must be between 0 and 1 for non-HOLD actions";
-        }
-        return null;
     }
 
     private static TradingAction parseAction(String action) {
@@ -154,10 +119,6 @@ public class AiTradingDecisionParser {
         } catch (RuntimeException e) {
             return null;
         }
-    }
-
-    private static boolean isInUnitInterval(BigDecimal value) {
-        return value != null && value.compareTo(BigDecimal.ZERO) >= 0 && value.compareTo(BigDecimal.ONE) <= 0;
     }
 
     private static String extractJsonObject(String rawResponse) {

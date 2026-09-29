@@ -1,6 +1,5 @@
 package com.trade.trading.infrastructure.persistence;
 
-import com.trade.trading.domain.order.TradingOrder;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -8,18 +7,18 @@ import java.util.List;
 
 @Mapper
 public interface TradingOrderMapper {
-    int insertIfAbsent(TradingOrder order);
+    int insertIfAbsent(TradingOrderRow order);
 
-    TradingOrder findByIdempotencyKey(String idempotencyKey);
+    TradingOrderRow findByIdempotencyKey(String idempotencyKey);
 
-    List<TradingOrder> findReconciliationCandidates(
+    List<TradingOrderRow> findReconciliationCandidates(
             @Param("instId") String instId,
             @Param("limit") int limit
     );
 
     int compareAndSet(
-            @Param("current") TradingOrder current,
-            @Param("next") TradingOrder next
+            @Param("current") TradingOrderRow current,
+            @Param("next") TradingOrderRow next
     );
 
     void insertStatusHistory(

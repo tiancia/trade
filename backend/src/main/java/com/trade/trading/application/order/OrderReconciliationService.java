@@ -1,5 +1,6 @@
 package com.trade.trading.application.order;
 
+import com.trade.trading.domain.risk.ReconciliationPolicy;
 import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.OkxResponses;
 import com.trade.client.okx.dto.AccountBalanceReq;
@@ -18,7 +19,7 @@ import com.trade.trading.domain.model.TradingRiskState;
 import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.domain.order.TradingOrder;
 import com.trade.trading.infrastructure.config.TradingProperties;
-import com.trade.trading.infrastructure.persistence.TradingStateRepository;
+import com.trade.trading.application.port.TradingStateStore;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -48,7 +49,7 @@ public class OrderReconciliationService {
     private final OkxApi okxApi;
     private final TradingOrderRepository orderRepository;
     private final OrderSettlementService settlementService;
-    private final TradingStateRepository stateRepository;
+    private final TradingStateStore stateRepository;
     private final FundSafetyService fundSafetyService;
     private final TradingProperties properties;
     private final MeterRegistry meterRegistry;
@@ -64,7 +65,7 @@ public class OrderReconciliationService {
             OkxApi okxApi,
             TradingOrderRepository orderRepository,
             OrderSettlementService settlementService,
-            TradingStateRepository stateRepository,
+            TradingStateStore stateRepository,
             FundSafetyService fundSafetyService,
             TradingProperties properties,
             MeterRegistry meterRegistry
@@ -136,10 +137,8 @@ public class OrderReconciliationService {
             recordFailure(e);
             counter("failed").increment();
             timer.stop(timer("failed"));
-            if (consecutiveFailures >= Math.max(
-                    1,
-                    properties.getReconciliation().getMaxConsecutiveFailures()
-            )) {
+            if (ReconciliationPolicy.shouldHalt(consecutiveFailures,
+                    properties.getReconciliation().getMaxConsecutiveFailures())) {
                 fundSafetyService.halt(
                         "order-reconciliation",
                         "Reconciliation failed " + consecutiveFailures + " consecutive times: " + e.getMessage()
@@ -191,11 +190,7 @@ public class OrderReconciliationService {
                 .filter(position -> properties.getInstId().equals(position.getInstId()))
                 .filter(position -> TradingMath.decimal(position.getPos()).signum() != 0)
                 .toList();
-        if (positions.size() > 1) {
-            throw new IllegalStateException(
-                    "Multiple derivative position sides require an explicit portfolio projection"
-            );
-        }
+        ReconciliationPolicy.requireSinglePosition(positions.size());
         PositionResp position = positions.isEmpty() ? null : positions.getFirst();
         BigDecimal exchangeQuantity = position == null
                 ? BigDecimal.ZERO
@@ -233,16 +228,9 @@ public class OrderReconciliationService {
                 dedicated ? exchangeAverageCost : null,
                 Instant.now()
         );
-        if (!dedicated) {
-            return;
-        }
-        BigDecimal difference = zero(before.getTrackedBaseAmount())
-                .subtract(zero(exchangeQuantity))
-                .abs();
-        BigDecimal tolerance = zero(properties.getReconciliation().getPositionMismatchTolerance());
-        if (difference.compareTo(tolerance) > 0) {
-            String reason = "Dedicated-account position mismatch: managed="
-                    + before.getTrackedBaseAmount() + ", exchange=" + exchangeQuantity;
+        String reason = ReconciliationPolicy.positionMismatch(dedicated, before.getTrackedBaseAmount(),
+                exchangeQuantity, properties.getReconciliation().getPositionMismatchTolerance());
+        if (reason != null) {
             fundSafetyService.halt("position-reconciliation", reason);
             throw new IllegalStateException(reason);
         }
@@ -283,7 +271,4 @@ public class OrderReconciliationService {
         return TradingMath.decimal(fallback).max(BigDecimal.ZERO);
     }
 
-    private static BigDecimal zero(BigDecimal value) {
-        return value == null ? BigDecimal.ZERO : value;
-    }
 }

@@ -1,7 +1,6 @@
 package com.trade.marketplace.application.service;
 
-import com.trade.marketplace.domain.exception.MarketplaceConflictException;
-import com.trade.marketplace.domain.exception.MarketplaceForbiddenException;
+import com.trade.marketplace.domain.rule.MarketplaceConversationRules;
 import com.trade.marketplace.domain.exception.MarketplaceNotFoundException;
 import com.trade.marketplace.domain.model.MarketplaceApi;
 import com.trade.marketplace.domain.model.MarketplacePrincipal;
@@ -42,12 +41,7 @@ public class MarketplaceChatService {
     @Transactional
     public MarketplaceApi.Conversation createConversation(MarketplacePrincipal buyer, long itemId) {
         MarketplaceItemRow item = itemService.requireItem(itemId);
-        if (!"LISTED".equals(item.getStatus())) {
-            throw new MarketplaceConflictException("item is no longer listed");
-        }
-        if (item.getSellerId().equals(buyer.id())) {
-            throw new IllegalArgumentException("seller cannot start a conversation with themselves");
-        }
+        MarketplaceConversationRules.requireCanStart(item.getStatus(), item.getSellerId(), buyer.id());
         MarketplaceConversationRow existing = mapper.findConversationForItemBuyer(itemId, buyer.id());
         if (existing != null) {
             return MarketplaceViews.conversation(existing);
@@ -89,7 +83,7 @@ public class MarketplaceChatService {
             MarketplaceApi.SendMessageRequest request
     ) {
         requireConversation(conversationId, sender);
-        String body = cleanBody(request == null ? null : request.body());
+        String body = MarketplaceConversationRules.cleanBody(request == null ? null : request.body());
         Timestamp now = Timestamp.from(Instant.now(clock));
         MarketplaceMessageRow row = new MarketplaceMessageRow()
                 .setConversationId(conversationId)
@@ -108,17 +102,8 @@ public class MarketplaceChatService {
         if (row == null) {
             throw new MarketplaceNotFoundException("conversation does not exist");
         }
-        if (!row.getBuyerId().equals(user.id()) && !row.getSellerId().equals(user.id())) {
-            throw new MarketplaceForbiddenException("only the buyer and seller can access this conversation");
-        }
+        MarketplaceConversationRules.requireParticipant(row.getBuyerId(), row.getSellerId(), user.id());
         return row;
     }
 
-    private static String cleanBody(String value) {
-        String body = value == null ? "" : value.trim();
-        if (body.isEmpty() || body.length() > 1000) {
-            throw new IllegalArgumentException("message body must be 1-1000 characters");
-        }
-        return body;
-    }
 }

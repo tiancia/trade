@@ -1,6 +1,7 @@
 package com.trade.textgame.application.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trade.textgame.infrastructure.persistence.MyBatisTextGameSessionStore;
 import com.trade.textgame.application.support.InMemoryTextGameMapper;
 import com.trade.textgame.domain.exception.TextGameConflictException;
 import com.trade.textgame.domain.model.TextGameApi;
@@ -37,7 +38,7 @@ class TextGameSessionServiceTest {
         mapper.insertVersion(new TextGameVersionRow().setStoryId(story.getId()).setVersionNumber(1)
                 .setStatus("PUBLISHED").setRevision(0).setStoryJson(storyJson).setChecksum("v1")
                 .setPublishedAt(Timestamp.from(Instant.now())));
-        service = new TextGameSessionService(mapper, objectMapper, new TextGameRuleEngine(), new TextGameProperties());
+        service = new TextGameSessionService(new MyBatisTextGameSessionStore(mapper, objectMapper), objectMapper, new TextGameRuleEngine(), new TextGameProperties());
     }
 
     @Test
@@ -63,7 +64,7 @@ class TextGameSessionServiceTest {
         assertEquals("day15_skill", next.scene().nodeId());
 
         TextGameSessionService restarted = new TextGameSessionService(
-                mapper, objectMapper, new TextGameRuleEngine(), new TextGameProperties());
+                new MyBatisTextGameSessionStore(mapper, objectMapper), objectMapper, new TextGameRuleEngine(), new TextGameProperties());
         assertEquals(next, restarted.getSession(created.sessionId()));
     }
 

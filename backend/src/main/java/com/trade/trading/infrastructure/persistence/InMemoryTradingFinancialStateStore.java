@@ -1,12 +1,12 @@
 package com.trade.trading.infrastructure.persistence;
 
+import com.trade.trading.domain.order.PositionAccounting;
 import com.trade.trading.application.port.TradingFinancialStateStore;
 import com.trade.trading.domain.model.TradingPositionState;
 import com.trade.trading.domain.model.TradingRiskState;
 import com.trade.trading.domain.order.SpotFillApplication;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -31,11 +31,7 @@ public class InMemoryTradingFinancialStateStore implements TradingFinancialState
             BigDecimal seedAverageCost
     ) {
         return copyPosition(positions.computeIfAbsent(key(accountScope, instId), ignored ->
-                new TradingPositionState()
-                        .setAccountScope(accountScope)
-                        .setInstId(instId)
-                        .setQuantity(zero(seedQuantity))
-                        .setAverageCost(zero(seedAverageCost))));
+                TradingPositionState.seed(accountScope, instId, seedQuantity, seedAverageCost)));
     }
 
     @Override
@@ -45,15 +41,10 @@ public class InMemoryTradingFinancialStateStore implements TradingFinancialState
             BigDecimal quantity,
             BigDecimal averageCost
     ) {
-        TradingPositionState position = mutablePosition(accountScope, instId);
-        BigDecimal oldQuantity = zero(position.getQuantity());
-        BigDecimal newQuantity = oldQuantity.add(quantity);
-        BigDecimal totalCost = oldQuantity.multiply(zero(position.getAverageCost()))
-                .add(quantity.multiply(averageCost));
-        position.setQuantity(newQuantity)
-                .setAverageCost(totalCost.divide(newQuantity, 18, RoundingMode.HALF_UP))
-                .setVersion(position.getVersion() + 1);
-        return copyPosition(position);
+        TradingPositionState position = currentPosition(accountScope, instId);
+        var next = position.buy(quantity, quantity.multiply(averageCost));
+        positions.put(key(accountScope, instId), next);
+        return next;
     }
 
     @Override
@@ -62,12 +53,10 @@ public class InMemoryTradingFinancialStateStore implements TradingFinancialState
             String instId,
             BigDecimal quantity
     ) {
-        TradingPositionState position = mutablePosition(accountScope, instId);
-        BigDecimal remaining = zero(position.getQuantity()).subtract(quantity).max(BigDecimal.ZERO);
-        position.setQuantity(remaining)
-                .setAverageCost(remaining.signum() == 0 ? BigDecimal.ZERO : zero(position.getAverageCost()))
-                .setVersion(position.getVersion() + 1);
-        return copyPosition(position);
+        TradingPositionState position = currentPosition(accountScope, instId);
+        var next = position.sell(quantity);
+        positions.put(key(accountScope, instId), next);
+        return next;
     }
 
     @Override
@@ -79,20 +68,11 @@ public class InMemoryTradingFinancialStateStore implements TradingFinancialState
             BigDecimal authoritativeAverageCost,
             Instant reconciledAt
     ) {
-        TradingPositionState position = mutablePosition(accountScope, instId);
-        position.setExchangeQuantity(zero(exchangeQuantity))
-                .setLastReconciledAt(reconciledAt == null ? Instant.now() : reconciledAt)
-                .setVersion(position.getVersion() + 1);
-        if (authoritativeQuantity != null) {
-            BigDecimal normalizedQuantity = authoritativeQuantity.max(BigDecimal.ZERO);
-            position.setQuantity(normalizedQuantity);
-            if (normalizedQuantity.signum() == 0) {
-                position.setAverageCost(BigDecimal.ZERO);
-            } else if (authoritativeAverageCost != null && authoritativeAverageCost.signum() > 0) {
-                position.setAverageCost(authoritativeAverageCost);
-            }
-        }
-        return copyPosition(position);
+        TradingPositionState position = currentPosition(accountScope, instId);
+        var next = position.reconcile(exchangeQuantity, authoritativeQuantity, authoritativeAverageCost,
+                reconciledAt == null ? Instant.now() : reconciledAt);
+        positions.put(key(accountScope, instId), next);
+        return next;
     }
 
     @Override
@@ -157,41 +137,21 @@ public class InMemoryTradingFinancialStateStore implements TradingFinancialState
         BigDecimal observedFill = zero(cumulativeFilledSize);
         BigDecimal observedPosition = zero(cumulativePositionQuantity);
         BigDecimal observedCost = zero(cumulativeQuoteCost);
-        if (observedFill.compareTo(previous.filled()) < 0
-                || observedPosition.compareTo(previous.position()) < 0
-                || observedCost.compareTo(previous.quoteCost()) < 0) {
-            return SpotFillApplication.unchanged();
-        }
-        BigDecimal delta = observedPosition.subtract(previous.position());
-        BigDecimal costDelta = observedCost.subtract(previous.quoteCost());
-        if (delta.signum() == 0 && costDelta.signum() == 0) {
-            return SpotFillApplication.unchanged();
-        }
-        TradingPositionState position = mutablePosition(accountScope, instId);
-        if ("buy".equalsIgnoreCase(side)) {
-            BigDecimal oldQuantity = zero(position.getQuantity());
-            BigDecimal newQuantity = oldQuantity.add(delta);
-            BigDecimal totalCost = oldQuantity.multiply(zero(position.getAverageCost())).add(costDelta);
-            position.setQuantity(newQuantity)
-                    .setAverageCost(totalCost.divide(newQuantity, 18, RoundingMode.HALF_UP));
-        } else {
-            if (delta.compareTo(zero(position.getQuantity())) > 0) {
-                throw new IllegalStateException("Reconciled SELL exceeds managed position");
-            }
-            BigDecimal remaining = zero(position.getQuantity()).subtract(delta);
-            position.setQuantity(remaining)
-                    .setAverageCost(remaining.signum() == 0 ? BigDecimal.ZERO : position.getAverageCost());
-        }
-        position.setVersion(position.getVersion() + 1);
+        var change = PositionAccounting.cumulativeDelta(observedFill, observedPosition, observedCost,
+                previous.filled(), previous.position(), previous.quoteCost());
+        if (!change.changed()) { return SpotFillApplication.unchanged(); }
+        BigDecimal delta = change.quantity();
+        BigDecimal costDelta = change.quoteCost();
+        TradingPositionState position = currentPosition(accountScope, instId);
+        var next = "buy".equalsIgnoreCase(side) ? position.buy(delta, costDelta) : position.applySellFill(delta);
+        positions.put(key(accountScope, instId), next);
         fills.put(orderId, new FillCheckpoint(side, observedFill, observedPosition, observedCost));
         return new SpotFillApplication(true, previous.position().signum() == 0, delta);
     }
 
-    private TradingPositionState mutablePosition(String accountScope, String instId) {
+    private TradingPositionState currentPosition(String accountScope, String instId) {
         return positions.computeIfAbsent(key(accountScope, instId), ignored ->
-                new TradingPositionState()
-                        .setAccountScope(accountScope)
-                        .setInstId(instId));
+                TradingPositionState.seed(accountScope, instId, BigDecimal.ZERO, BigDecimal.ZERO));
     }
 
     private static String key(String accountScope, String instId) {
@@ -199,15 +159,7 @@ public class InMemoryTradingFinancialStateStore implements TradingFinancialState
     }
 
     private static TradingPositionState copyPosition(TradingPositionState source) {
-        return new TradingPositionState()
-                .setAccountScope(source.getAccountScope())
-                .setInstId(source.getInstId())
-                .setPositionSide(source.getPositionSide())
-                .setQuantity(zero(source.getQuantity()))
-                .setAverageCost(zero(source.getAverageCost()))
-                .setExchangeQuantity(source.getExchangeQuantity())
-                .setLastReconciledAt(source.getLastReconciledAt())
-                .setVersion(source.getVersion());
+        return source; // Immutable snapshot.
     }
 
     private static TradingRiskState copyRisk(TradingRiskState source) {

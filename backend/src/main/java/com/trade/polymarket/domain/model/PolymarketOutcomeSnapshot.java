@@ -1,6 +1,5 @@
 package com.trade.polymarket.domain.model;
 
-import com.trade.client.polymarket.dto.PolymarketOrderBookLevel;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
@@ -23,7 +22,7 @@ public class PolymarketOutcomeSnapshot {
     private String minOrderSize;
     private String tickSize;
     private Boolean negRisk;
-    private List<PolymarketOrderBookLevel> topBids;
-    private List<PolymarketOrderBookLevel> topAsks;
+    private List<MarketDepthLevel> topBids;
+    private List<MarketDepthLevel> topAsks;
     private String orderBookError;
 }

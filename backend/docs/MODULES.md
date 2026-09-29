@@ -41,23 +41,24 @@ trading/
 │  ├─ web/                # HTTP、SSE、请求转换
 │  └─ scheduler/          # 定时触发
 ├─ application/
-│  ├─ strategy/           # 策略选择、注册和评估
+│  ├─ strategy/           # 策略选择、注册和领域输入转换
 │  ├─ order/              # 幂等、订单生命周期、结算与对账
-│  ├─ risk/               # 配置驱动风控、资金停止与恢复
-│  ├─ execution/          # 下单数量计算
+│  ├─ risk/               # 风控编排、资金停止与恢复
+│  ├─ execution/          # 下单编排、门禁与数量规则输入转换
 │  ├─ backtest/           # 回测编排
-│  ├─ runtime/            # 行情生命周期、领导租约
-│  ├─ market/             # 行情查询与信号检测
-│  ├─ decision/           # Prompt 与解析
+│  ├─ runtime/            # 行情生命周期、领导租约、触发用例
+│  ├─ market/             # 行情查询、采集上下文、领域输入转换与信号检测
+│  ├─ decision/           # Prompt、解析与审计信封
 │  ├─ event/              # 技术事件信封、载荷与状态
 │  └─ port/               # Broker、存储、缓存、事件与审计契约
 ├─ domain/
 │  ├─ model/              # 决策、策略记忆、运行快照、业务枚举
-│  ├─ order/              # 订单、成交与状态机
-│  ├─ risk/               # 风险评估结果与资金状态
-│  └─ backtest/           # 回测请求、状态、成交与权益结果
+│  ├─ order/              # 幂等身份、状态演进、结算、数量与成本规则
+│  ├─ risk/               # 风控规则、状态演进、评估与资金状态
+│  ├─ strategy/           # 纯价量阈值与仓位退出规则
+│  └─ backtest/           # 回测参数、模拟持仓、盈亏统计与结果
 └─ infrastructure/
-   ├─ broker/             # paper/live/backtest 执行实现与路由
+   ├─ broker/             # Broker 接入、OKX 协议与查询重试
    ├─ persistence/        # MyBatis、文件状态与 Redis
    ├─ market/             # REST/WS 接入与历史行情
    ├─ event/              # 有界总线与处理器
@@ -70,10 +71,11 @@ trading/
 
 ```text
 AutomationTaskManager
-  -> TradingScheduler
+  -> TradingScheduler -> TradingTriggerService
     -> TradingStrategyEngine
       -> strategy -> risk/sizing -> broker
-        -> paper state 或 OkxLiveBroker -> OrderLifecycleService -> OKX
+        -> PaperBroker / OkxLiveBroker -> application/execution 用例
+          -> domain 规则 + OrderLifecycleService + ExchangeOrderGateway
 
   -> reconciliation loop
     -> OrderReconciliationService -> OKX order/account query
@@ -81,12 +83,14 @@ AutomationTaskManager
 
   -> database leadership heartbeat
     -> one leader runs decision/event/reconciliation loops
-      -> OkxLiveBroker revalidates leadership immediately before placeOrder
+      -> LiveOrderExecutionService revalidates leadership immediately before placeOrder
 
 REST / WebSocket market data
   -> TradingEventPublisher -> bounded queue
     -> isolated handlers -> MySQL / Redis
 ```
+
+订单对象不暴露 setter，状态推进经由 `OrderChange`；MyBatis 使用 `TradingOrderRow` 恢复不可变订单。持仓快照通过领域买入、卖出和对账方法演进。回测线程池由 `BacktestExecutorConfiguration` 装配并关闭，应用用例只提交任务。
 
 真实订单可靠性依赖持久化幂等键、确定性 `clOrdId`、状态机、乐观锁、状态历史和累计成交账本。仓位、成本、风险状态与资金级停止状态以 MySQL 为权威；`data/trading-state.json` 只保存策略选择、策略画像和有界决策记忆。事件管道依赖固定容量、显式队满策略、handler 异常隔离、指标与优雅排空。修改这些路径前应先读对应测试。
 
@@ -96,13 +100,19 @@ REST / WebSocket market data
 
 用例在 `application/service`，Prompt 与解析在 `application/decision`，模型在 `domain/model`，触发器在 `interfaces/scheduler`。Polymarket 的订单编排在 `application/execution`，Python 下单及地域检查实现在 `infrastructure/broker`，行情在 `infrastructure/market`；story 的热点采集在 `infrastructure/trend`，文件输出在 `infrastructure/persistence`。
 
+Polymarket 市场资格规则在 `domain/rule/PolymarketMarketFilters`，参数由 `MarketEligibilityPolicy` 表达，不依赖配置绑定类；行情采集和下单校验共同复用。
+
+`PolymarketOrderPolicy` 负责执行阈值和数量计算，解析后的业务有效性由 `PolymarketDecisionRules` 校验。故事的分节、篇幅、续写、连续性和伏笔回收位于 `domain/rule/StoryDraftPolicy`，AI 调用循环留在应用服务。
+
 共享 AI 审计接口在 `ai/application/port`，记录在 `ai/domain/model`，MyBatis 实现在 `ai/infrastructure/persistence`。
 
 ### textgame 与 marketplace
 
-这两个 HTTP 业务域使用 `interfaces/web`、`application/service`、`domain/model`、`domain/exception`、`infrastructure/persistence` 和 `infrastructure/config`。文字游戏的纯规则额外放在 `domain/rule`；集市的 OSS 实现放在 `infrastructure/oss`，契约放在 `application/port`。部分 application service 仍直接依赖 Mapper 或 Row，后续随具体需求渐进收敛。
+这两个 HTTP 业务域使用 `interfaces/web`、`application/service`、`domain/model`、`domain/exception`、`infrastructure/persistence` 和 `infrastructure/config`。文字游戏的纯规则额外放在 `domain/rule`；集市的 OSS 实现放在 `infrastructure/oss`，契约放在 `application/port`。文字游戏会话用例通过 `application/port/TextGameSessionStore` 访问持久化；管理用例和集市部分 application service 仍直接依赖 Mapper 或 Row，后续随具体需求渐进收敛。
 
-文字游戏和集市的共享业务异常均位于各自的 `domain/exception`。`MarketplaceViews` 保留为 `application/service` 内部的 Row 转换助手。
+文字游戏和集市的共享业务异常均位于各自的 `domain/exception`。集市商品和会话规则在 `domain/rule`，应用服务仍负责查询与事务；`MarketplaceViews` 保留为 `application/service` 内部的 Row 转换助手。文字游戏规则的 Spring 装配位于 `TextGameConfiguration`，规则类不依赖 Spring。
+
+`GameSession` 承载类型化会话状态并调用 `SessionProgression` 进行选择和阶段推进；`MyBatisTextGameSessionStore` 隔离 Row 与旧存档 JSON，`TextGameSessionViews` 负责响应视图，会话更新与事件写入仍在应用事务中。`StoryPublicationPolicy` 负责发布条件；账号和图片元数据规则分别由 `MarketplaceAccountRules` 和 `MarketplaceImageRules` 承担。OSS 单对象授权策略的 JSON 和签名属于 `infrastructure/oss`。
 
 ### weibo
 

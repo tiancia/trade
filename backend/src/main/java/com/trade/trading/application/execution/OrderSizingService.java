@@ -1,25 +1,16 @@
 package com.trade.trading.application.execution;
 
-import com.trade.client.okx.dto.BalanceDetail;
-import com.trade.client.okx.dto.InstrumentInfoResp;
-import com.trade.client.okx.dto.TickerResp;
-import com.trade.common.support.TradingMath;
-import com.trade.trading.application.risk.RiskContext;
+import com.trade.trading.domain.risk.AccountValuation;
+import com.trade.trading.application.market.TradingMarketInputs;
 import com.trade.trading.domain.model.OrderSizing;
 import com.trade.trading.domain.model.StrategyDecision;
-import com.trade.trading.domain.model.TradingDecisionContext;
+import com.trade.trading.application.market.TradingDecisionContext;
+import com.trade.trading.domain.order.OrderSizingRules;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import org.springframework.stereotype.Component;
-
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 
-/**
- * Applies exchange and strategy caps to strategy-requested order sizes.
- *
- * <p>The executor only receives plain OKX-compatible size strings from here,
- * so rounding and min-size checks stay in one place.</p>
- */
+/** Maps configuration and provider data to the pure order-sizing policy. */
 @Component
 public class OrderSizingService {
     private final TradingProperties properties;
@@ -29,111 +20,27 @@ public class OrderSizingService {
     }
 
     public OrderSizing buySize(StrategyDecision decision, TradingDecisionContext context) {
-        BigDecimal requestedAmount = decision.getBuyQuoteAmount();
-        BigDecimal availableQuote = available(context.getQuoteBalance());
-        BigDecimal maxAmount = properties.getMaxBuyQuoteAmount();
-        // Optional equity-ratio cap limits a single new open even if the AI
-        // asks for less than the absolute maxBuyQuoteAmount.
-        maxAmount = TradingMath.clamp(maxAmount, maxSingleOpenQuoteAmount(context));
-        BigDecimal amount = TradingMath.clamp(TradingMath.clamp(requestedAmount, maxAmount), availableQuote);
-        amount = amount.setScale(properties.getQuoteAmountScale(), RoundingMode.DOWN);
-
-        InstrumentInfoResp instrument = context.getInstrument();
-        BigDecimal maxMarketAmount = TradingMath.decimal(instrument.getMaxMktAmt());
-        amount = TradingMath.clamp(amount, maxMarketAmount).setScale(properties.getQuoteAmountScale(), RoundingMode.DOWN);
-
-        if (amount.signum() <= 0) {
-            return OrderSizing.skipped("BUY skipped: amount is zero after caps");
-        }
-
-        BigDecimal lastPrice = lastPrice(context.getTicker());
-        BigDecimal minBaseSize = TradingMath.decimal(instrument.getMinSz());
-        if (lastPrice.signum() > 0 && minBaseSize.signum() > 0) {
-            BigDecimal estimatedBase = amount.divide(lastPrice, 18, RoundingMode.DOWN);
-            if (estimatedBase.compareTo(minBaseSize) < 0) {
-                return OrderSizing.skipped("BUY skipped: estimated BTC amount is below OKX minSz");
-            }
-        }
-
-        return OrderSizing.executable(TradingMath.plain(amount));
+        return rules(context).buySize(decision, TradingMarketInputs.sizingFacts(context));
     }
 
     public OrderSizing sellSize(StrategyDecision decision, TradingDecisionContext context) {
-        BigDecimal requestedAmount = decision.getSellBaseAmount();
-        BigDecimal availableBase = available(context.getBaseBalance());
-        BigDecimal maxByRatio = availableBase.multiply(properties.getMaxSellPositionRatio());
-        BigDecimal amount = TradingMath.clamp(TradingMath.clamp(requestedAmount, maxByRatio), availableBase);
-
-        InstrumentInfoResp instrument = context.getInstrument();
-        BigDecimal lotSize = TradingMath.decimal(instrument.getLotSz());
-        amount = TradingMath.roundDownToStep(amount, lotSize);
-
-        BigDecimal maxMarketSize = TradingMath.decimal(instrument.getMaxMktSz());
-        amount = TradingMath.clamp(amount, maxMarketSize);
-        amount = TradingMath.roundDownToStep(amount, lotSize);
-
-        BigDecimal minSize = TradingMath.decimal(instrument.getMinSz());
-        if (amount.signum() <= 0) {
-            return OrderSizing.skipped("SELL skipped: amount is zero after caps");
-        }
-        if (minSize.signum() > 0 && amount.compareTo(minSize) < 0) {
-            return OrderSizing.skipped("SELL skipped: BTC amount is below OKX minSz");
-        }
-
-        return OrderSizing.executable(TradingMath.plain(amount));
+        return rules(context).sellSize(decision, TradingMarketInputs.sizingFacts(context));
     }
 
     public OrderSizing derivativeSize(StrategyDecision decision, TradingDecisionContext context) {
-        BigDecimal amount = TradingMath.clamp(decision.getOrderSize(), properties.getMaxDerivativeOrderSize());
-
-        InstrumentInfoResp instrument = context.getInstrument();
-        BigDecimal lotSize = TradingMath.decimal(instrument.getLotSz());
-        amount = TradingMath.roundDownToStep(amount, lotSize);
-
-        BigDecimal maxMarketSize = TradingMath.decimal(instrument.getMaxMktSz());
-        amount = TradingMath.clamp(amount, maxMarketSize);
-        amount = TradingMath.roundDownToStep(amount, lotSize);
-
-        BigDecimal minSize = TradingMath.decimal(instrument.getMinSz());
-        if (amount.signum() <= 0) {
-            return OrderSizing.skipped(decision.getAction() + " skipped: orderSize is zero after caps");
-        }
-        if (minSize.signum() > 0 && amount.compareTo(minSize) < 0) {
-            return OrderSizing.skipped(decision.getAction() + " skipped: orderSize is below OKX minSz");
-        }
-
-        return OrderSizing.executable(TradingMath.plain(amount));
+        return rules(context).derivativeSize(decision, TradingMarketInputs.sizingFacts(context));
     }
 
-    private static BigDecimal available(BalanceDetail detail) {
-        if (detail == null) {
-            return BigDecimal.ZERO;
-        }
-        BigDecimal availBal = TradingMath.decimal(detail.getAvailBal());
-        if (availBal.signum() > 0) {
-            return availBal;
-        }
-        return TradingMath.decimal(detail.getCashBal());
-    }
-
-    private static BigDecimal lastPrice(TickerResp ticker) {
-        if (ticker == null) {
-            return BigDecimal.ZERO;
-        }
-        return TradingMath.decimal(ticker.getLast());
+    private OrderSizingRules rules(TradingDecisionContext context) {
+        return new OrderSizingRules(new OrderSizingRules.Limits(
+                properties.getMaxBuyQuoteAmount(), properties.getQuoteAmountScale(),
+                properties.getMaxSellPositionRatio(), properties.getMaxDerivativeOrderSize(),
+                maxSingleOpenQuoteAmount(context)));
     }
 
     private BigDecimal maxSingleOpenQuoteAmount(TradingDecisionContext context) {
-        TradingProperties.RiskProperties riskProperties = properties.getRisk();
-        if (riskProperties == null || !riskProperties.isEnabled()) {
-            return BigDecimal.ZERO;
-        }
-
-        BigDecimal ratio = riskProperties.getMaxSingleOpenEquityRatio();
-        BigDecimal equity = RiskContext.estimateEquity(context);
-        if (ratio == null || ratio.signum() <= 0 || equity.signum() <= 0) {
-            return BigDecimal.ZERO;
-        }
-        return equity.multiply(ratio);
+        TradingProperties.RiskProperties risk = properties.getRisk();
+        return risk == null ? BigDecimal.ZERO : AccountValuation.singleOpenLimit(
+                risk.isEnabled(), risk.getMaxSingleOpenEquityRatio(), TradingMarketInputs.estimatedEquity(context));
     }
 }
