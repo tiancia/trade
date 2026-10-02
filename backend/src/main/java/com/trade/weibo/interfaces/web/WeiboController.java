@@ -6,6 +6,10 @@ import com.trade.client.weibo.WeiboPublishResult;
 import com.trade.weibo.application.service.WeiboAccountService;
 import com.trade.weibo.application.service.WeiboOAuthService;
 import com.trade.weibo.application.service.WeiboPublishingService;
+import com.trade.weibo.application.service.WeiboPostService;
+import com.trade.weibo.domain.model.HotEvent;
+import com.trade.weibo.domain.model.WeiboPost;
+import com.trade.weibo.domain.model.WeiboPostHistory;
 import com.trade.weibo.domain.exception.WeiboOAuthException;
 import com.trade.weibo.domain.exception.WeiboPublishingException;
 import com.trade.weibo.domain.model.WeiboAccount;
@@ -17,6 +21,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,6 +32,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Map;
+import java.util.List;
+import java.time.Instant;
 
 /**
  * Admin-protected Weibo OAuth and publishing API.
@@ -43,17 +51,20 @@ public class WeiboController {
     private final WeiboOAuthService oauthService;
     private final WeiboAccountService accountService;
     private final WeiboPublishingService publishingService;
+    private final WeiboPostService postService;
     private final byte[] adminToken;
 
     public WeiboController(
             WeiboOAuthService oauthService,
             WeiboAccountService accountService,
             WeiboPublishingService publishingService,
+            WeiboPostService postService,
             WeiboClientProperties properties
     ) {
         this.oauthService = oauthService;
         this.accountService = accountService;
         this.publishingService = publishingService;
+        this.postService = postService;
         this.adminToken = properties.requiredAdminToken().getBytes(StandardCharsets.UTF_8);
     }
 
@@ -87,6 +98,52 @@ public class WeiboController {
         return publishingService.publishText(request == null ? null : request.status());
     }
 
+    @PostMapping("/posts")
+    public ResponseEntity<WeiboPost> generatePost(
+            @RequestHeader(value = ADMIN_TOKEN_HEADER, required = false) String supplied,
+            @RequestBody GeneratePostRequest request) {
+        authorize(supplied);
+        if (request == null) throw new IllegalArgumentException("Event input is required");
+        HotEvent event = new HotEvent(request.title(), request.sourceUrl(), request.summary(),
+                request.occurredAt(), Instant.now());
+        return postService.generate(event).map(post -> ResponseEntity.status(HttpStatus.CREATED).body(post))
+                .orElseGet(() -> ResponseEntity.status(HttpStatus.CONFLICT).build());
+    }
+
+    @GetMapping("/posts")
+    public List<WeiboPost> posts(@RequestHeader(value = ADMIN_TOKEN_HEADER, required = false) String supplied,
+                                @RequestParam(defaultValue = "30") int limit) {
+        authorize(supplied);
+        return postService.recent(limit);
+    }
+
+    @GetMapping("/posts/{id}")
+    public WeiboPost post(@RequestHeader(value = ADMIN_TOKEN_HEADER, required = false) String supplied,
+                           @PathVariable String id) {
+        authorize(supplied);
+        return postService.get(id);
+    }
+
+    @GetMapping("/posts/{id}/history")
+    public List<WeiboPostHistory> history(
+            @RequestHeader(value = ADMIN_TOKEN_HEADER, required = false) String supplied, @PathVariable String id) {
+        authorize(supplied);
+        return postService.history(id);
+    }
+
+    @PutMapping("/posts/{id}")
+    public WeiboPost revise(@RequestHeader(value = ADMIN_TOKEN_HEADER, required = false) String supplied,
+                             @PathVariable String id, @RequestBody RevisePostRequest request) {
+        authorize(supplied);
+        if (request == null) throw new IllegalArgumentException("Post input is required");
+        return postService.revise(id, request.expectedRevision(), request.body());
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<Map<String, String>> conflict(IllegalStateException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
+    }
+
     @ExceptionHandler(WeiboUnauthorizedException.class)
     public ResponseEntity<Map<String, String>> unauthorized(WeiboUnauthorizedException e) {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", e.getMessage()));
@@ -101,8 +158,7 @@ public class WeiboController {
     public ResponseEntity<Map<String, Object>> weiboHttpError(WeiboHttpException e) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(Map.of(
                 "error", "Weibo API request failed",
-                "status", e.statusCode(),
-                "body", e.responseBody()
+                "status", e.statusCode()
         ));
     }
 
@@ -115,4 +171,7 @@ public class WeiboController {
 
     public record PublishTextRequest(String status) {
     }
+
+    public record GeneratePostRequest(String title, String sourceUrl, String summary, Instant occurredAt) { }
+    public record RevisePostRequest(long expectedRevision, String body) { }
 }

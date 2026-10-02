@@ -6,7 +6,7 @@
 
 业务域包括 `trading`、`polymarket`、`story`、`textgame`、`marketplace`、`weibo`。它们保留同一个 Spring Boot 进程、Maven 构建和数据库连接；没有拆成微服务或多个 Maven module。
 
-业务域、`automation` 和共享审计模块 `ai` 只使用以下四种一级目录，按需创建：
+业务域、`automation` 和共享能力模块 `ai`、`telegram` 只使用以下四种一级目录，按需创建：
 
 ```text
 <module>/
@@ -39,11 +39,11 @@ interfaces -> application -> domain
              application.port <- infrastructure implementation
 
 automation -> 各业务域的 scheduler / lifecycle 入口
-业务域 -> client / ai / common
+业务域 -> client / ai / telegram / common
 ```
 
 - 业务域之间不得直接 import，跨域生命周期由 `automation` 编排。
-- `client`、`ai`、`common` 不得反向依赖业务域或 `automation`。
+- `client`、`ai`、`telegram`、`common` 不得反向依赖业务域或 `automation`。
 - `domain` 不依赖 `application`、`interfaces`、`infrastructure`。不依赖供应商 client；架构测试不再保留 provider DTO 豁免。
 - `application/port` 不依赖接口入口或基础设施实现。Broker、订单存储、资金状态、行情缓存和审计等现有接口放在这里。
 - 非接口层不得反向依赖本域 HTTP 或定时入口。`automation` 登记各域 scheduler 是跨域编排的明确职责。
@@ -167,6 +167,11 @@ REST / WebSocket producers
 - 历史 K 线异步写入，但调用返回时合并本次 REST 数据与缓存，保留回测读取语义。
 
 ## 5. Weibo 分层示例
+
+热点审核工作流沿用相同四层：不可变 `WeiboPost` 聚合管理规则，应用服务通过 port 编排
+RSS/Atom、AI、MyBatis 和发布。共享 `telegram` 与 `ai` 使用四层且禁止反向依赖业务域，
+只定义通用审核请求/决策与投递，不拥有微博状态。参见 [ADR-0003](adr/0003-shared-human-review-capability.md)
+和 [微博工作流](WEIBO_WORKFLOW.md)。
 
 ```text
 weibo/

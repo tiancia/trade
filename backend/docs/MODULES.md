@@ -12,7 +12,8 @@
 | `story` | 业务域 | `AiStoryScheduler`、`AiStoryService` | `trade.story.*`；配置目录下的生成文件 |
 | `textgame` | 业务域 | `TextGameController`、`TextGameAdminController` | `trade.text-game.*`；故事、版本、会话和事件表 |
 | `marketplace` | 业务域 | `Marketplace*Controller`、`Marketplace*Service` | `trade.marketplace.*`；用户、商品、会话和消息表 |
-| `weibo` | 业务域 | `WeiboController`、`Weibo*Service` | `trade.weibo.*`；OAuth state 和账号 token 表 |
+| `weibo` | 业务域 | `WeiboController`、`WeiboPostService`、`WeiboScheduler` | `trade.weibo.*`；OAuth、草稿、历史、发布尝试和账号配额锁 |
+| `telegram` | 共享审核能力 | `HumanReviewGateway` | 通用审核请求/决策；传输 TODO，默认不可用 |
 | `client` | 共享出站适配 | `AiClientConfiguration`、各 provider client | `trade.ai.client`、`trade.gemini`、`trade.okx` 等；不拥有业务数据 |
 | `ai` | 共享基础能力 | `AiResponseParseErrorSink` | AI 解析失败审计表 |
 | `common` | 共享纯代码 | `TradingMath` | 无配置、无 I/O、无 Spring 生命周期 |
@@ -25,7 +26,7 @@
 
 ### automation
 
-`AutomationTaskRegistrar` 把 trading、polymarket、story 的循环定义登记到 `AutomationTaskManager`。登记不等于运行：只有应用就绪后的 `auto-start` 或 `/api/automation/tasks/{taskId}/start` 才会调用 `start()`。
+`AutomationTaskRegistrar` 把 trading、polymarket、story、weibo 的循环定义登记到 `AutomationTaskManager`。登记不等于运行：只有应用就绪后的 `auto-start` 或 `/api/automation/tasks/{taskId}/start` 才会调用 `start()`。
 
 两者位于 `automation/application/task`；HTTP 入口在 `interfaces/web`，任务定义和快照在 `domain/model`，调度器装配在 `infrastructure/config`。
 
@@ -119,6 +120,17 @@ Polymarket 市场资格规则在 `domain/rule/PolymarketMarketFilters`，参数�
 Weibo 是 application port 模式的参考实现：`application/service` 依赖 `application/port`，MyBatis adapter 位于 `infrastructure/persistence`，供应商 HTTP 协议位于 `client/weibo`。新增相似 OAuth 或发布模块时优先参考这一依赖方向。
 
 授权和发布用例异常位于 `weibo/domain/exception`；仅用于 HTTP 管理员鉴权的 `WeiboUnauthorizedException` 留在 `interfaces/web`。
+
+热点评论由 `WeiboPostService` 编排；`domain/model/WeiboPost` 管理正文版本、审核和发布状态。
+RSS/Atom 源在 `infrastructure/trend`，AI Prompt 在 `application/decision`，存储经 application port。
+审核依赖共享 `telegram/application/port/HumanReviewGateway`，当前不可用占位不会批准。
+任务包含生成与发布循环；配置默认关闭。详见 [微博工作流](WEIBO_WORKFLOW.md)。
+
+### telegram
+
+共享通用审核能力，不拥有业务草稿，不依赖微博等业务域。请求/决策在 `domain/model`，
+投递契约在 `application/port`，占位实现在 `infrastructure/review`。未来入站回调经编排边界
+路由到业务用例，不在共享模块 import 业务域。没有接入 API，没有 Token 配置，没有自动批准。
 
 ## Resources 所有权
 

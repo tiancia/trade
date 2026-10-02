@@ -58,6 +58,8 @@ mybatis:
 trade:
   # 模块开关
   automation:
+    weibo:
+      auto-start: ${TRADE_AUTOMATION_WEIBO_AUTO_START:false}
     story:
       auto-start: ${TRADE_AUTOMATION_STORY_AUTO_START:false}
     trading:
@@ -86,6 +88,26 @@ trade:
     client-secret: ${WEIBO_CLIENT_SECRET:}
     redirect-uri: ${WEIBO_REDIRECT_URI:}
     admin-token: ${TRADE_WEIBO_ADMIN_TOKEN:}
+    # Real publishing needs this gate AND workflow.publishing-enabled for reviewed posts.
+    live-publishing-enabled: ${TRADE_WEIBO_LIVE_PUBLISHING_ENABLED:false}
+    # Direct /statuses is always blocked while workflow.enabled=true.
+    review-required: ${TRADE_WEIBO_REVIEW_REQUIRED:true}
+    workflow:
+      enabled: ${TRADE_WEIBO_WORKFLOW_ENABLED:false}
+      generation-enabled: ${TRADE_WEIBO_GENERATION_ENABLED:false}
+      publishing-enabled: ${TRADE_WEIBO_PUBLISHING_ENABLED:false}
+      target-uid: ${TRADE_WEIBO_TARGET_UID:}
+      feed-url: ${TRADE_WEIBO_FEED_URL:}
+      max-body-chars: ${TRADE_WEIBO_MAX_BODY_CHARS:280}
+      daily-generation-limit: ${TRADE_WEIBO_DAILY_GENERATION_LIMIT:5}
+      daily-publish-limit: ${TRADE_WEIBO_DAILY_PUBLISH_LIMIT:3}
+      event-max-age-hours: ${TRADE_WEIBO_EVENT_MAX_AGE_HOURS:24}
+      review-ttl-hours: ${TRADE_WEIBO_REVIEW_TTL_HOURS:6}
+      publish-interval-seconds: ${TRADE_WEIBO_PUBLISH_INTERVAL_SECONDS:1800}
+      claim-timeout-seconds: ${TRADE_WEIBO_CLAIM_TIMEOUT_SECONDS:300}
+      generation-fixed-delay-ms: ${TRADE_WEIBO_GENERATION_FIXED_DELAY_MS:900000}
+      publishing-fixed-delay-ms: ${TRADE_WEIBO_PUBLISHING_FIXED_DELAY_MS:60000}
+      initial-delay-ms: ${TRADE_WEIBO_INITIAL_DELAY_MS:30000}
     oauth-base-url: "https://api.weibo.com/oauth2"
     api-base-url: "https://api.weibo.com/2"
     proxy:

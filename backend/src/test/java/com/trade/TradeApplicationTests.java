@@ -4,6 +4,12 @@ import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import com.trade.automation.application.task.AutomationTaskManager;
+import com.trade.telegram.application.port.HumanReviewGateway;
+import com.trade.telegram.infrastructure.review.UnavailableHumanReviewGateway;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -19,9 +25,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TradeApplicationTests {
     @Autowired
     private PrometheusMeterRegistry prometheusMeterRegistry;
+    @Autowired private AutomationTaskManager tasks;
+    @Autowired private HumanReviewGateway reviews;
 
     @Test
     void contextLoads() {
+        var weibo = tasks.status("weibo");
+        assertFalse(weibo.running());
+        assertEquals(2, weibo.loops().size());
+        assertInstanceOf(UnavailableHumanReviewGateway.class, reviews);
     }
 
     @Test

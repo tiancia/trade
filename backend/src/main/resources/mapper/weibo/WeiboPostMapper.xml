@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.weibo.infrastructure.persistence.WeiboPostMapper">
+    <resultMap id="post" type="com.trade.weibo.infrastructure.persistence.WeiboPostRow">
+        <id column="id" property="id"/>
+        <result column="target_uid" property="targetUid"/>
+        <result column="event_key" property="eventKey"/>
+        <result column="event_json" property="eventJson"/>
+        <result column="body" property="body"/>
+        <result column="review_note" property="reviewNote"/>
+        <result column="content_version" property="contentVersion"/>
+        <result column="revision" property="revision"/>
+        <result column="status" property="status"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+        <result column="expires_at" property="expiresAt"/>
+        <result column="reviewer" property="reviewer"/>
+        <result column="reviewed_at" property="reviewedAt"/>
+        <result column="review_reason" property="reviewReason"/>
+        <result column="attempt_id" property="attemptId"/>
+        <result column="publish_started_at" property="publishStartedAt"/>
+        <result column="weibo_id" property="weiboId"/>
+        <result column="last_error" property="lastError"/>
+    </resultMap>
+    <insert id="ensureAccountGate">INSERT IGNORE INTO weibo_account_gate (uid) VALUES (#{uid})</insert>
+    <select id="lockAccountGate" resultType="string">
+        SELECT uid FROM weibo_account_gate WHERE uid = #{uid} FOR UPDATE
+    </select>
+    <select id="countGenerated" resultType="int">
+        SELECT COUNT(*) FROM weibo_post WHERE target_uid = #{uid} AND created_at &gt;= #{since}
+    </select>
+    <select id="countAttempts" resultType="int">
+        SELECT COUNT(*) FROM weibo_publish_attempt WHERE target_uid = #{uid} AND started_at &gt;= #{since}
+    </select>
+    <select id="lastAttempt" resultType="java.sql.Timestamp">
+        SELECT MAX(started_at) FROM weibo_publish_attempt WHERE target_uid = #{uid}
+    </select>
+    <select id="findByEvent" resultMap="post">
+        SELECT * FROM weibo_post WHERE target_uid = #{uid} AND event_key = #{eventKey}
+    </select>
+    <insert id="insert">
+        INSERT INTO weibo_post (id, target_uid, event_key, event_json, body, review_note, content_version,
+            revision, status, created_at, updated_at, expires_at)
+        VALUES (#{id}, #{targetUid}, #{eventKey}, #{eventJson}, #{body}, #{reviewNote}, #{contentVersion},
+            #{revision}, #{status}, #{createdAt}, #{updatedAt}, #{expiresAt})
+    </insert>
+    <select id="find" resultMap="post">SELECT * FROM weibo_post WHERE id = #{id}</select>
+    <select id="recent" resultMap="post">
+        SELECT * FROM weibo_post ORDER BY created_at DESC, id LIMIT #{limit}
+    </select>
+    <select id="actionable" resultMap="post">
+        SELECT * FROM weibo_post WHERE status IN ('GENERATING','PENDING_REVIEW','APPROVED','PUBLISHING')
+        ORDER BY CASE status WHEN 'PUBLISHING' THEN 0 WHEN 'GENERATING' THEN 1 WHEN 'APPROVED' THEN 2 ELSE 3 END,
+            updated_at, id LIMIT #{limit}
+    </select>
+    <update id="update">
+        UPDATE weibo_post SET body = #{row.body}, review_note = #{row.reviewNote},
+            content_version = #{row.contentVersion}, revision = #{row.revision}, status = #{row.status},
+            updated_at = #{row.updatedAt}, reviewer = #{row.reviewer}, reviewed_at = #{row.reviewedAt},
+            review_reason = #{row.reviewReason}, attempt_id = #{row.attemptId},
+            publish_started_at = #{row.publishStartedAt}, weibo_id = #{row.weiboId}, last_error = #{row.lastError}
+        WHERE id = #{row.id} AND revision = #{expectedRevision}
+    </update>
+    <insert id="insertHistory">
+        INSERT INTO weibo_post_history (id, revision, content_version, status, body, reviewer, review_reason,
+            attempt_id, weibo_id, last_error, updated_at)
+        VALUES (#{id}, #{revision}, #{contentVersion}, #{status}, #{body}, #{reviewer}, #{reviewReason},
+            #{attemptId}, #{weiboId}, #{lastError}, #{updatedAt})
+    </insert>
+    <select id="history" resultMap="post">
+        SELECT * FROM weibo_post_history WHERE id = #{id} ORDER BY revision DESC LIMIT 100
+    </select>
+    <insert id="insertAttempt">
+        INSERT INTO weibo_publish_attempt (attempt_id, post_id, target_uid, content_version, status, started_at)
+        VALUES (#{attemptId}, #{id}, #{targetUid}, #{contentVersion}, #{status}, #{publishStartedAt})
+    </insert>
+    <update id="finishAttempt">
+        UPDATE weibo_publish_attempt SET status = #{status}, weibo_id = #{weiboId}, last_error = #{lastError},
+            completed_at = #{updatedAt} WHERE attempt_id = #{attemptId} AND status = 'PUBLISHING'
+    </update>
+</mapper>

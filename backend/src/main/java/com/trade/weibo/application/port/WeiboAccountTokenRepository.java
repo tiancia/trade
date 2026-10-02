@@ -17,4 +17,8 @@ public interface WeiboAccountTokenRepository {
     Optional<WeiboAccountToken> findCurrent();
 
     Optional<WeiboAccountToken> findValid(Instant now);
+
+    default Optional<WeiboAccountToken> findValidForUid(String uid, Instant now) {
+        return findValid(now).filter(token -> uid.equals(token.uid()));
+    }
 }

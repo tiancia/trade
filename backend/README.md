@@ -35,7 +35,8 @@ cd backend
 | `story` | 热点采集、AI 分段生成和文件落盘 | `AiStoryService` | 任务 ID `story` |
 | `textgame` | 剧情发布、会话推进和规则计算 | `TextGameController`、`TextGameAdminController` | `/api/text-game`；配置管理员令牌后才创建 `/admin` API |
 | `marketplace` | 用户认证、商品、会话聊天和 OSS 上传凭证 | 三个 `Marketplace*Controller` | `/api/marketplace` |
-| `weibo` | OAuth 授权、账号状态和微博发布 | `WeiboController` | `/api/weibo`；配置管理员令牌后才创建 |
+| `weibo` | OAuth、热点 AI 草稿、审核状态与发布 | `WeiboController` | `/api/weibo`；管理员保护，[工作流说明](docs/WEIBO_WORKFLOW.md) |
+| `telegram` | 共享人工审核契约 | `HumanReviewGateway` | API 接入 TODO；不自动批准 |
 | `client` | AI、OKX、Polymarket、微博等外部传输适配 | `AiClientConfiguration`、各 provider client | 由业务模块调用 |
 | `ai` | 跨业务的 AI 解析失败审计契约与持久化 | `AiResponseParseErrorSink` | 内部能力 |
 | `common` | 无业务归属的纯工具 | `TradingMath` | 内部能力 |

@@ -30,7 +30,7 @@ class PackageArchitectureTest {
     private static final List<String> BUSINESS_DOMAINS = List.of(
             "trading", "polymarket", "story", "textgame", "marketplace", "weibo"
     );
-    private static final List<String> SHARED_PACKAGES = List.of("client", "ai", "common");
+    private static final List<String> SHARED_PACKAGES = List.of("client", "ai", "telegram", "common");
     private static final List<String> LAYERED_TOP_LEVEL_PACKAGES = Stream.concat(
             BUSINESS_DOMAINS.stream(),
             Stream.of("automation")
@@ -177,7 +177,7 @@ class PackageArchitectureTest {
     @Test
     void modulesExposeOnlyFourLayerDirectories() throws IOException {
         Set<String> layers = Set.of("interfaces", "application", "domain", "infrastructure");
-        for (String module : Stream.concat(LAYERED_TOP_LEVEL_PACKAGES.stream(), Stream.of("ai")).toList()) {
+        for (String module : Stream.concat(LAYERED_TOP_LEVEL_PACKAGES.stream(), Stream.of("ai", "telegram")).toList()) {
             Path moduleRoot = mainJava.resolve("com/trade").resolve(module);
             for (Path source : javaSources(moduleRoot)) {
                 Path relative = moduleRoot.relativize(source);
@@ -206,7 +206,7 @@ class PackageArchitectureTest {
 
     @Test
     void innerLayersDoNotDependOnInboundAdapters() throws IOException {
-        for (String module : Stream.concat(BUSINESS_DOMAINS.stream(), Stream.of("ai")).toList()) {
+        for (String module : Stream.concat(BUSINESS_DOMAINS.stream(), Stream.of("ai", "telegram")).toList()) {
             for (Path source : javaSources(mainJava.resolve("com/trade").resolve(module))) {
                 if (belongsToLayer(source, "interfaces")) {
                     continue;

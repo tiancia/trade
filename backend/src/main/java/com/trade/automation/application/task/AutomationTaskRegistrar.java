@@ -10,6 +10,8 @@ import com.trade.story.interfaces.scheduler.AiStoryScheduler;
 import com.trade.trading.application.runtime.TradingMarketDataRuntime;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.interfaces.scheduler.TradingScheduler;
+import com.trade.weibo.interfaces.scheduler.WeiboScheduler;
+import com.trade.weibo.infrastructure.config.WeiboWorkflowProperties;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -20,7 +22,7 @@ import java.util.List;
  *
  * <p>This class is the quickest map from {@code trade.automation.*} startup
  * switches to the concrete loops that run OKX trading, Polymarket decisions,
- * and story generation.</p>
+ * story generation, and reviewed Weibo publishing.</p>
  */
 @Component
 public class AutomationTaskRegistrar {
@@ -34,7 +36,9 @@ public class AutomationTaskRegistrar {
             AiPolymarketScheduler polymarketScheduler,
             AiPolymarketProperties polymarketProperties,
             AiStoryScheduler storyScheduler,
-            AiStoryProperties storyProperties
+            AiStoryProperties storyProperties,
+            WeiboScheduler weiboScheduler,
+            WeiboWorkflowProperties weiboProperties
     ) {
         manager.register(new AutomationTaskDefinition(
                 "trading",
@@ -90,6 +94,16 @@ public class AutomationTaskRegistrar {
                         millis(storyProperties.getGenerationFixedDelayMs()),
                         storyScheduler::runScheduledGeneration
                 ))
+        ));
+
+        manager.register(new AutomationTaskDefinition(
+                "weibo", "Reviewed AI Weibo publishing", automationProperties.getWeibo().isAutoStart(),
+                null, null, List.of(
+                    new AutomationLoopDefinition("generation", millis(weiboProperties.getInitialDelayMs()),
+                            millis(weiboProperties.getGenerationFixedDelayMs()), weiboScheduler::generate),
+                    new AutomationLoopDefinition("publishing", millis(weiboProperties.getInitialDelayMs()),
+                            millis(weiboProperties.getPublishingFixedDelayMs()), weiboScheduler::publish)
+                )
         ));
     }
 

@@ -18,6 +18,8 @@
 - [ADR-0001](adr/0001-domain-first-modular-monolith.md)：理解为什么采用模块化单体；
 - [ADR-0002](adr/0002-four-layer-module-layout.md)：理解为什么业务域内部统一四层，再按能力细分；
 - [Trading 回测说明](TRADING_BACKTEST.md)：回测请求、成交模型和指标口径；
+- [微博审核工作流](WEIBO_WORKFLOW.md)：热点、AI、审核门禁、Telegram TODO 和迁移；
+- [ADR-0003](adr/0003-shared-human-review-capability.md)：共享审核能力与业务状态分离；
 - [AI 开发约定](../AGENTS.md)：AI 编码助手必须遵守的边界与交付格式。
 
 ### 部署、值守或排障

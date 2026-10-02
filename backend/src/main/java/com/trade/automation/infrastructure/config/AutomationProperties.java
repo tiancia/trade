@@ -9,6 +9,7 @@ public class AutomationProperties {
     private ModuleProperties trading = new ModuleProperties();
     private ModuleProperties polymarket = new ModuleProperties();
     private ModuleProperties story = new ModuleProperties();
+    private ModuleProperties weibo = new ModuleProperties();
 
     @Data
     public static class ModuleProperties {

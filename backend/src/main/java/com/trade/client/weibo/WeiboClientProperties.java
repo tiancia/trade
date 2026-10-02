@@ -10,6 +10,8 @@ public class WeiboClientProperties {
     private String clientSecret = "";
     private String redirectUri = "";
     private String adminToken = "";
+    private boolean livePublishingEnabled = false;
+    private boolean reviewRequired = true;
     private String oauthBaseUrl = WeiboEndpoints.DEFAULT_OAUTH_BASE_URL;
     private String apiBaseUrl = WeiboEndpoints.DEFAULT_API_BASE_URL;
     private ProxyProperties proxy = new ProxyProperties();

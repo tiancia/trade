@@ -3,6 +3,9 @@ package com.trade.weibo.application.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.client.weibo.WeiboApi;
 import com.trade.client.weibo.WeiboPublishResult;
+import com.trade.client.weibo.WeiboClientProperties;
+import com.trade.weibo.infrastructure.config.WeiboWorkflowProperties;
+import com.trade.weibo.domain.model.*;
 import com.trade.weibo.application.port.WeiboAccountTokenRepository;
 import com.trade.weibo.domain.exception.WeiboPublishingException;
 import com.trade.weibo.domain.model.WeiboAccountToken;
@@ -27,7 +30,7 @@ class WeiboPublishingServiceTest {
     @Test
     void rejectsBlankStatus() {
         WeiboApi api = mock(WeiboApi.class);
-        WeiboPublishingService service = new WeiboPublishingService(api, new EmptyTokenRepository(), clock);
+        WeiboPublishingService service = service(api, new EmptyTokenRepository());
 
         assertThrows(IllegalArgumentException.class, () -> service.publishText("   "));
 
@@ -37,7 +40,7 @@ class WeiboPublishingServiceTest {
     @Test
     void rejectsWhenNoValidTokenExists() {
         WeiboApi api = mock(WeiboApi.class);
-        WeiboPublishingService service = new WeiboPublishingService(api, new EmptyTokenRepository(), clock);
+        WeiboPublishingService service = service(api, new EmptyTokenRepository());
 
         assertThrows(WeiboPublishingException.class, () -> service.publishText("hello"));
 
@@ -54,7 +57,7 @@ class WeiboPublishingServiceTest {
                 new ObjectMapper().readTree("{\"id\":123,\"mid\":\"456\"}")
         );
         when(api.publishText("token", "hello")).thenReturn(result);
-        WeiboPublishingService service = new WeiboPublishingService(api, new OneTokenRepository(), clock);
+        WeiboPublishingService service = service(api, new OneTokenRepository());
 
         assertEquals(result, service.publishText(" hello "));
 
@@ -75,6 +78,72 @@ class WeiboPublishingServiceTest {
         public Optional<WeiboAccountToken> findValid(Instant now) {
             return Optional.empty();
         }
+    }
+
+    @Test
+    void defaultSettingsBlockRealPublishingAndDirectReviewBypass() {
+        WeiboApi api = mock(WeiboApi.class);
+        WeiboClientProperties properties = new WeiboClientProperties();
+        WeiboPublishingService service = new WeiboPublishingService(api, new OneTokenRepository(), clock,
+                properties, new WeiboWorkflowProperties().policy());
+        assertThrows(WeiboPublishingException.class, () -> service.publishText("hello"));
+        properties.setLivePublishingEnabled(true);
+        assertThrows(WeiboPublishingException.class, () -> service.publishText("hello"));
+        verify(api, never()).publishText(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void workflowCannotBeBypassedEvenIfLegacyReviewRequirementIsTurnedOff() {
+        WeiboApi api = mock(WeiboApi.class);
+        WeiboClientProperties properties = new WeiboClientProperties();
+        properties.setLivePublishingEnabled(true);
+        properties.setReviewRequired(false);
+        WeiboWorkflowProperties workflow = new WeiboWorkflowProperties();
+        workflow.setEnabled(true);
+        WeiboPublishingService service = new WeiboPublishingService(api, new OneTokenRepository(), clock,
+                properties, workflow.policy());
+        assertThrows(WeiboPublishingException.class, () -> service.publishText("hello"));
+        verify(api, never()).publishText(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void unrelatedValidAccountCannotReplaceTheBoundAccount() {
+        WeiboApi api = mock(WeiboApi.class);
+        WeiboPublishingService service = service(api, new OneTokenRepository());
+        org.junit.jupiter.api.Assertions.assertFalse(service.credentialsAvailable("different-uid"));
+    }
+
+    private WeiboPublishingService service(WeiboApi api, WeiboAccountTokenRepository repository) {
+        WeiboClientProperties properties = new WeiboClientProperties();
+        properties.setLivePublishingEnabled(true);
+        properties.setReviewRequired(false);
+        return new WeiboPublishingService(api, repository, clock, properties, new WeiboWorkflowProperties().policy());
+    }
+
+    @Test
+    void reviewedPublishingRechecksAccountStatusAndBothLiveGates() throws Exception {
+        WeiboApi api = mock(WeiboApi.class);
+        when(api.publishText("token", "正文")).thenReturn(new WeiboPublishResult("123", null, null,
+                new ObjectMapper().readTree("{\"id\":123}")));
+        WeiboClientProperties properties = new WeiboClientProperties();
+        WeiboWorkflowProperties workflow = new WeiboWorkflowProperties();
+        workflow.setEnabled(true);
+        workflow.setPublishingEnabled(true);
+        workflow.setTargetUid("uid");
+        WeiboPost pending = WeiboPost.generating("uid", new HotEvent("事件", "https://example.test/news",
+                "事实", now, now), now, workflow.policy()).generated(new GeneratedComment("正文", "说明"), now, 280);
+        WeiboPost claimed = pending.review(1, true, "reviewer", null, now, now).claim(now);
+        WeiboPublishingService service = new WeiboPublishingService(api, new OneTokenRepository(), clock,
+                properties, workflow.policy());
+        assertThrows(WeiboPublishingException.class, () -> service.publish(claimed));
+        properties.setLivePublishingEnabled(true);
+        assertThrows(WeiboPublishingException.class, () -> service.publish(pending));
+        assertEquals("123", service.publish(claimed));
+        workflow.setPublishingEnabled(false);
+        WeiboPublishingService disabled = new WeiboPublishingService(api, new OneTokenRepository(), clock,
+                properties, workflow.policy());
+        assertThrows(IllegalStateException.class, () -> disabled.publish(claimed));
+        verify(api, org.mockito.Mockito.times(1)).publishText("token", "正文");
     }
 
     private static final class OneTokenRepository implements WeiboAccountTokenRepository {

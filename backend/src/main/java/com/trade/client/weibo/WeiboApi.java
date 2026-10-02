@@ -62,8 +62,11 @@ public class WeiboApi {
                 WeiboEndpoints.STATUS_UPDATE,
                 params
         );
+        if (response.hasNonNull("error") || response.hasNonNull("error_code")) {
+            throw new IllegalStateException("Weibo returned an unsuccessful publish response");
+        }
         return new WeiboPublishResult(
-                optionalJsonText(response, "id"),
+                requiredJsonText(response, "id"),
                 optionalJsonText(response, "mid"),
                 optionalJsonText(response, "created_at"),
                 response

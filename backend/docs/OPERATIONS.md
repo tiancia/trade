@@ -24,6 +24,11 @@ $env:TRADE_TRADING_ENABLED="false"
 $env:TRADE_POLYMARKET_ENABLED="false"
 $env:TRADE_POLYMARKET_EXECUTION_ENABLED="false"
 $env:TRADE_STORY_ENABLED="false"
+$env:TRADE_AUTOMATION_WEIBO_AUTO_START="false"
+$env:TRADE_WEIBO_WORKFLOW_ENABLED="false"
+$env:TRADE_WEIBO_GENERATION_ENABLED="false"
+$env:TRADE_WEIBO_PUBLISHING_ENABLED="false"
+$env:TRADE_WEIBO_LIVE_PUBLISHING_ENABLED="false"
 
 .\mvnw.cmd spring-boot:run
 ```
@@ -49,6 +54,10 @@ OKX 真实下单还要求 `trade.trading.execution-mode=live` 与 `live-enabled=
 Actuator 当前暴露 health、info、metrics 和 prometheus。automation 启停 API 是运维控制面，应用内尚未提供统一运维鉴权；部署时必须由内网、网关或等价访问控制保护，不能直接暴露到公网。
 
 ## 后台任务操作
+
+微博新增 `weibo` 任务，包含生成与发布循环；默认关闭，真实发布需要多重门禁。
+Telegram 传输仍为 TODO，待审稿不会自动批准。配置、数据库升级和 UNKNOWN 排障见
+[微博审核工作流](WEIBO_WORKFLOW.md)。
 
 查询、启动和停止任务：
 

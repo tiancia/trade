@@ -16,4 +16,6 @@ public interface WeiboMapper {
     WeiboAccountTokenRow findCurrentToken();
 
     WeiboAccountTokenRow findValidToken(@Param("now") Timestamp now);
+
+    WeiboAccountTokenRow findValidTokenForUid(@Param("uid") String uid, @Param("now") Timestamp now);
 }

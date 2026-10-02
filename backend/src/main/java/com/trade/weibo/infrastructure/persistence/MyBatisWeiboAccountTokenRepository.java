@@ -44,4 +44,9 @@ public class MyBatisWeiboAccountTokenRepository implements WeiboAccountTokenRepo
                 row.getExpiresAt() == null ? null : row.getExpiresAt().toInstant()
         );
     }
+
+    @Override
+    public Optional<WeiboAccountToken> findValidForUid(String uid, Instant now) {
+        return Optional.ofNullable(mapper.findValidTokenForUid(uid, Timestamp.from(now))).map(this::toToken);
+    }
 }

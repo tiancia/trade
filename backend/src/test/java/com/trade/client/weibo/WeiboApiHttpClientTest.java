@@ -19,6 +19,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WeiboApiHttpClientTest {
     @Test
+    void missingPostIdAndBusinessErrorCannotBeReportedAsSuccess() {
+        WeiboApi missingId = new WeiboApi(new WeiboHttpClient(properties(), new CapturingSender("{}", 200)));
+        assertThrows(IllegalStateException.class, () -> missingId.publishText("token", "body"));
+        WeiboApi businessError = new WeiboApi(new WeiboHttpClient(properties(),
+                new CapturingSender("{\"error_code\":20019,\"error\":\"rejected\"}", 200)));
+        assertThrows(IllegalStateException.class, () -> businessError.publishText("token", "body"));
+    }
+    @Test
     void exchangeCodeUsesFormBody() {
         CapturingSender sender = new CapturingSender("""
                 {"access_token":"token-value","expires_in":3600}

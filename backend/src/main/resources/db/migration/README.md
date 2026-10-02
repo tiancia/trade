@@ -32,6 +32,7 @@
 | `migration_add_ai_decision_confidence.sql` | AI 决策置信度字段 |
 | `migration_add_text_game_story_engine.sql` | 文字游戏剧情、版本、会话和事件 |
 | `migration_add_weibo_oauth.sql` | 微博 OAuth state 与账号 token |
+| `migration_add_weibo_workflow.sql` | 微博事件草稿、审核版本历史、发布尝试及账号配额锁；先有 OAuth 表 |
 | `migration_add_marketplace.sql` | 集市用户、商品、会话和消息 |
 | `migration_normalize_bigint_decision_schema.sql` | 历史决策主键/外键类型归一化 |
 

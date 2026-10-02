@@ -36,4 +36,8 @@
         WHERE expires_at &gt; #{now}
         ORDER BY updated_at DESC LIMIT 1
     </select>
+    <select id="findValidTokenForUid" resultType="com.trade.weibo.infrastructure.persistence.WeiboAccountTokenRow">
+        SELECT uid, access_token, expires_at, created_at, updated_at
+        FROM weibo_account_token WHERE uid = #{uid} AND expires_at &gt; #{now}
+    </select>
 </mapper>
