@@ -1,35 +1,31 @@
 package com.trade.trading.application.runtime;
 
-import com.trade.trading.application.port.TradingEventPipeline;
 import com.trade.trading.application.port.TradingMarketFeed;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Coordinates producer and consumer order for start and graceful shutdown. */
+/** Controls trading producers; Spring manages the application-scoped event bus. */
 @Component
 public class TradingMarketDataRuntime implements SmartLifecycle {
-    private final TradingEventPipeline eventBus;
     private final TradingMarketFeed webSocketFeed;
     private final TradingLeadershipService leadershipService;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     public TradingMarketDataRuntime(
-            TradingEventPipeline eventBus,
             TradingMarketFeed webSocketFeed,
             TradingLeadershipService leadershipService
     ) {
-        this.eventBus = eventBus;
         this.webSocketFeed = webSocketFeed;
         this.leadershipService = leadershipService;
     }
 
+    @Override
     public synchronized void start() {
         if (!running.compareAndSet(false, true)) {
             return;
         }
-        eventBus.start();
         try {
             leadershipService.start();
             webSocketFeed.start();

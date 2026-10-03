@@ -10,6 +10,7 @@ import com.trade.trading.application.port.TradingEventHandler;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.support.GenericApplicationContext;
 
 import java.time.Duration;
 import java.util.List;
@@ -24,6 +25,28 @@ import static org.junit.jupiter.api.Assertions.assertTimeout;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BoundedTradingEventBusTest {
+
+    @Test
+    void springLifecycleStartsConsumerWithoutExplicitStartAndStopsItOnClose() throws InterruptedException {
+        BlockingHandler handler = new BlockingHandler();
+        handler.release.countDown();
+        BoundedTradingEventBus bus = new BoundedTradingEventBus(
+                properties(TradingProperties.EventQueueFullPolicy.DROP_OLDEST),
+                List.of(handler), new SimpleMeterRegistry()
+        );
+        try (GenericApplicationContext context = new GenericApplicationContext()) {
+            context.registerBean(BoundedTradingEventBus.class, () -> bus);
+            context.refresh();
+
+            assertTrue(bus.isRunning());
+            assertEquals(TradingEventPublishResult.ACCEPTED, bus.publish(event("1")));
+            assertTrue(handler.firstStarted.await(1, TimeUnit.SECONDS));
+            await(() -> handler.values.size() == 1);
+            assertEquals(List.of("1"), handler.values);
+        }
+        assertFalse(bus.isRunning());
+        assertFalse(bus.publish(event("2")).accepted());
+    }
 
     @Test
     void dropOldestKeepsProducerNonBlockingAndPreservesFresherData() throws InterruptedException {

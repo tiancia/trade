@@ -92,6 +92,7 @@ public class TradingStrategyEngine {
             log.info("OKX strategy trading is disabled, skip trigger={}", trigger);
             return false;
         }
+
         if (!decisionLock.tryLock()) {
             recordRun(triggerType, "busy", null);
             log.info("Strategy decision is already running, skip trigger={}", trigger);

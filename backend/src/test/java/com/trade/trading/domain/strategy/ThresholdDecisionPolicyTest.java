@@ -2,7 +2,8 @@ package com.trade.trading.domain.strategy;
 
 import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.domain.model.TradingState;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import java.math.BigDecimal;
 import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
@@ -13,24 +14,34 @@ class ThresholdDecisionPolicyTest {
             new BigDecimal("0.02"), new BigDecimal("3"), new BigDecimal("0.10"),
             null, null, null, 2, 1, true);
 
-    @Test
-    void derivativeEntryUsesResolvedFallbackSizeAndConfirmedCandles() {
+    @ParameterizedTest
+    @CsvSource({"false, BUY", "true, OPEN_LONG"})
+    void entryUsesResolvedFallbackAmountsAndConfirmedCandles(boolean derivative, TradingAction expectedAction) {
         var candles = List.of(candle("999", "999", false), candle("110", "300", true), candle("100", "100", true));
-        var result = policy.evaluate(facts(candles, new TradingState(), true), settings);
-        assertEquals(TradingAction.OPEN_LONG, result.getAction());
+        var result = policy.evaluate(facts(candles, new TradingState(), derivative), settings);
+        assertEquals(expectedAction, result.getAction());
+        assertEquals("threshold", result.getStrategyId());
         assertEquals(new BigDecimal("2"), result.getOrderSize());
         assertEquals(new BigDecimal("20"), result.getBuyQuoteAmount());
+        assertNull(result.getSellBaseAmount());
+        assertEquals("Positive price move and volume spike thresholds reached", result.getReason());
+        assertEquals("1m", result.getMetadata().get("bar"));
     }
 
-    @Test
-    void lossExitHasPriorityAndUsesTrackedQuantity() {
+    @ParameterizedTest
+    @CsvSource({"false, SELL", "true, CLOSE_LONG"})
+    void lossExitHasPriorityAndUsesTrackedQuantity(boolean derivative, TradingAction expectedAction) {
         var state = new TradingState().setTrackedBaseAmount(new BigDecimal("0.4"))
                 .setAverageCost(new BigDecimal("100"));
         var result = policy.evaluate(facts(List.of(candle("89", "100", true), candle("100", "100", true)),
-                state, false), settings);
-        assertEquals(TradingAction.SELL, result.getAction());
+                state, derivative), settings);
+        assertEquals(expectedAction, result.getAction());
+        assertEquals("threshold", result.getStrategyId());
         assertEquals(new BigDecimal("0.4"), result.getSellBaseAmount());
+        assertEquals(new BigDecimal("2"), result.getOrderSize());
+        assertNull(result.getBuyQuoteAmount());
         assertEquals("Tracked position floating loss threshold reached", result.getReason());
+        assertEquals("1m", result.getMetadata().get("bar"));
     }
 
     private static ThresholdDecisionPolicy.Candle candle(String close, String volume, boolean confirmed) {

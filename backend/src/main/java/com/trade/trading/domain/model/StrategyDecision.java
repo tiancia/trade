@@ -18,10 +18,34 @@ public class StrategyDecision {
     private BigDecimal orderSize;
     private Map<String, Object> metadata = new LinkedHashMap<>();
 
+    public static StrategyDecision buy(String strategyId, BigDecimal quoteAmount, String reason) {
+        return create(strategyId, TradingAction.BUY, reason)
+                .setBuyQuoteAmount(quoteAmount);
+    }
+
+    public static StrategyDecision sell(String strategyId, BigDecimal baseAmount, String reason) {
+        return create(strategyId, TradingAction.SELL, reason)
+                .setSellBaseAmount(baseAmount);
+    }
+
+    public static StrategyDecision openLong(String strategyId, BigDecimal orderSize, String reason) {
+        return create(strategyId, TradingAction.OPEN_LONG, reason)
+                .setOrderSize(orderSize);
+    }
+
+    public static StrategyDecision closeLong(String strategyId, BigDecimal orderSize, String reason) {
+        return create(strategyId, TradingAction.CLOSE_LONG, reason)
+                .setOrderSize(orderSize);
+    }
+
     public static StrategyDecision hold(String strategyId, String reason) {
+        return create(strategyId, TradingAction.HOLD, reason);
+    }
+
+    private static StrategyDecision create(String strategyId, TradingAction action, String reason) {
         return new StrategyDecision()
                 .setStrategyId(strategyId)
-                .setAction(TradingAction.HOLD)
+                .setAction(action)
                 .setReason(reason);
     }
 

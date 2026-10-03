@@ -74,6 +74,7 @@ public class BoundedTradingEventBus implements TradingEventPipeline, TradingEven
                 .register(meterRegistry);
     }
 
+    @Override
     public synchronized void start() {
         Thread existing = worker.get();
         if (existing != null && existing.isAlive()) {
@@ -114,6 +115,7 @@ public class BoundedTradingEventBus implements TradingEventPipeline, TradingEven
         }
     }
 
+    @Override
     public synchronized void stop() {
         accepting.set(false);
         Thread currentWorker = worker.get();

@@ -2,7 +2,6 @@ package com.trade.trading.domain.strategy;
 
 import com.trade.common.support.TradingMath;
 import com.trade.trading.domain.model.StrategyDecision;
-import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.domain.model.TradingState;
 import lombok.Value;
 import java.math.BigDecimal;
@@ -64,8 +63,7 @@ public final class ThresholdDecisionPolicy {
             return exitDecision(context, normalized, metadata, exitReason(priceMove, floatingLoss, normalized));
         }
 
-        if (priceMove.changePercent().compareTo(normalized.getPriceMoveTriggerPercent()) >= 0
-                && volumeSpike.ratio().compareTo(normalized.getVolumeSpikeMultiplier()) >= 0) {
+        if (shouldEnter(priceMove, volumeSpike, normalized)) {
             return enterDecision(context, normalized, metadata);
         }
 
@@ -79,18 +77,15 @@ public final class ThresholdDecisionPolicy {
             Map<String, Object> metadata
     ) {
 
-        TradingAction action = context.isDerivativeInstrument()
-                ? TradingAction.OPEN_LONG
-                : TradingAction.BUY;
-        return new StrategyDecision()
-                .setStrategyId(context.getStrategyId())
-                .setAction(action)
-                .setReason("Positive price move and volume spike thresholds reached")
-                .setBuyQuoteAmount(firstPositive(config.getBuyQuoteAmount(),
-                        context.getMaxBuyQuoteAmount()))
-                .setOrderSize(firstPositive(config.getOrderSize(),
-                        context.getMaxDerivativeOrderSize()))
-                .setMetadata(metadata);
+        BigDecimal buyQuoteAmount = firstPositive(config.getBuyQuoteAmount(), context.getMaxBuyQuoteAmount());
+        BigDecimal orderSize = firstPositive(config.getOrderSize(), context.getMaxDerivativeOrderSize());
+        String reason = "Positive price move and volume spike thresholds reached";
+        StrategyDecision decision = context.isDerivativeInstrument()
+                ? StrategyDecision.openLong(context.getStrategyId(), orderSize, reason)
+                        .setBuyQuoteAmount(buyQuoteAmount)
+                : StrategyDecision.buy(context.getStrategyId(), buyQuoteAmount, reason)
+                        .setOrderSize(orderSize);
+        return decision.setMetadata(metadata);
     }
 
     private static StrategyDecision exitDecision(
@@ -100,17 +95,23 @@ public final class ThresholdDecisionPolicy {
             String reason
     ) {
 
-        TradingAction action = context.isDerivativeInstrument()
-                ? TradingAction.CLOSE_LONG
-                : TradingAction.SELL;
-        return new StrategyDecision()
-                .setStrategyId(context.getStrategyId())
-                .setAction(action)
-                .setReason(reason)
-                .setSellBaseAmount(firstPositive(config.getSellBaseAmount(), exitBaseAmount(context)))
-                .setOrderSize(firstPositive(config.getOrderSize(),
-                        context.getMaxDerivativeOrderSize()))
-                .setMetadata(metadata);
+        BigDecimal sellBaseAmount = firstPositive(config.getSellBaseAmount(), exitBaseAmount(context));
+        BigDecimal orderSize = firstPositive(config.getOrderSize(), context.getMaxDerivativeOrderSize());
+        StrategyDecision decision = context.isDerivativeInstrument()
+                ? StrategyDecision.closeLong(context.getStrategyId(), orderSize, reason)
+                        .setSellBaseAmount(sellBaseAmount)
+                : StrategyDecision.sell(context.getStrategyId(), sellBaseAmount, reason)
+                        .setOrderSize(orderSize);
+        return decision.setMetadata(metadata);
+    }
+
+    private static boolean shouldEnter(
+            PriceMove priceMove,
+            VolumeSpike volumeSpike,
+            Settings config
+    ) {
+        return priceMove.changePercent().compareTo(config.getPriceMoveTriggerPercent()) >= 0
+                && volumeSpike.ratio().compareTo(config.getVolumeSpikeMultiplier()) >= 0;
     }
 
     private static boolean shouldExit(
