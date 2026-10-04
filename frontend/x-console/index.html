@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#151d32" />
+    <title>X 内容工作台</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23151d32'/%3E%3Cpath d='M10 10h6l14 20h-6zM29 10L11 30' stroke='white' stroke-width='2'/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <svg xmlns="http://www.w3.org/2000/svg" class="visually-hidden" aria-hidden="true">
+      <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+      <symbol id="i-review" viewBox="0 0 24 24"><path d="M9 4H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4M9 4V2h6v4H9ZM8 13l3 3 10-10"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4 20-7ZM22 2 11 13"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="m10.3 4-8 14a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3l-8-14a2 2 0 0 0-3.4 0ZM12 9v4M12 17h.01"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 2M18 18a8 8 0 0 1-13-2"/></symbol>
+      <symbol id="i-connect" viewBox="0 0 24 24"><path d="m10 13 4-4M8 16l-2 2a4 4 0 0 1-6-6l5-5a4 4 0 0 1 6 0M16 8l2-2a4 4 0 0 1 6 6l-5 5a4 4 0 0 1-6 0" transform="translate(1 0) scale(.92)"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H5a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9l-7-7ZM14 2v7h7M7 13h10M7 17h7"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7l-9-4ZM8 12l3 3 5-6"/></symbol>
+      <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 11a9 9 0 1 1 2 7M3 4v7h7M12 7v5l3 2"/></symbol>
+    </svg>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <a class="brand" href="./" aria-label="X 内容工作台首页">
+          <span class="brand-mark">𝕏</span>
+          <span><span class="brand-name">X STUDIO</span><span class="brand-subtitle">内容发布工作台</span></span>
+        </a>
+        <div class="nav-label">工作空间</div>
+        <nav id="navigation">
+          <button class="nav-item active" data-filter="ALL" aria-current="page"><svg><use href="#i-grid"/></svg><span>内容总览</span></button>
+          <button class="nav-item" data-filter="PENDING_REVIEW"><svg><use href="#i-review"/></svg><span>待审核</span><em id="nav-pending">—</em></button>
+          <button class="nav-item" data-filter="PUBLISH_RESULTS"><svg><use href="#i-send"/></svg><span>发布结果</span></button>
+          <button class="nav-item" data-filter="ATTENTION"><svg><use href="#i-alert"/></svg><span>需要关注</span><em id="nav-attention">—</em></button>
+        </nav>
+        <div class="sidebar-note"><svg><use href="#i-shield"/></svg><p><strong>审核记录可追溯</strong>从生成、审核到发布，查看每一条内容的完整过程。</p></div>
+        <div class="sidebar-footer"><span class="dot"></span><span>X 模块 · 内容监控</span><small>READ ONLY</small></div>
+      </aside>
+      <main class="workspace">
+        <header class="topbar">
+          <div class="breadcrumb">工作空间 <span>/</span> <strong>内容总览</strong></div>
+          <div class="connection-controls">
+            <span class="connection-pill" id="connection-status" role="status"><span class="dot"></span>未连接</span>
+            <button class="button secondary small" id="connect-button"><svg><use href="#i-connect"/></svg><span>连接后端</span></button>
+          </div>
+        </header>
+        <section class="page-heading">
+          <div><div class="eyebrow">X PUBLISHING · OVERVIEW</div><h1>内容工作台<span class="heading-dot">.</span></h1><p>最近产生的内容、审核反馈与发布结果，尽在一处。</p></div>
+          <div class="heading-actions"><button class="button secondary" id="refresh-button" disabled><svg id="refresh-icon"><use href="#i-refresh"/></svg>刷新记录</button></div>
+        </section>
+        <section class="stats-grid" aria-label="最近记录统计">
+          <button class="stat-card indigo active" data-filter="ALL"><span class="stat-top"><span class="stat-label">最近内容</span><span class="stat-icon"><svg><use href="#i-file"/></svg></span></span><span class="stat-value" id="stat-total">—</span><span class="stat-caption">当前读取的内容记录</span></button>
+          <button class="stat-card amber" data-filter="PENDING_REVIEW"><span class="stat-top"><span class="stat-label">等待审核</span><span class="stat-icon"><svg><use href="#i-clock"/></svg></span></span><span class="stat-value" id="stat-pending">—</span><span class="stat-caption">等待 Telegram 审核结果</span></button>
+          <button class="stat-card green" data-filter="PUBLISHED"><span class="stat-top"><span class="stat-label">发布成功</span><span class="stat-icon"><svg><use href="#i-check"/></svg></span></span><span class="stat-value" id="stat-published">—</span><span class="stat-caption">已收到 X 帖子 ID</span></button>
+          <button class="stat-card rose" data-filter="ATTENTION"><span class="stat-top"><span class="stat-label">需要关注</span><span class="stat-icon"><svg><use href="#i-alert"/></svg></span></span><span class="stat-value" id="stat-attention">—</span><span class="stat-caption">生成失败、发布失败或待核对</span></button>
+        </section>
+        <div class="content-layout">
+          <section class="content-board" aria-labelledby="board-title">
+            <div class="board-heading"><div><h2 id="board-title">最近内容 <span id="record-count">0</span></h2><p>按生成时间排列，最新内容优先</p></div><label class="limit-control">读取范围<select id="limit-select" aria-label="读取范围"><option value="30">最近 30 条</option><option value="50">最近 50 条</option><option value="100">最近 100 条</option></select></label></div>
+            <div class="filter-bar">
+              <div class="tabs" id="list-tabs" aria-label="内容筛选"><button class="active" data-filter="ALL">全部内容</button><button data-filter="PENDING_REVIEW">待审核</button><button data-filter="PUBLISHED">已发布</button></div>
+              <div class="board-tools"><label class="search-field"><svg><use href="#i-search"/></svg><input id="search-input" type="search" placeholder="搜索内容或 ID" aria-label="搜索内容、ID 或审核人" /></label><label class="state-filter"><span class="visually-hidden">按状态筛选</span><select id="status-select"><option value="ALL">所有状态</option><option value="GENERATING">生成中</option><option value="GENERATION_FAILED">生成失败</option><option value="PENDING_REVIEW">待审核</option><option value="APPROVED">审核通过 · 待发布</option><option value="REJECTED">审核拒绝</option><option value="EXPIRED">已过期</option><option value="PUBLISHING">发布中</option><option value="PUBLISHED">已发布</option><option value="FAILED">发布失败</option><option value="UNKNOWN">发布结果待核对</option><option value="PUBLISH_RESULTS">全部发布结果</option><option value="ATTENTION">需要关注</option></select></label></div>
+            </div>
+            <div class="notice error" id="list-notice" role="alert" hidden></div>
+            <div class="table-scroll" id="table-region" aria-live="polite"></div>
+            <footer class="board-footer"><span id="list-summary">连接后查看最近生成的内容</span><span id="updated-time">时间均为北京时间</span></footer>
+          </section>
+          <aside class="detail-panel" id="detail-panel" aria-label="内容详情"></aside>
+        </div>
+      </main>
+    </div>
+    <dialog class="connection-dialog" id="connection-dialog" aria-labelledby="connection-title">
+      <div class="dialog-heading"><div><div class="eyebrow">BACKEND CONNECTION</div><h2 id="connection-title">连接 X 模块</h2></div><button class="button icon-button dialog-close" id="dialog-close" aria-label="关闭连接设置"><svg><use href="#i-close"/></svg></button></div>
+      <p class="dialog-description">输入后端配置的管理员令牌，读取内容和状态记录。</p>
+      <form class="connection-form" id="connection-form">
+        <label class="field-label" for="token-input">管理员令牌</label>
+        <input id="token-input" type="password" autocomplete="off" spellcheck="false" required placeholder="输入管理员令牌" />
+        <p class="field-help">令牌对应后端的 TRADE_X_ADMIN_TOKEN，仅在当前页面内存中使用，刷新页面后需要重新输入。</p>
+        <p class="form-error" id="form-error" role="alert" hidden></p>
+        <div class="dialog-actions"><button class="button secondary" id="disconnect-button" type="button" hidden>断开连接</button><button class="button primary" type="submit"><svg><use href="#i-connect"/></svg>连接并读取</button></div>
+      </form>
+    </dialog>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

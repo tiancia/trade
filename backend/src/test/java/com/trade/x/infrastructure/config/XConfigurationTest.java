@@ -5,10 +5,14 @@ import com.trade.client.telegram.TelegramClientProperties;
 import com.trade.client.telegram.config.TelegramClientConfiguration;
 import com.trade.weibo.infrastructure.config.WeiboTelegramReviewProperties;
 import com.trade.x.application.port.*;
+import com.trade.x.application.service.XPostService;
 import com.trade.x.domain.model.XWorkflowPolicy;
 import com.trade.x.infrastructure.review.*;
+import com.trade.x.interfaces.scheduler.XScheduler;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.ComponentScan;
 import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
@@ -17,7 +21,7 @@ import static org.mockito.Mockito.*;
 class XConfigurationTest {
     private final XReviewDeliveryStore store = mock(XReviewDeliveryStore.class);
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
-            .withUserConfiguration(XConfiguration.class, TelegramClientConfiguration.class)
+            .withUserConfiguration(XConfiguration.class, TelegramClientConfiguration.class, ServiceComponents.class)
             .withBean(XPostRepository.class, () -> mock(XPostRepository.class))
             .withBean(XDraftGenerator.class, () -> mock(XDraftGenerator.class))
             .withBean(XPostPublisher.class, () -> mock(XPostPublisher.class))
@@ -25,13 +29,32 @@ class XConfigurationTest {
 
     @Test void defaultsHaveNoEnabledSideEffectsOrRequiredCredentials() {
         runner.run(context -> {
-            assertThat(context).hasNotFailed().hasSingleBean(XHumanReviewGateway.class);
+            assertThat(context).hasNotFailed().hasSingleBean(XHumanReviewGateway.class)
+                    .hasSingleBean(XPostService.class).hasBean("xPostService").hasSingleBean(XScheduler.class);
             assertInstanceOf(UnavailableXReviewGateway.class, context.getBean(XHumanReviewGateway.class));
             XWorkflowPolicy policy = context.getBean(XWorkflowPolicy.class);
             assertFalse(policy.enabled()); assertFalse(policy.generationEnabled()); assertFalse(policy.publishingEnabled());
             assertFalse(context.getBean(XPublishingProperties.class).isLivePublishingEnabled());
             assertEquals(40, policy.content().minChars()); assertEquals(120, policy.content().maxChars());
-            verifyNoInteractions(store);
+            XScheduler scheduler = context.getBean(XScheduler.class);
+            scheduler.generate(); scheduler.review(); scheduler.publish();
+            verifyNoInteractions(store, context.getBean(XPostRepository.class),
+                    context.getBean(XDraftGenerator.class), context.getBean(XPostPublisher.class));
+        });
+    }
+
+    @Test void scannedServiceUsesConfiguredGenerationInterval() {
+        runner.withPropertyValues("trade.x.workflow.enabled=true", "trade.x.workflow.target-user-id=123",
+                "trade.x.workflow.generation-enabled=true", "trade.x.workflow.content.direction=开发经验",
+                "trade.x.workflow.generation-fixed-delay-ms=" + Long.MAX_VALUE).run(context -> {
+            assertThat(context).hasNotFailed().hasSingleBean(XPostService.class).hasSingleBean(XScheduler.class);
+            XPostRepository posts = context.getBean(XPostRepository.class);
+            // A rejected reservation observes the configured interval without invoking an AI provider.
+            when(posts.reserveGeneration(any(), any(), anyInt())).thenReturn(false);
+            context.getBean(XScheduler.class).generate();
+            verify(posts).reserveGeneration(argThat(post -> "scheduled:0".equals(post.generationKey())),
+                    any(), eq(5));
+            verifyNoInteractions(store, context.getBean(XDraftGenerator.class), context.getBean(XPostPublisher.class));
         });
     }
 
@@ -85,4 +108,8 @@ class XConfigurationTest {
         });
         x.setEnabled(false); both.run(context -> assertThat(context).hasNotFailed());
     }
+
+    @TestConfiguration(proxyBeanMethods = false)
+    @ComponentScan(basePackageClasses = {XPostService.class, XScheduler.class})
+    static class ServiceComponents {}
 }

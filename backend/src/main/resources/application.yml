@@ -284,15 +284,15 @@ trade:
       target-user-id: ${TRADE_X_TARGET_USER_ID:}
       content:
         # AI 发帖主题 / 内容方向，开启生成时必填；当前生成原创文本，不抓取实时新闻。
-        direction: ${TRADE_X_CONTENT_DIRECTION:一段描写苦难的文字，简短但是震撼}
+        direction: ${TRADE_X_CONTENT_DIRECTION:一个简短的故事用来表现苦难，足够震撼}
         # AI 输出语言。
         language: ${TRADE_X_CONTENT_LANGUAGE:简体中文}
         # AI 写作语气和风格。
-        tone: ${TRADE_X_CONTENT_TONE:清晰、自然、克制}
+        tone: ${TRADE_X_CONTENT_TONE:犀利、简洁}
         # 额外写作要求，例如避免话题标签或限定受众，可留空。
         instructions: ${TRADE_X_CONTENT_INSTRUCTIONS:}
         # 正文最少 Unicode 字符数；按 code point 计数，范围 1～max-chars。
-        min-chars: ${TRADE_X_CONTENT_MIN_CHARS:40}
+        min-chars: ${TRADE_X_CONTENT_MIN_CHARS:10}
         # 正文最多 Unicode 字符数，配置上限 280；还校验 X 普通帖 280 加权上限（中文通常计 2）。
         max-chars: ${TRADE_X_CONTENT_MAX_CHARS:120}
       # 目标账号每个 UTC 日最多预留的 AI 生成次数；失败的生成仍占额度。

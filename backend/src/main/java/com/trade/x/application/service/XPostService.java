@@ -14,8 +14,11 @@ import com.trade.x.domain.model.XPostStatus;
 import com.trade.x.domain.model.XReviewDecision;
 import com.trade.x.domain.model.XReviewRequest;
 import com.trade.x.domain.model.XWorkflowPolicy;
+import com.trade.x.infrastructure.config.XWorkflowProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -25,6 +28,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 /** External AI, review and publish calls run between short, committed database operations. */
+@Service("xPostService")
 public class XPostService {
     private static final Logger log = LoggerFactory.getLogger(XPostService.class);
     private final XPostRepository posts;
@@ -34,6 +38,13 @@ public class XPostService {
     private final XWorkflowPolicy policy;
     private final long generationIntervalMs;
     private final Clock clock;
+
+    @Autowired
+    public XPostService(XPostRepository posts, XDraftGenerator generator, XHumanReviewGateway reviews,
+            XPostPublisher publisher, XWorkflowPolicy policy, XWorkflowProperties settings) {
+        this(posts, generator, reviews, publisher, policy,
+                settings.getGenerationFixedDelayMs(), Clock.systemUTC());
+    }
 
     public XPostService(XPostRepository posts, XDraftGenerator generator, XHumanReviewGateway reviews,
             XPostPublisher publisher, XWorkflowPolicy policy, long generationIntervalMs, Clock clock) {
