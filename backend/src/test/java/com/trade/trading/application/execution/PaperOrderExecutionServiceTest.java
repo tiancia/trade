@@ -10,12 +10,14 @@ import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.domain.model.TradingDecisionRecord;
 import com.trade.trading.infrastructure.config.TradingProperties;
+import com.trade.trading.infrastructure.config.TradingRiskConfiguration;
 import com.trade.trading.infrastructure.persistence.TradingStateRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.math.BigDecimal;
 import java.nio.file.Path;
+import java.time.Clock;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -32,7 +34,8 @@ class PaperOrderExecutionServiceTest {
                 new OrderSizingService(properties),
                 stateRepository,
                 properties,
-                new RiskControlService(properties, stateRepository)
+                new RiskControlService(properties, stateRepository, Clock.systemUTC(),
+                        new TradingRiskConfiguration().tradingRiskRules())
         );
         TradingDecisionRecord record = new TradingDecisionRecord();
 

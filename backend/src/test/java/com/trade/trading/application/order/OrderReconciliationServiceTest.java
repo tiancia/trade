@@ -12,6 +12,7 @@ import com.trade.trading.domain.model.ExecutionMode;
 import com.trade.trading.domain.order.OrderStatus;
 import com.trade.trading.domain.order.OrderSubmission;
 import com.trade.trading.infrastructure.config.TradingProperties;
+import com.trade.trading.infrastructure.config.TradingRiskConfiguration;
 import com.trade.trading.infrastructure.persistence.TradingStateRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.math.BigDecimal;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -57,7 +59,8 @@ class OrderReconciliationServiceTest {
         TradingStateRepository stateRepository = new TradingStateRepository(
                 tempDir.resolve("state.json")
         );
-        RiskControlService riskService = new RiskControlService(properties, stateRepository);
+        RiskControlService riskService = new RiskControlService(properties, stateRepository, Clock.systemUTC(),
+                new TradingRiskConfiguration().tradingRiskRules());
         OrderSettlementService settlement = new OrderSettlementService(
                 lifecycle,
                 stateRepository,

@@ -8,6 +8,7 @@ import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.domain.model.TradingRiskState;
 import com.trade.trading.domain.risk.RiskAssessment;
 import com.trade.trading.infrastructure.config.TradingProperties;
+import com.trade.trading.infrastructure.config.TradingRiskConfiguration;
 import com.trade.trading.infrastructure.persistence.TradingStateRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
@@ -18,9 +19,11 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RiskControlServiceTest {
@@ -155,7 +158,7 @@ class RiskControlServiceTest {
                 properties,
                 repository,
                 Clock.fixed(NOW, ZoneOffset.UTC),
-                null,
+                new TradingRiskConfiguration().tradingRiskRules(),
                 meterRegistry
         );
 
@@ -172,8 +175,21 @@ class RiskControlServiceTest {
                 .count());
     }
 
+    @Test
+    void rejectsMissingOrEmptyRulesInsteadOfBypassingRiskChecks() {
+        TradingProperties properties = properties();
+        TradingStateRepository repository = repository();
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new RiskControlService(properties, repository, clock, null));
+        assertThrows(IllegalArgumentException.class,
+                () -> new RiskControlService(properties, repository, clock, List.of()));
+    }
+
     private RiskControlService service(TradingProperties properties, TradingStateRepository repository, Instant now) {
-        return new RiskControlService(properties, repository, Clock.fixed(now, ZoneOffset.UTC));
+        return new RiskControlService(properties, repository, Clock.fixed(now, ZoneOffset.UTC),
+                new TradingRiskConfiguration().tradingRiskRules());
     }
 
     private TradingStateRepository repository() {

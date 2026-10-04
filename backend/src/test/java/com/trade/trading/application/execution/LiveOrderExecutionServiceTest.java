@@ -26,6 +26,7 @@ import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.domain.model.TradingDecisionRecord;
 import com.trade.trading.domain.order.OrderStatus;
 import com.trade.trading.infrastructure.config.TradingProperties;
+import com.trade.trading.infrastructure.config.TradingRiskConfiguration;
 import com.trade.trading.infrastructure.persistence.TradingStateRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.math.BigDecimal;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -246,7 +248,8 @@ class LiveOrderExecutionServiceTest {
             TradingLeadershipService leadershipService
     ) {
         TradingStateRepository stateRepository = new TradingStateRepository(tempDir.resolve("state-" + System.nanoTime() + ".json"));
-        RiskControlService riskControlService = new RiskControlService(properties, stateRepository);
+        RiskControlService riskControlService = new RiskControlService(properties, stateRepository, Clock.systemUTC(),
+                new TradingRiskConfiguration().tradingRiskRules());
         OrderLifecycleService lifecycleService = new OrderLifecycleService(orders, new SimpleMeterRegistry());
         return new LiveOrderExecutionService(
                 new OkxOrderGateway(okxApi, properties),

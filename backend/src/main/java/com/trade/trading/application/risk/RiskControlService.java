@@ -5,22 +5,17 @@ import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.application.market.TradingMarketInputs;
 import com.trade.trading.domain.model.TradingRiskState;
-import com.trade.trading.domain.risk.ConsecutiveOpenActionsRule;
-import com.trade.trading.domain.risk.DailyLossRule;
-import com.trade.trading.domain.risk.LossCooldownRule;
-import com.trade.trading.domain.risk.MaxDrawdownRule;
-import com.trade.trading.domain.risk.OpenIntervalRule;
 import com.trade.trading.domain.risk.RiskAssessment;
 import com.trade.trading.domain.risk.RiskContext;
 import com.trade.trading.domain.risk.RiskRule;
 import com.trade.trading.domain.risk.RiskStateTransitions;
-import com.trade.trading.domain.risk.SingleOpenExposureRule;
 import com.trade.trading.domain.risk.RiskViolation;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.application.port.TradingStateStore;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -48,17 +43,10 @@ public class RiskControlService {
     public RiskControlService(
             TradingProperties properties,
             TradingStateStore stateRepository,
+            @Qualifier("tradingRiskRules") List<RiskRule> rules,
             MeterRegistry meterRegistry
     ) {
-        this(properties, stateRepository, Clock.systemUTC(), defaultRules(), meterRegistry);
-    }
-
-    public RiskControlService(TradingProperties properties, TradingStateStore stateRepository) {
-        this(properties, stateRepository, Clock.systemUTC(), defaultRules(), null);
-    }
-
-    public RiskControlService(TradingProperties properties, TradingStateStore stateRepository, Clock clock) {
-        this(properties, stateRepository, clock, defaultRules(), null);
+        this(properties, stateRepository, Clock.systemUTC(), rules, meterRegistry);
     }
 
     public RiskControlService(
@@ -77,10 +65,13 @@ public class RiskControlService {
             List<RiskRule> rules,
             MeterRegistry meterRegistry
     ) {
+        if (rules == null || rules.isEmpty()) {
+            throw new IllegalArgumentException("Risk rules must not be null or empty");
+        }
         this.properties = properties;
         this.stateRepository = stateRepository;
         this.clock = clock == null ? Clock.systemUTC() : clock;
-        this.rules = rules == null ? defaultRules() : List.copyOf(rules);
+        this.rules = List.copyOf(rules);
         this.meterRegistry = meterRegistry;
     }
 
@@ -196,17 +187,6 @@ public class RiskControlService {
         return value.trim()
                 .toLowerCase(Locale.ROOT)
                 .replaceAll("[^a-z0-9_]+", "_");
-    }
-
-    private static List<RiskRule> defaultRules() {
-        return List.of(
-                new LossCooldownRule(),
-                new MaxDrawdownRule(),
-                new DailyLossRule(),
-                new OpenIntervalRule(),
-                new ConsecutiveOpenActionsRule(),
-                new SingleOpenExposureRule()
-        );
     }
 
     private static BigDecimal zeroIfNull(BigDecimal value) {

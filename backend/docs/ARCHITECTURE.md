@@ -53,7 +53,7 @@ automation -> 各业务域的 scheduler / lifecycle 入口
 
 已收敛的边界：
 
-- `RiskControlService` 加载/保存状态并记录指标；`domain/risk` 执行六类风控规则及交易日、亏损冷却、已成交动作的状态演进。`RiskInputs` 负责配置转换，`TradingMarketInputs` 负责账户与行情 DTO 到领域输入的转换。
+- `RiskControlService` 加载/保存状态并记录指标；`domain/risk` 执行六类风控规则及交易日、亏损冷却、已成交动作的状态演进。`TradingRiskConfiguration` 在 `infrastructure/config` 中按固定顺序装配名为 `tradingRiskRules` 的规则集合，由构造方法注入；缺失或空集合会阻止服务创建。`RiskInputs` 负责配置转换，`TradingMarketInputs` 负责账户与行情 DTO 到领域输入的转换。
 - `OrderSizingService` 转换余额、品种限制和配置；`domain/order/OrderSizingRules` 执行数量上限、步长取整与最小量规则。
 - `ThresholdEventStrategy` 负责注册及输入转换；`domain/strategy/ThresholdDecisionPolicy` 决定价量入场、反向波动与浮亏退出。
 - `TradingScheduler` 只调用 `TradingTriggerService`。后者编排行情回退、领导权校验、扫描冷却和决策触发；这些是有状态的用例流程。
