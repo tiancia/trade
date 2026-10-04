@@ -127,8 +127,10 @@ class XWorkflowIntegrationTest {
         AiTextClient ai = mock(AiTextClient.class);
         TelegramApi telegram = mock(TelegramApi.class);
         XApi x = mock(XApi.class);
-        String aiJson = new ObjectMapper().writeValueAsString(Map.of("body", body,
-                "reviewNote", "This is a general design lesson, without live factual assertions."));
+        String aiJson = new ObjectMapper().writeValueAsString(Map.of("candidates", List.of(
+                Map.of("body", body, "reviewNote", "This is a general design lesson, without live factual assertions."),
+                Map.of("body", body, "reviewNote", "Alternate candidate"),
+                Map.of("body", body, "reviewNote", "Alternate candidate"))));
         when(ai.generateJson(anyString())).thenAnswer(call -> {
             assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
             assertEquals("GENERATING", jdbc.queryForObject("SELECT status FROM x_post", String.class));

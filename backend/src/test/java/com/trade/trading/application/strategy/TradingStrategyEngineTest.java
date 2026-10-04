@@ -7,6 +7,10 @@ import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.application.event.TradingEventPublishResult;
 import com.trade.trading.application.order.OrderReconciliationService;
 import com.trade.trading.application.port.TradingBroker;
+import com.trade.trading.application.port.TradingMarketSource;
+import com.trade.trading.application.port.TradingMarketFeed;
+import com.trade.trading.application.port.TradingStateStore;
+import com.trade.trading.domain.model.ExecutionMode;
 import com.trade.trading.application.risk.FundSafetyService;
 import com.trade.trading.application.runtime.TradingLeadershipService;
 import com.trade.trading.domain.model.StrategyDecision;
@@ -29,11 +33,34 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 class TradingStrategyEngineTest {
     @TempDir
     Path tempDir;
+
+    @Test
+    void backtestModeSkipsRealtimeCollectionSelectionAndExecution() {
+        TradingProperties properties = new TradingProperties();
+        properties.setExecutionMode(ExecutionMode.BACKTEST);
+        TradingMarketSource market = mock(TradingMarketSource.class);
+        TradingStrategySelectionService selection = mock(TradingStrategySelectionService.class);
+        TradingBroker broker = mock(TradingBroker.class);
+        TradingStateStore state = mock(TradingStateStore.class);
+        SimpleMeterRegistry metrics = new SimpleMeterRegistry();
+        TradingStrategyEngine engine = new TradingStrategyEngine(
+                market, selection, broker, state, properties, mock(TradingMarketFeed.class),
+                mock(FundSafetyService.class), mock(OrderReconciliationService.class),
+                mock(TradingLeadershipService.class), metrics);
+
+        assertFalse(engine.runDecision(TradingTrigger.scheduled()));
+
+        verifyNoInteractions(market, selection, broker, state);
+        assertEquals(1.0, metrics.get("trade.trading.decisions.runs")
+                .tags("trigger", "scheduled", "outcome", "unsupported_mode").counter().count());
+    }
 
     @Test
     void evaluatesOnlyThePersistedActiveStrategy() {

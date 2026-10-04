@@ -36,6 +36,8 @@ class XConfigurationTest {
             assertFalse(policy.enabled()); assertFalse(policy.generationEnabled()); assertFalse(policy.publishingEnabled());
             assertFalse(context.getBean(XPublishingProperties.class).isLivePublishingEnabled());
             assertEquals(40, policy.content().minChars()); assertEquals(120, policy.content().maxChars());
+            assertTrue(policy.content().direction().contains("原创文学短章"));
+            assertTrue(policy.content().instructions().contains("非露骨"));
             XScheduler scheduler = context.getBean(XScheduler.class);
             scheduler.generate(); scheduler.review(); scheduler.publish();
             verifyNoInteractions(store, context.getBean(XPostRepository.class),
@@ -86,7 +88,8 @@ class XConfigurationTest {
 
     @Test void incompleteAndInvalidSettingsFailBeforeAnyProviderCall() {
         runner.withPropertyValues("trade.x.workflow.enabled=true", "trade.x.workflow.target-user-id=123",
-                "trade.x.workflow.generation-enabled=true").run(context -> assertThat(context).hasFailed());
+                "trade.x.workflow.generation-enabled=true", "trade.x.workflow.content.direction=")
+                .run(context -> assertThat(context).hasFailed());
         runner.withPropertyValues("trade.x.review.telegram.enabled=true").run(context -> assertThat(context).hasFailed());
         runner.withPropertyValues("trade.x.workflow.content.min-chars=100", "trade.x.workflow.content.max-chars=20")
                 .run(context -> assertThat(context).hasFailed());

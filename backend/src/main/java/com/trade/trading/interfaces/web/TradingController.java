@@ -84,7 +84,11 @@ public class TradingController {
     }
 
     @PutMapping("/strategies/active")
-    public ActiveStrategySelection activateStrategy(@RequestBody ActivateStrategyRequest request) {
+    public ActiveStrategySelection activateStrategy(
+            @RequestHeader(value = "X-Trading-Operator-Token", required = false) String operatorToken,
+            @RequestBody ActivateStrategyRequest request
+    ) {
+        requireOperatorToken(operatorToken);
         try {
             if (request == null) {
                 throw new IllegalArgumentException("request body is required");

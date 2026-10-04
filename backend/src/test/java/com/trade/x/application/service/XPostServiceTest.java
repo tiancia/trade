@@ -42,7 +42,7 @@ class XPostServiceTest {
             return post != null && Set.of(XPostStatus.GENERATING, XPostStatus.PENDING_REVIEW,
                     XPostStatus.APPROVED, XPostStatus.PUBLISHING).contains(post.status()) ? List.of(post) : List.of();
         });
-        when(generator.generate(content)).thenReturn(new GeneratedXPost("把复杂问题拆成可验证的小步骤。", "一般方法，无实时事实"));
+        when(generator.generate(eq(content), anyList())).thenReturn(new GeneratedXPost("把复杂问题拆成可验证的小步骤。", "一般方法，无实时事实"));
         when(publisher.credentialsAvailable("123")).thenReturn(true);
         when(publisher.publish(any())).thenReturn("999");
     }
@@ -52,11 +52,43 @@ class XPostServiceTest {
         assertEquals(XPostStatus.PENDING_REVIEW, pending.status());
         var order = inOrder(repository, generator, reviews);
         order.verify(repository).reserveGeneration(any(), eq(now), eq(5));
-        order.verify(generator).generate(content);
+        order.verify(repository).recent(30);
+        order.verify(generator).generate(eq(content), eq(List.of()));
         order.verify(repository).save(eq(pending), eq(0L));
         order.verify(reviews).submit(argThat(request -> request.content().equals(pending.body())
                 && request.targetUserId().equals("123") && request.version() == pending.contentVersion()
                 && request.context().contains("开发经验")));
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test void historyIsAccountScopedAndBoundedBeforeItReachesAi() {
+        List<XPost> recent = new ArrayList<>();
+        var otherPolicy = new XWorkflowPolicy(true, true, true, "999", content, 5, 3,
+                policy.reviewTtl(), policy.publishInterval(), policy.claimTimeout());
+        recent.add(XPost.generating("999", "other-account", now, otherPolicy)
+                .generated(new GeneratedXPost("其他账号的正文不要传入。", "note"), now));
+        for (int i = 0; i < 12; i++) {
+            recent.add(XPost.generating("123", "old-" + i, now, policy)
+                    .generated(new GeneratedXPost("同账号历史正文编号" + i, "note"), now));
+        }
+        when(repository.recent(30)).thenReturn(recent);
+
+        service.generate();
+
+        verify(generator).generate(eq(content), argThat(bodies -> bodies.size() == 8
+                && bodies.getFirst().equals("同账号历史正文编号0")
+                && bodies.getLast().equals("同账号历史正文编号7")));
+    }
+
+    @Test void repeatedGeneratorOutputFailsWithoutReviewOrPublication() {
+        XPost previous = XPost.generating("123", "previous", now, policy)
+                .generated(new GeneratedXPost("把复杂问题拆成可验证的小步骤！", "note"), now);
+        when(repository.recent(30)).thenReturn(List.of(previous));
+
+        assertEquals(XPostStatus.GENERATION_FAILED, service.generate().orElseThrow().status());
+
+        verify(generator, times(1)).generate(eq(content), anyList());
+        verifyNoInteractions(reviews);
         verify(publisher, never()).publish(any());
     }
 
@@ -67,7 +99,7 @@ class XPostServiceTest {
     }
 
     @Test void invalidAiLengthIsFailedWithoutTruncationOrReview() {
-        when(generator.generate(content)).thenReturn(new GeneratedXPost("中".repeat(150), "note"));
+        when(generator.generate(eq(content), anyList())).thenReturn(new GeneratedXPost("中".repeat(150), "note"));
         assertEquals(XPostStatus.GENERATION_FAILED, service.generate().orElseThrow().status());
         verifyNoInteractions(reviews);
         verify(publisher, never()).publish(any());

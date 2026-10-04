@@ -324,7 +324,7 @@ public class TradingProperties {
 
     @Data
     public static class FundSafetyProperties {
-        /** Token required by HTTP stop/resume mutations; blank disables those endpoints. */
+        /** Token for strategy selection, stop/resume and manual reconciliation; blank disables them. */
         private String operatorToken;
         /** OKX cancel-all-after timeout armed when the fund stop activates. */
         private int deadManTimeoutSeconds = 10;

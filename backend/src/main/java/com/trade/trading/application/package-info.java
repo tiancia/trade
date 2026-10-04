@@ -7,5 +7,7 @@
  * <p>Business decisions and arithmetic are delegated to domain policies. Execution services
  * coordinate safety checks and external calls through ports; adapters implement the
  * OKX submission/query protocol. This layer owns I/O order, transaction boundaries and metrics.</p>
+ * <p>Backtests obtain candles through HistoricalCandleSource and run the domain
+ * simulation portfolio independently of the PAPER/LIVE realtime engine.</p>
  */
 package com.trade.trading.application;

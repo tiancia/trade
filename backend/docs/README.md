@@ -18,6 +18,7 @@
 - [ADR-0001](adr/0001-domain-first-modular-monolith.md)：理解为什么采用模块化单体；
 - [ADR-0002](adr/0002-four-layer-module-layout.md)：理解为什么业务域内部统一四层，再按能力细分；
 - [Trading 回测说明](TRADING_BACKTEST.md)：回测请求、成交模型和指标口径；
+- [Trading 结构评审与演进](TRADING_EVOLUTION.md)：当前边界、已修复问题与分阶段路线；
 - [Telegram Bot API](TELEGRAM_API.md)：客户端方法、显式实例化、更新和失败处理；
 - [微博审核工作流](WEIBO_WORKFLOW.md)：热点、AI、审核门禁、Telegram 审核待办和迁移；
 - [X 客户端](X_API.md)：OAuth 1.0a 四凭据、账号查询与文本发布协议；

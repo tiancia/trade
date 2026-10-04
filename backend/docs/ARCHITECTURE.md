@@ -147,6 +147,8 @@ OKX order snapshot
 
 MySQL 是资金状态的权威来源。旧 JSON 的仓位、成本和风险仅在目标数据库行为空时兼容初始化；之后 JSON 只保存策略选择、画像和有界决策记忆。
 
+本地记忆在副本上修改，同目录临时文件完成序列化后原子替换，成功后才更新内存；不支持原子替换的文件系统会拒绝写入。此机制只保证单进程的失败一致性，不提供跨实例策略同步，后续计划见 [Trading 演进路线](TRADING_EVOLUTION.md)。
+
 资金级停止先提交 `HALTED`，再撤销挂单和设置 cancel-all-after。每次真实提交在取得提交所有权后再次读取停止门；恢复要求期望 revision、确认词、本地无待对账订单且交易所无挂单。
 
 ### 行情事件管道
@@ -208,4 +210,5 @@ X 的 `application/service/XPostService` 编排配置驱动的 AI 草稿、Teleg
 - `PackageArchitectureTest` 检查包与路径、四层入口、业务域隔离、共享模块依赖方向、Web 不引用持久化、内层不依赖接口入口、port 不依赖实现、领域类型不依赖外层，以及 Mapper XML 中类名可解析。
 - domain 不允许引用 provider DTO；应用层采集与执行契约可以保留供应商协议，在调用纯规则前转换。结构规则不得通过放宽限制来掩盖错误归层。
 - 新增边界检查禁止 domain 引入 Spring/MyBatis/SQL 框架，禁止 Trading 的 application/interfaces 直接依赖已抽象的四类状态/行情/事件实现。
+- 历史行情也通过 `application/port/HistoricalCandleSource` 注入回测用例，由 `HistoricalCandleService` 实现；架构测试禁止用例与 HTTP 层直接依赖该实现。实时 Broker 仅路由 PAPER/LIVE，BACKTEST 必须走独立回测 API。
 - Java 全限定名改变，仓库外 Java 调用方需更新 import；HTTP 调用方和数据库无需因此迁移。订单/持仓不再提供 setter，直接使用这些 Java 类型的调用方需改用领域方法；MyBatis 订单映射已同步改为持久化 Row，无需数据库迁移。

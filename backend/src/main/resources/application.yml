@@ -283,16 +283,16 @@ trade:
       # 目标 X 账号数字用户 ID；发布前查询 /2/users/me 校验授权账号一致。
       target-user-id: ${TRADE_X_TARGET_USER_ID:}
       content:
-        # AI 发帖主题 / 内容方向，开启生成时必填；当前生成原创文本，不抓取实时新闻。
-        direction: ${TRADE_X_CONTENT_DIRECTION:一个简短的故事用来表现苦难，足够震撼}
+        # 原创文学与情绪共鸣方向，开启生成时不得为空；不抓取实时新闻。
+        direction: ${TRADE_X_CONTENT_DIRECTION:面向成年读者的原创文学短章，写日常细节、孤独、关系、欲言又止与自我和解；可有克制的成人暧昧，不靠猎奇消费苦难}
         # AI 输出语言。
         language: ${TRADE_X_CONTENT_LANGUAGE:简体中文}
         # AI 写作语气和风格。
-        tone: ${TRADE_X_CONTENT_TONE:犀利、简洁}
+        tone: ${TRADE_X_CONTENT_TONE:有画面、有情绪张力、语言准确克制，亲近而不讨好，结尾留有余味}
         # 额外写作要求，例如避免话题标签或限定受众，可留空。
-        instructions: ${TRADE_X_CONTENT_INSTRUCTIONS:}
+        instructions: ${TRADE_X_CONTENT_INSTRUCTIONS:轮换生活切片、微型叙事、独白与短诗；每条聚焦一个场景和一种情绪；不堆砌辞藻，不写鸡汤或求赞求关注，不默认加标签、表情和链接；虚构不冒充真实经历，成人暧昧限于自愿且非露骨的表达}
         # 正文最少 Unicode 字符数；按 code point 计数，范围 1～max-chars。
-        min-chars: ${TRADE_X_CONTENT_MIN_CHARS:10}
+        min-chars: ${TRADE_X_CONTENT_MIN_CHARS:40}
         # 正文最多 Unicode 字符数，配置上限 280；还校验 X 普通帖 280 加权上限（中文通常计 2）。
         max-chars: ${TRADE_X_CONTENT_MAX_CHARS:120}
       # 目标账号每个 UTC 日最多预留的 AI 生成次数；失败的生成仍占额度。
@@ -515,7 +515,7 @@ trade:
     td-mode: cash
     # OKX 合约持仓模式；long_short 会发送 posSide=long/short，net 会省略 posSide。
     position-mode: long_short
-    # 策略执行模式：paper 为模拟成交，live 为真实下单，backtest 为历史回测。
+    # 实时策略执行模式：paper 模拟成交，live 真实下单；backtest 跳过实时决策，历史回测由独立 API 启动。
     execution-mode: ${TRADE_TRADING_EXECUTION_MODE:paper}
     # 真实下单二次保险开关；只有 execution-mode=live 且此项为 true 才允许发单。
     live-enabled: ${TRADE_TRADING_LIVE_ENABLED:false}
@@ -766,7 +766,7 @@ trade:
       # LIVE 提交订单前是否强制校验有效领导者租约；未启用租约或丢失租约时拒绝下单。
       required-for-live: ${TRADE_TRADING_LEADERSHIP_REQUIRED_FOR_LIVE:true}
     fund-safety:
-      # 留空时 HTTP stop/resume 端点保持禁用；内部硬风控仍可触发持久化停止。
+      # 策略切换、stop/resume 和手工对账共用操作令牌；留空时这些 HTTP 写操作禁用，内部硬风控仍有效。
       operator-token: ${TRADE_TRADING_OPERATOR_TOKEN:}
       # 资金停止后设置 OKX cancel-all-after 的超时秒数；对账循环重申，失联后由交易所撤单。
       dead-man-timeout-seconds: ${TRADE_TRADING_DEAD_MAN_TIMEOUT_SECONDS:10}

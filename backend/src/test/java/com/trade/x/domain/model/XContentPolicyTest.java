@@ -6,6 +6,16 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class XContentPolicyTest {
     @Test
+    void detectsTypographyOnlyRewritesButDoesNotClaimSemanticDeduplication() {
+        assertTrue(XContentPolicy.repeatsRecentBody("灯还亮着——人却走远了！",
+                java.util.List.of("灯还亮着，人却走远了。")));
+        assertTrue(XContentPolicy.repeatsRecentBody("ＣＡＦÉ", java.util.List.of("Cafe\u0301")));
+        assertFalse(XContentPolicy.repeatsRecentBody("窗前的灯替我等了一夜。",
+                java.util.List.of("灯还亮着，人却走远了。")));
+        assertFalse(XContentPolicy.repeatsRecentBody("新正文", java.util.List.of()));
+    }
+
+    @Test
     void trimsSettingsAndCountsUnicodeCodePointsWithoutTruncatingTheBody() {
         var policy = new XContentPolicy(" engineering ", " en ", " plain ", " avoid hype ", 2, 3);
         assertEquals("engineering", policy.direction());

@@ -20,7 +20,7 @@ import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.domain.backtest.SimulatedPortfolio;
 import com.trade.trading.infrastructure.config.TradingProperties;
-import com.trade.trading.infrastructure.market.HistoricalCandleService;
+import com.trade.trading.application.port.HistoricalCandleSource;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
@@ -43,14 +43,14 @@ public class BacktestService {
     private static final int MAX_PAGE_SIZE = 1_000;
     private static final int MAX_RETAINED_RUNS = 1_000;
 
-    private final HistoricalCandleService historicalCandleService;
+    private final HistoricalCandleSource historicalCandleService;
     private final TradingStrategyRegistry strategyRegistry;
     private final TradingProperties properties;
     private final Executor executor;
     private final ConcurrentMap<String, BacktestRun> runs = new ConcurrentHashMap<>();
 
     public BacktestService(
-            HistoricalCandleService historicalCandleService,
+            HistoricalCandleSource historicalCandleService,
             TradingStrategyRegistry strategyRegistry,
             TradingProperties properties,
             @Qualifier("backtestExecutor") Executor executor

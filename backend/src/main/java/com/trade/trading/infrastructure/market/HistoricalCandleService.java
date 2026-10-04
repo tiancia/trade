@@ -8,6 +8,7 @@ import com.trade.common.support.TradingMath;
 import com.trade.trading.application.event.TradingEvent;
 import com.trade.trading.application.event.TradingEventSource;
 import com.trade.trading.application.port.TradingEventPublisher;
+import com.trade.trading.application.port.HistoricalCandleSource;
 import com.trade.trading.infrastructure.persistence.OkxCandleCacheMapper;
 import com.trade.trading.infrastructure.persistence.OkxCandleCacheRow;
 import org.slf4j.Logger;
@@ -24,7 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
 @Component
-public class HistoricalCandleService {
+public class HistoricalCandleService implements HistoricalCandleSource {
     private static final Logger log = LoggerFactory.getLogger(HistoricalCandleService.class);
     private static final int PAGE_SIZE = 300;
     private static final int DEFAULT_MAX_CANDLES = 10_000;
@@ -48,6 +49,7 @@ public class HistoricalCandleService {
         return historyCandles(instId, bar, from, to, DEFAULT_MAX_CANDLES);
     }
 
+    @Override
     public List<CandleResp> historyCandles(
             String instId,
             String bar,

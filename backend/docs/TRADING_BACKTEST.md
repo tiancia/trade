@@ -4,6 +4,8 @@
 
 回测由 `TradingController` 暴露，和后台自动交易任务相互独立：
 
+无需把 `trade.trading.execution-mode` 改为 `backtest`。该配置值只会使实时引擎跳过决策，不能启动历史回放，也不会再降级为 PAPER 成交。历史数据通过 `application/port/HistoricalCandleSource` 获取，默认由 `infrastructure/market/HistoricalCandleService` 实现。
+
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
 | `POST` | `/api/trading/backtests` | 校验参数并提交异步回测，成功接收返回 `202 Accepted` |
@@ -65,7 +67,7 @@
 
 ## 运行边界
 
-- 当前 `BacktestBroker` 是现货多头模型。若全局 `instType` 为 `SWAP`、`FUTURES` 或 `OPTION`，请求会直接失败，避免在没有合约面值、保证金和资金费率模型时生成误导结果。
+- 当前回测用例直接使用 domain 的 `SimulatedPortfolio` 现货多头模型，`BacktestBroker` 仅保留兼容适配。若全局 `instType` 为 `SWAP`、`FUTURES` 或 `OPTION`，请求会直接失败，避免在没有合约面值、保证金和资金费率模型时生成误导结果。
 - 当前成交模型假设指定金额能在下一根开盘价附近全部成交，不模拟盘口深度、成交量参与率、挂单排队和 K 线内止盈止损路径。
 - 两个专用工作线程执行回测，等待队列容量为 32；队列满时运行会以失败状态返回，应用关闭时最多等待 5 秒后中断剩余任务。
 - 运行结果目前保存在进程内，最多保留 1000 个运行摘要。数据库中的 `okx_backtest_*` 表尚未接入运行仓储，因此应用重启后不能查询旧的 `runId`。

@@ -270,6 +270,7 @@ class PackageArchitectureTest {
         Set<String> adapters = Set.of(
                 "com.trade.trading.infrastructure.persistence.TradingStateRepository",
                 "com.trade.trading.infrastructure.market.MarketContextCollector",
+                "com.trade.trading.infrastructure.market.HistoricalCandleService",
                 "com.trade.trading.infrastructure.market.OkxMarketDataWebSocketFeed",
                 "com.trade.trading.infrastructure.event.BoundedTradingEventBus");
         for (String layer : List.of("application", "interfaces")) {

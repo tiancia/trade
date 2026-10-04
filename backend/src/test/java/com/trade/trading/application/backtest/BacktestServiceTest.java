@@ -11,7 +11,7 @@ import com.trade.trading.domain.backtest.BacktestStatus;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.infrastructure.config.TradingProperties;
-import com.trade.trading.infrastructure.market.HistoricalCandleService;
+import com.trade.trading.application.port.HistoricalCandleSource;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -32,7 +32,7 @@ class BacktestServiceTest {
 
     @Test
     void replaysAtHistoricalTimesAndBuildsTradeAndEquityMetrics() {
-        HistoricalCandleService history = mock(HistoricalCandleService.class);
+        HistoricalCandleSource history = mock(HistoricalCandleSource.class);
         List<CandleResp> candles = List.of(
                 candle("2026-05-17T00:00:00Z", "100", "100", "1"),
                 candle("2026-05-17T00:01:00Z", "100", "105", "1"),
@@ -75,7 +75,7 @@ class BacktestServiceTest {
 
     @Test
     void validatesRatesBeforeSchedulingOrLoadingHistory() {
-        HistoricalCandleService history = mock(HistoricalCandleService.class);
+        HistoricalCandleSource history = mock(HistoricalCandleSource.class);
         CapturingStrategy strategy = new CapturingStrategy();
         TradingProperties properties = properties(strategy.type());
         BacktestService service = new BacktestService(
@@ -94,7 +94,7 @@ class BacktestServiceTest {
 
     @Test
     void excludesUnconfirmedCandlesByDefault() {
-        HistoricalCandleService history = mock(HistoricalCandleService.class);
+        HistoricalCandleSource history = mock(HistoricalCandleSource.class);
         when(history.historyCandles(anyString(), anyString(), any(), any(), anyInt()))
                 .thenReturn(List.of(
                         candle("2026-05-17T00:00:00Z", "100", "100", "1"),
@@ -117,7 +117,7 @@ class BacktestServiceTest {
 
     @Test
     void marksOpenPositionToMarketWhenForcedCloseIsDisabled() {
-        HistoricalCandleService history = mock(HistoricalCandleService.class);
+        HistoricalCandleSource history = mock(HistoricalCandleSource.class);
         when(history.historyCandles(anyString(), anyString(), any(), any(), anyInt()))
                 .thenReturn(List.of(
                         candle("2026-05-17T00:00:00Z", "100", "100", "1"),

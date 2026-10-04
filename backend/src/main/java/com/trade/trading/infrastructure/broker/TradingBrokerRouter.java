@@ -12,8 +12,8 @@ import org.springframework.stereotype.Component;
  * Selects the execution implementation for a strategy decision.
  *
  * <p>{@code trade.trading.execution-mode=live} sends orders to OKX through
- * {@link OkxLiveBroker}; every other mode uses {@link PaperBroker} so local
- * development and scheduled dry runs do not place real orders.</p>
+ * {@link OkxLiveBroker}; {@code paper} uses {@link PaperBroker}.
+ * BACKTEST is driven by the separate historical API and cannot execute here.</p>
  */
 @Component
 public class TradingBrokerRouter implements TradingBroker {
@@ -41,6 +41,11 @@ public class TradingBrokerRouter implements TradingBroker {
             liveBroker.execute(decision, context, decisionRecord);
             return;
         }
-        paperBroker.execute(decision, context, decisionRecord);
+        if (properties.getExecutionMode() == ExecutionMode.PAPER) {
+            paperBroker.execute(decision, context, decisionRecord);
+            return;
+        }
+        decisionRecord.setExecutionStatus("SKIPPED")
+                .setSkipReason("Realtime execution requires PAPER or LIVE; use /api/trading/backtests for historical backtests");
     }
 }

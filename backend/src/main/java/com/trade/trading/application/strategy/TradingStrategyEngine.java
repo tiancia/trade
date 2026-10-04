@@ -6,6 +6,7 @@ import com.trade.trading.application.port.TradingBroker;
 import com.trade.trading.application.risk.FundSafetyService;
 import com.trade.trading.application.runtime.TradingLeadershipService;
 import com.trade.trading.domain.model.ActiveStrategySelection;
+import com.trade.trading.domain.model.ExecutionMode;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.domain.model.TradingDecisionRecord;
@@ -90,6 +91,14 @@ public class TradingStrategyEngine {
         if (!properties.isEnabled()) {
             recordRun(triggerType, "disabled", null);
             log.info("OKX strategy trading is disabled, skip trigger={}", trigger);
+            return false;
+        }
+
+        if (properties.getExecutionMode() != ExecutionMode.PAPER
+                && properties.getExecutionMode() != ExecutionMode.LIVE) {
+            recordRun(triggerType, "unsupported_mode", null);
+            log.warn("Realtime strategy decision skipped: executionMode={}, use the historical backtest API",
+                    properties.getExecutionMode());
             return false;
         }
 

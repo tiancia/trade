@@ -20,6 +20,7 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.ConcurrentModificationException;
@@ -154,7 +155,7 @@ public class TradingStateRepository implements TradingStateStore {
         if (record == null || limit <= 0) {
             return;
         }
-        TradingMemoryDocument current = memory();
+        TradingMemoryDocument current = copyMemory(memory());
         List<TradingDecisionRecord> recent = new ArrayList<>();
         recent.add(copyDecision(record));
         recent.addAll(copyRecentDecisions(current.getRecentDecisions()));
@@ -169,7 +170,7 @@ public class TradingStateRepository implements TradingStateStore {
         if (decision == null || !hasStrategyUpdate(decision)) {
             return;
         }
-        TradingMemoryDocument current = memory();
+        TradingMemoryDocument current = copyMemory(memory());
         TradingStrategyState previous = current.getStrategyState();
         current.setStrategyState(new TradingStrategyState()
                 .setBias(firstText(decision.getStrategyBias(), previous == null ? null : previous.getBias()))
@@ -216,7 +217,7 @@ public class TradingStateRepository implements TradingStateStore {
         if (strategyId == null || strategyId.isBlank()) {
             throw new IllegalArgumentException("strategyId is required");
         }
-        TradingMemoryDocument current = memory();
+        TradingMemoryDocument current = copyMemory(memory());
         if (expectedRevision != null && expectedRevision.longValue() != current.getActiveStrategyRevision()) {
             throw new ConcurrentModificationException(
                     "Active strategy revision changed from " + expectedRevision
@@ -284,19 +285,41 @@ public class TradingStateRepository implements TradingStateStore {
     }
 
     private void writeMemory(TradingMemoryDocument nextMemory) {
+        Path temporary = null;
         try {
             // Initialize legacy financial state before the old JSON values are
             // intentionally removed from the rewritten memory document.
             getState();
-            Path parent = statePath.getParent();
-            if (parent != null) {
-                Files.createDirectories(parent);
-            }
-            objectMapper.writerWithDefaultPrettyPrinter().writeValue(statePath.toFile(), nextMemory);
+            Path target = statePath.toAbsolutePath();
+            Path parent = target.getParent();
+            Files.createDirectories(parent);
+            temporary = Files.createTempFile(parent, target.getFileName().toString() + ".", ".tmp");
+            objectMapper.writerWithDefaultPrettyPrinter().writeValue(temporary.toFile(), nextMemory);
+            // Fail closed if the filesystem cannot replace atomically. A failed
+            // write must preserve both the last complete file and active memory.
+            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             memory = nextMemory;
         } catch (Exception e) {
             throw new IllegalStateException("Write trading memory failed: " + statePath, e);
+        } finally {
+            if (temporary != null) {
+                try {
+                    Files.deleteIfExists(temporary);
+                } catch (java.io.IOException ignored) {
+                    // A leftover temp file must not change the commit outcome.
+                }
+            }
         }
+    }
+
+    private static TradingMemoryDocument copyMemory(TradingMemoryDocument source) {
+        TradingMemoryDocument copy = new TradingMemoryDocument();
+        copy.setActiveStrategyId(source.getActiveStrategyId());
+        copy.setActiveStrategyRevision(source.getActiveStrategyRevision());
+        copy.setActiveStrategyChangedAt(source.getActiveStrategyChangedAt());
+        copy.setStrategyState(copyStrategyState(source.getStrategyState()));
+        copy.setRecentDecisions(copyRecentDecisions(source.getRecentDecisions()));
+        return copy;
     }
 
     private static TradingState compose(

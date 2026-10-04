@@ -25,10 +25,10 @@ public class XWorkflowProperties {
 
     @Data
     public static class Content {
-        private String direction = "";
+        private String direction = "面向成年读者的原创文学短章，写日常细节、孤独、关系、欲言又止与自我和解；可有克制的成人暧昧，不靠猎奇消费苦难";
         private String language = "简体中文";
-        private String tone = "清晰、自然、克制";
-        private String instructions = "";
+        private String tone = "有画面、有情绪张力、语言准确克制，亲近而不讨好，结尾留有余味";
+        private String instructions = "轮换生活切片、微型叙事、独白与短诗；每条聚焦一个场景和一种情绪；不堆砌辞藻，不写鸡汤或求赞求关注，不默认加标签、表情和链接；虚构不冒充真实经历，成人暧昧限于自愿且非露骨的表达";
         private int minChars = 40;
         private int maxChars = 120;
         public XContentPolicy policy() {

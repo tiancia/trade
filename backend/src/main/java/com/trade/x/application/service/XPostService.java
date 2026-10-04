@@ -8,6 +8,7 @@ import com.trade.x.application.port.XPostPublisher;
 import com.trade.x.application.port.XPostRepository;
 import com.trade.x.domain.exception.XPublishingException;
 import com.trade.x.domain.model.GeneratedXPost;
+import com.trade.x.domain.model.XContentPolicy;
 import com.trade.x.domain.model.XPost;
 import com.trade.x.domain.model.XPostHistory;
 import com.trade.x.domain.model.XPostStatus;
@@ -62,8 +63,15 @@ public class XPostService {
         if (!posts.reserveGeneration(reserved, dayStart(now), policy.dailyGenerationLimit())) return Optional.empty();
         XPost generated;
         try {
-            GeneratedXPost draft = generator.generate(reserved.contentPolicy());
+            List<String> recentBodies = posts.recent(30).stream()
+                    .filter(post -> reserved.targetUserId().equals(post.targetUserId()))
+                    .map(XPost::body).filter(body -> body != null && !body.isBlank())
+                    .distinct().limit(8).toList();
+            GeneratedXPost draft = generator.generate(reserved.contentPolicy(), recentBodies);
             String body = XPostTextValidator.normalizeAndValidate(draft.body(), reserved.contentPolicy());
+            if (XContentPolicy.repeatsRecentBody(body, recentBodies)) {
+                throw new IllegalArgumentException("X draft repeats recent content");
+            }
             generated = reserved.generated(new GeneratedXPost(body, draft.reviewNote()), now());
         } catch (RuntimeException failure) {
             generated = reserved.generationFailed(now());
@@ -207,9 +215,12 @@ public class XPostService {
         try {
             var content = post.contentPolicy();
             reviews.submit(new XReviewRequest(post.id(), post.contentVersion(), post.targetUserId(), post.body(),
-                    "内容方向：" + content.direction() + "\n语言：" + content.language() + "\n语气：" + content.tone()
+                    "创作说明（AI 自述，需人工判断）：" + post.reviewNote()
+                    + "\n审核重点：开头是否吸引、细节是否具体、结尾是否有余味；是否与近期内容雷同；虚构是否误导。"
+                    + "涉及暧昧时确认人物均为成年人且关系自愿、表达不露骨。"
+                    + "\n内容方向：" + content.direction() + "\n语言：" + content.language() + "\n语气：" + content.tone()
                     + "\n字数范围：" + content.minChars() + "–" + content.maxChars()
-                    + "\n额外规则：" + content.instructions() + "\n审核说明：" + post.reviewNote(), post.expiresAt()));
+                    + "\n额外规则：" + content.instructions(), post.expiresAt()));
         } catch (RuntimeException failure) { log.warn("X review delivery unavailable: postId={}", post.id()); }
     }
 

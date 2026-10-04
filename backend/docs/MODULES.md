@@ -93,6 +93,8 @@ REST / WebSocket market data
 
 订单对象不暴露 setter，状态推进经由 `OrderChange`；MyBatis 使用 `TradingOrderRow` 恢复不可变订单。持仓快照通过领域买入、卖出和对账方法演进。回测线程池由 `BacktestExecutorConfiguration` 装配并关闭，应用用例只提交任务。
 
+回测经 `application/port/HistoricalCandleSource` 加载历史数据，默认适配为 `HistoricalCandleService`。实时引擎与 Broker 只执行 PAPER/LIVE；BACKTEST 配置不会启动历史回放或降级成实时模拟成交。活动策略切换与资金操作复用 `X-Trading-Operator-Token` 鉴权。
+
 真实订单可靠性依赖持久化幂等键、确定性 `clOrdId`、状态机、乐观锁、状态历史和累计成交账本。仓位、成本、风险状态与资金级停止状态以 MySQL 为权威；`data/trading-state.json` 只保存策略选择、策略画像和有界决策记忆。事件管道依赖固定容量、显式队满策略、handler 异常隔离、指标与优雅排空。修改这些路径前应先读对应测试。
 
 ### polymarket 与 story

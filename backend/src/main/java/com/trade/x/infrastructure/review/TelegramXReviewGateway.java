@@ -181,12 +181,12 @@ public class TelegramXReviewGateway implements XHumanReviewGateway {
     private String reviewText(XReviewRequest request) {
         String header = "X草稿待审核\n目标账号：" + request.targetUserId() + "\n草稿：" + request.reference()
                 + "\n正文版本：" + request.version() + "\n过期时间：" + request.expiresAt() + "\n\n【待发布正文】\n";
-        String footer = "\n【正文结束】\n\n通过后只会发布以上正文。\n【来源与审核说明】\n";
+        String footer = "\n【正文结束】\n\n通过后只会发布以上正文。\n【创作与审核说明】\n";
         String essential = header + request.content() + footer;
         int budget = 4096 - essential.codePointCount(0, essential.length());
         if (budget < 40) throw new IllegalArgumentException("Full X body does not fit a Telegram review message");
         String context = request.context() == null ? "" : request.context();
-        String suffix = "\n（来源说明过长，已截断；正文完整保留）";
+        String suffix = "\n（审核说明过长，已截断；正文完整保留）";
         int contextLimit = Math.min(budget, 1000);
         if (context.codePointCount(0, context.length()) > contextLimit) {
             int retained = contextLimit - suffix.codePointCount(0, suffix.length());

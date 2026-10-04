@@ -13,15 +13,58 @@ import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ConcurrentModificationException;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class TradingStateRepositoryTest {
     @TempDir
     Path tempDir;
+
+    @Test
+    void failedWriteDoesNotActivateStrategyOrAdvanceRevision() throws Exception {
+        Path parent = tempDir.resolve("blocked-parent");
+        TradingStateRepository repository = new TradingStateRepository(parent.resolve("state.json"));
+        repository.getState();
+        Files.writeString(parent, "a file prevents creation of the state directory");
+
+        assertThrows(IllegalStateException.class, () -> repository.selectActiveStrategy("defensive", 0L));
+
+        assertNull(repository.getState().getActiveStrategyId());
+        assertEquals(0L, repository.getState().getActiveStrategyRevision());
+        assertEquals("a file prevents creation of the state directory", Files.readString(parent));
+    }
+
+    @Test
+    void failedSerializationPreservesCompleteFileAndDecisionMemory() throws Exception {
+        Path file = tempDir.resolve("state.json");
+        TradingStateRepository repository = new TradingStateRepository(file);
+        repository.selectActiveStrategy("balanced", 0L);
+        repository.recordDecision(decision("old", TradingAction.HOLD), 2);
+        String committed = Files.readString(file);
+        TradingDecisionRecord invalid = decision("new", TradingAction.BUY)
+                .setMetadata(Map.of("invalid", new UnserializableValue()));
+
+        assertThrows(IllegalStateException.class, () -> repository.recordDecision(invalid, 2));
+
+        assertEquals(committed, Files.readString(file));
+        assertEquals(1, repository.getState().getRecentDecisions().size());
+        assertEquals("old", repository.getState().getRecentDecisions().getFirst().getTimestamp());
+        assertEquals("balanced", new TradingStateRepository(file).getState().getActiveStrategyId());
+        try (var entries = Files.list(tempDir)) {
+            assertEquals(1L, entries.count());
+        }
+    }
+
+    public static class UnserializableValue {
+        public String getValue() {
+            throw new IllegalStateException("serialization failure");
+        }
+    }
 
     @Test
     void persistsWeightedAverageCostAndSellReduction() {

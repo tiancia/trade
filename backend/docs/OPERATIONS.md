@@ -119,10 +119,19 @@ $env:TRADE_TRADING_LEADERSHIP_HEARTBEAT_INTERVAL_MS="5000"
 
 ## 资金级停止与恢复
 
-先在部署环境设置长随机值 `TRADE_TRADING_OPERATOR_TOKEN`；留空时 HTTP stop/resume 端点返回 503，内部硬风控和对账仍能自动停止。不要把 token 放进 URL、日志或仓库。
+先在部署环境设置长随机值 `TRADE_TRADING_OPERATOR_TOKEN`；策略切换、HTTP stop/resume 和手工对账共用此令牌。留空时这些写操作返回 503，令牌缺失或错误返回 403；内部硬风控和定时对账仍能自动停止。不要把 token 放进 URL、日志或仓库。
+
+`PUT /api/trading/strategies/active` 也必须携带 `X-Trading-Operator-Token`，请求体仍为 `strategyId` 和可选 `expectedRevision`，版本冲突仍返回 409。PAPER 与 LIVE 都执行鉴权。浏览器只对 `trade.trading.frontend-allowed-origin-patterns` 中允许的来源放行该请求头；跨域许可不替代令牌校验。旧驾驶舱尚未发送该请求头，其策略切换会被拒绝，调用方需适配；在此之前可使用以下操作命令。
 
 ```powershell
 $headers = @{ "X-Trading-Operator-Token" = $env:TRADE_TRADING_OPERATOR_TOKEN }
+
+# expectedRevision 使用 GET /api/trading/runtime/status 返回的 activeStrategyRevision。
+Invoke-RestMethod -Method Put `
+  -Uri http://127.0.0.1:8080/api/trading/strategies/active `
+  -Headers $headers `
+  -ContentType "application/json" `
+  -Body '{"strategyId":"threshold-event-defensive","expectedRevision":1}'
 
 Invoke-RestMethod -Method Post `
   -Uri http://127.0.0.1:8080/api/trading/safety/stop `
@@ -161,6 +170,8 @@ Invoke-RestMethod -Method Post `
 不要用 SQL 直接把状态改成 ACTIVE；这会绕过 revision、挂单检查和 dead-man switch 解除流程。
 
 ## 观测
+
+实时决策仅支持 `execution-mode=paper/live`。配置为 `backtest` 时引擎在行情采集前跳过，Broker 也拒绝降级为 PAPER；历史回测必须显式调用 `POST /api/trading/backtests`，不会因修改执行模式自行开始。
 
 | 信号 | 入口 | 关注点 |
 | --- | --- | --- |

@@ -1,5 +1,9 @@
 package com.trade.x.domain.model;
 
+import java.text.Normalizer;
+import java.util.List;
+import java.util.Locale;
+
 /** Immutable content settings captured with each draft, independent of provider counting rules. */
 public record XContentPolicy(String direction, String language, String tone, String instructions,
                              int minChars, int maxChars) {
@@ -30,6 +34,18 @@ public record XContentPolicy(String direction, String language, String tone, Str
         return value.codePoints().anyMatch(codePoint ->
                 (Character.isISOControl(codePoint) && codePoint != '\n' && codePoint != '\t')
                         || Character.getType(codePoint) == Character.SURROGATE);
+    }
+
+    /** Exact text reuse ignoring typography; semantic originality still needs editorial review. */
+    public static boolean repeatsRecentBody(String body, List<String> recentBodies) {
+        String key = comparisonKey(body);
+        return !key.isBlank() && recentBodies != null && recentBodies.stream()
+                .anyMatch(previous -> key.equals(comparisonKey(previous)));
+    }
+
+    private static String comparisonKey(String text) {
+        return text == null ? "" : Normalizer.normalize(text, Normalizer.Form.NFKC)
+                .toLowerCase(Locale.ROOT).replaceAll("[\\p{P}\\p{Z}\\s]+", "");
     }
 
     private static String setting(String value, int maxLength, String name) {
