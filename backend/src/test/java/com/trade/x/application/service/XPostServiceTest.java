@@ -145,6 +145,9 @@ class XPostServiceTest {
         XPost approved = service.applyReview(original);
         XPost revised = service.revise(approved.id(), approved.revision(), "修改后正文仍需由人工重新审核。");
         assertEquals(2, revised.contentVersion()); assertNull(revised.reviewedAt());
+        verify(reviews).submit(argThat(request -> request.version() == 2
+                && request.content().equals(revised.body())
+                && request.context().contains("原始 AI 说明不代表当前版本")));
         callback(original); service.runReviews();
         assertEquals(XPostStatus.PENDING_REVIEW, state.get().status());
         verify(publisher, never()).publish(any());

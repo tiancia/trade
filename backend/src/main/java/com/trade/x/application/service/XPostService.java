@@ -214,8 +214,11 @@ public class XPostService {
         if (post.status() != XPostStatus.PENDING_REVIEW || !policy.targetUserId().equals(post.targetUserId()) || !post.live(now())) return;
         try {
             var content = post.contentPolicy();
+            String noteLabel = post.contentVersion() > 1
+                    ? "正文已人工修改；原始 AI 说明不代表当前版本，请重新判断："
+                    : "创作说明（AI 自述，需人工判断）：";
             reviews.submit(new XReviewRequest(post.id(), post.contentVersion(), post.targetUserId(), post.body(),
-                    "创作说明（AI 自述，需人工判断）：" + post.reviewNote()
+                    noteLabel + (post.reviewNote() == null ? "无原始说明" : post.reviewNote())
                     + "\n审核重点：开头是否吸引、细节是否具体、结尾是否有余味；是否与近期内容雷同；虚构是否误导。"
                     + "涉及暧昧时确认人物均为成年人且关系自愿、表达不露骨。"
                     + "\n内容方向：" + content.direction() + "\n语言：" + content.language() + "\n语气：" + content.tone()

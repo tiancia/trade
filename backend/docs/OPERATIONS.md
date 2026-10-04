@@ -171,6 +171,9 @@ Invoke-RestMethod -Method Post `
 
 ## 观测
 
+X 文学内容生成沿用 `TRADE_X_CONTENT_DIRECTION/TONE/INSTRUCTIONS` 和 40–120 字默认范围。
+修改这些部署变量并重启后只影响新草稿。一次 AI 请求包含三个候选，仅一条送审；候选全部无效或与近期正文重复时生成失败，不会自动再次付费重试。生成频率、额度及发布门禁不变，部署与审核步骤见 [X 工作流](X_WORKFLOW.md)。
+
 实时决策仅支持 `execution-mode=paper/live`。配置为 `backtest` 时引擎在行情采集前跳过，Broker 也拒绝降级为 PAPER；历史回测必须显式调用 `POST /api/trading/backtests`，不会因修改执行模式自行开始。
 
 | 信号 | 入口 | 关注点 |
