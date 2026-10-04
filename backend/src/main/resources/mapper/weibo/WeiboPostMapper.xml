@@ -2,7 +2,7 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.trade.weibo.infrastructure.persistence.WeiboPostMapper">
     <resultMap id="post" type="com.trade.weibo.infrastructure.persistence.WeiboPostRow">
-        <id column="id" property="id"/>
+        <id column="post_key" property="id"/>
         <result column="target_uid" property="targetUid"/>
         <result column="event_key" property="eventKey"/>
         <result column="event_json" property="eventJson"/>
@@ -39,19 +39,19 @@
         SELECT * FROM weibo_post WHERE target_uid = #{uid} AND event_key = #{eventKey}
     </select>
     <insert id="insert">
-        INSERT INTO weibo_post (id, target_uid, event_key, event_json, body, review_note, content_version,
+        INSERT INTO weibo_post (post_key, target_uid, event_key, event_json, body, review_note, content_version,
             revision, status, created_at, updated_at, expires_at)
         VALUES (#{id}, #{targetUid}, #{eventKey}, #{eventJson}, #{body}, #{reviewNote}, #{contentVersion},
             #{revision}, #{status}, #{createdAt}, #{updatedAt}, #{expiresAt})
     </insert>
-    <select id="find" resultMap="post">SELECT * FROM weibo_post WHERE id = #{id}</select>
+    <select id="find" resultMap="post">SELECT * FROM weibo_post WHERE post_key = #{id}</select>
     <select id="recent" resultMap="post">
-        SELECT * FROM weibo_post ORDER BY created_at DESC, id LIMIT #{limit}
+        SELECT * FROM weibo_post ORDER BY created_at DESC, post_key LIMIT #{limit}
     </select>
     <select id="actionable" resultMap="post">
         SELECT * FROM weibo_post WHERE status IN ('GENERATING','PENDING_REVIEW','APPROVED','PUBLISHING')
         ORDER BY CASE status WHEN 'PUBLISHING' THEN 0 WHEN 'GENERATING' THEN 1 WHEN 'APPROVED' THEN 2 ELSE 3 END,
-            updated_at, id LIMIT #{limit}
+            updated_at, post_key LIMIT #{limit}
     </select>
     <update id="update">
         UPDATE weibo_post SET body = #{row.body}, review_note = #{row.reviewNote},
@@ -59,16 +59,16 @@
             updated_at = #{row.updatedAt}, reviewer = #{row.reviewer}, reviewed_at = #{row.reviewedAt},
             review_reason = #{row.reviewReason}, attempt_id = #{row.attemptId},
             publish_started_at = #{row.publishStartedAt}, weibo_id = #{row.weiboId}, last_error = #{row.lastError}
-        WHERE id = #{row.id} AND revision = #{expectedRevision}
+        WHERE post_key = #{row.id} AND revision = #{expectedRevision}
     </update>
     <insert id="insertHistory">
-        INSERT INTO weibo_post_history (id, revision, content_version, status, body, reviewer, review_reason,
+        INSERT INTO weibo_post_history (post_key, revision, content_version, status, body, reviewer, review_reason,
             attempt_id, weibo_id, last_error, updated_at)
         VALUES (#{id}, #{revision}, #{contentVersion}, #{status}, #{body}, #{reviewer}, #{reviewReason},
             #{attemptId}, #{weiboId}, #{lastError}, #{updatedAt})
     </insert>
     <select id="history" resultMap="post">
-        SELECT * FROM weibo_post_history WHERE id = #{id} ORDER BY revision DESC LIMIT 100
+        SELECT * FROM weibo_post_history WHERE post_key = #{id} ORDER BY revision DESC LIMIT 100
     </select>
     <insert id="insertAttempt">
         INSERT INTO weibo_publish_attempt (attempt_id, post_id, target_uid, content_version, status, started_at)

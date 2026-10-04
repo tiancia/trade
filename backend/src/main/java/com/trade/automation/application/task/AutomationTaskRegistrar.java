@@ -12,6 +12,10 @@ import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.interfaces.scheduler.TradingScheduler;
 import com.trade.weibo.interfaces.scheduler.WeiboScheduler;
 import com.trade.weibo.infrastructure.config.WeiboWorkflowProperties;
+import com.trade.weibo.infrastructure.config.WeiboTelegramReviewProperties;
+import com.trade.x.interfaces.scheduler.XScheduler;
+import com.trade.x.infrastructure.config.XWorkflowProperties;
+import com.trade.x.infrastructure.config.XTelegramReviewProperties;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -22,7 +26,7 @@ import java.util.List;
  *
  * <p>This class is the quickest map from {@code trade.automation.*} startup
  * switches to the concrete loops that run OKX trading, Polymarket decisions,
- * story generation, and reviewed Weibo publishing.</p>
+ * story generation, and reviewed Weibo/X publishing.</p>
  */
 @Component
 public class AutomationTaskRegistrar {
@@ -38,7 +42,11 @@ public class AutomationTaskRegistrar {
             AiStoryScheduler storyScheduler,
             AiStoryProperties storyProperties,
             WeiboScheduler weiboScheduler,
-            WeiboWorkflowProperties weiboProperties
+            WeiboWorkflowProperties weiboProperties,
+            WeiboTelegramReviewProperties weiboReviewProperties,
+            XScheduler xScheduler,
+            XWorkflowProperties xProperties,
+            XTelegramReviewProperties xReviewProperties
     ) {
         manager.register(new AutomationTaskDefinition(
                 "trading",
@@ -101,8 +109,22 @@ public class AutomationTaskRegistrar {
                 null, null, List.of(
                     new AutomationLoopDefinition("generation", millis(weiboProperties.getInitialDelayMs()),
                             millis(weiboProperties.getGenerationFixedDelayMs()), weiboScheduler::generate),
+                    new AutomationLoopDefinition("review", millis(weiboProperties.getInitialDelayMs()),
+                            millis(weiboReviewProperties.getPollingFixedDelayMs()), weiboScheduler::review),
                     new AutomationLoopDefinition("publishing", millis(weiboProperties.getInitialDelayMs()),
                             millis(weiboProperties.getPublishingFixedDelayMs()), weiboScheduler::publish)
+                )
+        ));
+
+        manager.register(new AutomationTaskDefinition(
+                "x", "Reviewed AI X publishing", automationProperties.getX().isAutoStart(),
+                null, null, List.of(
+                    new AutomationLoopDefinition("generation", millis(xProperties.getInitialDelayMs()),
+                            millis(xProperties.getGenerationFixedDelayMs()), xScheduler::generate),
+                    new AutomationLoopDefinition("review", millis(xProperties.getInitialDelayMs()),
+                            millis(xReviewProperties.getPollingFixedDelayMs()), xScheduler::review),
+                    new AutomationLoopDefinition("publishing", millis(xProperties.getInitialDelayMs()),
+                            millis(xProperties.getPublishingFixedDelayMs()), xScheduler::publish)
                 )
         ));
     }

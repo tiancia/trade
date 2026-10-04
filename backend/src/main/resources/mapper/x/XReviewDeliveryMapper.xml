@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.x.infrastructure.persistence.XReviewDeliveryMapper">
+    <resultMap id="delivery" type="com.trade.x.infrastructure.persistence.XReviewDeliveryRow">
+        <id column="delivery_key" property="id"/>
+        <result column="bot_id" property="botId"/>
+        <result column="post_id" property="postId"/>
+        <result column="content_version" property="version"/>
+        <result column="chat_id" property="chatId"/>
+        <result column="message_id" property="messageId"/>
+        <result column="status" property="status"/>
+        <result column="expires_at" property="expiresAt"/>
+        <result column="callback_id" property="callbackId"/>
+        <result column="approved" property="approved"/>
+        <result column="reviewer" property="reviewer"/>
+        <result column="decided_at" property="decidedAt"/>
+        <result column="decision_status" property="decisionStatus"/>
+    </resultMap>
+    <insert id="insert">
+        INSERT INTO x_review_delivery (delivery_key, bot_id, post_id, content_version, chat_id, message_id,
+            status, expires_at, callback_id, approved, reviewer, decided_at, decision_status)
+        VALUES (#{id}, #{botId}, #{postId}, #{version}, #{chatId}, #{messageId}, #{status}, #{expiresAt},
+            #{callbackId}, #{approved}, #{reviewer}, #{decidedAt}, #{decisionStatus})
+    </insert>
+    <select id="find" resultMap="delivery">
+        SELECT * FROM x_review_delivery WHERE bot_id = #{botId} AND delivery_key = #{id}
+    </select>
+    <select id="findForPost" resultMap="delivery">
+        SELECT * FROM x_review_delivery
+        WHERE bot_id = #{botId} AND post_id = #{postId} AND content_version = #{version}
+    </select>
+    <update id="markSent">
+        UPDATE x_review_delivery SET status = 'SENT', message_id = #{messageId}
+        WHERE bot_id = #{botId} AND delivery_key = #{id} AND status = 'SENDING'
+    </update>
+    <update id="markUnknown">
+        UPDATE x_review_delivery SET status = 'UNKNOWN'
+        WHERE bot_id = #{botId} AND delivery_key = #{id} AND status = 'SENDING'
+    </update>
+    <update id="recordDecision">
+        UPDATE x_review_delivery SET callback_id = #{callbackId}, approved = #{approved},
+            reviewer = #{reviewer}, decided_at = #{decidedAt}, decision_status = 'PENDING'
+        WHERE bot_id = #{botId} AND delivery_key = #{id} AND status = 'SENT' AND callback_id IS NULL
+    </update>
+    <update id="finishDecision">
+        UPDATE x_review_delivery SET decision_status = #{decisionStatus}
+        WHERE bot_id = #{botId} AND delivery_key = #{id} AND decision_status = 'PENDING' AND callback_id IS NOT NULL
+    </update>
+    <insert id="ensurePolling">
+        INSERT INTO x_review_polling (bot_id, next_offset) VALUES (#{botId}, 0)
+        ON DUPLICATE KEY UPDATE bot_id = bot_id
+    </insert>
+    <update id="acquirePolling">
+        UPDATE x_review_polling SET lease_owner = #{owner}, lease_until = #{until}
+        WHERE bot_id = #{botId} AND (lease_owner IS NULL OR lease_until &lt;= #{now})
+    </update>
+    <select id="pollingOffset" resultType="java.lang.Long">
+        SELECT next_offset FROM x_review_polling WHERE bot_id = #{botId}
+    </select>
+    <update id="renewPolling">
+        UPDATE x_review_polling SET lease_until = #{until}
+        WHERE bot_id = #{botId} AND lease_owner = #{owner} AND lease_until &gt; #{now}
+    </update>
+    <update id="advancePolling">
+        UPDATE x_review_polling SET next_offset = #{nextOffset}, lease_until = #{until}
+        WHERE bot_id = #{botId} AND lease_owner = #{owner} AND lease_until &gt; #{now}
+            AND next_offset &lt;= #{nextOffset}
+    </update>
+    <update id="releasePolling">
+        UPDATE x_review_polling SET lease_owner = NULL, lease_until = NULL
+        WHERE bot_id = #{botId} AND lease_owner = #{owner}
+    </update>
+</mapper>

@@ -6,9 +6,12 @@
 AI 复用 `client.ai.AiTextClient` 和 `trade.ai.client`，不新增 SDK 或读取 `.env`。
 新闻源提供评论资料，不证明事实已被独立核实，也不等于微博热搜排名采集。
 
-`telegram` 是独立共享审核能力，和 `ai` 一样不得反向依赖业务域。当前
-`UnavailableHumanReviewGateway` 不联网、不发送消息、不自动批准。因此真实流程停在
-`PENDING_REVIEW`；审核至发布链路使用离线模拟验证。HTTP 没有批准端点。
+审核契约、请求与决策属于微博域，分别位于 `weibo/application/port` 和 `weibo/domain/model`。
+启用后，`weibo/infrastructure/review/TelegramHumanReviewGateway` 通过
+[Telegram Bot API](TELEGRAM_API.md) 发送完整草稿及“通过并发布 / 拒绝”按钮，轮询获取认证回调。
+批准触发原有发布用例；拒绝保持 `REJECTED`，不会发布。HTTP 没有批准端点。
+关闭审核时使用 `UnavailableHumanReviewGateway`，草稿停在 `PENDING_REVIEW`。
+装配及审核行为属于 `weibo`，协议留在 `client/telegram`，没有顶层 `telegram` 模块。
 
 ## DDD 结构
 
@@ -18,12 +21,13 @@ automation -> weibo/interfaces/scheduler -> application/service/WeiboPostService
   -> application/port/HotEventSource        # infrastructure/trend 的 RSS/Atom 实现
   -> application/port/WeiboDraftGenerator   # application/decision 的 Prompt/解析
   -> application/port/WeiboPostRepository   # infrastructure/persistence 的 MyBatis 实现
-  -> telegram/application/port/HumanReviewGateway
+  -> application/port/HumanReviewGateway    # infrastructure/review 的 Telegram 适配器
+  -> application/port/WeiboReviewDeliveryStore # 投递去重、决定、轮询 cursor/租约
   -> application/port/WeiboPostPublisher    # 复用微博发布服务和 client/weibo
 ```
 
-共享审核请求只携带模块、业务引用、正文版本、正文、上下文和有效期。未来其他模块可复用，
-不依赖微博模型。`WeiboPostService.applyReview` 是内部应用用例，未来只能由审核人已认证的适配器调用。
+微博域内的审核请求携带模块、业务引用、正文版本、正文、上下文和有效期。
+`WeiboPostService.runReviews` 经认证适配器消费 `ReviewDecision`，再调用内部用例 `applyReview`。
 
 ## 状态与可靠性
 
@@ -51,10 +55,13 @@ GENERATION_FAILED  REJECTED      EXPIRED      FAILED / UNKNOWN
 
 ## 数据库升级
 
-新库基线包含 `weibo_account_gate`、`weibo_post`、`weibo_post_history`、`weibo_publish_attempt`。
-原 OAuth 表不变。存量库先有 `migration_add_weibo_oauth.sql`，再手工执行
-[`migration_add_weibo_workflow.sql`](../src/main/resources/db/migration/migration_add_weibo_workflow.sql)。
-按照[迁移说明](../src/main/resources/db/migration/README.md)先备份并在隔离库验证；迁移目录不会自动执行。
+[`db/schema/weibo/schema.sql`](../src/main/resources/db/schema/weibo/schema.sql) 包含 OAuth、账号、草稿、审核历史、发布尝试和 Telegram 审核投递/轮询表。应用启动会创建缺失的表，已有表不会自动补字段。
+
+需要在启动前手工建表或升级历史结构时，先检查目标库。手工脚本的依赖顺序为
+[`migration_add_weibo_oauth.sql`](../src/main/resources/db/upgrade/weibo/migration_add_weibo_oauth.sql)、
+[`migration_add_weibo_workflow.sql`](../src/main/resources/db/upgrade/weibo/migration_add_weibo_workflow.sql)、
+[`migration_add_weibo_review_delivery.sql`](../src/main/resources/db/upgrade/weibo/migration_add_weibo_review_delivery.sql)。
+只选择适用于实际结构的脚本，按照[升级说明](../src/main/resources/db/upgrade/README.md)先备份并在隔离库验证；`upgrade/` 不会自动执行。
 
 ## 配置与启动
 
@@ -67,10 +74,21 @@ $env:TRADE_WEIBO_TARGET_UID="目标微博账号的 UID"
 $env:TRADE_WEIBO_LIVE_PUBLISHING_ENABLED="false"
 $env:TRADE_WEIBO_PUBLISHING_ENABLED="false"
 $env:TRADE_AUTOMATION_WEIBO_AUTO_START="false"
+$env:TRADE_TELEGRAM_ENABLED="true"
+$env:TRADE_WEIBO_TELEGRAM_REVIEW_ENABLED="true"
+# Bot Token 由部署环境安全注入 TRADE_TELEGRAM_BOT_TOKEN，不在示例填写。
+$env:TRADE_WEIBO_TELEGRAM_CHAT_ID="123456789"
+$env:TRADE_WEIBO_TELEGRAM_REVIEWER_USER_IDS="123456789"
 ```
 
 生成开关允许使用已配置 AI 的真实额度；离线测试不使用这些设置。管理员 API 需要部署环境中的
 `TRADE_WEIBO_ADMIN_TOKEN`；OAuth 使用现有微博应用配置。不在仓库、命令输出或响应中填写真实凭据。
+
+机器人须已加入目标聊天；私人聊天先向机器人发送 `/start`。chat ID 与 reviewer ID 必须是数字，
+审核人列表可以逗号分隔多个用户 ID，不能用用户名鉴权。开启审核时缺少 Token、聊天、审核人，
+或未开启 workflow/Telegram client 会使启动校验失败；默认全部关闭时不需要这些值。
+网络需要代理时使用 `TRADE_TELEGRAM_PROXY_ENABLED/HOST/PORT`。Telegram 审核时正文上限配置不超过 3000，
+默认仍为 280；正文完整展示，过长的来源上下文会标明截断。
 
 `TRADE_WEIBO_FEED_URL` 配置可信 HTTPS RSS/Atom 源，不跟随重定向。RSS 要求
 title/link/description/pubDate；Atom 要求 title/alternate link、summary 或 content、published 或 updated。
@@ -85,9 +103,11 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/automation/tasks/weibo/
 Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/automation/tasks/weibo/stop
 ```
 
-generation 和 publishing 两个循环在同一任务内串行。真实发布关闭时 publishing 循环仍扫描过期、
+generation、review 和 publishing 三个循环在同一任务内串行。真实发布关闭时 publishing 循环仍扫描过期、
 崩溃恢复和审核投递。默认正文 280 个 Unicode 字符，每 UTC 日生成 5 条、发布 3 次，间隔 1800 秒；
-热点有效期 24 小时、审核 TTL 6 小时。循环间隔分别 900000/60000 ms，初始延迟 30000 ms。
+热点有效期 24 小时、审核 TTL 6 小时。循环间隔分别 900000/5000/60000 ms，初始延迟 30000 ms。
+review 短轮询只订阅 `callback_query`，批准后立即尝试发布；配额、间隔或开关不满足时保留批准状态，
+由后续 publishing 循环重查。网络请求与生成会占用同任务互斥锁，5000 ms 不是审核响应的保证时限。
 本地字符上限不能代替平台实际限制和账号权限。
 
 真实自动发布必须同时满足 workflow enabled、publishing enabled、live publishing enabled、
@@ -124,16 +144,23 @@ generation 和 publishing 两个循环在同一任务内串行。真实发布关
 非法输入返回 400；门禁、版本冲突及非法状态返回 409。供应商原始错误正文不再通过 HTTP 返回。
 automation 控制面仍由网关/内网保护，参照运维手册。
 
-## Telegram TODO
+## Telegram 审核与故障恢复
 
-1. 共享模块实现 Bot API 传输、凭据配置和 reviewer/chat allowlist。
-2. module/reference/version 为持久化投递身份；待审核循环重复 submit 时不得重复发消息。
-3. 通过/驳回按钮的回调认证后生成 ReviewDecision，处理重复、过期和冲突，确认 answerCallbackQuery。
-4. 组合/编排边界注册各模块决策处理器，路由至微博 applyReview；Telegram 不 import 微博。
-5. 保存消息与 update/callback 身份。消息送达不等于批准；正文改动生成新版本，发布后反馈结果。
+- 投递按 bot ID、草稿 ID、正文版本唯一。先持久化 `SENDING` 占位，再发送，成功绑定聊天与消息 ID 后变为 `SENT`。
+  待审核扫描不会重复发送同版本；送达不等于批准。
+- 按钮使用随机投递引用。只接受配置审核人、配置聊天、当前 bot 及已绑定消息；正文版本和有效期由微博聚合再次校验。
+  第一条认证决定先保存 callback ID、决定和微秒时间，再执行审核；重复/相反按钮不会更改已决定版本。
+- cursor 和租约按 `getMe().id` 隔离，重启保留进度。消费提交或确定已失效后才推进 offset；暂时数据库失败会保留更新重试。
+  回调应答失败不撤销审核。多个实例共享数据库租约，但同一个机器人不能同时给另一套应用轮询使用。
+  多实例使用同步时钟；更换目标微博账号后，不再投递或批准旧账号的待审稿。
+  如已有 webhook，先停用它再使用轮询；项目不自动删除其他应用的 webhook。
+- 发送超时、错误或消息绑定落库失败会留下 `UNKNOWN`；占位后崩溃可能保留 `SENDING`。两者均不自动重发，按钮也不能批准未绑定消息。
+  先人工核对 Telegram，再用管理 API 的最新 revision 修改正文（可以提交同样正文）生成新版本重新送审；
+  旧按钮无法批准新版本。不要通过直接改库把未知发送或未知微博发布状态改成成功。
+- 启用前后保留 `TRADE_WEIBO_REVIEW_REQUIRED=true`。按钮确认表示审核结果；实际发布结果从草稿状态/历史查看，当前不额外发送发布结果消息。
 
 ## 验证边界
 
-测试使用模拟 AI/微博及 H2 MySQL 模式执行生产迁移和 Mapper；覆盖版本、门禁、CAS、配额并发、
+测试使用模拟 AI/Telegram/微博及 H2 MySQL 模式执行生产迁移和 Mapper；覆盖投递去重、回调认证与恢复、租约/游标、版本、门禁、CAS、配额并发、
 事务回滚、崩溃恢复、RSS/Atom 和 XXE 拒绝，不发布、不调用付费 AI、不写生产库。
 H2 不等于实际 MySQL；上线前仍需隔离 MySQL 迁移、实际源/权限/凭据检查和一条审核发布联调。

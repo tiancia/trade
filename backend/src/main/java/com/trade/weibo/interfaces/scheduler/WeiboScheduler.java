@@ -9,5 +9,6 @@ public class WeiboScheduler {
     private final WeiboPostService posts;
     public WeiboScheduler(WeiboPostService posts) { this.posts = posts; }
     public void generate() { posts.runGeneration(); }
+    public void review() { posts.runReviews(); }
     public void publish() { posts.runPublishing(); }
 }

@@ -18,17 +18,21 @@
 - [ADR-0001](adr/0001-domain-first-modular-monolith.md)：理解为什么采用模块化单体；
 - [ADR-0002](adr/0002-four-layer-module-layout.md)：理解为什么业务域内部统一四层，再按能力细分；
 - [Trading 回测说明](TRADING_BACKTEST.md)：回测请求、成交模型和指标口径；
-- [微博审核工作流](WEIBO_WORKFLOW.md)：热点、AI、审核门禁、Telegram TODO 和迁移；
-- [ADR-0003](adr/0003-shared-human-review-capability.md)：共享审核能力与业务状态分离；
+- [Telegram Bot API](TELEGRAM_API.md)：客户端方法、显式实例化、更新和失败处理；
+- [微博审核工作流](WEIBO_WORKFLOW.md)：热点、AI、审核门禁、Telegram 审核待办和迁移；
+- [X 客户端](X_API.md)：OAuth 1.0a 四凭据、账号查询与文本发布协议；
+- [X 审核工作流](X_WORKFLOW.md)：配置内容方向、语气和长度，Telegram 审核及审核后发布；
+- [ADR-0003](adr/0003-shared-human-review-capability.md)：历史上的共享审核布局；当前审核类型归微博域，Telegram 仅保留客户端；
 - [AI 开发约定](../AGENTS.md)：AI 编码助手必须遵守的边界与交付格式。
 
 ### 部署、值守或排障
 
 - [运维手册](OPERATIONS.md)：安全启动、任务启停、观测、停机和故障处理；
 - [Trading 可观测性](OBSERVABILITY.md)：Prometheus 抓取、Grafana 仪表盘、告警规则和排障；
-- [数据库迁移说明](../src/main/resources/db/migration/README.md)：基线与手工迁移；
+- [数据库目录](../src/main/resources/db/README.md)：模块 schema 索引与启动执行范围；
+- [数据库升级说明](../src/main/resources/db/upgrade/README.md)：手工补丁、前置依赖与历史脚本重叠；
 - `.env.example`：环境变量清单，不包含真实凭据；
-- `application.yml`：配置默认值的唯一代码级事实来源。
+- `application.yml`：应用运行配置默认值；显式创建的客户端属性默认值以对应 Properties 类为准。
 
 ## 文档责任边界
 

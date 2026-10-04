@@ -1,0 +1,6 @@
+package com.trade.x.domain.model;
+
+public enum XPostStatus {
+    GENERATING, GENERATION_FAILED, PENDING_REVIEW, APPROVED, REJECTED,
+    EXPIRED, PUBLISHING, PUBLISHED, FAILED, UNKNOWN
+}

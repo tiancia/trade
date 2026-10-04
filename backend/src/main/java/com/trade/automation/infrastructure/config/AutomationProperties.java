@@ -10,6 +10,7 @@ public class AutomationProperties {
     private ModuleProperties polymarket = new ModuleProperties();
     private ModuleProperties story = new ModuleProperties();
     private ModuleProperties weibo = new ModuleProperties();
+    private ModuleProperties x = new ModuleProperties();
 
     @Data
     public static class ModuleProperties {

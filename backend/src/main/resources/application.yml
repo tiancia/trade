@@ -1,119 +1,317 @@
+# ${环境变量:默认值}：优先使用运行进程的环境变量；未设置时使用冒号后的默认值。
+# fixed-delay-ms：本轮执行结束后等待的毫秒数；initial-delay-ms：任务启动后首次执行前的等待毫秒数。
+# 后台循环由 trade.automation.*.auto-start 或任务管理 API 启动；仍须通过各业务 enabled / 发布 / 实盘门禁。
 spring:
   application:
+    # 应用名称，同时用于日志和指标标签。
     name: trade
   http:
     converters:
+      # HTTP JSON 转换使用 Jackson 2，兼容当前业务 DTO 和序列化配置。
       preferred-json-mapper: jackson2
   datasource:
+    # MySQL JDBC 驱动。
     driver-class-name: com.mysql.cj.jdbc.Driver
+    # 数据库连接地址，末尾 trade_system 为库名。
     url: ${SPRING_DATASOURCE_URL:jdbc:mysql://127.0.0.1:3306/trade_system}
+    # 数据库连接用户名。
     username: ${SPRING_DATASOURCE_USERNAME:root}
+    # 数据库连接密码，通过环境变量覆盖。
     password: ${SPRING_DATASOURCE_PASSWORD:123456}
   data:
     redis:
+      # Redis 地址；用于 trading 可关闭的热行情缓存。
       host: ${SPRING_DATA_REDIS_HOST:127.0.0.1}
+      # Redis TCP 端口。
       port: ${SPRING_DATA_REDIS_PORT:6379}
+      # Redis 逻辑数据库编号。
       database: ${SPRING_DATA_REDIS_DATABASE:0}
+      # Redis 认证密码，通过环境变量覆盖。
       password: ${SPRING_DATA_REDIS_PASSWORD:123456}
+      # 建立 Redis 连接的超时；带时间单位，例如 1s 或 1000ms。
       connect-timeout: ${SPRING_DATA_REDIS_CONNECT_TIMEOUT:1s}
+      # Redis 命令读取超时；带时间单位，例如 1s 或 1000ms。
       timeout: ${SPRING_DATA_REDIS_TIMEOUT:1s}
   sql:
     init:
+      # always：启动时执行下面的完整结构脚本，包括使用外部 MySQL 时。
       mode: always
-      schema-locations: classpath:db/ai_trade_mysql_schema.sql
+      # 按列表顺序加载七个模块的 schema；db/upgrade/ 下的手工升级脚本不会自动执行。
+      # CREATE TABLE IF NOT EXISTS 会补缺失表，不会给旧表自动补字段或改索引。
+      schema-locations:
+        - classpath:db/schema/ai/schema.sql
+        - classpath:db/schema/trading/schema.sql
+        - classpath:db/schema/polymarket/schema.sql
+        - classpath:db/schema/textgame/schema.sql
+        - classpath:db/schema/marketplace/schema.sql
+        - classpath:db/schema/weibo/schema.sql
+        - classpath:db/schema/x/schema.sql
 
 management:
   endpoint:
     health:
       probes:
+        # 开启存活与就绪健康探针。
         enabled: true
   endpoints:
     web:
       exposure:
+        # 通过 /actuator 暴露的 HTTP 端点列表。
         include: health,info,metrics,prometheus
   metrics:
     tags:
+      # 所有指标附加的应用名称标签。
       application: ${spring.application.name}
+      # 所有指标附加的环境标签，例如 local、test、prod。
       environment: ${TRADE_METRICS_ENVIRONMENT:local}
     distribution:
       percentiles-histogram:
+        # HTTP 请求耗时分布，用于统计分位数。
         http.server.requests: true
+        # 交易决策耗时分布。
         trade.trading.decisions.duration: true
+        # 行情事件在队列中的等待耗时分布。
         trade.trading.events.queue.latency: true
+        # 行情事件处理器耗时分布。
         trade.trading.events.handler.duration: true
+        # 订单对账耗时分布。
         trade.trading.reconciliation.duration: true
       slo:
+        # HTTP 请求耗时桶边界，数值带 ms / s 单位。
         http.server.requests: 100ms,250ms,500ms,1s,2s,5s
+        # 交易决策耗时桶边界。
         trade.trading.decisions.duration: 100ms,500ms,1s,5s,15s,30s,60s
+        # 行情队列等待耗时桶边界。
         trade.trading.events.queue.latency: 10ms,50ms,100ms,250ms,500ms,1s,5s
+        # 行情事件处理耗时桶边界。
         trade.trading.events.handler.duration: 10ms,50ms,100ms,250ms,500ms,1s,5s
+        # 订单对账耗时桶边界。
         trade.trading.reconciliation.duration: 100ms,500ms,1s,2s,5s,10s,30s
 
 mybatis:
+  # MyBatis Mapper XML 扫描位置。
   mapper-locations: classpath*:mapper/**/*.xml
   configuration:
+    # 数据库 snake_case 字段自动映射到 Java camelCase 属性。
     map-underscore-to-camel-case: true
 
 # 项目自定义配置
 trade:
-  # 模块开关
+  # 自动任务启动开关：只启动循环，不替代对应业务开关；false 时可通过任务管理 API 手动启动。
   automation:
     weibo:
+      # 应用就绪后是否启动微博生成、Telegram 审核轮询和发布扫描三个循环。
       auto-start: ${TRADE_AUTOMATION_WEIBO_AUTO_START:false}
+    x:
+      # 应用就绪后是否启动 X 生成、Telegram 审核轮询和发布扫描三个循环。
+      auto-start: ${TRADE_AUTOMATION_X_AUTO_START:true}
     story:
+      # 应用就绪后是否启动小说生成循环。
       auto-start: ${TRADE_AUTOMATION_STORY_AUTO_START:false}
     trading:
+      # 应用就绪后是否启动交易决策、事件扫描、对账循环和行情运行时。
       auto-start: ${TRADE_AUTOMATION_TRADING_AUTO_START:false}
     polymarket:
+      # 应用就绪后是否启动 Polymarket AI 决策循环。
       auto-start: ${TRADE_AUTOMATION_POLYMARKET_AUTO_START:false}
   text-game:
+    # 文字游戏管理 API 的鉴权令牌；留空时管理接口关闭。
     admin-token: ${TRADE_TEXT_GAME_ADMIN_TOKEN:}
+    # 游戏会话到期时间从创建 / 更新时起延长的天数。
     session-retention-days: 30
+    # 启动时是否导入 textgame/stories/ 中的内置故事。
     seed-enabled: ${TRADE_TEXT_GAME_SEED_ENABLED:true}
   marketplace:
+    # 登录会话有效期，单位天。
     session-retention-days: ${TRADE_MARKETPLACE_SESSION_RETENTION_DAYS:30}
+    # 更新会话 last_seen_at 的最小间隔，单位分钟，减少频繁写库。
     session-touch-interval-minutes: ${TRADE_MARKETPLACE_SESSION_TOUCH_INTERVAL_MINUTES:5}
     oss:
+      # 向阿里云 STS 申请上传凭据使用的 AccessKey ID。
       access-key-id: ${ALIBABA_CLOUD_ACCESS_KEY_ID:}
+      # 与 AccessKey ID 配对的密钥，通过环境变量提供。
       access-key-secret: ${ALIBABA_CLOUD_ACCESS_KEY_SECRET:}
+      # STS AssumeRole 使用的 RAM 角色 ARN。
       role-arn: ${TRADE_MARKETPLACE_OSS_ROLE_ARN:}
+      # 商品图片上传的 OSS Bucket 名称。
       bucket: ${TRADE_MARKETPLACE_OSS_BUCKET:26-6-second-hand-market}
+      # OSS 所在地域，例如 oss-cn-beijing。
       region: ${TRADE_MARKETPLACE_OSS_REGION:oss-cn-beijing}
+      # 生成图片公开访问 URL 使用的基础地址。
       public-base-url: ${TRADE_MARKETPLACE_OSS_PUBLIC_BASE_URL:https://26-6-second-hand-market.oss-cn-beijing.aliyuncs.com}
+      # 阿里云 STS API 基础地址。
       sts-endpoint: ${TRADE_MARKETPLACE_OSS_STS_ENDPOINT:https://sts.aliyuncs.com}
+      # 临时上传凭据有效期，单位秒；代码限制为 900～3600 秒。
       duration-seconds: ${TRADE_MARKETPLACE_OSS_DURATION_SECONDS:900}
+      # 图片对象 key 的目录前缀。
       key-prefix: ${TRADE_MARKETPLACE_OSS_KEY_PREFIX:marketplace}
+
+
+  telegram:
+    # 共享 Telegram Bot API 客户端开关；微博 / X 审核还需打开各自的 review.telegram.enabled。
+    enabled: ${TRADE_TELEGRAM_ENABLED:true}
+    # BotFather 创建的机器人 Token，通过环境变量提供。
+    bot-token: ${TRADE_TELEGRAM_BOT_TOKEN:}
+    # Telegram Bot API 服务基础地址。
+    base-url: ${TRADE_TELEGRAM_BASE_URL:https://api.telegram.org}
+    # 建立 Telegram HTTP 连接的超时，单位秒。
+    connect-timeout-seconds: ${TRADE_TELEGRAM_CONNECT_TIMEOUT_SECONDS:10}
+    # 单次 Telegram API 请求超时，单位秒。
+    request-timeout-seconds: ${TRADE_TELEGRAM_REQUEST_TIMEOUT_SECONDS:30}
+    proxy:
+      # 是否通过 HTTP 代理访问 Telegram。
+      enabled: ${TRADE_TELEGRAM_PROXY_ENABLED:true}
+      # Telegram HTTP 代理主机地址。
+      host: ${TRADE_TELEGRAM_PROXY_HOST:127.0.0.1}
+      # Telegram HTTP 代理 TCP 端口。
+      port: ${TRADE_TELEGRAM_PROXY_PORT:7897}
+
+
   weibo:
+    # 微博开放平台应用的 App Key。
     client-id: ${WEIBO_CLIENT_ID:}
+    # 与 App Key 配对的 App Secret。
     client-secret: ${WEIBO_CLIENT_SECRET:}
+    # OAuth 授权回调地址，须与微博应用登记地址一致。
     redirect-uri: ${WEIBO_REDIRECT_URI:}
+    # 微博管理 API 的鉴权令牌；留空时管理接口关闭。
     admin-token: ${TRADE_WEIBO_ADMIN_TOKEN:}
-    # Real publishing needs this gate AND workflow.publishing-enabled for reviewed posts.
+    # 真实发布的总门禁；审核工作流还要求 workflow.publishing-enabled 和有效账号授权。
     live-publishing-enabled: ${TRADE_WEIBO_LIVE_PUBLISHING_ENABLED:false}
-    # Direct /statuses is always blocked while workflow.enabled=true.
+    # 是否禁止未经审核的直接发帖；workflow.enabled=true 时始终禁止直接 /statuses 发布。
     review-required: ${TRADE_WEIBO_REVIEW_REQUIRED:true}
+    review:
+      telegram:
+        # 开启微博 Telegram 审核投递和轮询；与 X 复用同一机器人时只能启用其中一套。
+        enabled: ${TRADE_WEIBO_TELEGRAM_REVIEW_ENABLED:false}
+        # 接收审核消息的数字 chat ID；私聊 / 群聊的会话标识。
+        chat-id: ${TRADE_WEIBO_TELEGRAM_CHAT_ID:}
+        # 允许点击审核按钮的 Telegram 数字用户 ID 列表，多个 ID 用逗号分隔。
+        reviewer-user-ids: ${TRADE_WEIBO_TELEGRAM_REVIEWER_USER_IDS:}
+        # 每轮审核短轮询处理结束后等待的毫秒数；5000 = 5 秒，审核通过后立即尝试发布。
+        polling-fixed-delay-ms: ${TRADE_WEIBO_TELEGRAM_POLLING_FIXED_DELAY_MS:5000}
     workflow:
+      # 微博草稿生成、审核与发布工作流总开关。
       enabled: ${TRADE_WEIBO_WORKFLOW_ENABLED:false}
+      # 允许调用 AI 生成草稿；需工作流开启、配置事件源和目标账号。
       generation-enabled: ${TRADE_WEIBO_GENERATION_ENABLED:false}
+      # 允许发布已审核草稿；仍受 live-publishing-enabled、TTL、额度和间隔限制。
       publishing-enabled: ${TRADE_WEIBO_PUBLISHING_ENABLED:false}
+      # 微博目标账号数字 UID，发布授权须属于这个账号。
       target-uid: ${TRADE_WEIBO_TARGET_UID:}
+      # 用于获取真实事件的 RSS / Atom 源地址。
       feed-url: ${TRADE_WEIBO_FEED_URL:}
+      # 正文最大 Unicode 字符数；Telegram 审核开启时最多 3000，以展示全文。
       max-body-chars: ${TRADE_WEIBO_MAX_BODY_CHARS:280}
+      # 目标账号每个 UTC 日最多预留的 AI 生成次数；失败的生成仍占额度。
       daily-generation-limit: ${TRADE_WEIBO_DAILY_GENERATION_LIMIT:5}
+      # 目标账号每个 UTC 日最多预留的发布尝试次数；失败或结果未知的尝试仍占额度。
       daily-publish-limit: ${TRADE_WEIBO_DAILY_PUBLISH_LIMIT:3}
+      # 允许使用的事件最长年龄，单位小时；也限制草稿的最晚可发布时间。
       event-max-age-hours: ${TRADE_WEIBO_EVENT_MAX_AGE_HOURS:24}
+      # 自生成预约创建起的有效期，单位小时；与事件最晚时间取较早值，修改 / 审核不续期。
       review-ttl-hours: ${TRADE_WEIBO_REVIEW_TTL_HOURS:6}
+      # 从最近一次发布尝试开始计时的最小间隔，单位秒；1800 = 30 分钟。
       publish-interval-seconds: ${TRADE_WEIBO_PUBLISH_INTERVAL_SECONDS:1800}
+      # 发布扫描识别卡住生成 / 发布的恢复阈值，单位秒；不是 HTTP 超时，未知发布不自动重发。
       claim-timeout-seconds: ${TRADE_WEIBO_CLAIM_TIMEOUT_SECONDS:300}
+      # 每轮生成结束后等待的毫秒数；900000 = 15 分钟，仍受日额度和事件去重限制。
       generation-fixed-delay-ms: ${TRADE_WEIBO_GENERATION_FIXED_DELAY_MS:900000}
+      # 每轮发布扫描结束后等待的毫秒数；60000 = 1 分钟，扫描补偿并受发布门禁限制。
       publishing-fixed-delay-ms: ${TRADE_WEIBO_PUBLISHING_FIXED_DELAY_MS:60000}
+      # 微博任务启动后，三个循环首次执行前的等待时间，单位毫秒；30000 = 30 秒。
       initial-delay-ms: ${TRADE_WEIBO_INITIAL_DELAY_MS:30000}
+    # 微博 OAuth API 基础地址。
     oauth-base-url: "https://api.weibo.com/oauth2"
+    # 微博业务 API 基础地址。
     api-base-url: "https://api.weibo.com/2"
     proxy:
+      # 是否通过 HTTP 代理访问微博 API。
       enabled: ${TRADE_WEIBO_PROXY_ENABLED:false}
+      # 微博 HTTP 代理主机地址。
       host: ${TRADE_WEIBO_PROXY_HOST:127.0.0.1}
+      # 微博 HTTP 代理 TCP 端口。
       port: ${TRADE_WEIBO_PROXY_PORT:7897}
+
+  # X 单账号文本工作流；复用 Telegram Bot 时必须关闭微博 review.telegram.enabled。
+  x:
+    # X 草稿管理 API 的鉴权令牌；留空时管理接口关闭。
+    admin-token: ${TRADE_X_ADMIN_TOKEN:}
+    # X 真实发布的总门禁；还需工作流发布开关、客户端和有效用户授权。
+    live-publishing-enabled: ${TRADE_X_LIVE_PUBLISHING_ENABLED:true}
+    client:
+      # X API 客户端开关，调用查询和发布前均检查。
+      enabled: ${TRADE_X_CLIENT_ENABLED:true}
+      # OAuth 1.0a 应用 Consumer Key / API Key。
+      api-key: ${X_API_KEY:}
+      # 与 Consumer Key 配对的 Consumer Secret / API Secret。
+      api-secret: ${X_API_SECRET:}
+      # 目标账号的 OAuth 1.0a 用户 Access Token，须有写权限。
+      access-token: ${X_ACCESS_TOKEN:}
+      # 与用户 Access Token 配对的 Access Token Secret。
+      access-token-secret: ${X_ACCESS_TOKEN_SECRET:}
+      # X API 基础地址；当前通过 OAuth 1.0a 调用 /2/users/me 和 /2/tweets。
+      base-url: ${TRADE_X_BASE_URL:https://api.x.com}
+      # 建立 X HTTP 连接的超时，单位秒。
+      connect-timeout-seconds: ${TRADE_X_CONNECT_TIMEOUT_SECONDS:10}
+      # 单次 X API 请求超时，单位秒。
+      request-timeout-seconds: ${TRADE_X_REQUEST_TIMEOUT_SECONDS:30}
+      proxy:
+        # 是否通过 HTTP 代理访问 X API。
+        enabled: ${TRADE_X_PROXY_ENABLED:true}
+        # X HTTP 代理主机地址。
+        host: ${TRADE_X_PROXY_HOST:127.0.0.1}
+        # X HTTP 代理 TCP 端口。
+        port: ${TRADE_X_PROXY_PORT:7897}
+    review:
+      telegram:
+        # 开启 X Telegram 审核投递和轮询；同时要求共享 Telegram 客户端和 X 工作流开启。
+        enabled: ${TRADE_X_TELEGRAM_REVIEW_ENABLED:true}
+        # 接收 X 审核消息的数字 chat ID，可填写现有机器人使用的会话 ID。
+        chat-id: ${TRADE_X_TELEGRAM_CHAT_ID:}
+        # 允许审核的 Telegram 数字用户 ID 列表，多个 ID 用逗号分隔，须显式配置。
+        reviewer-user-ids: ${TRADE_X_TELEGRAM_REVIEWER_USER_IDS:}
+        # 每轮审核短轮询处理结束后等待的毫秒数；5000 = 5 秒，审核通过后立即尝试发布。
+        polling-fixed-delay-ms: ${TRADE_X_TELEGRAM_POLLING_FIXED_DELAY_MS:5000}
+    workflow:
+      # X 草稿生成、审核与发布工作流总开关。
+      enabled: ${TRADE_X_WORKFLOW_ENABLED:true}
+      # 允许调用 AI 生成草稿；需开启工作流并配置内容方向和目标账号。
+      generation-enabled: ${TRADE_X_GENERATION_ENABLED:true}
+      # 允许发布已审核草稿；仍受真实发布门禁、TTL、账号、额度和最小间隔限制。
+      publishing-enabled: ${TRADE_X_PUBLISHING_ENABLED:false}
+      # 目标 X 账号数字用户 ID；发布前查询 /2/users/me 校验授权账号一致。
+      target-user-id: ${TRADE_X_TARGET_USER_ID:}
+      content:
+        # AI 发帖主题 / 内容方向，开启生成时必填；当前生成原创文本，不抓取实时新闻。
+        direction: ${TRADE_X_CONTENT_DIRECTION:一段描写苦难的文字，简短但是震撼}
+        # AI 输出语言。
+        language: ${TRADE_X_CONTENT_LANGUAGE:简体中文}
+        # AI 写作语气和风格。
+        tone: ${TRADE_X_CONTENT_TONE:清晰、自然、克制}
+        # 额外写作要求，例如避免话题标签或限定受众，可留空。
+        instructions: ${TRADE_X_CONTENT_INSTRUCTIONS:}
+        # 正文最少 Unicode 字符数；按 code point 计数，范围 1～max-chars。
+        min-chars: ${TRADE_X_CONTENT_MIN_CHARS:40}
+        # 正文最多 Unicode 字符数，配置上限 280；还校验 X 普通帖 280 加权上限（中文通常计 2）。
+        max-chars: ${TRADE_X_CONTENT_MAX_CHARS:120}
+      # 目标账号每个 UTC 日最多预留的 AI 生成次数；失败的生成仍占额度。
+      daily-generation-limit: ${TRADE_X_DAILY_GENERATION_LIMIT:5}
+      # 目标账号每个 UTC 日最多预留的发布尝试次数；失败或结果未知的尝试仍占额度。
+      daily-publish-limit: ${TRADE_X_DAILY_PUBLISH_LIMIT:3}
+      # 自生成预约创建起的有效期，单位小时；修改 / 审核不续期，过期后不发布。
+      review-ttl-hours: ${TRADE_X_REVIEW_TTL_HOURS:6}
+      # 从最近一次发布尝试开始计时的最小间隔，单位秒；1800 = 30 分钟。
+      publish-interval-seconds: ${TRADE_X_PUBLISH_INTERVAL_SECONDS:1800}
+      # 发布扫描识别卡住生成 / 发布的恢复阈值，单位秒；不是 HTTP 超时，未知发布不自动重发。
+      claim-timeout-seconds: ${TRADE_X_CLAIM_TIMEOUT_SECONDS:300}
+      # 每轮生成结束后等待的毫秒数；900000 = 15 分钟，仍受日额度和时间槽去重限制。
+      generation-fixed-delay-ms: ${TRADE_X_GENERATION_FIXED_DELAY_MS:900000}
+      # 每轮发布扫描结束后等待的毫秒数；60000 = 1 分钟，补偿审核投递、过期和发布恢复。
+      publishing-fixed-delay-ms: ${TRADE_X_PUBLISHING_FIXED_DELAY_MS:60000}
+      # X 任务启动后，三个循环首次执行前的等待时间，单位毫秒；30000 = 30 秒。
+      initial-delay-ms: ${TRADE_X_INITIAL_DELAY_MS:30000}
+
   # OKX 交易所客户端配置，用于 REST 和 WebSocket 请求。
   okx:
     # OKX REST API 基础地址。
@@ -127,7 +325,7 @@ trade:
       enabled: ${TRADE_OKX_PROXY_ENABLED:false}
       # OKX 代理主机地址。
       host: ${TRADE_OKX_PROXY_HOST:127.0.0.1}
-      # OKX 代理端口。
+      # OKX HTTP / WebSocket 代理 TCP 端口。
       port: ${TRADE_OKX_PROXY_PORT:7897}
 
   # Polymarket 独立 AI 决策模块；默认关闭，避免启动后直接读取市场并下注。
@@ -138,14 +336,17 @@ trade:
     market-limit: 5
     # 市场发现来源：gamma-volume 使用 Gamma /markets 成交量轮换；clob-sampling 使用 CLOB /sampling-markets 游标轮换。
     market-discovery-source: clob-sampling
-    # 短周期资金周转筛选：只把预计 15 分钟后到 72 小时内结算的市场交给 AI。
+    # 是否要求候选市场具备结束时间，再按下方剩余时间范围筛选。
     require-market-end-date: true
+    # 市场距离结束至少多少分钟；15 表示不分析即将结束的市场。
     min-time-to-resolution-minutes: 15
+    # 市场距离结束最多多少小时；72 = 3 天。
     max-time-to-resolution-hours: 72
-    # 可执行流动性筛选：过滤盘口过宽、买入侧深度不足的 outcome。
+    # outcome 买卖盘口价差上限，单位为每股 USDC；0.06 表示 6 美分。
     max-outcome-spread: "0.06"
+    # outcome 卖盘可买入深度下限，单位 USDC。
     min-outcome-ask-liquidity-usdc: "25"
-    # 指定 Gamma market slug；留空时按 24h 成交量拉取开放市场。
+    # 指定 Gamma market slug；所有显式 ID 列表为空时按 market-discovery-source 发现市场。
     market-slugs: []
     # 指定 Gamma market id；可与 market-slugs 搭配使用。
     market-ids: []
@@ -161,14 +362,15 @@ trade:
     min-win-confidence-score: "0.70"
     # AI 估计概率减去限价后的最低边际，0.03 表示 3 个百分点。
     min-expected-edge: "0.03"
-    # 限价下限/上限，单位为每股 outcome 的 USDC。
+    # outcome 限价下限，单位为每股 USDC。
     min-limit-price: "0.01"
+    # outcome 限价上限，单位为每股 USDC。
     max-limit-price: "0.95"
     # 默认最小 shares 数；市场返回 min_order_size 时优先使用市场值。
     min-order-size: 1
-    # Polymarket 常规定时 AI 决策的执行间隔，单位毫秒。
+    # 本轮 Polymarket AI 决策结束后等待的毫秒数；900000 = 15 分钟。
     decision-fixed-delay-ms: 900000
-    # 应用启动后首次执行 Polymarket AI 决策前的延迟，单位毫秒。
+    # Polymarket 任务启动后首次决策前的等待时间，单位毫秒；60000 = 1 分钟。
     initial-delay-ms: 60000
     client:
       # Gamma API 基础地址，用于市场发现。
@@ -178,45 +380,61 @@ trade:
       proxy:
         # 是否给 Polymarket HTTP 请求启用代理。
         enabled: ${TRADE_POLYMARKET_PROXY_ENABLED:false}
+        # Polymarket HTTP 代理主机地址。
         host: ${TRADE_POLYMARKET_PROXY_HOST:127.0.0.1}
+        # Polymarket HTTP 代理 TCP 端口。
         port: ${TRADE_POLYMARKET_PROXY_PORT:7897}
     execution:
       # 是否启用真实下单；false 时只记录 dry-run。
       enabled: ${TRADE_POLYMARKET_EXECUTION_ENABLED:false}
-      # Python SDK 下单桥接脚本。
+      # 执行下单桥接脚本使用的 Python 命令或解释器路径。
       python-command: "python"
+      # Python SDK 下单桥接脚本路径；相对路径以工作目录等候选位置解析。
       script-path: ${POLYMARKET_ORDER_SCRIPT:../tools/polymarket/polymarket_place_order.py}
+      # 等待 Python 下单进程完成的超时，单位毫秒；60000 = 1 分钟。
       timeout-ms: 60000
+      # 传给 Python SDK 的链 ID；137 为 Polygon。
       chain-id: 137
       # EOA 通常为 0；使用 Polymarket proxy/funder 钱包时按官方 SDK 要求调整。
       signature-type: 1
       # 默认使用 fill-and-kill 限价单，避免长期挂单。
       order-type: FAK
-      # 密钥
+      # 订单签名的钱包私钥，通过环境变量提供并传入 Python 子进程环境。
       private-key: ${POLYMARKET_PRIVATE_KEY:}
+      # Polymarket CLOB API Key；与 secret / passphrase 配套使用。
       api-key: ${POLYMARKET_API_KEY:}
+      # Polymarket CLOB API Secret。
       api-secret: ${POLYMARKET_API_SECRET:}
+      # Polymarket CLOB API Passphrase。
       api-passphrase: ${POLYMARKET_API_PASSPHRASE:}
+      # 实际出资钱包地址，使用 proxy / funder 钱包时配置。
       funder-address: ${POLYMARKET_FUNDER_ADDRESS:}
+      # Python 子进程读取钱包私钥的环境变量名称。
       private-key-env-name: POLYMARKET_PRIVATE_KEY
+      # Python 子进程读取 CLOB API Key 的环境变量名称。
       api-key-env-name: POLYMARKET_API_KEY
+      # Python 子进程读取 CLOB API Secret 的环境变量名称。
       api-secret-env-name: POLYMARKET_API_SECRET
+      # Python 子进程读取 CLOB API Passphrase 的环境变量名称。
       api-passphrase-env-name: POLYMARKET_API_PASSPHRASE
+      # Python 子进程读取出资钱包地址的环境变量名称。
       funder-address-env-name: POLYMARKET_FUNDER_ADDRESS
       # 真实下单前调用 Polymarket geoblock API；失败或受限时拒绝下单。
       geoblock-check-enabled: true
+      # 下单地域限制检查接口地址。
       geoblock-url: "https://polymarket.com/api/geoblock"
 
-  # 通用 AI 客户端配置，供小说生成和 Polymarket 决策复用。
+  # 通用 AI 客户端配置，供小说、交易决策和微博/X 草稿复用。
   ai:
     client:
       # AI 服务提供商；可选值：gemini、openai-compatible、deepseek、kimi。
       provider: deepseek
       # 使用的 AI 模型名称；未配置时会使用 provider 对应的默认模型。
-      model: deepseek-v4-pro
-#      model: deepseek-v4-flash
+#      model: deepseek-v4-pro
+      model: deepseek-flash
       # 保存 AI API Key 的环境变量名；实际密钥建议放在环境变量里。
       api-key-env-name: DEEPSEEK_API_KEY
+      # AI 服务基础地址，应与 provider 对应；OpenAI 兼容客户端按下方路径发送请求。
       base-url: "https://api.deepseek.com"
       # OpenAI 兼容接口的 chat completions 路径；未配置时会使用 provider 对应的默认路径。
       # chat-completions-path:
@@ -231,34 +449,39 @@ trade:
         enabled: ${TRADE_AI_PROXY_ENABLED:false}
         # AI 请求代理主机地址。
         host: ${TRADE_AI_PROXY_HOST:127.0.0.1}
-        # AI 请求代理端口。
+        # AI HTTP 请求代理 TCP 端口。
         port: ${TRADE_AI_PROXY_PORT:7897}
 
   # AI 自动短篇小说生成模块
   story:
     # 是否启用小说生成调度；启用后会消耗 AI token。
     enabled: ${TRADE_STORY_ENABLED:false}
-    # 小说生成定时执行间隔，单位毫秒；1800000 = 30 分钟。
+    # 本轮小说生成结束后等待的毫秒数；1800000 = 30 分钟。
     generation-fixed-delay-ms: 1800000
-    # 应用启动后首次生成小说前的延迟，单位毫秒。
+    # story 任务启动后首次生成前的等待时间，单位毫秒；12000 = 12 秒。
     initial-delay-ms: 12000
-    # 小说保存目录。
+    # 小说文件保存目录，相对路径从进程工作目录解析。
     output-dir: ${TRADE_STORY_OUTPUT_DIR:../story}
-    # 目标非空白中文字符数
+    # 提示词中的目标非空白字符数；统计含中文、英文、数字和标点的 Unicode code point。
     target-char-count: 10000
     # 低于该字数时最多补写 max-continuation-sections 节。
     min-acceptable-char-count: 13000
     # 主体分节数量；分节生成比一次性长输出更稳。
     section-count: 6
+    # 正文不足 min-acceptable-char-count 时最多追加的续写节数。
     max-continuation-sections: 2
     # 目标平台定位，用于提示词约束题材和节奏。
     target-platform: "番茄小说等中文网络小说平台"
     # 是否在生成前抓取榜单/题材页；失败会自动回退到 fallback-hot-topics。
     trend-fetch-enabled: true
+    # 热点页面连接和单次抓取请求超时，单位毫秒；10000 = 10 秒。
     trend-fetch-timeout-ms: 10000
+    # 抓取页面及汇总热点上下文保留的最大字符数，避免提示词过长。
     trend-source-max-chars: 6000
+    # 生成小说前尝试读取的榜单 / 题材页面 URL 列表。
     trend-source-urls:
       - "https://fanqienovel.com/rank"
+    # 抓取关闭或未取得内容时使用的本地题材候选列表。
     fallback-hot-topics:
       - "都市脑洞：普通人绑定反套路系统，在现实压力中快速逆袭"
       - "末世囤货：灾变前重生，围绕家庭、物资和基地建设展开"
@@ -269,14 +492,17 @@ trade:
       - "女频成长：女主事业线、家庭关系和情感选择并行推进"
       - "无限流副本：高概念副本、团队博弈和阶段性通关奖励"
     trend-proxy:
+      # 是否通过 HTTP 代理抓取热点页面；AI 请求代理另由 trade.ai.client.proxy 配置。
       enabled: ${TRADE_STORY_TREND_PROXY_ENABLED:false}
+      # 热点页面 HTTP 代理主机地址。
       host: ${TRADE_STORY_TREND_PROXY_HOST:127.0.0.1}
+      # 热点页面 HTTP 代理 TCP 端口。
       port: ${TRADE_STORY_TREND_PROXY_PORT:7897}
 
   # OKX 自动交易模块配置。
   trading:
     # 是否启用 OKX 策略交易；false 时调度任务会跳过策略评估和下单。
-    enabled: ${TRADE_TRADING_ENABLED:false}
+    enabled: ${TRADE_TRADING_ENABLED:true}
     # 交易标的 ID，例如 BTC-USDT。
     inst-id: BTC-USDT
     # OKX 产品类型，例如 SPOT 表示现货。
@@ -356,37 +582,57 @@ trade:
           require-confirmed-candle: true
       # 更保守的 5 分钟策略；提高价格与成交量门槛，减少交易频率。
       - id: threshold-event-defensive
+        # 使用与默认实例相同的价量阈值策略。
         type: threshold-event
+        # 是否启用这个策略实例。
         enabled: true
+        # 当前实例按 5 分钟 K 线评估。
         bar: 5m
         params:
+          # 价格窗口累计涨跌触发比例；0.03 = 3%。
           price-move-trigger-percent: "0.03"
+          # 当前成交量相对历史均量的触发倍数。
           volume-spike-multiplier: "4"
+          # 本地跟踪持仓浮亏触发比例；0.06 = 6%。
           floating-loss-trigger-percent: "0.06"
+          # BUY 默认使用的计价币种金额，当前为 USDT。
           buy-quote-amount: "8"
+          # 计算价格变化使用的 K 线根数。
           price-move-window-candles: 5
+          # 计算历史均量使用的 K 线根数。
           volume-lookback-candles: 20
+          # 是否只使用已确认收盘的 K 线。
           require-confirmed-candle: true
       # 更灵敏的 1 分钟策略；仍受统一风控、PAPER/LIVE 与实盘二次门禁约束。
       - id: threshold-event-reactive
+        # 使用与默认实例相同的价量阈值策略。
         type: threshold-event
+        # 是否启用这个策略实例。
         enabled: true
+        # 当前实例按 1 分钟 K 线评估。
         bar: 1m
         params:
+          # 价格窗口累计涨跌触发比例；0.01 = 1%。
           price-move-trigger-percent: "0.01"
+          # 当前成交量相对历史均量的触发倍数。
           volume-spike-multiplier: "2"
+          # 本地跟踪持仓浮亏触发比例；0.08 = 8%。
           floating-loss-trigger-percent: "0.08"
+          # BUY 默认使用的计价币种金额，当前为 USDT。
           buy-quote-amount: "6"
+          # 计算价格变化使用的 K 线根数。
           price-move-window-candles: 3
+          # 计算历史均量使用的 K 线根数。
           volume-lookback-candles: 12
+          # 是否只使用已确认收盘的 K 线。
           require-confirmed-candle: true
-    # 常规定时策略评估的执行间隔，单位毫秒。
+    # 本轮常规策略评估结束后等待的毫秒数；1800000 = 30 分钟。
     decision-fixed-delay-ms: 1800000
-    # 市场事件扫描的执行间隔，单位毫秒。
+    # 本轮市场事件扫描结束后等待的毫秒数；60000 = 1 分钟。
     event-scan-fixed-delay-ms: 60000
-    # 应用启动后首次执行常规策略评估前的延迟，单位毫秒。
+    # trading 任务启动后首次常规策略评估前的等待时间，单位毫秒；30000 = 30 秒。
     initial-delay-ms: 30000
-    # 应用启动后首次执行市场事件扫描前的延迟，单位毫秒。
+    # trading 任务启动后首次市场事件扫描前的等待时间，单位毫秒；30000 = 30 秒。
     event-initial-delay-ms: 30000
     # 市场事件触发策略评估后的冷却时间，单位毫秒。
     event-cooldown-ms: 600000
@@ -399,12 +645,15 @@ trade:
       candle-cache-limit: 100
     # REST/WebSocket 行情生产者与事件消费者共享的有界队列。
     event-queue:
+      # 队列最多等待消费的行情事件条数。
       capacity: ${TRADE_TRADING_EVENT_QUEUE_CAPACITY:1024}
-      # drop-oldest 保留新行情；block 对生产者施加限时阻塞背压。
+      # 队满策略：drop-oldest 丢最旧、drop-latest 丢新事件、block 限时阻塞生产者。
       full-policy: ${TRADE_TRADING_EVENT_QUEUE_FULL_POLICY:drop-oldest}
+      # block 策略下生产者等待队列容量的最长时间，单位毫秒。
       publish-timeout-ms: ${TRADE_TRADING_EVENT_QUEUE_PUBLISH_TIMEOUT_MS:100}
+      # 消费者等待下一条事件的最长轮询时间，单位毫秒。
       poll-timeout-ms: ${TRADE_TRADING_EVENT_QUEUE_POLL_TIMEOUT_MS:100}
-      # 停止生产者后，排空已接收事件的最长等待时间。
+      # 停止生产者后排空已接收事件的最长等待时间，单位毫秒。
       shutdown-timeout-ms: ${TRADE_TRADING_EVENT_QUEUE_SHUTDOWN_TIMEOUT_MS:5000}
     # 公共市场数据数据库落库配置；数据库异常只告警，不阻断交易决策。
     market-data-persistence:
@@ -418,23 +667,29 @@ trade:
       candle-enabled: true
       # WebSocket ticker 最小写库间隔，避免高频行情产生过多快照，单位毫秒。
       websocket-ticker-min-interval-ms: 5000
-    # Redis stores the latest shared snapshots and bounded recent candle sets.
+    # Redis 热行情缓存：共享最新快照和有界近期 K 线，不承担资金状态权威存储。
     hot-market-data-cache:
+      # 是否启用 Redis 热行情缓存；缓存故障不会阻断交易决策。
       enabled: ${TRADE_TRADING_HOT_MARKET_CACHE_ENABLED:true}
+      # Redis 行情 key 的命名空间前缀。
       key-prefix: ${TRADE_TRADING_HOT_MARKET_CACHE_KEY_PREFIX:trade:trading:hot-market}
+      # 最新 ticker / order book 快照的缓存有效期，单位毫秒；120000 = 2 分钟。
       snapshot-ttl-ms: ${TRADE_TRADING_HOT_MARKET_CACHE_SNAPSHOT_TTL_MS:120000}
+      # 每个标的 / 周期的 K 线集合缓存有效期，单位毫秒；10800000 = 3 小时。
       candle-ttl-ms: ${TRADE_TRADING_HOT_MARKET_CACHE_CANDLE_TTL_MS:10800000}
+      # 每个标的 / 周期在 Redis 中保留的最近 K 线根数上限。
       candle-limit: ${TRADE_TRADING_HOT_MARKET_CACHE_CANDLE_LIMIT:200}
+      # Redis 连接 / 命令失败后再次尝试的冷却时间，单位毫秒。
       failure-retry-interval-ms: ${TRADE_TRADING_HOT_MARKET_CACHE_RETRY_INTERVAL_MS:5000}
-    # 5 分钟价格变化触发 AI 决策的阈值比例，0.02 表示 2%。
+    # 全局市场事件检测的价格变化阈值比例，0.02 = 2%；也是未配置实例参数时的兼容默认值。
     price-move-trigger-percent: "0.02"
     # 1 分钟成交量相对前 20 分钟均量的放大倍数阈值。
     volume-spike-multiplier: 3
-    # 本地追踪持仓浮亏触发 AI 决策的阈值比例，0.10 表示 10%。
+    # 本地追踪持仓浮亏触发策略评估的阈值比例，0.10 = 10%。
     floating-loss-trigger-percent: "0.10"
     # 策略交易成本上下文使用的 taker 费率；0.001 表示 0.1%。
     taker-fee-rate: "0.001"
-    # Required expected net edge after fee and spread. 0.001 means 0.1%.
+    # 扣除手续费和盘口价差后要求的最低预期净优势比例；0.001 = 0.1%。
     min-expected-net-edge-percent: "0.001"
     # 本地非资金策略记忆文件；持仓、成本和风险状态以 MySQL 为准。
     state-file: "data/trading-state.json"
@@ -481,28 +736,39 @@ trade:
     # LIVE 账户订单恢复与仓位核对。execution-mode=live 即可运行；
     # live-enabled 仍可保持 false 来阻断新单。该循环绝不重新下单。
     reconciliation:
+      # 是否执行 LIVE 订单 / 仓位对账；关闭后资金停止状态仍可重申超时撤单保护。
       enabled: ${TRADE_TRADING_RECONCILIATION_ENABLED:true}
+      # trading 任务启动后首次对账前的等待时间，单位毫秒；5000 = 5 秒。
       initial-delay-ms: ${TRADE_TRADING_RECONCILIATION_INITIAL_DELAY_MS:5000}
+      # 本轮对账结束后等待的毫秒数；15000 = 15 秒。
       fixed-delay-ms: ${TRADE_TRADING_RECONCILIATION_FIXED_DELAY_MS:15000}
+      # 每轮最多处理的未完成本地订单数量。
       batch-size: ${TRADE_TRADING_RECONCILIATION_BATCH_SIZE:100}
+      # 连续对账失败达到该次数时触发持久化资金停止。
       max-consecutive-failures: ${TRADE_TRADING_RECONCILIATION_MAX_FAILURES:3}
       # managed-only 允许同账户存在人工仓位；dedicated-account 要求交易所总仓位与本进程账本完全一致。
       position-ownership: ${TRADE_TRADING_POSITION_OWNERSHIP:managed-only}
+      # dedicated-account 模式允许的仓位数量误差，按基础币种 / 合约数量计。
       position-mismatch-tolerance: ${TRADE_TRADING_POSITION_MISMATCH_TOLERANCE:0.00000001}
-    # 多实例单写租约。存量库先执行 leader-lease migration，再显式启用。
+    # 多实例单写租约；旧库先执行 db/upgrade/trading/ 中对应的租约升级脚本，再显式启用。
     # PAPER 可保持关闭；LIVE 下单默认强制要求本实例持有有效租约。
     leadership:
+      # 是否启用数据库领导者租约选举和续约。
       enabled: ${TRADE_TRADING_LEADERSHIP_ENABLED:false}
       # 同一 OKX 资金账户的所有实例必须使用相同 lease-name。
       lease-name: ${TRADE_TRADING_LEADERSHIP_LEASE_NAME:okx-primary-account}
       # 留空时按主机、PID 和随机后缀生成；容器部署建议注入 Pod/Task ID。
       instance-id: ${TRADE_TRADING_INSTANCE_ID:}
+      # 领导者租约有效期，单位毫秒；须明显长于 heartbeat-interval-ms。
       lease-duration-ms: ${TRADE_TRADING_LEADERSHIP_LEASE_DURATION_MS:30000}
+      # 租约续约 / 追随者尝试获取租约的等待间隔，单位毫秒，独立于交易循环。
       heartbeat-interval-ms: ${TRADE_TRADING_LEADERSHIP_HEARTBEAT_INTERVAL_MS:5000}
+      # LIVE 提交订单前是否强制校验有效领导者租约；未启用租约或丢失租约时拒绝下单。
       required-for-live: ${TRADE_TRADING_LEADERSHIP_REQUIRED_FOR_LIVE:true}
     fund-safety:
       # 留空时 HTTP stop/resume 端点保持禁用；内部硬风控仍可触发持久化停止。
       operator-token: ${TRADE_TRADING_OPERATOR_TOKEN:}
-      # 停止后设置 OKX cancel-all-after；对账循环会持续重申，进程失联后由交易所超时撤单。
+      # 资金停止后设置 OKX cancel-all-after 的超时秒数；对账循环重申，失联后由交易所撤单。
       dead-man-timeout-seconds: ${TRADE_TRADING_DEAD_MAN_TIMEOUT_SECONDS:10}
+      # HTTP 恢复 LIVE 交易时必须逐字匹配的确认文本。
       resume-confirmation: RESUME_LIVE_TRADING

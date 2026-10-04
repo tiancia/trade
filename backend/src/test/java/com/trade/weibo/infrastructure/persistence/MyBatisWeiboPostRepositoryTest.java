@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
@@ -33,6 +34,7 @@ class MyBatisWeiboPostRepositoryTest {
     @Autowired private WeiboPostRepository posts;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private WeiboAccountTokenRepository tokens;
+    @Autowired private WeiboMapper accountMapper;
     private final Instant now = Instant.parse("2026-10-02T01:00:00Z");
     private final Instant day = now.truncatedTo(ChronoUnit.DAYS);
     private final WeiboWorkflowPolicy policy = new WeiboWorkflowPolicy(true, true, true, "uid", 280, 5, 3,
@@ -40,22 +42,62 @@ class MyBatisWeiboPostRepositoryTest {
 
     @BeforeEach
     void schema() throws Exception {
-        jdbc.execute("DROP TABLE IF EXISTS weibo_publish_attempt");
-        jdbc.execute("DROP TABLE IF EXISTS weibo_post_history");
-        jdbc.execute("DROP TABLE IF EXISTS weibo_post");
-        jdbc.execute("DROP TABLE IF EXISTS weibo_account_gate");
-        jdbc.execute("DROP TABLE IF EXISTS weibo_account_token");
-        jdbc.execute("CREATE TABLE weibo_account_token (uid VARCHAR(64) PRIMARY KEY, access_token VARCHAR(1000),"
-                + " expires_at TIMESTAMP, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
-                + " updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
-        // Execute the production migration itself; only MySQL storage-engine options are omitted for H2.
+        for (String table : new String[]{"weibo_review_delivery", "weibo_review_polling", "weibo_publish_attempt",
+                "weibo_post_history", "weibo_post", "weibo_account_gate", "weibo_oauth_state", "weibo_account_token"}) {
+            jdbc.execute("DROP TABLE IF EXISTS " + table);
+        }
+        // Execute the current production schema; only MySQL storage-engine options are omitted for H2.
         String sql;
-        try (var input = new ClassPathResource("db/migration/migration_add_weibo_workflow.sql").getInputStream()) {
+        try (var input = new ClassPathResource("db/schema/weibo/schema.sql").getInputStream()) {
             sql = new String(input.readAllBytes(), StandardCharsets.UTF_8);
         }
         sql = sql.replaceAll("(?m)^--.*$", "")
                 .replaceAll(" ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci", "");
         for (String statement : sql.split(";")) if (!statement.isBlank()) jdbc.execute(statement);
+    }
+
+    @Test
+    void databaseAssignsNumericIdsWhileBusinessIdentitiesRemainUnique() {
+        assertEquals(8, jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.columns"
+                + " WHERE LOWER(table_schema)='public' AND LOWER(table_name) LIKE 'weibo_%' AND LOWER(column_name)='id'"
+                + " AND LOWER(data_type)='bigint' AND UPPER(is_identity)='YES'", Integer.class));
+        accountMapper.insertOAuthState("state-1", java.sql.Timestamp.from(now.plusSeconds(60)));
+        accountMapper.insertOAuthState("state-2", java.sql.Timestamp.from(now.plusSeconds(60)));
+        assertThrows(DuplicateKeyException.class,
+                () -> accountMapper.insertOAuthState("state-1", java.sql.Timestamp.from(now.plusSeconds(60))));
+        assertEquals(1, accountMapper.consumeOAuthState("state-1", java.sql.Timestamp.from(now)));
+        assertEquals(0, accountMapper.consumeOAuthState("state-1", java.sql.Timestamp.from(now)));
+        assertTrue(jdbc.queryForObject("SELECT MIN(id) FROM weibo_oauth_state", Long.class) > 0);
+        assertEquals(2, jdbc.queryForObject("SELECT COUNT(DISTINCT id) FROM weibo_oauth_state", Integer.class));
+
+        tokens.upsert("uid", "offline-original", now.plusSeconds(3600));
+        Long tokenId = jdbc.queryForObject("SELECT id FROM weibo_account_token WHERE uid='uid'", Long.class);
+        tokens.upsert("uid", "offline-renewed", now.plusSeconds(7200));
+        assertTrue(tokenId > 0);
+        assertEquals(tokenId, jdbc.queryForObject("SELECT id FROM weibo_account_token WHERE uid='uid'", Long.class));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM weibo_account_token", Integer.class));
+        assertEquals("offline-renewed", tokens.findValidForUid("uid", now).orElseThrow().accessToken());
+
+        WeiboPost first = approve(reserved("identity-1"));
+        WeiboPost second = approve(reserved("identity-2"));
+        Long firstId = jdbc.queryForObject("SELECT id FROM weibo_post WHERE post_key=?", Long.class, first.id());
+        Long secondId = jdbc.queryForObject("SELECT id FROM weibo_post WHERE post_key=?", Long.class, second.id());
+        assertTrue(firstId > 0 && secondId > firstId);
+        assertEquals(first, posts.find(first.id()).orElseThrow());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM weibo_account_gate WHERE uid='uid'", Integer.class));
+        assertTrue(jdbc.queryForObject("SELECT id FROM weibo_account_gate WHERE uid='uid'", Long.class) > 0);
+        assertEquals(6, jdbc.queryForObject("SELECT COUNT(DISTINCT id) FROM weibo_post_history", Integer.class));
+        assertEquals(3, jdbc.queryForObject("SELECT COUNT(*) FROM weibo_post_history WHERE post_key=?",
+                Integer.class, first.id()));
+
+        WeiboPost claimed = first.claim(now);
+        assertTrue(posts.claimPublishing(claimed, first.revision(), day, 3, Duration.ofMinutes(30)));
+        assertTrue(jdbc.queryForObject("SELECT id FROM weibo_publish_attempt WHERE attempt_id=?",
+                Long.class, claimed.attemptId()) > 0);
+        assertEquals(first.id(), jdbc.queryForObject("SELECT post_id FROM weibo_publish_attempt WHERE attempt_id=?",
+                String.class, claimed.attemptId()));
+        assertFalse(posts.claimPublishing(first.claim(now), first.revision(), day, 3, Duration.ofMinutes(30)));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM weibo_publish_attempt", Integer.class));
     }
 
     @Test
@@ -134,7 +176,7 @@ class MyBatisWeiboPostRepositoryTest {
         WeiboPost initial = reserved("1");
         assertTrue(posts.reserveGeneration(initial, day, 5));
         // Force a history unique-key failure after the post UPDATE.
-        jdbc.update("INSERT INTO weibo_post_history (id, revision, content_version, status, updated_at) VALUES (?,1,1,'GENERATING',?)",
+        jdbc.update("INSERT INTO weibo_post_history (post_key, revision, content_version, status, updated_at) VALUES (?,1,1,'GENERATING',?)",
                 initial.id(), java.sql.Timestamp.from(now));
         assertThrows(RuntimeException.class,
                 () -> posts.save(initial.generated(new GeneratedComment("正文", "依据"), now, 280), 0));

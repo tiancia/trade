@@ -76,12 +76,12 @@ public class TradingTriggerService {
     public void reconcileOrders() {
         leadershipService.runIfLeader(
                 "order-reconciliation",
-                orderReconciliationService::reconcileOnce
+                () -> orderReconciliationService.reconcileOnce()
         );
     }
 
     public void scanEventTriggers() {
-        leadershipService.runIfLeader("event-scan", this::scanEventTriggersAsLeader);
+        leadershipService.runIfLeader("event-scan", () -> scanEventTriggersAsLeader());
     }
 
     private void scanEventTriggersAsLeader() {

@@ -17,7 +17,7 @@ services:
     ports:
       - "${MYSQL_BIND_ADDRESS:-127.0.0.1}:${MYSQL_PORT:-3306}:3306"
     volumes:
-      - mysql-data:/var/lib/mysql
+      - "A:/DockerData/trade-infrastructure/mysql:/var/lib/mysql"
     networks:
       - trade-network
     healthcheck:
@@ -43,7 +43,7 @@ services:
     ports:
       - "${REDIS_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     volumes:
-      - redis-data:/data
+      - "A:/DockerData/trade-infrastructure/redis:/data"
     networks:
       - trade-network
     healthcheck:
@@ -68,7 +68,7 @@ services:
     volumes:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./observability/prometheus/rules:/etc/prometheus/rules:ro
-      - prometheus-data:/prometheus
+      - "A:/DockerData/trade-infrastructure/prometheus:/prometheus"
     networks:
       - trade-network
     logging: *default-logging
@@ -91,7 +91,7 @@ services:
       - ./observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
-      - grafana-data:/var/lib/grafana
+      - "A:/DockerData/trade-infrastructure/grafana:/var/lib/grafana"
     networks:
       - trade-network
     logging: *default-logging
@@ -99,15 +99,3 @@ services:
 networks:
   trade-network:
     name: ${DOCKER_NETWORK_NAME:-trade-infrastructure}
-
-volumes:
-  mysql-data:
-    name: ${MYSQL_VOLUME_NAME:-trade-mysql-data}
-  redis-data:
-    name: ${REDIS_VOLUME_NAME:-trade-redis-data}
-  prometheus-data:
-    name: ${PROMETHEUS_VOLUME_NAME:-trade-prometheus-data}
-    external: ${PROMETHEUS_VOLUME_EXTERNAL:-false}
-  grafana-data:
-    name: ${GRAFANA_VOLUME_NAME:-trade-grafana-data}
-    external: ${GRAFANA_VOLUME_EXTERNAL:-false}

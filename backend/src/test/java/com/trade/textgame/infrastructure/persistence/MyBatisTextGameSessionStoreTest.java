@@ -41,7 +41,7 @@ class MyBatisTextGameSessionStoreTest {
         jdbc.execute("DROP ALL OBJECTS");
         jdbc.execute("CREATE TABLE text_game_stories (id BIGINT AUTO_INCREMENT PRIMARY KEY, story_key VARCHAR(100), title VARCHAR(200), summary VARCHAR(500), enabled BOOLEAN, sort_order INT, created_at TIMESTAMP, updated_at TIMESTAMP)");
         jdbc.execute("CREATE TABLE text_game_story_versions (id BIGINT AUTO_INCREMENT PRIMARY KEY, story_id BIGINT, version_number INT, status VARCHAR(30), revision BIGINT, story_json CLOB, checksum VARCHAR(100), published_at TIMESTAMP, created_at TIMESTAMP, updated_at TIMESTAMP)");
-        jdbc.execute("CREATE TABLE text_game_sessions (session_id VARCHAR(100) PRIMARY KEY, story_version_id BIGINT, current_node_id VARCHAR(100), pending_node_id VARCHAR(100), phase VARCHAR(30), attributes_json CLOB, relations_json CLOB, flags_json CLOB, history_json CLOB, result_json CLOB, revision BIGINT, expires_at TIMESTAMP, completed_at TIMESTAMP, created_at TIMESTAMP, updated_at TIMESTAMP)");
+        jdbc.execute("CREATE TABLE text_game_sessions (id BIGINT AUTO_INCREMENT PRIMARY KEY, session_id VARCHAR(100) NOT NULL UNIQUE, story_version_id BIGINT, current_node_id VARCHAR(100), pending_node_id VARCHAR(100), phase VARCHAR(30), attributes_json CLOB, relations_json CLOB, flags_json CLOB, history_json CLOB, result_json CLOB, revision BIGINT, expires_at TIMESTAMP, completed_at TIMESTAMP, created_at TIMESTAMP, updated_at TIMESTAMP)");
         jdbc.execute("CREATE TABLE text_game_session_events (id BIGINT AUTO_INCREMENT PRIMARY KEY, session_id VARCHAR(100), sequence_no INT, node_id VARCHAR(100), choice_id VARCHAR(100), effects_json CLOB, state_after_json CLOB, created_at TIMESTAMP, UNIQUE(session_id, sequence_no))");
         var story = new TextGameStoryRow().setStoryKey("100-days-comeback").setTitle("100天翻身")
                 .setSummary("summary").setEnabled(true).setSortOrder(1);
@@ -50,6 +50,23 @@ class MyBatisTextGameSessionStoreTest {
                 .setStatus("PUBLISHED").setRevision(0).setChecksum("v1")
                 .setStoryJson(new ClassPathResource("textgame/stories/100-days-comeback.v1.json").getContentAsString(StandardCharsets.UTF_8))
                 .setPublishedAt(Timestamp.from(Instant.now())));
+    }
+
+    @Test
+    void databaseGeneratesIdsWhileSessionsRemainAddressableByUniqueUuid() {
+        var first = service.createSession(new TextGameApi.CreateSessionRequest("100-days-comeback"));
+        var second = service.createSession(new TextGameApi.CreateSessionRequest("100-days-comeback"));
+        Long firstId = jdbc.queryForObject("SELECT id FROM text_game_sessions WHERE session_id=?", Long.class, first.sessionId());
+        Long secondId = jdbc.queryForObject("SELECT id FROM text_game_sessions WHERE session_id=?", Long.class, second.sessionId());
+        assertNotNull(firstId);
+        assertNotNull(secondId);
+        assertTrue(firstId > 0 && secondId > firstId);
+        assertEquals(first, service.getSession(first.sessionId()));
+        assertEquals(second, service.getSession(second.sessionId()));
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class,
+                () -> mapper.insertSession(mapper.findSession(first.sessionId())));
+        service.submitChoice(first.sessionId(), new TextGameApi.SubmitChoiceRequest("start_skill", 0L));
+        assertEquals(first.sessionId(), mapper.listSessionEvents(first.sessionId()).getFirst().getSessionId());
     }
 
     @Test

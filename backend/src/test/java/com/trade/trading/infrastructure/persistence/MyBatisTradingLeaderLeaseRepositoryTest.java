@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.test.context.jdbc.Sql;
 import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
@@ -27,13 +28,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Sql(statements = {
         "DROP TABLE IF EXISTS okx_trading_leader_lease",
         "CREATE TABLE okx_trading_leader_lease (" +
-                "lease_name VARCHAR(128) PRIMARY KEY, owner_id VARCHAR(128) NOT NULL," +
+                "id BIGINT AUTO_INCREMENT PRIMARY KEY," +
+                "lease_name VARCHAR(128) NOT NULL UNIQUE, owner_id VARCHAR(128) NOT NULL," +
                 "lease_until TIMESTAMP NOT NULL, fencing_token BIGINT NOT NULL," +
                 "created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL)"
 })
 class MyBatisTradingLeaderLeaseRepositoryTest {
     @Autowired
     private TradingLeaderLeaseRepository repository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Test
     void leaseIsSingleOwnerAndFencingTokenAdvancesOnHandoff() {
@@ -42,6 +47,9 @@ class MyBatisTradingLeaderLeaseRepositoryTest {
                 "instance-a",
                 Duration.ofSeconds(30)
         );
+        Long leaseId = jdbcTemplate.queryForObject(
+                "SELECT id FROM okx_trading_leader_lease WHERE lease_name = 'okx-account'", Long.class);
+        assertTrue(leaseId > 0);
         TradingLeaderLease blocked = repository.acquireOrRenew(
                 "okx-account",
                 "instance-b",
@@ -68,6 +76,12 @@ class MyBatisTradingLeaderLeaseRepositoryTest {
         assertEquals(2L, handedOff.fencingToken());
         assertEquals(2L, renewed.fencingToken());
         assertTrue(renewed.leaseUntil().isAfter(handedOff.updatedAt()));
+        assertEquals(leaseId, jdbcTemplate.queryForObject(
+                "SELECT id FROM okx_trading_leader_lease WHERE lease_name = 'okx-account'", Long.class));
+        assertEquals(1, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_trading_leader_lease", Integer.class));
+        repository.acquireOrRenew("another-account", "instance-c", Duration.ofSeconds(30));
+        assertTrue(jdbcTemplate.queryForObject(
+                "SELECT id FROM okx_trading_leader_lease WHERE lease_name = 'another-account'", Long.class) > leaseId);
     }
 
     @Configuration(proxyBeanMethods = false)
@@ -115,6 +129,11 @@ class MyBatisTradingLeaderLeaseRepositoryTest {
         @Bean
         PlatformTransactionManager transactionManager(DataSource dataSource) {
             return new DataSourceTransactionManager(dataSource);
+        }
+
+        @Bean
+        JdbcTemplate jdbcTemplate(DataSource dataSource) {
+            return new JdbcTemplate(dataSource);
         }
     }
 }

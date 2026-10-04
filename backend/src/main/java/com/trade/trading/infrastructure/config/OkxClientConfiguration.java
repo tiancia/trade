@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Configuration;
  * Wires the OKX transport clients used by the trading domain.
  *
  * <p>Shared AI-provider beans are configured separately under
- * {@code com.trade.client.config}; keeping them out of this class prevents
+ * {@code com.trade.client.ai.config}; keeping them out of this class prevents
  * story and Polymarket workflows from depending on trading configuration.</p>
  */
 @Configuration

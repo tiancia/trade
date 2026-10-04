@@ -1,8 +1,8 @@
 package com.trade.weibo.application.service;
 
 import com.trade.client.weibo.WeiboHttpException;
-import com.trade.telegram.application.port.HumanReviewGateway;
-import com.trade.telegram.domain.model.ReviewDecision;
+import com.trade.weibo.application.port.HumanReviewGateway;
+import com.trade.weibo.domain.model.ReviewDecision;
 import com.trade.weibo.application.port.HotEventSource;
 import com.trade.weibo.application.port.WeiboDraftGenerator;
 import com.trade.weibo.application.port.WeiboPostPublisher;
@@ -56,7 +56,7 @@ class WeiboPostServiceTest {
     }
 
     @Test
-    void unavailableTelegramLeavesDraftPendingAndEventIsNotGeneratedTwice() {
+    void unavailableReviewLeavesDraftPendingAndEventIsNotGeneratedTwice() {
         WeiboPost draft = service(now).generate(event).orElseThrow();
         assertEquals(WeiboPostStatus.PENDING_REVIEW, draft.status());
         assertTrue(service(now).generate(event).isEmpty());
@@ -156,9 +156,99 @@ class WeiboPostServiceTest {
                 Clock.fixed(now, ZoneOffset.UTC));
         service.runGeneration();
         service.runPublishing();
+        service.runReviews();
         assertThrows(IllegalStateException.class, () -> service.generate(event));
         verify(source, never()).collect();
         verify(generator, never()).generate(any(), anyInt());
+        verify(publisher, never()).publish(any());
+        verify(reviews, never()).poll(any());
+    }
+
+    @Test
+    void reviewLoopPublishesApprovedBodyAndReplayAfterPublishIsHarmless() {
+        WeiboPost draft = service(now).generate(event).orElseThrow();
+        ReviewDecision approved = decision(draft, true);
+        doAnswer(call -> {
+            java.util.function.Function<ReviewDecision, Boolean> consume = call.getArgument(0);
+            assertTrue(consume.apply(approved));
+            return null;
+        }).when(reviews).poll(any());
+        service(now).runReviews();
+        service(now).runReviews();
+        assertEquals(WeiboPostStatus.PUBLISHED, service(now).get(draft.id()).status());
+        assertEquals(service(now).get(draft.id()), service(now).applyReview(approved));
+        verify(publisher, times(1)).publish(argThat(post -> post.body().equals("观点正文")));
+    }
+
+    @Test
+    void rejectedAndStaleReviewsNeverPublish() {
+        WeiboPost draft = service(now).generate(event).orElseThrow();
+        ReviewDecision reject = decision(draft, false);
+        doAnswer(call -> {
+            java.util.function.Function<ReviewDecision, Boolean> consume = call.getArgument(0);
+            assertTrue(consume.apply(reject));
+            return null;
+        }).when(reviews).poll(any());
+        service(now).runReviews();
+        assertEquals(WeiboPostStatus.REJECTED, service(now).get(draft.id()).status());
+        service(now).revise(draft.id(), service(now).get(draft.id()).revision(), "第二稿");
+        doAnswer(call -> {
+            java.util.function.Function<ReviewDecision, Boolean> consume = call.getArgument(0);
+            assertFalse(consume.apply(decision(draft, true)));
+            return null;
+        }).when(reviews).poll(any());
+        service(now).runReviews();
+        assertEquals(WeiboPostStatus.PENDING_REVIEW, service(now).get(draft.id()).status());
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test
+    void transientReviewCasFailureRemainsUnacknowledged() {
+        WeiboPost draft = service(now).generate(event).orElseThrow();
+        doReturn(false).when(posts).save(any(), anyLong());
+        doAnswer(call -> {
+            java.util.function.Function<ReviewDecision, Boolean> consume = call.getArgument(0);
+            consume.apply(decision(draft, true));
+            return null;
+        }).when(reviews).poll(any());
+        assertThrows(IllegalStateException.class, () -> service(now).runReviews());
+        assertEquals(WeiboPostStatus.PENDING_REVIEW, service(now).get(draft.id()).status());
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test
+    void reviewCallbackCannotBypassPublishingGate() {
+        WeiboPost draft = service(now).generate(event).orElseThrow();
+        WeiboWorkflowPolicy closed = new WeiboWorkflowPolicy(true, true, false, "uid", 280, 5, 3,
+                Duration.ofHours(24), Duration.ofHours(6), Duration.ofMinutes(30), Duration.ofMinutes(5));
+        doAnswer(call -> {
+            java.util.function.Function<ReviewDecision, Boolean> consume = call.getArgument(0);
+            assertTrue(consume.apply(decision(draft, true)));
+            return null;
+        }).when(reviews).poll(any());
+        new WeiboPostService(posts, source, generator, reviews, publisher, closed,
+                Clock.fixed(now, ZoneOffset.UTC)).runReviews();
+        assertEquals(WeiboPostStatus.APPROVED, service(now).get(draft.id()).status());
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test
+    void changedTargetAccountCannotDeliverOrReviewOldAccountDraft() {
+        WeiboPost draft = service(now).generate(event).orElseThrow();
+        clearInvocations(reviews);
+        WeiboWorkflowPolicy otherAccount = new WeiboWorkflowPolicy(true, true, true, "other-uid", 280, 5, 3,
+                Duration.ofHours(24), Duration.ofHours(6), Duration.ofMinutes(30), Duration.ofMinutes(5));
+        WeiboPostService changed = new WeiboPostService(posts, source, generator, reviews, publisher, otherAccount,
+                Clock.fixed(now, ZoneOffset.UTC));
+        changed.runPublishing();
+        verify(reviews, never()).submit(any());
+        doAnswer(call -> {
+            java.util.function.Function<ReviewDecision, Boolean> consume = call.getArgument(0);
+            assertFalse(consume.apply(decision(draft, true)));
+            return null;
+        }).when(reviews).poll(any());
+        changed.runReviews();
+        assertEquals(WeiboPostStatus.PENDING_REVIEW, changed.get(draft.id()).status());
         verify(publisher, never()).publish(any());
     }
 

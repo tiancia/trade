@@ -29,6 +29,11 @@ $env:TRADE_WEIBO_WORKFLOW_ENABLED="false"
 $env:TRADE_WEIBO_GENERATION_ENABLED="false"
 $env:TRADE_WEIBO_PUBLISHING_ENABLED="false"
 $env:TRADE_WEIBO_LIVE_PUBLISHING_ENABLED="false"
+$env:TRADE_AUTOMATION_X_AUTO_START="false"
+$env:TRADE_X_WORKFLOW_ENABLED="false"
+$env:TRADE_X_GENERATION_ENABLED="false"
+$env:TRADE_X_PUBLISHING_ENABLED="false"
+$env:TRADE_X_LIVE_PUBLISHING_ENABLED="false"
 
 .\mvnw.cmd spring-boot:run
 ```
@@ -55,9 +60,22 @@ Actuator 当前暴露 health、info、metrics 和 prometheus。automation 启停
 
 ## 后台任务操作
 
-微博新增 `weibo` 任务，包含生成与发布循环；默认关闭，真实发布需要多重门禁。
-Telegram 传输仍为 TODO，待审稿不会自动批准。配置、数据库升级和 UNKNOWN 排障见
+微博 `weibo` 任务包含生成、Telegram 审核与发布循环；默认关闭，真实发布需要多重门禁。
+机器人将完整正文和审核按钮发到指定聊天，仅认证审核人能批准具体版本。配置、数据库升级和 UNKNOWN 排障见
 [微博审核工作流](WEIBO_WORKFLOW.md)。
+
+Telegram 协议和共享 Bean 在 `client/telegram`，审核行为分别由微博与 X 装配。启用微博前确认
+`db/schema/weibo/schema.sql` 中的表已创建；旧表结构有差异时按[微博工作流](WEIBO_WORKFLOW.md)选择 `db/upgrade/weibo/` 补丁。安全注入 `TRADE_TELEGRAM_BOT_TOKEN`，
+配置 `TRADE_WEIBO_TELEGRAM_CHAT_ID` 与 `TRADE_WEIBO_TELEGRAM_REVIEWER_USER_IDS`，再开启
+`TRADE_TELEGRAM_ENABLED`、`TRADE_WEIBO_TELEGRAM_REVIEW_ENABLED` 和 workflow/generation 开关。
+初次联调保持两个发布开关关闭；确认审核状态后，按[工作流说明](WEIBO_WORKFLOW.md)配置目标账号授权和发布门禁。
+创建 Bean 不启动任务；实际聊天权限、消息发送和微博发布仍需独立联调。轮询模式不能与该 bot 已有 webhook 或另一套 consumer 共用。
+
+X 的 `x` 任务也包含生成、审核、发布三个循环。启动 schema 会创建缺失的六张 X 表；已有表升级时检查 `db/upgrade/x/` 的适用补丁。
+配置 `TRADE_X_CONTENT_*`、目标 X 用户 ID 与四个 OAuth 1.0a 凭据，再按
+[X 工作流](X_WORKFLOW.md)联调。复用现有 Bot 时，先停止所有实例的微博审核并关闭
+`TRADE_WEIBO_TELEGRAM_REVIEW_ENABLED`；应用会拒绝两套审核同时 enabled。
+保留两项 X 发布开关关闭直到联调完成；X 外部协议见 [X 客户端](X_API.md)。
 
 查询、启动和停止任务：
 
@@ -73,8 +91,8 @@ automation `stop` 只阻止后续循环并停止域运行时，不代表资金�
 
 ## 多实例单写租约
 
-同一 OKX 资金账户运行多个后端实例时，必须先执行
-`db/migration/migration_add_okx_trading_leader_lease.sql`，再在所有实例启用：
+同一 OKX 资金账户运行多个后端实例时，必须先确认租约表结构完整；手工建表或升级旧库使用
+`db/upgrade/trading/migration_add_okx_trading_leader_lease.sql`，再在所有实例启用：
 
 ```powershell
 $env:TRADE_TRADING_LEADERSHIP_ENABLED="true"
@@ -174,10 +192,10 @@ Invoke-RestMethod -Method Post `
 
 ## 数据库升级
 
-应用每次启动都会执行 `db/ai_trade_mysql_schema.sql`，但其中的 `CREATE TABLE IF NOT EXISTS` 只适合新库初始化，不会自动补齐已有表字段。存量库按以下流程升级：
+应用每次启动按 `spring.sql.init.schema-locations` 的显式顺序执行 `db/schema/<module>/schema.sql`。`CREATE TABLE IF NOT EXISTS` 会创建缺失的表，但不会自动补齐已有表字段或修改索引。模块位置见 [数据库目录](../src/main/resources/db/README.md)，存量库按以下流程升级：
 
 1. 备份并记录当前 schema；
-2. 阅读 `db/migration/README.md` 的依赖和重叠说明；
+2. 阅读 [db/upgrade/README.md](../src/main/resources/db/upgrade/README.md) 的依赖和重叠说明，按模块选择适用补丁；
 3. 在隔离库执行目标脚本；
 4. 验证表、索引、历史数据和应用测试；
 5. 在维护窗口执行并保留结果；
@@ -186,9 +204,9 @@ Invoke-RestMethod -Method Post `
 项目当前没有 Flyway/Liquibase 版本表，不能假设按文件名字典序全部执行是安全的。
 
 本次真实资金闭环升级至少需要先有
-`migration_add_okx_order_idempotency_state_machine.sql`，再执行
-`migration_add_okx_financial_safety_state.sql`，多实例部署随后执行
-`migration_add_okx_trading_leader_lease.sql`。首次启动时，若目标
+`db/upgrade/trading/migration_add_okx_order_idempotency_state_machine.sql`，再执行
+`db/upgrade/trading/migration_add_okx_financial_safety_state.sql`，多实例部署随后执行
+`db/upgrade/trading/migration_add_okx_trading_leader_lease.sql`。首次启动时，若目标
 `account_scope + inst_id` 尚无 MySQL 行，应用会从旧
 `data/trading-state.json` 兼容导入一次仓位、成本和风险；导入后应立即
 执行对账并核对 `okx_position_state`、`okx_risk_state`。后续 JSON 中的

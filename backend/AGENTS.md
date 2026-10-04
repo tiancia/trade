@@ -39,11 +39,18 @@
 
 领域模型不得反向依赖 application、interfaces 或 infrastructure；application/port 不得依赖实现。业务域根目录不再平铺 market、execution、persistence 等能力包。`client` 按供应商组织，`common` 保留纯函数，不强制创建空层。
 
+## 数据库主键规范
+
+- 所有新增或重建的业务表统一使用单列 `id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY`，由数据库生成主键。
+- UUID、账号、会话、令牌哈希、订单幂等键和复合业务键使用独立字段及 `UNIQUE` 约束；不得改用这些字段作为主键，必须保留已有接口、外键关联、去重、UPSERT、行锁与交易幂等语义。
+- 普通业务 INSERT 不指定 `id`，不得用 `MAX(id)+1` 等应用计算替代数据库自增；确需返回新主键时使用 MyBatis 生成键回填，数字主键对应的 Java 字段使用 `Long`。初始化种子和存量迁移需要保留固定 ID 时可显式写入。
+- 修改主键时同步更新模块 schema、旧库手工升级脚本、Mapper/Row 和相关测试。遵守 [数据库主键与重建说明](src/main/resources/db/README.md)；删除旧表重建仅适用于允许丢弃全部数据的开发库，已有表不会因重启自动升级。
+
 ## 高风险变更
 
 - 交易：保持幂等键、确定性 `clOrdId`、订单状态机、乐观锁和审计历史的语义；重试不得直接二次下单。
 - 行情：生产者统一发布到有界事件总线；保留背压、异常隔离、指标和优雅停机，不在 WebSocket 回调线程直接写数据库。
-- 数据库：新库完整结构更新 `db/ai_trade_mysql_schema.sql`；存量库升级另增 `db/migration/` 脚本并更新迁移说明。Mapper 类型改包时同步更新 XML namespace/resultType/parameterType。
+- 数据库：完整结构更新所属模块的 `db/schema/<module>/schema.sql`；存量库升级另增 `db/upgrade/<module>/` 手工脚本并更新升级说明。新增数据库模块时同步更新 `spring.sql.init.schema-locations`。Mapper 类型改包时同步更新 XML namespace/resultType/parameterType。
 - 配置：新增配置时同步检查 `application.yml`、`.env.example`、`@ConfigurationProperties`、默认安全值和运维文档。
 - 凭据：不得读取、打印或提交 `.env`、密钥、令牌、私钥和生产数据。
 

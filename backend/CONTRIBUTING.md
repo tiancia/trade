@@ -53,13 +53,21 @@
 
 ## 数据库变更
 
-- `db/ai_trade_mysql_schema.sql` 是新数据库的完整基线；
-- `db/migration/` 是已有数据库的手工升级脚本，不会自动执行；
+- `db/schema/<module>/schema.sql` 按模块保存完整结构，应用启动时按 `spring.sql.init.schema-locations` 中的显式顺序执行；
+- `db/upgrade/<module>/` 是已有数据库的手工升级脚本，不会自动执行；跨模块历史补丁放在 `db/upgrade/legacy/`；
 - SQL 必须注明适用旧结构、前置条件、验证方式和不可逆操作；
 - 表结构、Mapper 接口、Row 类型和 XML 必须在同一变更中保持一致；
 - 合并前至少在隔离数据库验证，生产执行前必须备份。
 
-完整规则见 [数据库迁移说明](src/main/resources/db/migration/README.md)。
+### 主键约定
+
+- 所有业务表必须以单列 `id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY` 作为数据库主键，不使用 UUID、账号、会话或复合业务字段作为主键。
+- 业务标识使用独立字段并建立所需的单列或复合 `UNIQUE` 约束；保留已有业务关联、幂等、去重、UPSERT 和行锁语义。数据库主键不能替代交易所用户 ID、审核回调身份等外部标识。
+- 普通 INSERT 省略 `id`，不得用 `MAX(id)+1` 等应用计算替代数据库自增；需要返回生成值时通过 MyBatis 回填到数字主键对应的 Java `Long` 字段。初始化种子或旧数据迁移确需保留固定 ID 时允许显式写入。
+- 新表及主键变更必须同步完整 schema、适用的旧库升级脚本、Mapper/Row 和测试；`DatabaseSchemaInitializationTest` 校验全部启动表的单列主键、BIGINT 类型和自增属性，不得放宽断言来规避规范。
+- 空开发库可由启动 schema 重建；重启不会修改已有表结构。需要保留数据的数据库必须使用经过验证的升级脚本，不能以删表作为升级流程。
+
+模块索引和重建条件见 [数据库目录](src/main/resources/db/README.md)，升级依赖和使用规则见 [数据库升级说明](src/main/resources/db/upgrade/README.md)。
 
 ## 测试与质量门禁
 
@@ -83,13 +91,14 @@
 | 启动、停机、监控或故障处理 | `docs/OPERATIONS.md` |
 | 架构级取舍 | `docs/adr/` 新增 ADR，不覆盖历史决策 |
 | 新环境变量 | `.env.example` 和相关运维说明 |
-| 数据库升级 | 基线、迁移脚本和迁移 README |
+| 数据库升级 | 模块 schema、upgrade 脚本和升级 README；新增模块同步启动列表 |
 | 开发/测试命令变化 | 本文件、根 README、`AGENTS.md` |
 
 ## 评审清单
 
 - [ ] 变更放在正确业务域和层级；
 - [ ] API、数据库和配置兼容性已说明；
+- [ ] 新增或变更的业务表使用自增 BIGINT `id` 单列主键，业务唯一约束与关联语义保留；
 - [ ] 真实资金与外部副作用仍有明确门禁；
 - [ ] 幂等、并发、失败隔离、审计和停机行为已覆盖；
 - [ ] 测试覆盖成功、失败和边界路径；

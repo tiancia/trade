@@ -24,6 +24,7 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ConcurrentModificationException;
 import javax.sql.DataSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -38,16 +39,18 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
         "DROP TABLE IF EXISTS okx_position_state",
         "DROP TABLE IF EXISTS okx_fund_safety_state",
         "DROP TABLE IF EXISTS okx_orders",
-        "CREATE TABLE okx_orders (id BIGINT PRIMARY KEY)",
+        "CREATE TABLE okx_orders (id BIGINT AUTO_INCREMENT PRIMARY KEY)",
         "CREATE TABLE okx_position_state (" +
+                "id BIGINT AUTO_INCREMENT PRIMARY KEY," +
                 "account_scope VARCHAR(32) NOT NULL, inst_id VARCHAR(64) NOT NULL," +
                 "position_side VARCHAR(16) NOT NULL, quantity DECIMAL(38,18) NOT NULL," +
                 "average_cost DECIMAL(38,18) NOT NULL, exchange_quantity DECIMAL(38,18)," +
                 "last_reconciled_at TIMESTAMP, version BIGINT NOT NULL," +
                 "created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL," +
-                "PRIMARY KEY(account_scope, inst_id))",
+                "UNIQUE(account_scope, inst_id))",
         "CREATE TABLE okx_risk_state (" +
-                "account_scope VARCHAR(32) PRIMARY KEY, current_equity DECIMAL(38,18) NOT NULL," +
+                "id BIGINT AUTO_INCREMENT PRIMARY KEY," +
+                "account_scope VARCHAR(32) NOT NULL UNIQUE, current_equity DECIMAL(38,18) NOT NULL," +
                 "equity_high_watermark DECIMAL(38,18) NOT NULL, day_start_equity DECIMAL(38,18) NOT NULL," +
                 "day_start_date VARCHAR(16), consecutive_losses INT NOT NULL, loss_cooldown_until TIMESTAMP," +
                 "last_trade_time TIMESTAMP, consecutive_open_actions INT NOT NULL, last_risk_reason VARCHAR(1000)," +
@@ -55,12 +58,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
                 "last_reconciliation_error VARCHAR(1000), version BIGINT NOT NULL," +
                 "created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL)",
         "CREATE TABLE okx_fund_safety_state (" +
-                "account_scope VARCHAR(32) PRIMARY KEY, status VARCHAR(16) NOT NULL," +
+                "id BIGINT AUTO_INCREMENT PRIMARY KEY," +
+                "account_scope VARCHAR(32) NOT NULL UNIQUE, status VARCHAR(16) NOT NULL," +
                 "reason VARCHAR(1000), source VARCHAR(64), resume_reason VARCHAR(1000)," +
                 "last_action_error VARCHAR(1000), halted_at TIMESTAMP, resumed_at TIMESTAMP," +
                 "updated_at TIMESTAMP NOT NULL, version BIGINT NOT NULL)",
         "CREATE TABLE okx_order_fill_ledger (" +
-                "order_id BIGINT PRIMARY KEY, side VARCHAR(16) NOT NULL," +
+                "id BIGINT AUTO_INCREMENT PRIMARY KEY," +
+                "order_id BIGINT NOT NULL UNIQUE, side VARCHAR(16) NOT NULL," +
                 "cumulative_filled_size DECIMAL(38,18) NOT NULL," +
                 "applied_position_quantity DECIMAL(38,18) NOT NULL," +
                 "applied_quote_cost DECIMAL(38,18) NOT NULL," +
@@ -83,6 +88,10 @@ class MyBatisTradingFinancialStateStoreTest {
     @Test
     void positionCostRiskAndCumulativeFillAreDurableAndIdempotent() {
         store.getOrCreatePosition("paper", "BTC-USDT", new BigDecimal("0.1"), new BigDecimal("50000"));
+        Long paperPositionId = jdbcTemplate.queryForObject(
+                "SELECT id FROM okx_position_state WHERE account_scope = 'paper' AND inst_id = 'BTC-USDT'",
+                Long.class);
+        assertTrue(paperPositionId > 0);
         TradingPositionState paper = store.recordBuy(
                 "paper",
                 "BTC-USDT",
@@ -166,11 +175,25 @@ class MyBatisTradingFinancialStateStoreTest {
                 "SELECT COUNT(*) FROM okx_order_fill_ledger",
                 Integer.class
         ));
+        assertEquals(paperPositionId, jdbcTemplate.queryForObject(
+                "SELECT id FROM okx_position_state WHERE account_scope = 'paper' AND inst_id = 'BTC-USDT'",
+                Long.class));
+        assertTrue(jdbcTemplate.queryForObject(
+                "SELECT id FROM okx_position_state WHERE account_scope = 'live' AND inst_id = 'BTC-USDT'",
+                Long.class) > paperPositionId);
+        assertTrue(jdbcTemplate.queryForObject(
+                "SELECT id FROM okx_risk_state WHERE account_scope = 'paper'", Long.class) > 0);
+        assertEquals(1, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_risk_state", Integer.class));
+        assertTrue(jdbcTemplate.queryForObject(
+                "SELECT id FROM okx_order_fill_ledger WHERE order_id = 1", Long.class) > 0);
     }
 
     @Test
     void fundStopSurvivesReadsAndRequiresExpectedRevisionToResume() {
         var bootstrap = fundSafetyRepository.getOrCreate("live");
+        Long fundSafetyId = jdbcTemplate.queryForObject(
+                "SELECT id FROM okx_fund_safety_state WHERE account_scope = 'live'", Long.class);
+        assertTrue(fundSafetyId > 0);
         assertEquals(FundSafetyStatus.HALTED, bootstrap.getStatus());
         assertEquals("bootstrap", bootstrap.getSource());
         var active = fundSafetyRepository.resume(
@@ -184,10 +207,16 @@ class MyBatisTradingFinancialStateStoreTest {
         assertEquals(FundSafetyStatus.HALTED, halted.getStatus());
         assertEquals(2L, halted.getVersion());
         assertEquals(FundSafetyStatus.HALTED, fundSafetyRepository.getOrCreate("live").getStatus());
+        assertThrows(ConcurrentModificationException.class, () -> fundSafetyRepository.resume(
+                "live", bootstrap.getVersion(), "stale operator view", Instant.now()));
+        assertEquals(FundSafetyStatus.HALTED, fundSafetyRepository.getOrCreate("live").getStatus());
 
         var resumed = fundSafetyRepository.resume("live", halted.getVersion(), "operator checked", Instant.now());
         assertEquals(FundSafetyStatus.ACTIVE, resumed.getStatus());
         assertEquals(3L, resumed.getVersion());
+        assertEquals(fundSafetyId, jdbcTemplate.queryForObject(
+                "SELECT id FROM okx_fund_safety_state WHERE account_scope = 'live'", Long.class));
+        assertEquals(1, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_fund_safety_state", Integer.class));
     }
 
     @Test

@@ -1,6 +1,6 @@
 # Trade Backend
 
-基于 Spring Boot 4 和 Java 21 的后端服务，包含 OKX 策略交易、Polymarket AI 决策、AI 小说生成、文字游戏、二手集市、微博发布以及后台任务编排。
+基于 Spring Boot 4 和 Java 21 的后端服务，包含 OKX 策略交易、Polymarket AI 决策、AI 小说生成、文字游戏、二手集市、微博与 X 发布以及后台任务编排。
 
 如果是第一次接触项目，建议先看本页的模块导航，再进入 [项目文档导航](docs/README.md)。代码采用“业务域优先、域内分层”的模块化单体结构，不按 Controller、Service、Mapper 建立全局大目录。
 
@@ -36,10 +36,12 @@ cd backend
 | `textgame` | 剧情发布、会话推进和规则计算 | `TextGameController`、`TextGameAdminController` | `/api/text-game`；配置管理员令牌后才创建 `/admin` API |
 | `marketplace` | 用户认证、商品、会话聊天和 OSS 上传凭证 | 三个 `Marketplace*Controller` | `/api/marketplace` |
 | `weibo` | OAuth、热点 AI 草稿、审核状态与发布 | `WeiboController` | `/api/weibo`；管理员保护，[工作流说明](docs/WEIBO_WORKFLOW.md) |
-| `telegram` | 共享人工审核契约 | `HumanReviewGateway` | API 接入 TODO；不自动批准 |
-| `client` | AI、OKX、Polymarket、微博等外部传输适配 | `AiClientConfiguration`、各 provider client | 由业务模块调用 |
+| `x` | 配置方向与长度的 AI 草稿、Telegram 审核和发布 | `XPostService`、`XPostController` | `/api/x/posts`；任务 ID `x`，[工作流说明](docs/X_WORKFLOW.md) |
+| `client` | AI、OKX、Polymarket、微博、Telegram 等外部传输适配 | `AiClientConfiguration`、各 provider client | 由业务模块调用 |
 | `ai` | 跨业务的 AI 解析失败审计契约与持久化 | `AiResponseParseErrorSink` | 内部能力 |
 | `common` | 无业务归属的纯工具 | `TradingMath` | 内部能力 |
+
+Telegram 协议与共享客户端装配位于 `client/telegram`，微博与 X 各自负责草稿投递、按钮审核和发布；复用同一机器人时必须先停用微博审核。配置及启动见 [微博工作流](docs/WEIBO_WORKFLOW.md)、[X 工作流](docs/X_WORKFLOW.md)，协议使用见 [Telegram Bot API](docs/TELEGRAM_API.md)。
 
 交易行情由 REST/WebSocket 生产者发布到模块级有界事件队列，再由独立消费者持久化；生产线程不直接访问数据库。LIVE 订单由后台对账循环持续收敛，订单状态、累计成交、仓位/成本、风险和资金停止状态以 MySQL 为权威。多实例部署可启用数据库领导租约，保证同一 OKX 账户只有一个实例执行决策、对账和真实下单。运行状态可通过 `GET /api/trading/runtime/events` 和 `GET /api/trading/runtime/status` 查看。驾驶舱通过 `GET /api/trading/market/candles` 读取 K 线快照，并通过 `/api/trading/market/candles/stream` 的 SSE 流接收增量；`PUT /api/trading/strategies/active` 会以乐观版本号持久化切换当前策略。回测的请求、成交和指标口径见 [Trading 回测说明](docs/TRADING_BACKTEST.md)。
 
@@ -66,12 +68,14 @@ backend/
 │  ├─ textgame/                # 文字游戏域
 │  ├─ marketplace/             # 二手集市域
 │  ├─ weibo/                   # 微博域
+│  ├─ x/                       # X AI 草稿与审核发布域
 │  ├─ client/                  # 外部系统传输适配
 │  ├─ ai/                      # 共享 AI 基础能力
 │  └─ common/                  # 业务无关的共享代码
 ├─ src/main/resources/
 │  ├─ application.yml          # 运行配置与安全默认值
-│  ├─ db/                      # 新库基线和手工迁移脚本
+│  ├─ db/schema/<module>/      # 按模块保存的完整建表结构
+│  ├─ db/upgrade/<module>/     # 按模块保存的手工升级脚本
 │  ├─ mapper/<domain>/         # 按所属业务域分组的 MyBatis XML
 │  └─ textgame/stories/        # 内置剧情资源
 └─ src/test/java/com/trade/    # 与生产包路径镜像的测试
@@ -101,9 +105,11 @@ backend/
 
 ## 数据库
 
-应用启动时会执行 `db/ai_trade_mysql_schema.sql`。该文件使用 `CREATE TABLE IF NOT EXISTS`，适合初始化新库，但不会自动把已有表升级到最新字段结构。
+SQL 按业务模块分目录：`db/schema/<module>/schema.sql` 保存完整结构，`db/upgrade/<module>/` 保存旧数据库的升级补丁。模块索引见 [数据库目录](src/main/resources/db/README.md)。
 
-`db/migration/` 下的脚本是手工迁移，不使用 Flyway 或 Liquibase，也不会被 Spring 自动执行。升级已有数据库前请先备份，再根据当前表结构选择脚本；具体约定见 [迁移说明](src/main/resources/db/migration/README.md)。
+应用启动时按 `spring.sql.init.schema-locations` 中的显式顺序执行各模块 schema。`CREATE TABLE IF NOT EXISTS` 会创建缺失的表，但不会给已有表补字段或修改索引。
+
+`db/upgrade/` 下的脚本需要手工执行，项目不使用 Flyway 或 Liquibase。升级已有数据库前请先备份，再根据当前表结构选择脚本；具体约定见 [升级说明](src/main/resources/db/upgrade/README.md)。
 
 ## 测试
 

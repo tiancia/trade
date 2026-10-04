@@ -12,7 +12,8 @@
  *
  * <p>Reviewed posting uses the immutable domain post aggregate, application ports,
  * RSS/Atom and MyBatis adapters. AI prompt/validation belong to application.decision;
- * shared human review is provided by telegram (transport TODO, never auto-approves).
+ * draft-review contracts, durable deliveries/cursors and authenticated Telegram adapters belong to this domain.
+ * Telegram protocol lives in com.trade.client.telegram; config binds its transport settings.
  * Scheduler lifecycle is registered by automation; real publishing defaults off.</p>
  */
 package com.trade.weibo;

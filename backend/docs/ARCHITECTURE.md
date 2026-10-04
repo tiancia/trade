@@ -4,9 +4,9 @@
 
 ## 1. 先定位业务域，再定位层和能力
 
-业务域包括 `trading`、`polymarket`、`story`、`textgame`、`marketplace`、`weibo`。它们保留同一个 Spring Boot 进程、Maven 构建和数据库连接；没有拆成微服务或多个 Maven module。
+业务域包括 `trading`、`polymarket`、`story`、`textgame`、`marketplace`、`weibo`、`x`。它们保留同一个 Spring Boot 进程、Maven 构建和数据库连接；没有拆成微服务或多个 Maven module。
 
-业务域、`automation` 和共享能力模块 `ai`、`telegram` 只使用以下四种一级目录，按需创建：
+业务域、`automation` 和共享能力模块 `ai` 只使用以下四种一级目录，按需创建：
 
 ```text
 <module>/
@@ -28,7 +28,7 @@
    └─ config/             # 配置绑定、Bean 装配
 ```
 
-`client` 已是按供应商组织的共享传输模块，继续使用 `client/okx`、`client/weibo`、`client/ai` 等目录；`common/support` 只容纳无业务归属的纯函数，不强行给这两个技术模块套四层空目录。
+`client` 是按外部服务或能力组织的共享传输模块，使用 `client/okx`、`client/weibo`、`client/polymarket`、`client/telegram`、`client/ai` 等目录。AI provider 选择位于 `client/ai/config`，Gemini 协议及 DTO 位于 `client/ai/gemini`；`common/support` 只容纳无业务归属的纯函数，不强行给这两个技术模块套四层空目录。
 
 ## 2. 依赖方向与现有边界
 
@@ -39,11 +39,11 @@ interfaces -> application -> domain
              application.port <- infrastructure implementation
 
 automation -> 各业务域的 scheduler / lifecycle 入口
-业务域 -> client / ai / telegram / common
+业务域 -> client / ai / common
 ```
 
 - 业务域之间不得直接 import，跨域生命周期由 `automation` 编排。
-- `client`、`ai`、`telegram`、`common` 不得反向依赖业务域或 `automation`。
+- `client`、`ai`、`common` 不得反向依赖业务域或 `automation`。
 - `domain` 不依赖 `application`、`interfaces`、`infrastructure`。不依赖供应商 client；架构测试不再保留 provider DTO 豁免。
 - `application/port` 不依赖接口入口或基础设施实现。Broker、订单存储、资金状态、行情缓存和审计等现有接口放在这里。
 - 非接口层不得反向依赖本域 HTTP 或定时入口。`automation` 登记各域 scheduler 是跨域编排的明确职责。
@@ -106,7 +106,7 @@ automation -> 各业务域的 scheduler / lifecycle 入口
 | 技术事件契约与信封 | `application/event`、`application/port` | `TradingEvent`、`TradingEventPublisher` |
 | 队列与事件处理器 | `infrastructure/event` | `BoundedTradingEventBus` |
 | Prompt、协议解析与格式校验 | `application/decision` | `AiStoryResponseParser` |
-| 供应商 HTTP/WS、签名、协议 DTO | `client/<provider>` | `client/okx` |
+| 供应商 HTTP/WS、签名、协议 DTO | `client/<provider>`，AI 实现归 `client/ai` | `client/okx`、`client/ai/gemini` |
 
 不创建全局 `enums`、`dto`、`service` 或 `utils`。纯数据按业务归属放置，而不是只按 Java 语法分类。`MarketplaceViews` 是依赖 Row 的包级转换助手，留在 `application/service`；HTTP 专用鉴权异常可以留在 `interfaces/web`。
 
@@ -169,31 +169,42 @@ REST / WebSocket producers
 ## 5. Weibo 分层示例
 
 热点审核工作流沿用相同四层：不可变 `WeiboPost` 聚合管理规则，应用服务通过 port 编排
-RSS/Atom、AI、MyBatis 和发布。共享 `telegram` 与 `ai` 使用四层且禁止反向依赖业务域，
-只定义通用审核请求/决策与投递，不拥有微博状态。参见 [ADR-0003](adr/0003-shared-human-review-capability.md)
-和 [微博工作流](WEIBO_WORKFLOW.md)。
+RSS/Atom、AI、MyBatis 和发布。审核请求与决策归 `weibo/domain/model`，投递契约归
+`weibo/application/port`，Telegram 审核及关闭时的占位实现在 `weibo/infrastructure/review`。
+[ADR-0003](adr/0003-shared-human-review-capability.md) 记录历史上的共享审核布局，与当前目录不同；
+当前工作流见 [微博工作流](WEIBO_WORKFLOW.md)。
 
 ```text
 weibo/
 ├─ interfaces/web/           # WeiboController、HTTP 专用鉴权异常
 ├─ application/
 │  ├─ service/               # OAuth、账号查询、发布用例
-│  └─ port/                  # token 与 OAuth state 存储接口
+│  └─ port/                  # token、OAuth state、草稿存储与审核投递接口
 ├─ domain/
-│  ├─ model/                 # 账号、令牌、授权结果
+│  ├─ model/                 # 账号、令牌、授权结果、草稿与审核类型
 │  └─ exception/             # 授权与发布失败
 └─ infrastructure/
    ├─ persistence/           # MyBatis 实现、Mapper、Row
+   ├─ review/                # Telegram 投递/认证轮询，关闭时 submit 返回 false
    └─ config/                # 客户端 Bean 装配
 ```
 
-供应商协议仍位于 `client/weibo`。共享 AI provider 的选择仍位于 `client/config/AiClientConfiguration`；OKX Bean 在 `trading/infrastructure/config/OkxClientConfiguration` 装配。
+供应商协议仍位于 `client/weibo`。共享 AI provider 的选择位于 `client/ai/config/AiClientConfiguration`；OKX Bean 在 `trading/infrastructure/config/OkxClientConfiguration` 装配。
+
+Telegram Bot API 协议与 DTO 位于 `client/telegram`，共享的 `TelegramClientConfiguration` 绑定属性并装配 `TelegramApi`。
+审核适配器验证用户、聊天、bot 和消息，再把持久化的 `ReviewDecision` 交给应用用例；游标推进在业务提交之后。
+微博与 X 分别拥有自身审核投递与轮询数据，未新增顶层 `telegram` 模块；开关默认关闭，注册 Bean 不会调用 API 或启动任务。
+
+X 的 `application/service/XPostService` 编排配置驱动的 AI 草稿、Telegram 审核与发布。
+内容规则快照、状态及版本在 `domain/model`，Prompt、解析和官方加权字数校验在
+`application/decision`；`infrastructure` 实现持久化、审核与发布适配，OAuth 签名归 `client/x`。
+`automation` 负责跨域 Bot 消费者互斥检查，禁止微博与 X 审核同时启用。详细配置见 [X 工作流](X_WORKFLOW.md)。
 
 ## 6. 验证与资源约定
 
 - 生产代码和测试包路径镜像，移动类型必须同步移动测试并运行 `clean test`。
 - MyBatis XML 保留 `src/main/resources/mapper/<module>/`，同步更新 namespace/resultType/parameterType。数据库表和手工迁移脚本不因搬包而改变。
-- `application.yml` 的配置键、默认开关保持不变；新库基线仍是 `db/ai_trade_mysql_schema.sql`，存量升级仍使用手工 `db/migration/`。
+- 数据库完整结构按模块保存于 `db/schema/<module>/schema.sql`，`application.yml` 的 `spring.sql.init.schema-locations` 显式列出启动顺序；存量升级使用手工 `db/upgrade/<module>/`。SQL 目录调整不改变表结构、业务配置键或默认开关，详见 [数据库目录](../src/main/resources/db/README.md)。
 - `PackageArchitectureTest` 检查包与路径、四层入口、业务域隔离、共享模块依赖方向、Web 不引用持久化、内层不依赖接口入口、port 不依赖实现、领域类型不依赖外层，以及 Mapper XML 中类名可解析。
 - domain 不允许引用 provider DTO；应用层采集与执行契约可以保留供应商协议，在调用纯规则前转换。结构规则不得通过放宽限制来掩盖错误归层。
 - 新增边界检查禁止 domain 引入 Spring/MyBatis/SQL 框架，禁止 Trading 的 application/interfaces 直接依赖已抽象的四类状态/行情/事件实现。

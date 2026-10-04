@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.x.infrastructure.persistence.XPostMapper">
+    <resultMap id="post" type="com.trade.x.infrastructure.persistence.XPostRow">
+        <id column="post_key" property="id"/>
+        <result column="target_user_id" property="targetUserId"/>
+        <result column="generation_key" property="generationKey"/>
+        <result column="content_policy_json" property="contentPolicyJson"/>
+        <result column="body" property="body"/>
+        <result column="review_note" property="reviewNote"/>
+        <result column="content_version" property="contentVersion"/>
+        <result column="revision" property="revision"/>
+        <result column="status" property="status"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+        <result column="expires_at" property="expiresAt"/>
+        <result column="reviewer" property="reviewer"/>
+        <result column="reviewed_at" property="reviewedAt"/>
+        <result column="review_reason" property="reviewReason"/>
+        <result column="attempt_id" property="attemptId"/>
+        <result column="publish_started_at" property="publishStartedAt"/>
+        <result column="external_post_id" property="postId"/>
+        <result column="last_error" property="lastError"/>
+    </resultMap>
+    <insert id="ensureAccountGate">INSERT IGNORE INTO x_account_gate (user_id) VALUES (#{userId})</insert>
+    <select id="lockAccountGate" resultType="string">
+        SELECT user_id FROM x_account_gate WHERE user_id = #{userId} FOR UPDATE
+    </select>
+    <select id="countGenerated" resultType="int">
+        SELECT COUNT(*) FROM x_post WHERE target_user_id = #{userId} AND created_at &gt;= #{since}
+    </select>
+    <select id="countAttempts" resultType="int">
+        SELECT COUNT(*) FROM x_publish_attempt WHERE target_user_id = #{userId} AND started_at &gt;= #{since}
+    </select>
+    <select id="lastAttempt" resultType="java.sql.Timestamp">
+        SELECT MAX(started_at) FROM x_publish_attempt WHERE target_user_id = #{userId}
+    </select>
+    <select id="findByGenerationKey" resultMap="post">
+        SELECT * FROM x_post WHERE target_user_id = #{userId} AND generation_key = #{generationKey}
+    </select>
+    <insert id="insert">
+        INSERT INTO x_post (post_key, target_user_id, generation_key, content_policy_json, body, review_note, content_version,
+            revision, status, created_at, updated_at, expires_at)
+        VALUES (#{id}, #{targetUserId}, #{generationKey}, #{contentPolicyJson}, #{body}, #{reviewNote}, #{contentVersion},
+            #{revision}, #{status}, #{createdAt}, #{updatedAt}, #{expiresAt})
+    </insert>
+    <select id="find" resultMap="post">SELECT * FROM x_post WHERE post_key = #{id}</select>
+    <select id="recent" resultMap="post">
+        SELECT * FROM x_post ORDER BY created_at DESC, post_key LIMIT #{limit}
+    </select>
+    <select id="actionable" resultMap="post">
+        SELECT * FROM x_post WHERE status IN ('GENERATING','PENDING_REVIEW','APPROVED','PUBLISHING')
+        ORDER BY CASE status WHEN 'PUBLISHING' THEN 0 WHEN 'GENERATING' THEN 1 WHEN 'APPROVED' THEN 2 ELSE 3 END,
+            updated_at, post_key LIMIT #{limit}
+    </select>
+    <update id="update">
+        UPDATE x_post SET body = #{row.body}, review_note = #{row.reviewNote},
+            content_version = #{row.contentVersion}, revision = #{row.revision}, status = #{row.status},
+            updated_at = #{row.updatedAt}, reviewer = #{row.reviewer}, reviewed_at = #{row.reviewedAt},
+            review_reason = #{row.reviewReason}, attempt_id = #{row.attemptId},
+            publish_started_at = #{row.publishStartedAt}, external_post_id = #{row.postId}, last_error = #{row.lastError}
+        WHERE post_key = #{row.id} AND revision = #{expectedRevision}
+    </update>
+    <insert id="insertHistory">
+        INSERT INTO x_post_history (post_key, revision, content_version, status, body, reviewer, review_reason,
+            attempt_id, external_post_id, last_error, updated_at)
+        VALUES (#{id}, #{revision}, #{contentVersion}, #{status}, #{body}, #{reviewer}, #{reviewReason},
+            #{attemptId}, #{postId}, #{lastError}, #{updatedAt})
+    </insert>
+    <select id="history" resultMap="post">
+        SELECT * FROM x_post_history WHERE post_key = #{id} ORDER BY revision DESC LIMIT 100
+    </select>
+    <insert id="insertAttempt">
+        INSERT INTO x_publish_attempt (attempt_id, post_id, target_user_id, content_version, status, started_at)
+        VALUES (#{attemptId}, #{id}, #{targetUserId}, #{contentVersion}, #{status}, #{publishStartedAt})
+    </insert>
+    <update id="finishAttempt">
+        UPDATE x_publish_attempt SET status = #{status}, external_post_id = #{postId}, last_error = #{lastError},
+            completed_at = #{updatedAt} WHERE attempt_id = #{attemptId} AND status = 'PUBLISHING'
+    </update>
+</mapper>

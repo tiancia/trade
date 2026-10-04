@@ -1,9 +1,9 @@
 package com.trade.weibo.application.service;
 
 import com.trade.client.weibo.WeiboHttpException;
-import com.trade.telegram.application.port.HumanReviewGateway;
-import com.trade.telegram.domain.model.ReviewDecision;
-import com.trade.telegram.domain.model.ReviewRequest;
+import com.trade.weibo.application.port.HumanReviewGateway;
+import com.trade.weibo.domain.model.ReviewDecision;
+import com.trade.weibo.domain.model.ReviewRequest;
 import com.trade.weibo.application.port.HotEventSource;
 import com.trade.weibo.application.port.WeiboDraftGenerator;
 import com.trade.weibo.application.port.WeiboPostPublisher;
@@ -99,22 +99,71 @@ public class WeiboPostService {
         return changed;
     }
 
-    /** Internal use case; no HTTP approval shortcut. Future Telegram adapter calls after authentication. */
+    /** Internal use case; Telegram decisions reach this only after reviewer/message authentication. */
     public WeiboPost applyReview(ReviewDecision decision) {
         policy.requireEnabled();
         if (!"weibo".equals(decision.module())) throw new IllegalArgumentException("Review belongs to another module");
         WeiboPost current = get(decision.reference());
         // Exact duplicate callbacks are harmless, conflicting callbacks remain rejected.
-        if ((current.status() == WeiboPostStatus.APPROVED || current.status() == WeiboPostStatus.REJECTED)
-                && current.contentVersion() == decision.version()
-                && current.reviewer().equals(decision.reviewer())
-                && Objects.equals(current.reviewReason(), decision.reason())
-                && current.reviewedAt().equals(decision.decidedAt())
-                && (current.status() == WeiboPostStatus.APPROVED) == decision.approved()) return current;
+        if (matchesReview(current, decision)) return current;
         WeiboPost reviewed = current.review(decision.version(), decision.approved(), decision.reviewer(),
                 decision.reason(), decision.decidedAt(), Instant.now(clock));
         requireSaved(posts.save(reviewed, current.revision()));
         return reviewed;
+    }
+
+    public void runReviews() {
+        if (!policy.enabled()) return;
+        boolean[] approved = {false};
+        reviews.poll(decision -> {
+            boolean applied = consumeReview(decision);
+            if (applied && decision.approved()) approved[0] = true;
+            return applied;
+        });
+        if (approved[0]) runPublishing();
+    }
+
+    private boolean consumeReview(ReviewDecision decision) {
+        policy.requireEnabled();
+        if (!"weibo".equals(decision.module())) return false;
+        WeiboPost current = posts.find(decision.reference()).orElse(null);
+        if (current != null && !policy.targetUid().equals(current.targetUid())) return false;
+        if (matchesReview(current, decision)) return true;
+        if (!canReview(current, decision)) return false;
+        try {
+            applyReview(decision);
+            return true;
+        } catch (IllegalStateException conflict) {
+            // A concurrent edit/expiry is final; a still eligible CAS failure must be retried.
+            WeiboPost latest = posts.find(decision.reference()).orElse(null);
+            if (matchesReview(latest, decision)) return true;
+            if (!canReview(latest, decision)) return false;
+            throw conflict;
+        }
+    }
+
+    private boolean canReview(WeiboPost post, ReviewDecision decision) {
+        Instant now = Instant.now(clock);
+        return post != null && post.status() == WeiboPostStatus.PENDING_REVIEW
+                && policy.targetUid().equals(post.targetUid())
+                && post.contentVersion() == decision.version() && post.live(now)
+                && !decision.decidedAt().isBefore(post.updatedAt())
+                && !decision.decidedAt().isAfter(now.plusSeconds(30));
+    }
+
+    private static boolean matchesReview(WeiboPost post, ReviewDecision decision) {
+        if (post == null || post.reviewer() == null || post.reviewedAt() == null
+                || post.contentVersion() != decision.version()
+                || !post.reviewer().equals(decision.reviewer())
+                || !Objects.equals(post.reviewReason(), decision.reason())
+                || !post.reviewedAt().equals(decision.decidedAt())) return false;
+        return switch (post.status()) {
+            case APPROVED, PUBLISHING, PUBLISHED, FAILED, UNKNOWN -> decision.approved();
+            case REJECTED -> !decision.approved();
+            // Only an approved post retains an audit when the publishing loop expires it.
+            case EXPIRED -> decision.approved();
+            default -> false;
+        };
     }
 
     public void runPublishing() {
@@ -176,7 +225,8 @@ public class WeiboPostService {
     }
 
     private void submitReview(WeiboPost post) {
-        if (post.status() != WeiboPostStatus.PENDING_REVIEW || !post.live(Instant.now(clock))) return;
+        if (post.status() != WeiboPostStatus.PENDING_REVIEW || !policy.targetUid().equals(post.targetUid())
+                || !post.live(Instant.now(clock))) return;
         try {
             reviews.submit(new ReviewRequest("weibo", post.id(), post.contentVersion(), post.body(),
                     "目标账号：" + post.targetUid() + "\n事件：" + post.event().title()

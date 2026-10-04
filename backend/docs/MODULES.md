@@ -12,9 +12,9 @@
 | `story` | 业务域 | `AiStoryScheduler`、`AiStoryService` | `trade.story.*`；配置目录下的生成文件 |
 | `textgame` | 业务域 | `TextGameController`、`TextGameAdminController` | `trade.text-game.*`；故事、版本、会话和事件表 |
 | `marketplace` | 业务域 | `Marketplace*Controller`、`Marketplace*Service` | `trade.marketplace.*`；用户、商品、会话和消息表 |
-| `weibo` | 业务域 | `WeiboController`、`WeiboPostService`、`WeiboScheduler` | `trade.weibo.*`；OAuth、草稿、历史、发布尝试和账号配额锁 |
-| `telegram` | 共享审核能力 | `HumanReviewGateway` | 通用审核请求/决策；传输 TODO，默认不可用 |
-| `client` | 共享出站适配 | `AiClientConfiguration`、各 provider client | `trade.ai.client`、`trade.gemini`、`trade.okx` 等；不拥有业务数据 |
+| `weibo` | 业务域 | `WeiboController`、`WeiboPostService`、`WeiboScheduler` | `trade.weibo.*`；OAuth、草稿、审核投递/轮询、历史、发布尝试和账号配额锁 |
+| `x` | 业务域 | `XPostController`、`XPostService`、`XScheduler` | `trade.x.*`；冻结内容规则、草稿、审核、历史、尝试和账号配额锁 |
+| `client` | 共享出站适配 | `AiClientConfiguration`、各 provider client | `trade.ai.client`、`trade.gemini`、`trade.okx`、`trade.telegram` 等；不拥有业务数据 |
 | `ai` | 共享基础能力 | `AiResponseParseErrorSink` | AI 解析失败审计表 |
 | `common` | 共享纯代码 | `TradingMath` | 无配置、无 I/O、无 Spring 生命周期 |
 
@@ -26,7 +26,7 @@
 
 ### automation
 
-`AutomationTaskRegistrar` 把 trading、polymarket、story、weibo 的循环定义登记到 `AutomationTaskManager`。登记不等于运行：只有应用就绪后的 `auto-start` 或 `/api/automation/tasks/{taskId}/start` 才会调用 `start()`。
+`AutomationTaskRegistrar` 把 trading、polymarket、story、weibo、x 的循环定义登记到 `AutomationTaskManager`。登记不等于运行：只有应用就绪后的 `auto-start` 或 `/api/automation/tasks/{taskId}/start` 才会调用 `start()`。
 
 两者位于 `automation/application/task`；HTTP 入口在 `interfaces/web`，任务定义和快照在 `domain/model`，调度器装配在 `infrastructure/config`。
 
@@ -123,24 +123,37 @@ Weibo 是 application port 模式的参考实现：`application/service` 依赖 
 
 热点评论由 `WeiboPostService` 编排；`domain/model/WeiboPost` 管理正文版本、审核和发布状态。
 RSS/Atom 源在 `infrastructure/trend`，AI Prompt 在 `application/decision`，存储经 application port。
-审核依赖共享 `telegram/application/port/HumanReviewGateway`，当前不可用占位不会批准。
-任务包含生成与发布循环；配置默认关闭。详见 [微博工作流](WEIBO_WORKFLOW.md)。
+审核契约位于 `weibo/application/port/HumanReviewGateway`，请求与决策位于 `weibo/domain/model`。
+`infrastructure/review/TelegramHumanReviewGateway` 发送按钮并认证轮询回调，投递去重、决定、游标和租约由 MyBatis 持久化；
+未启用时使用 `UnavailableHumanReviewGateway`，不会批准。任务包含生成、审核与发布循环；配置默认关闭。
+详见 [微博工作流](WEIBO_WORKFLOW.md)。
 
-### telegram
+### x
 
-共享通用审核能力，不拥有业务草稿，不依赖微博等业务域。请求/决策在 `domain/model`，
-投递契约在 `application/port`，占位实现在 `infrastructure/review`。未来入站回调经编排边界
-路由到业务用例，不在共享模块 import 业务域。没有接入 API，没有 Token 配置，没有自动批准。
+`XPostService` 按配置方向、语言、语气与字数范围生成原创文本草稿，保存规则快照，
+经 `TelegramXReviewGateway` 认证审核后调用 `XApiPostPublisher` 发布。
+`client/x` 负责 OAuth 1.0a 协议；业务状态、审计与六张表归 `x`。
+普通帖子的官方加权字数由 `application/decision/XPostTextValidator` 校验，详情见 [X 工作流](X_WORKFLOW.md)。
+
+### client
+
+共享出站传输按外部服务或能力分为 `ai`、`okx`、`polymarket`、`weibo`、`telegram`、`x`。`client/ai` 保留统一的 `AiTextClient` 契约和 OpenAI 兼容实现；`client/ai/config/AiClientConfiguration` 负责 AI provider 选择，`client/ai/gemini` 包含 Gemini 客户端、配置属性和协议 DTO。`trade.ai.client`、`trade.gemini` 配置前缀保持不变。
+
+`client/ai` 负责外部 AI 调用，顶层 `ai` 模块负责共享解析失败审计；各业务域继续拥有自己的 Prompt、解析和业务校验。
+
+`client/telegram` 封装 Bot API 协议、DTO 与客户端装配，提供身份查询、文本/内联按钮发送、获取更新和回调应答。
+`TelegramClientConfiguration` 绑定 `trade.telegram` 并装配共享 `TelegramApi`；微博与 X 各自拥有审核投递和认证。
+属性默认关闭，创建客户端不访问 API。使用说明见 [Telegram Bot API](TELEGRAM_API.md)。
 
 ## Resources 所有权
 
 | 路径 | 所有者 / 用途 |
 | --- | --- |
 | `application.yml` | 全局组合点；配置类仍归各自模块 |
-| `db/ai_trade_mysql_schema.sql` | 所有数据库模块的新库完整基线 |
-| `db/migration/` | 存量数据库手工升级记录 |
+| `db/schema/<module>/schema.sql` | 所属模块的完整结构；启动按显式配置列表执行 |
+| `db/upgrade/<module>/` | 所属模块的存量数据库手工升级补丁；跨模块历史补丁归 `legacy/` |
 | `mapper/<domain>/` | 对应业务域的 MyBatis XML |
 | `textgame/stories/` | textgame 内置故事定义 |
 | `data/trading-state.example.json` | trading 非资金策略记忆格式示例；仓位/成本/风险不在此保存 |
 
-模块入口、配置前缀或资源所有权变化时，必须同步更新本页、对应 `package-info.java` 和架构测试。
+数据库模块索引和启动、升级边界见 [数据库目录](../src/main/resources/db/README.md)。模块入口、配置前缀或资源所有权变化时，必须同步更新本页、对应 `package-info.java` 和架构测试。
