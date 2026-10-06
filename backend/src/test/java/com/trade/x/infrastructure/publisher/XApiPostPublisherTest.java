@@ -56,6 +56,15 @@ class XApiPostPublisherTest {
         assertThrows(XPublishingException.class, () -> publisher.publish(claimed));
         verify(api, never()).publishText(anyString());
     }
+    @Test void preflightHttpFailureRetainsSafeStatusAndNeverCreatesPost() {
+        when(api.getMe()).thenThrow(new XApiException(402));
+        XPublishingException failure = assertThrows(XPublishingException.class, () -> publisher.publish(claimed));
+        assertEquals(Integer.valueOf(402), failure.statusCode());
+        assertEquals("X account preflight request failed before send", failure.getMessage());
+        verify(api, never()).publishText(anyString());
+        assertThrows(IllegalArgumentException.class, () -> new XPublishingException("status", 99));
+        assertThrows(IllegalArgumentException.class, () -> new XPublishingException("status", 600));
+    }
     @Test void expiryDuringAccountCheckStopsPost() {
         when(api.getMe()).thenAnswer(invocation -> { time.set(claimed.expiresAt()); return new XUser("123", "test", "test"); });
         assertThrows(XPublishingException.class, () -> publisher.publish(claimed));
@@ -63,9 +72,16 @@ class XApiPostPublisherTest {
     }
     @Test void missingCredentialsAndLiveGateFailClosed() {
         client.setAccessTokenSecret(""); assertFalse(publisher.credentialsAvailable("123"));
+        assertEquals("X OAuth credentials are missing", publisher.unavailableReason("123"));
         assertThrows(XPublishingException.class, () -> publisher.publish(claimed));
         client.setAccessTokenSecret("fake"); settings.setLivePublishingEnabled(false);
-        assertThrows(XPublishingException.class, () -> publisher.publish(claimed)); verifyNoInteractions(api);
+        assertEquals("X live publishing is disabled", publisher.unavailableReason("123"));
+        assertThrows(XPublishingException.class, () -> publisher.publish(claimed));
+        settings.setLivePublishingEnabled(true); client.setEnabled(false);
+        assertEquals("X API client is disabled", publisher.unavailableReason("123"));
+        assertFalse(publisher.credentialsAvailable("123"));
+        assertThrows(XPublishingException.class, () -> publisher.publish(claimed));
+        verifyNoInteractions(api);
     }
     @Test void pendingOrUnclaimedApprovalCannotBypassReview() {
         assertThrows(XPublishingException.class, () -> publisher.publish(pending));

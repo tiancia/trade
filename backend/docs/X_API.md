@@ -15,6 +15,8 @@
 
 `XClientProperties` 的绑定前缀为 `trade.x.client`：
 
+下表是属性类默认值；仓库 `application.yml` 当前把 client.enabled 的回退值设为 true，实际开关还受部署环境覆盖。业务 workflow publishing 回退值为 false，不能仅凭客户端启用推断会发帖。
+
 | 属性 | 默认值 |
 | --- | --- |
 | `enabled` | `false` |
@@ -48,5 +50,9 @@ XPost published = api.publishText("已审核的正文");
 签名采用 OAuth 1.0a HMAC-SHA1，按 [X 官方签名说明](https://docs.x.com/fundamentals/authentication/oauth-1-0a/creating-a-signature) 与 [RFC 5849](https://www.rfc-editor.org/rfc/rfc5849) 百分编码、排序并签名。每次请求使用新的 nonce 与当前秒时间戳；URL query 参数参与规范化，基础 URI 去除 query/fragment；JSON 正文不作为表单参数参与签名。
 
 客户端禁用重定向，不自动重试。HTTP 失败抛 `XApiException`，仅提供 `statusCode()`；解析、I/O 与中断异常使用固定文案，不保留原始响应、Authorization 或底层异常链。中断恢复线程标记。发送超时可能已经成功发帖，业务流程应保留不确定状态并人工核对，不能直接重发。
+
+业务发布器将 `GET /2/users/me` 的 HTTP 失败保留为 `FAILED` 与 `preflight HTTP <状态>`，可确认创建帖子请求尚未发送；`POST /2/tweets` 的明确 4xx（除 408）为 `FAILED`，其余不确定结果为 `UNKNOWN`。日志和记录只保留阶段、状态和固定文案，单凭状态码不能证明余额不足。
+
+按 2026-10-06 核实的 [官方计费文档](https://docs.x.com/x-api/getting-started/pricing)，X API 使用预付 credits 按使用量扣费；余额耗尽或达到 spending limit 都可能阻断 API。账号查询也可能产生读取费用。价格和可用余额以开发者控制台为准；购买 AI 服务额度不代表 X API 有余额。
 
 离线测试使用 fake sender，覆盖公开签名向量、GET/POST、JSON 正文、nonce、属性门禁、异常脱敏和代理，不读真实凭据、不调用 X。实际账号权限、网络、额度和发布仍需独立联调。

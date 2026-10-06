@@ -95,8 +95,8 @@ class XWorkflowIntegrationTest {
 
     @Test
     void configuredAiDraftRequiresBoundHumanApprovalAndPublishesExactlyOnceAcrossServiceRecreation() throws Exception {
-        String body = "A clear system starts with one safe step 🌱.\nKeep the full reviewed wording.";
-        String direction = "Practical engineering tradeoffs";
+        String body = "A small check-in can change a date.\n\n1. What feels comfortable?\n2. What would you rather skip?";
+        String direction = "Desire, intimacy and communication for consenting adults";
         XWorkflowProperties workflow = new XWorkflowProperties();
         workflow.setEnabled(true);
         workflow.setGenerationEnabled(true);

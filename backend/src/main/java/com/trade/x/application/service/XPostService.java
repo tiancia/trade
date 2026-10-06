@@ -180,25 +180,46 @@ public class XPostService {
         }
         if (snapshot.status() == XPostStatus.PUBLISHING) {
             if (!snapshot.publishStartedAt().plus(policy.claimTimeout()).isAfter(now)) {
-                posts.finishPublishing(snapshot.finish(XPostStatus.UNKNOWN, null,
-                        "Publishing interrupted; verify on X before taking further action", now), snapshot.revision());
+                XPost interrupted = snapshot.finish(XPostStatus.UNKNOWN, null,
+                        "Publishing interrupted; verify on X before taking further action", now);
+                if (posts.finishPublishing(interrupted, snapshot.revision())) logPublishingFailure(interrupted);
             }
             return;
         }
         if (!snapshot.live(now)) { posts.save(snapshot.expire(now), snapshot.revision()); return; }
         if (snapshot.status() == XPostStatus.PENDING_REVIEW) { submitReview(snapshot); return; }
-        if (!policy.publishingEnabled() || !policy.targetUserId().equals(snapshot.targetUserId())
-                || !publisher.credentialsAvailable(snapshot.targetUserId())) return;
+        if (!policy.publishingEnabled()) {
+            recordWaiting(snapshot, "Waiting to publish: X workflow publishing is disabled", now);
+            return;
+        }
+        if (!policy.targetUserId().equals(snapshot.targetUserId())) {
+            recordWaiting(snapshot, "Waiting to publish: X target account differs from this draft", now);
+            return;
+        }
+        if (!publisher.credentialsAvailable(snapshot.targetUserId())) {
+            String reason = publisher.unavailableReason(snapshot.targetUserId());
+            recordWaiting(snapshot, "Waiting to publish: " + (reason == null
+                    ? "Publisher gates or credentials are unavailable" : reason), now);
+            return;
+        }
         policy.requirePublishing();
         String validated = XPostTextValidator.normalizeAndValidate(snapshot.body(), snapshot.contentPolicy());
         if (!validated.equals(snapshot.body())) throw new IllegalStateException("Reviewed X text is not canonical");
         XPost claimed = snapshot.claim(now);
-        if (!posts.claimPublishing(claimed, snapshot.revision(), dayStart(now), policy.dailyPublishLimit(), policy.publishInterval())) return;
+        if (!posts.claimPublishing(claimed, snapshot.revision(), dayStart(now), policy.dailyPublishLimit(), policy.publishInterval())) {
+            // A failed CAS is also reported as false: never overwrite a newer review or publishing claim.
+            posts.find(snapshot.id()).filter(latest -> latest.revision() == snapshot.revision()
+                    && latest.status() == XPostStatus.APPROVED).ifPresent(latest -> recordWaiting(latest,
+                            "Waiting to publish: local daily attempt limit or minimum interval", now));
+            return;
+        }
         XPost finished;
         try {
             finished = claimed.finish(XPostStatus.PUBLISHED, publisher.publish(claimed), null, now());
         } catch (XPublishingException blocked) {
-            finished = claimed.finish(XPostStatus.FAILED, null, "Publishing blocked before send", now());
+            String reason = blocked.statusCode() == null ? "Publishing blocked before send"
+                    : "Publishing blocked before send: X preflight HTTP " + blocked.statusCode();
+            finished = claimed.finish(XPostStatus.FAILED, null, reason, now());
         } catch (XApiException rejected) {
             XPostStatus outcome = rejected.statusCode() >= 400 && rejected.statusCode() < 500 && rejected.statusCode() != 408
                     ? XPostStatus.FAILED : XPostStatus.UNKNOWN;
@@ -208,6 +229,18 @@ public class XPostService {
                     "Publishing result uncertain; verify on X, do not automatically retry", now());
         }
         requireSaved(posts.finishPublishing(finished, claimed.revision()));
+        if (finished.status() != XPostStatus.PUBLISHED) logPublishingFailure(finished);
+    }
+
+    private void recordWaiting(XPost snapshot, String reason, Instant now) {
+        XPost waiting = snapshot.waitingToPublish(reason, now);
+        if (waiting != snapshot && posts.save(waiting, snapshot.revision())) {
+            log.warn("X publishing waiting: postId={}, state={}, reason={}", waiting.id(), waiting.status(), waiting.lastError());
+        }
+    }
+
+    private static void logPublishingFailure(XPost post) {
+        log.warn("X publishing unsuccessful: postId={}, state={}, reason={}", post.id(), post.status(), post.lastError());
     }
 
     private void submitReview(XPost post) {
@@ -219,8 +252,9 @@ public class XPostService {
                     : "创作说明（AI 自述，需人工判断）：";
             reviews.submit(new XReviewRequest(post.id(), post.contentVersion(), post.targetUserId(), post.body(),
                     noteLabel + (post.reviewNote() == null ? "无原始说明" : post.reviewNote())
-                    + "\n审核重点：开头是否吸引、细节是否具体、结尾是否有余味；是否与近期内容雷同；虚构是否误导。"
-                    + "涉及暧昧时确认人物均为成年人且关系自愿、表达不露骨。"
+                    + "\n审核重点：正文是否符合冻结语言且自然（英文避免直译），形式与换行是否有效，开头是否吸引、细节是否具体、结尾是否有余味；"
+                    + "是否与近期内容雷同；虚构是否误导。涉及欲望或亲密关系时确认人物均为成年人且关系自愿、"
+                    + "表达不露骨且不以性唤起为目的；不冒充医疗、心理或研究结论。"
                     + "\n内容方向：" + content.direction() + "\n语言：" + content.language() + "\n语气：" + content.tone()
                     + "\n字数范围：" + content.minChars() + "–" + content.maxChars()
                     + "\n额外规则：" + content.instructions(), post.expiresAt()));

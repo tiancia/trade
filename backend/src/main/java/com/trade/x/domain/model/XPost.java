@@ -69,6 +69,19 @@ public record XPost(String id, String targetUserId, String generationKey, XConte
                 now, actor, decision, reason, null, null, null, null);
     }
 
+    /** Retains approval and expiry; repeated maintenance ticks do not create duplicate history. */
+    public XPost waitingToPublish(String reason, Instant now) {
+        require(XPostStatus.APPROVED);
+        if (!live(now)) throw new IllegalStateException("X post has expired");
+        if (reason == null || reason.isBlank() || reason.length() > 256
+                || XContentPolicy.hasInvalidCharacters(reason)) {
+            throw new IllegalArgumentException("X publishing wait reason must be safe and bounded");
+        }
+        if (Objects.equals(lastError, reason)) return this;
+        return changed(body, reviewNote, contentVersion, status, now, reviewer, reviewedAt,
+                reviewReason, attemptId, publishStartedAt, postId, reason);
+    }
+
     public XPost claim(Instant now) {
         require(XPostStatus.APPROVED);
         if (!live(now) || reviewedAt == null || reviewer == null || reviewer.isBlank()) {

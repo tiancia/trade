@@ -171,8 +171,10 @@ Invoke-RestMethod -Method Post `
 
 ## 观测
 
-X 文学内容生成沿用 `TRADE_X_CONTENT_DIRECTION/TONE/INSTRUCTIONS` 和 40–120 字默认范围。
-修改这些部署变量并重启后只影响新草稿。一次 AI 请求包含三个候选，仅一条送审；候选全部无效或与近期正文重复时生成失败，不会自动再次付费重试。生成频率、额度及发布门禁不变，部署与审核步骤见 [X 工作流](X_WORKFLOW.md)。
+X 内容生成沿用 `TRADE_X_CONTENT_DIRECTION/LANGUAGE/TONE/INSTRUCTIONS`，默认面向成年英文读者写欲望、亲密关系与沟通，范围为 40–260 个 Unicode 码点且仍须满足 280 加权字符上限。
+修改这些部署变量并重启后只影响新草稿。一次 AI 请求包含三个不同形式的候选，仅一条送审；分行对话、微清单和空行会完整保存、送审与发布。候选全部无效或与近期正文重复时生成失败，不会自动再次付费重试。部署与审核步骤见 [X 工作流](X_WORKFLOW.md)。
+
+审核通过只代表 `APPROVED`。发布扫描会把关闭开关、缺凭据、账号不符、本地日额度或间隔等待写入现有 `lastError` 与历史，同一等待原因不反复写入。`FAILED` 的发布前检查和发布请求错误保留安全的 HTTP 状态；`UNKNOWN` 必须在 X 核对，均不会自动重发。automation 循环成功不表示帖子发布成功，需查看草稿状态、`postId`、`lastError` 和历史。
 
 实时决策仅支持 `execution-mode=paper/live`。配置为 `backtest` 时引擎在行情采集前跳过，Broker 也拒绝降级为 PAPER；历史回测必须显式调用 `POST /api/trading/backtests`，不会因修改执行模式自行开始。
 

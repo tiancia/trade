@@ -65,6 +65,28 @@ class XPostTest {
     }
 
     @Test
+    void publishingWaitKeepsApprovalAndExpiryWithoutRepeatedRevisionChanges() {
+        XPost pending = draft();
+        XPost approved = pending.review(1, true, "reviewer", "checked", now, now);
+        String reason = "Waiting to publish: X workflow publishing is disabled";
+        XPost waiting = approved.waitingToPublish(reason, now.plusSeconds(1));
+        assertEquals(XPostStatus.APPROVED, waiting.status());
+        assertEquals(approved.revision() + 1, waiting.revision());
+        assertEquals(approved.contentVersion(), waiting.contentVersion());
+        assertEquals(approved.body(), waiting.body());
+        assertEquals(approved.reviewer(), waiting.reviewer());
+        assertEquals(approved.reviewedAt(), waiting.reviewedAt());
+        assertEquals(approved.reviewReason(), waiting.reviewReason());
+        assertEquals(approved.expiresAt(), waiting.expiresAt());
+        assertEquals(reason, waiting.lastError());
+        assertSame(waiting, waiting.waitingToPublish(reason, now.plusSeconds(60)));
+        assertNull(waiting.claim(now.plusSeconds(61)).lastError());
+        assertThrows(IllegalStateException.class, () -> pending.waitingToPublish(reason, now));
+        assertThrows(IllegalStateException.class, () -> waiting.waitingToPublish(reason, waiting.expiresAt()));
+        assertThrows(IllegalArgumentException.class, () -> approved.waitingToPublish("x".repeat(257), now));
+    }
+
+    @Test
     void rejectedExpiredAndUnknownOutcomesCannotBePublishedOrBlindlyRetried() {
         XPost pending = draft();
         XPost rejected = pending.review(1, false, "reviewer", "no", now, now);

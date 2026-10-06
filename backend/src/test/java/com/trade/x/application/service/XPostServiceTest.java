@@ -2,6 +2,7 @@ package com.trade.x.application.service;
 
 import com.trade.client.x.XApiException;
 import com.trade.x.application.port.*;
+import com.trade.x.domain.exception.XPublishingException;
 import com.trade.x.domain.model.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -173,12 +174,107 @@ class XPostServiceTest {
         assertEquals(XPostStatus.APPROVED, state.get().status());
     }
 
-    @ParameterizedTest @CsvSource({"400,FAILED", "403,FAILED", "429,FAILED", "408,UNKNOWN", "500,UNKNOWN"})
+    @Test void disabledPublishingRecordsOneWaitingHistoryAndPreservesApproval() {
+        XPost pending = service.generate().orElseThrow();
+        XPost approved = service.applyReview(decision(pending, true));
+        var disabled = new XWorkflowPolicy(true, true, false, "123", content, 5, 3,
+                policy.reviewTtl(), policy.publishInterval(), policy.claimTimeout());
+        clearInvocations(repository, publisher);
+
+        service(disabled, now.plusSeconds(1)).runPublishing();
+        XPost waiting = state.get();
+        service(disabled, now.plusSeconds(61)).runPublishing();
+
+        assertSame(waiting, state.get());
+        assertEquals(XPostStatus.APPROVED, waiting.status());
+        assertEquals("Waiting to publish: X workflow publishing is disabled", waiting.lastError());
+        assertEquals(approved.revision() + 1, waiting.revision());
+        assertEquals(approved.reviewedAt(), waiting.reviewedAt());
+        assertEquals(approved.expiresAt(), waiting.expiresAt());
+        verify(repository, times(1)).save(any(), eq(approved.revision()));
+        verify(repository, never()).claimPublishing(any(), anyLong(), any(), anyInt(), any());
+        verifyNoInteractions(publisher);
+    }
+
+    @Test void publisherUnavailableReasonIsSavedOnceWithoutClaimOrSend() {
+        XPost pending = service.generate().orElseThrow();
+        XPost approved = service.applyReview(decision(pending, true));
+        when(publisher.credentialsAvailable("123")).thenReturn(false);
+        when(publisher.unavailableReason("123")).thenReturn("X live publishing is disabled");
+        clearInvocations(repository);
+
+        service.runPublishing(); service.runPublishing();
+
+        assertEquals("Waiting to publish: X live publishing is disabled", state.get().lastError());
+        assertEquals(approved.revision() + 1, state.get().revision());
+        verify(repository, times(1)).save(any(), eq(approved.revision()));
+        verify(repository, never()).claimPublishing(any(), anyLong(), any(), anyInt(), any());
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test void unavailablePublisherMockWithoutDiagnosticUsesSafeFallback() {
+        XPost pending = service.generate().orElseThrow(); service.applyReview(decision(pending, true));
+        when(publisher.credentialsAvailable("123")).thenReturn(false);
+
+        service.runPublishing();
+
+        assertEquals("Waiting to publish: Publisher gates or credentials are unavailable", state.get().lastError());
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test void localQuotaOrIntervalWaitIsStableAndCanLaterPublish() {
+        XPost pending = service.generate().orElseThrow();
+        XPost approved = service.applyReview(decision(pending, true));
+        when(repository.claimPublishing(any(), anyLong(), any(), anyInt(), any())).thenReturn(false);
+        clearInvocations(repository);
+
+        service.runPublishing(); service.runPublishing();
+
+        assertEquals("Waiting to publish: local daily attempt limit or minimum interval", state.get().lastError());
+        assertEquals(approved.revision() + 1, state.get().revision());
+        verify(repository, times(1)).save(any(), eq(approved.revision()));
+        verify(publisher, never()).publish(any());
+        when(repository.claimPublishing(any(), anyLong(), any(), anyInt(), any())).thenAnswer(this::save);
+        service.runPublishing();
+        assertEquals(XPostStatus.PUBLISHED, state.get().status());
+        assertNull(state.get().lastError());
+        verify(publisher, times(1)).publish(any());
+    }
+
+    @Test void claimCasConflictNeverOverwritesAnotherPublishingClaimWithWaitingReason() {
+        XPost pending = service.generate().orElseThrow(); service.applyReview(decision(pending, true));
+        when(repository.claimPublishing(any(), anyLong(), any(), anyInt(), any())).thenAnswer(invocation -> {
+            state.set(invocation.getArgument(0)); return false;
+        });
+        clearInvocations(repository);
+
+        service.runPublishing();
+
+        assertEquals(XPostStatus.PUBLISHING, state.get().status());
+        assertNull(state.get().lastError());
+        verify(repository, never()).save(any(), anyLong());
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test void preflightCreditFailurePreservesHttpStatusAndIsNeverRetried() {
+        XPost pending = service.generate().orElseThrow(); service.applyReview(decision(pending, true));
+        when(publisher.publish(any())).thenThrow(new XPublishingException("safe preflight failure", 402));
+
+        service.runPublishing(); service.runPublishing();
+
+        assertEquals(XPostStatus.FAILED, state.get().status());
+        assertEquals("Publishing blocked before send: X preflight HTTP 402", state.get().lastError());
+        verify(publisher, times(1)).publish(any());
+    }
+
+    @ParameterizedTest @CsvSource({"400,FAILED", "402,FAILED", "403,FAILED", "429,FAILED", "408,UNKNOWN", "500,UNKNOWN"})
     void responseClassificationNeverRetries(int http, XPostStatus outcome) {
         XPost pending = service.generate().orElseThrow(); service.applyReview(decision(pending, true));
         when(publisher.publish(any())).thenThrow(new XApiException(http));
         service.runPublishing(); service.runPublishing();
-        assertEquals(outcome, state.get().status()); verify(publisher, times(1)).publish(any());
+        assertEquals(outcome, state.get().status());
+        assertEquals("X request failed: HTTP " + http, state.get().lastError());
+        verify(publisher, times(1)).publish(any());
     }
 
     @Test void timeoutIsUnknownAndInterruptedClaimIsRecoveredWithoutResend() {
@@ -217,6 +313,7 @@ class XPostServiceTest {
         var other = new XWorkflowPolicy(true, true, true, "456", content, 5, 3,
                 policy.reviewTtl(), policy.publishInterval(), policy.claimTimeout());
         service(other, now).runPublishing(); verify(publisher, never()).publish(any());
+        assertEquals("Waiting to publish: X target account differs from this draft", state.get().lastError());
     }
 
     private Boolean save(org.mockito.invocation.InvocationOnMock invocation) {

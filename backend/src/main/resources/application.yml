@@ -283,30 +283,30 @@ trade:
       # 目标 X 账号数字用户 ID；发布前查询 /2/users/me 校验授权账号一致。
       target-user-id: ${TRADE_X_TARGET_USER_ID:}
       content:
-        # 原创文学与情绪共鸣方向，开启生成时不得为空；不抓取实时新闻。
-        direction: ${TRADE_X_CONTENT_DIRECTION:面向成年读者的原创文学短章，写日常细节、孤独、关系、欲言又止与自我和解；可有克制的成人暧昧，不靠猎奇消费苦难}
+        # 成年英文读者的欲望、亲密关系与沟通方向；不抓取实时新闻。
+        direction: ${TRADE_X_CONTENT_DIRECTION:面向成年英文读者，以性吸引、欲望、亲密关系与沟通为主线，辅以约会、自尊、孤独和日常关系观察；尊重同意与边界，非露骨且不以性唤起为目的}
         # AI 输出语言。
-        language: ${TRADE_X_CONTENT_LANGUAGE:简体中文}
+        language: ${TRADE_X_CONTENT_LANGUAGE:English}
         # AI 写作语气和风格。
-        tone: ${TRADE_X_CONTENT_TONE:有画面、有情绪张力、语言准确克制，亲近而不讨好，结尾留有余味}
+        tone: ${TRADE_X_CONTENT_TONE:自然地道的英文，坦诚、机智、有具体细节和关系张力，温暖而不说教，不制造性别对立}
         # 额外写作要求，例如避免话题标签或限定受众，可留空。
-        instructions: ${TRADE_X_CONTENT_INSTRUCTIONS:轮换生活切片、微型叙事、独白与短诗；每条聚焦一个场景和一种情绪；不堆砌辞藻，不写鸡汤或求赞求关注，不默认加标签、表情和链接；虚构不冒充真实经历，成人暧昧限于自愿且非露骨的表达}
+        instructions: ${TRADE_X_CONTENT_INSTRUCTIONS:三个候选采用不同形式，轮换短观点、微场景、两句对话、2至3项微清单、开放问题与短诗；可用换行和空行，每条是完整独立的单帖；不求赞求关注，不默认加标签、表情和链接，不写Markdown；虚构按正文语言标明，reviewNote用简体中文；仅自愿成年人且非露骨，不冒充性健康或心理治疗建议}
         # 正文最少 Unicode 字符数；按 code point 计数，范围 1～max-chars。
         min-chars: ${TRADE_X_CONTENT_MIN_CHARS:40}
         # 正文最多 Unicode 字符数，配置上限 280；还校验 X 普通帖 280 加权上限（中文通常计 2）。
-        max-chars: ${TRADE_X_CONTENT_MAX_CHARS:120}
+        max-chars: ${TRADE_X_CONTENT_MAX_CHARS:260}
       # 目标账号每个 UTC 日最多预留的 AI 生成次数；失败的生成仍占额度。
-      daily-generation-limit: ${TRADE_X_DAILY_GENERATION_LIMIT:5}
+      daily-generation-limit: ${TRADE_X_DAILY_GENERATION_LIMIT:10000}
       # 目标账号每个 UTC 日最多预留的发布尝试次数；失败或结果未知的尝试仍占额度。
       daily-publish-limit: ${TRADE_X_DAILY_PUBLISH_LIMIT:3}
       # 自生成预约创建起的有效期，单位小时；修改 / 审核不续期，过期后不发布。
-      review-ttl-hours: ${TRADE_X_REVIEW_TTL_HOURS:6}
+      review-ttl-hours: ${TRADE_X_REVIEW_TTL_HOURS:24}
       # 从最近一次发布尝试开始计时的最小间隔，单位秒；1800 = 30 分钟。
       publish-interval-seconds: ${TRADE_X_PUBLISH_INTERVAL_SECONDS:1800}
       # 发布扫描识别卡住生成 / 发布的恢复阈值，单位秒；不是 HTTP 超时，未知发布不自动重发。
       claim-timeout-seconds: ${TRADE_X_CLAIM_TIMEOUT_SECONDS:300}
       # 每轮生成结束后等待的毫秒数；900000 = 15 分钟，仍受日额度和时间槽去重限制。
-      generation-fixed-delay-ms: ${TRADE_X_GENERATION_FIXED_DELAY_MS:900000}
+      generation-fixed-delay-ms: ${TRADE_X_GENERATION_FIXED_DELAY_MS:180000}
       # 每轮发布扫描结束后等待的毫秒数；60000 = 1 分钟，补偿审核投递、过期和发布恢复。
       publishing-fixed-delay-ms: ${TRADE_X_PUBLISHING_FIXED_DELAY_MS:60000}
       # X 任务启动后，三个循环首次执行前的等待时间，单位毫秒；30000 = 30 秒。

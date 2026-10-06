@@ -35,8 +35,9 @@ class XConfigurationTest {
             XWorkflowPolicy policy = context.getBean(XWorkflowPolicy.class);
             assertFalse(policy.enabled()); assertFalse(policy.generationEnabled()); assertFalse(policy.publishingEnabled());
             assertFalse(context.getBean(XPublishingProperties.class).isLivePublishingEnabled());
-            assertEquals(40, policy.content().minChars()); assertEquals(120, policy.content().maxChars());
-            assertTrue(policy.content().direction().contains("原创文学短章"));
+            assertEquals(40, policy.content().minChars()); assertEquals(260, policy.content().maxChars());
+            assertEquals("English", policy.content().language());
+            assertTrue(policy.content().direction().contains("亲密关系"));
             assertTrue(policy.content().instructions().contains("非露骨"));
             XScheduler scheduler = context.getBean(XScheduler.class);
             scheduler.generate(); scheduler.review(); scheduler.publish();

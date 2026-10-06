@@ -1,6 +1,7 @@
 package com.trade.x.infrastructure.publisher;
 
 import com.trade.client.x.XApi;
+import com.trade.client.x.XApiException;
 import com.trade.client.x.XClientProperties;
 import com.trade.x.application.decision.XPostTextValidator;
 import com.trade.x.application.port.XPostPublisher;
@@ -38,13 +39,20 @@ public class XApiPostPublisher implements XPostPublisher {
     }
 
     @Override public boolean credentialsAvailable(String targetUserId) {
-        if (!client.isEnabled() || !settings.isLivePublishingEnabled() || !policy.enabled()
-                || !policy.publishingEnabled() || !policy.targetUserId().equals(targetUserId)) return false;
+        return unavailableReason(targetUserId) == null;
+    }
+
+    @Override public String unavailableReason(String targetUserId) {
+        if (!policy.enabled()) return "X workflow is disabled";
+        if (!policy.publishingEnabled()) return "X workflow publishing is disabled";
+        if (!policy.targetUserId().equals(targetUserId)) return "X target account differs from this draft";
+        if (!client.isEnabled()) return "X API client is disabled";
+        if (!settings.isLivePublishingEnabled()) return "X live publishing is disabled";
         try {
             client.requiredApiKey(); client.requiredApiSecret();
             client.requiredAccessToken(); client.requiredAccessTokenSecret();
-            return true;
-        } catch (IllegalArgumentException missing) { return false; }
+            return null;
+        } catch (IllegalArgumentException missing) { return "X OAuth credentials are missing"; }
     }
 
     @Override public String publish(XPost claimed) {
@@ -61,6 +69,9 @@ public class XApiPostPublisher implements XPostPublisher {
             }
             if (!claimed.live(Instant.now(clock))) throw new XPublishingException("X draft expired before send");
         } catch (XPublishingException blocked) { throw blocked; }
+        catch (XApiException rejected) {
+            throw new XPublishingException("X account preflight request failed before send", rejected.statusCode());
+        }
         catch (RuntimeException blocked) { throw new XPublishingException("X publishing preflight failed before send"); }
         return api.publishText(claimed.body()).id();
     }
