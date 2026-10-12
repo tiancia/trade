@@ -17,6 +17,7 @@ import com.trade.x.application.decision.XAiDraftGenerator;
 import com.trade.x.application.port.XPostRepository;
 import com.trade.x.application.port.XReviewDeliveryStore;
 import com.trade.x.application.service.XPostService;
+import com.trade.x.domain.model.XContentPolicy;
 import com.trade.x.domain.model.XPost;
 import com.trade.x.domain.model.XPostStatus;
 import com.trade.x.domain.model.XReviewDecision;
@@ -29,7 +30,8 @@ import com.trade.x.infrastructure.publisher.XApiPostPublisher;
 import com.trade.x.infrastructure.review.TelegramXReviewGateway;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
@@ -93,19 +95,27 @@ class XWorkflowIntegrationTest {
         for (String statement : sql.split(";")) if (!statement.isBlank()) jdbc.execute(statement);
     }
 
-    @Test
-    void configuredAiDraftRequiresBoundHumanApprovalAndPublishesExactlyOnceAcrossServiceRecreation() throws Exception {
-        String body = "A small check-in can change a date.\n\n1. What feels comfortable?\n2. What would you rather skip?";
-        String direction = "Desire, intimacy and communication for consenting adults";
+    @ParameterizedTest
+    @EnumSource(XContentPolicy.Format.class)
+    void configuredAiDraftRequiresBoundHumanApprovalAndPublishesExactlyOnceAcrossServiceRecreation(
+            XContentPolicy.Format format) throws Exception {
+        boolean dialogue = format == XContentPolicy.Format.CHAT_DIALOGUE;
+        String body = dialogue
+                ? "“你到家了吗？”\n“到了。”\n“那怎么还显示正在输入？”\n“有句话，写了又删。”"
+                : "A small check-in can change a date.\n\n1. What feels comfortable?\n2. What would you rather skip?";
+        String direction = dialogue ? "成年人的暧昧与想念" : "Desire, intimacy and communication for consenting adults";
+        String language = dialogue ? "简体中文" : "English";
         XWorkflowProperties workflow = new XWorkflowProperties();
         workflow.setEnabled(true);
         workflow.setGenerationEnabled(true);
         workflow.setPublishingEnabled(true);
         workflow.setTargetUserId("42");
         workflow.getContent().setDirection(direction);
-        workflow.getContent().setLanguage("English");
-        workflow.getContent().setTone("clear and practical");
-        workflow.getContent().setInstructions("Describe a general lesson; make no live factual claims.");
+        workflow.getContent().setLanguage(language);
+        workflow.getContent().setTone(dialogue ? "自然的聊天口吻" : "clear and practical");
+        workflow.getContent().setInstructions(dialogue ? "只写原创虚构短对话，不加旁白或总结。"
+                : "Describe a general lesson; make no live factual claims.");
+        workflow.getContent().setFormat(format);
         workflow.getContent().setMinChars(10);
         workflow.getContent().setMaxChars(120);
         XWorkflowPolicy policy = workflow.policy();
@@ -128,7 +138,8 @@ class XWorkflowIntegrationTest {
         TelegramApi telegram = mock(TelegramApi.class);
         XApi x = mock(XApi.class);
         String aiJson = new ObjectMapper().writeValueAsString(Map.of("candidates", List.of(
-                Map.of("body", body, "reviewNote", "This is a general design lesson, without live factual assertions."),
+                Map.of("body", body, "reviewNote", dialogue ? "原创虚构成年人对话；没说出口的想念；非露骨，需人工判断。"
+                        : "一般观点，没有实时事实断言。"),
                 Map.of("body", body, "reviewNote", "Alternate candidate"),
                 Map.of("body", body, "reviewNote", "Alternate candidate"))));
         when(ai.generateJson(anyString())).thenAnswer(call -> {
@@ -180,7 +191,7 @@ class XWorkflowIntegrationTest {
         verify(ai).generateJson(prompt.capture());
         assertTrue(prompt.getValue().contains(direction));
         assertTrue(prompt.getValue().contains("10–120"));
-        assertTrue(prompt.getValue().contains("English"));
+        assertTrue(prompt.getValue().contains(language));
         assertTrue(prompt.getValue().contains(policy.content().instructions()));
         ArgumentCaptor<String> shown = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<TelegramInlineKeyboardMarkup> buttons = ArgumentCaptor.forClass(TelegramInlineKeyboardMarkup.class);

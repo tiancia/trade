@@ -1,5 +1,6 @@
 package com.trade.x.domain.model;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -48,6 +49,86 @@ class XContentPolicyTest {
         var policy = new XContentPolicy(null, null, null, null, 1, 280);
         assertEquals("", policy.direction());
         assertEquals("", policy.instructions());
+    }
+
+    @Test
+    void acceptsTwoToSixQuotedDialogueLinesWithoutRewritingTheirContents() {
+        var policy = dialoguePolicy();
+        for (String body : new String[]{
+                "\"你还没走？\"\n\"在等你。\"",
+                "“一”\n“二”\n“三”\n“四”\n“五”\n“六”",
+                "\"  I heard ‘stay’.  \"\n“可你说的是\"再见\"。”",
+                "\"他说“别走”。\"\n“嗯。”"}) {
+            assertEquals(body, policy.validateBody(body));
+        }
+        assertEquals("\"还在？\"\n\"嗯。\"", policy.validateBody(" \n\"还在？\"\n\"嗯。\"\n "));
+    }
+
+    @Test
+    void rejectsDialogueLineCountBlankLinesUnpairedQuotesAndMultipleQuoteGroups() {
+        var policy = dialoguePolicy();
+        for (String invalid : new String[]{
+                "\"只有一句。\"",
+                "\"一句\"\n".repeat(7).strip(),
+                "\"你还在？\"\n\n\"嗯。\"",
+                "\"你还在？\"\n  \n\"嗯。\"",
+                "你还在？\n\"嗯。\"",
+                "“你还在？\"\n“嗯。”",
+                "\"你还在？\"\n\"嗯。\"。",
+                "\"你还在？\" \n\"嗯。\"",
+                "\"你还在？\"\n \"嗯。\"",
+                "\"你\t还在？\"\n\"嗯。\"",
+                "\"\"\n\"嗯。\"",
+                "“  ”\n“嗯。”",
+                "\"一句\" \"另一句\"\n\"嗯。\"",
+                "“一句”“另一句”\n“嗯。”",
+                "“他说“别走”。”\n“嗯。”"}) {
+            assertThrows(IllegalArgumentException.class, () -> policy.validateBody(invalid), invalid);
+        }
+    }
+
+    @Test
+    void dialogueStillUsesUnicodeCodePointBoundsIncludingQuotesAndLineBreaks() {
+        String body = "\"中\"\n\"🙂\"";
+        var exact = new XContentPolicy("关系观察", "简体中文", "自然", "", 7, 7, XContentPolicy.Format.CHAT_DIALOGUE);
+        assertEquals(body, exact.validateBody(body));
+        var tooShort = new XContentPolicy("关系观察", "简体中文", "自然", "", 8, 280, XContentPolicy.Format.CHAT_DIALOGUE);
+        assertThrows(IllegalArgumentException.class, () -> tooShort.validateBody(body));
+        var tooLong = new XContentPolicy("关系观察", "简体中文", "自然", "", 1, 6, XContentPolicy.Format.CHAT_DIALOGUE);
+        assertThrows(IllegalArgumentException.class, () -> tooLong.validateBody(body));
+    }
+
+    @Test
+    void legacyConstructorsAndSavedJsonRemainFreeText() throws Exception {
+        var legacy = new XContentPolicy("legacy", "English", "plain", "", 1, 280);
+        assertEquals(XContentPolicy.Format.FREE_TEXT, legacy.format());
+        assertEquals(legacy, new XContentPolicy("legacy", "English", "plain", "", 1, 280, null));
+
+        String oldJson = """
+                {"direction":"legacy","language":"English","tone":"plain",
+                 "instructions":"","minChars":1,"maxChars":280}
+                """;
+        XContentPolicy restored = new ObjectMapper().readValue(oldJson, XContentPolicy.class);
+
+        assertEquals(legacy, restored);
+        assertEquals("An ordinary old post.\nNo quotes\there.",
+                restored.validateBody("  An ordinary old post.\nNo quotes\there.  "));
+    }
+
+    @Test
+    void dialogueJsonRoundTripRetainsItsFrozenFormatAndValidation() throws Exception {
+        var json = new ObjectMapper();
+        var policy = dialoguePolicy();
+
+        XContentPolicy restored = json.readValue(json.writeValueAsString(policy), XContentPolicy.class);
+
+        assertEquals(policy, restored);
+        assertEquals("\"还在？\"\n\"嗯。\"", restored.validateBody("\"还在？\"\n\"嗯。\""));
+        assertThrows(IllegalArgumentException.class, () -> restored.validateBody("An old unquoted paragraph."));
+    }
+
+    private static XContentPolicy dialoguePolicy() {
+        return new XContentPolicy("关系观察", "简体中文", "自然", "", 1, 280, XContentPolicy.Format.CHAT_DIALOGUE);
     }
 
     private static XContentPolicy policy(int min, int max) {

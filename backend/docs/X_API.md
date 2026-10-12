@@ -15,7 +15,7 @@
 
 `XClientProperties` 的绑定前缀为 `trade.x.client`：
 
-下表是属性类默认值；仓库 `application.yml` 当前把 client.enabled 的回退值设为 true，实际开关还受部署环境覆盖。业务 workflow publishing 回退值为 false，不能仅凭客户端启用推断会发帖。
+下表是属性类默认值；客户端 `enabled` 与业务 workflow publishing 在仓库 `application.yml` 中也默认 false，实际开关受部署环境覆盖，不能仅凭客户端启用推断会发帖。代理沿用现有配置：YAML 中 `proxy.enabled` 的回退值为 true，与属性类和 `.env.example` 的 false 不同；需要直连时显式设置 `TRADE_X_PROXY_ENABLED=false`，使用代理时确认主机和端口。
 
 | 属性 | 默认值 |
 | --- | --- |

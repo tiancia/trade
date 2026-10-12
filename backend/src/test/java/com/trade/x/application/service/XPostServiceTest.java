@@ -58,8 +58,56 @@ class XPostServiceTest {
         order.verify(repository).save(eq(pending), eq(0L));
         order.verify(reviews).submit(argThat(request -> request.content().equals(pending.body())
                 && request.targetUserId().equals("123") && request.version() == pending.contentVersion()
-                && request.context().contains("开发经验")));
+                && request.context().contains("开发经验")
+                && request.context().contains("自由文本审核")
+                && request.context().contains("冻结格式：FREE_TEXT")
+                && !request.context().contains("短对话审核")
+                && request.context().contains("不冒充心理或性健康专家")
+                && request.context().contains("不保证涨粉或收益")));
         verify(publisher, never()).publish(any());
+    }
+
+    @Test void dialogueReviewKeepsQuotedLinesAndCreativeNoteSeparate() {
+        var dialogueContent = new XContentPolicy("成年人的暧昧", "简体中文", "自然", "仅短对话", 5, 120,
+                XContentPolicy.Format.CHAT_DIALOGUE);
+        var dialoguePolicy = new XWorkflowPolicy(true, true, true, "123", dialogueContent, 5, 3,
+                policy.reviewTtl(), policy.publishInterval(), policy.claimTimeout());
+        String body = "“你还在等他？”\n“没有，我只是还没关灯。”";
+        String note = "AI 虚构对话；两名成年人，情绪来自否认与等待的反差。";
+        when(generator.generate(eq(dialogueContent), anyList())).thenReturn(new GeneratedXPost(body, note));
+
+        XPost pending = service(dialoguePolicy, now).generate().orElseThrow();
+
+        assertEquals(body, pending.body());
+        assertEquals(note, pending.reviewNote());
+        verify(reviews).submit(argThat(request -> request.content().equals(body)
+                && !request.content().contains(note)
+                && request.context().contains(note)
+                && request.context().contains("冻结格式：CHAT_DIALOGUE")
+                && request.context().contains("短对话审核")
+                && request.context().contains("潜台词")
+                && request.context().contains("不得冒充真实聊天截图、亲历或读者投稿")
+                && request.context().contains("创作说明仅用于审核，不随正文发布")));
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test void invalidDialogueRevisionIsRejectedBeforeSavingOrSubmittingReview() {
+        var dialogueContent = new XContentPolicy("成年人的暧昧", "简体中文", "自然", "仅短对话", 5, 120,
+                XContentPolicy.Format.CHAT_DIALOGUE);
+        var dialoguePolicy = new XWorkflowPolicy(true, true, true, "123", dialogueContent, 5, 3,
+                policy.reviewTtl(), policy.publishInterval(), policy.claimTimeout());
+        var dialogueService = service(dialoguePolicy, now);
+        when(generator.generate(eq(dialogueContent), anyList()))
+                .thenReturn(new GeneratedXPost("\"还没睡？\"\n\"在等你的晚安。\"", "AI 虚构对话。"));
+        XPost pending = dialogueService.generate().orElseThrow();
+        clearInvocations(repository, reviews, publisher);
+
+        assertThrows(IllegalArgumentException.class, () -> dialogueService.revise(pending.id(), pending.revision(),
+                "我以为自己已经不再等他的消息了。"));
+
+        assertSame(pending, state.get());
+        verify(repository, never()).save(any(), anyLong());
+        verifyNoInteractions(reviews, publisher);
     }
 
     @Test void historyIsAccountScopedAndBoundedBeforeItReachesAi() {
@@ -154,7 +202,7 @@ class XPostServiceTest {
         verify(publisher, never()).publish(any());
     }
 
-    @Test void frozenContentBoundsSurviveConfigurationChange() {
+    @Test void frozenContentRulesSurviveConfigurationChange() {
         XPost pending = service.generate().orElseThrow();
         var changedContent = new XContentPolicy("新的方向", "English", "formal", "", 100, 120);
         var changedPolicy = new XWorkflowPolicy(true, true, true, "123", changedContent, 5, 3,
@@ -162,6 +210,36 @@ class XPostServiceTest {
         var changedService = service(changedPolicy, now);
         XPost revised = changedService.revise(pending.id(), pending.revision(), "短正文遵守原有规则。");
         assertEquals(content, revised.contentPolicy());
+        verify(reviews).submit(argThat(request -> request.version() == 2
+                && request.context().contains("内容方向：开发经验")
+                && request.context().contains("语言：简体中文")
+                && !request.context().contains("语言：English")));
+    }
+
+    @Test void existingEnglishDraftReviewKeepsItsFrozenLanguageUnderChineseConfiguration() {
+        var englishContent = new XContentPolicy("Adult relationships", "English", "concrete and restrained", "", 5, 120);
+        var englishPolicy = new XWorkflowPolicy(true, true, true, "123", englishContent, 5, 3,
+                policy.reviewTtl(), policy.publishInterval(), policy.claimTimeout());
+        XPost pending = XPost.generating("123", "earlier-english-draft", now, englishPolicy)
+                .generated(new GeneratedXPost("Can we talk about what feels comfortable for both of us?", "An expression example."), now);
+        state.set(pending);
+
+        var currentDialogueContent = new XContentPolicy("成年人的暧昧", "简体中文", "自然", "仅短对话", 5, 120,
+                XContentPolicy.Format.CHAT_DIALOGUE);
+        var currentDialoguePolicy = new XWorkflowPolicy(true, true, true, "123", currentDialogueContent, 5, 3,
+                policy.reviewTtl(), policy.publishInterval(), policy.claimTimeout());
+        XPost revised = service(currentDialoguePolicy, now).revise(pending.id(), pending.revision(),
+                "I want to hear what feels comfortable for both of us.");
+
+        assertEquals(englishContent, revised.contentPolicy());
+        verify(reviews).submit(argThat(request -> request.version() == 2
+                && request.context().contains("按冻结语言自然表达")
+                && request.context().contains("语言：English")
+                && !request.context().contains("语言：简体中文")
+                && request.context().contains("冻结格式：FREE_TEXT")
+                && !request.context().contains("短对话审核")
+                && !request.context().contains("每句独占一行")
+                && request.context().contains("原始 AI 说明不代表当前版本")));
     }
 
     @Test void disabledPublishingAndQuotaFenceBothPreventExternalSend() {

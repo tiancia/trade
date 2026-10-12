@@ -6,6 +6,7 @@ import com.trade.client.telegram.config.TelegramClientConfiguration;
 import com.trade.weibo.infrastructure.config.WeiboTelegramReviewProperties;
 import com.trade.x.application.port.*;
 import com.trade.x.application.service.XPostService;
+import com.trade.x.domain.model.XContentPolicy;
 import com.trade.x.domain.model.XWorkflowPolicy;
 import com.trade.x.infrastructure.review.*;
 import com.trade.x.interfaces.scheduler.XScheduler;
@@ -35,9 +36,10 @@ class XConfigurationTest {
             XWorkflowPolicy policy = context.getBean(XWorkflowPolicy.class);
             assertFalse(policy.enabled()); assertFalse(policy.generationEnabled()); assertFalse(policy.publishingEnabled());
             assertFalse(context.getBean(XPublishingProperties.class).isLivePublishingEnabled());
-            assertEquals(40, policy.content().minChars()); assertEquals(260, policy.content().maxChars());
-            assertEquals("English", policy.content().language());
-            assertTrue(policy.content().direction().contains("亲密关系"));
+            assertEquals(8, policy.content().minChars()); assertEquals(120, policy.content().maxChars());
+            assertEquals(XContentPolicy.Format.CHAT_DIALOGUE, policy.content().format());
+            assertEquals("简体中文", policy.content().language());
+            assertTrue(policy.content().direction().contains("原创虚构短对话"));
             assertTrue(policy.content().instructions().contains("非露骨"));
             XScheduler scheduler = context.getBean(XScheduler.class);
             scheduler.generate(); scheduler.review(); scheduler.publish();
@@ -65,11 +67,13 @@ class XConfigurationTest {
         runner.withPropertyValues("trade.x.workflow.enabled=true", "trade.x.workflow.target-user-id=123",
                 "trade.x.workflow.generation-enabled=true", "trade.x.workflow.content.direction=开发经验",
                 "trade.x.workflow.content.language=English", "trade.x.workflow.content.tone=concise",
-                "trade.x.workflow.content.instructions=no hashtags", "trade.x.workflow.content.min-chars=30",
+                "trade.x.workflow.content.instructions=no hashtags", "trade.x.workflow.content.format=FREE_TEXT",
+                "trade.x.workflow.content.min-chars=30",
                 "trade.x.workflow.content.max-chars=100").run(context -> {
             assertThat(context).hasNotFailed(); var content = context.getBean(XWorkflowPolicy.class).content();
             assertEquals("开发经验", content.direction()); assertEquals("English", content.language());
             assertEquals("concise", content.tone()); assertEquals("no hashtags", content.instructions());
+            assertEquals(XContentPolicy.Format.FREE_TEXT, content.format());
             assertEquals(30, content.minChars()); assertEquals(100, content.maxChars());
             verifyNoInteractions(store);
         });
@@ -93,6 +97,8 @@ class XConfigurationTest {
                 .run(context -> assertThat(context).hasFailed());
         runner.withPropertyValues("trade.x.review.telegram.enabled=true").run(context -> assertThat(context).hasFailed());
         runner.withPropertyValues("trade.x.workflow.content.min-chars=100", "trade.x.workflow.content.max-chars=20")
+                .run(context -> assertThat(context).hasFailed());
+        runner.withPropertyValues("trade.x.workflow.content.format=UNSUPPORTED")
                 .run(context -> assertThat(context).hasFailed());
         verifyNoInteractions(store);
     }

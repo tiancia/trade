@@ -132,11 +132,11 @@ RSS/Atom 源在 `infrastructure/trend`，AI Prompt 在 `application/decision`，
 
 ### x
 
-`XPostService` 按配置方向、语言、语气与字数范围生成原创文本草稿，保存规则快照，
+`XPostService` 按配置方向、语言、语气、格式与字数范围生成原创文本草稿，保存规则快照，
 经 `TelegramXReviewGateway` 认证审核后调用 `XApiPostPublisher` 发布。
-默认面向成年英文读者，以欲望、亲密关系与沟通为主线，轮换分行观点、微场景、对话、微清单等单帖形式；
-`XDraftPromptBuilder` 引导一次请求生成不同形式的多个候选，
-`XAiDraftGenerator` 筛选格式、字数及近期重复，`XContentPolicy` 提供纯文本重复规则。
+默认面向中文成年读者，生成聊天记录样式的原创虚构短对话，每条2～6句、一句一行且成对双引号，不附旁白或总结；
+`XDraftPromptBuilder` 引导一次请求生成不同情绪与潜台词的多个候选，
+`XAiDraftGenerator` 筛选格式、字数及近期重复，`XContentPolicy` 提供冻结格式校验和纯文本重复规则。旧草稿缺少格式字段时仍为自由正文。
 同账号近期正文由应用用例读取，最终只持久化并审核一条正文，内容边界仍由人工确认。
 `client/x` 负责 OAuth 1.0a 协议；业务状态、审计与六张表归 `x`。
 普通帖子的官方加权字数由 `application/decision/XPostTextValidator` 校验，详情见 [X 工作流](X_WORKFLOW.md)。

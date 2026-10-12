@@ -16,23 +16,25 @@ public class XWorkflowProperties {
     private Content content = new Content();
     private int dailyGenerationLimit = 5;
     private int dailyPublishLimit = 3;
-    private long reviewTtlHours = 6;
+    private long reviewTtlHours = 24;
     private long publishIntervalSeconds = 1800;
     private long claimTimeoutSeconds = 300;
-    private long generationFixedDelayMs = 900000;
+    private long generationFixedDelayMs = 14400000;
     private long publishingFixedDelayMs = 60000;
     private long initialDelayMs = 30000;
 
     @Data
     public static class Content {
-        private String direction = "面向成年英文读者，以性吸引、欲望、亲密关系与沟通为主线，辅以约会、自尊、孤独和日常关系观察；尊重同意与边界，非露骨且不以性唤起为目的";
-        private String language = "English";
-        private String tone = "自然地道的英文，坦诚、机智、有具体细节和关系张力，温暖而不说教，不制造性别对立";
-        private String instructions = "三个候选采用不同形式，轮换短观点、微场景、两句对话、2至3项微清单、开放问题与短诗；可用换行和空行，每条是完整独立的单帖；不求赞求关注，不默认加标签、表情和链接，不写Markdown；虚构按正文语言标明，reviewNote用简体中文；仅自愿成年人且非露骨，不冒充性健康或心理治疗建议";
-        private int minChars = 40;
-        private int maxChars = 260;
+        private String direction = "面向中文成年读者，创作聊天记录样式的原创虚构短对话，写成年人的暧昧、想念、试探、靠近与退让；让情绪从几句来回和潜台词里自然出现";
+        private String language = "简体中文";
+        private String tone = "自然简短的中文聊天口吻，有回应、有停顿、有潜台词，可温柔、嘴硬、幽默或失落；像两个人在说话，不像作者在写金句";
+        private String instructions = "每条正文仅2至6句对话，一句一行，每行用成对双引号包住；不加空行、角色名、标题、旁白、解释或总结；三个候选更换关系处境、情绪与潜台词，不轮换成散文；话要接得上，不句句金句，不提供沟通话术；reviewNote用简体中文说明原创虚构、潜台词、情绪变化与核验项，绝不混入正文；不冒充真实聊天记录、截图、亲历或投稿；仅自愿成年人且非露骨，不承诺挽回、涨粉或收益";
+        private int minChars = 8;
+        private int maxChars = 120;
+        private XContentPolicy.Format format = XContentPolicy.Format.CHAT_DIALOGUE;
         public XContentPolicy policy() {
-            return new XContentPolicy(direction, language, tone, instructions, minChars, maxChars);
+            if (format == null) throw new IllegalArgumentException("X content format is required");
+            return new XContentPolicy(direction, language, tone, instructions, minChars, maxChars, format);
         }
     }
 

@@ -250,12 +250,22 @@ public class XPostService {
             String noteLabel = post.contentVersion() > 1
                     ? "正文已人工修改；原始 AI 说明不代表当前版本，请重新判断："
                     : "创作说明（AI 自述，需人工判断）：";
+            String formatReview = content.format() == XContentPolicy.Format.CHAT_DIALOGUE
+                    ? "短对话审核：是否只有 2–6 句，每句独占一行并由成对双引号包裹；"
+                        + "是否像自然的聊天来回，让情绪从回应、潜台词和未说出口的部分产生；"
+                        + "是否混入角色名、标题、旁白、解释、总结或话术教程。"
+                        + "本稿是 AI 虚构对话，不得冒充真实聊天截图、亲历或读者投稿。"
+                    : "自由文本审核：按草稿冻结的方向、语气和额外规则判断风格；"
+                        + "形式与换行是否有效，是否与近期内容雷同；虚构内容是否诚实呈现，避免冒充真实经历或事实依据。";
             reviews.submit(new XReviewRequest(post.id(), post.contentVersion(), post.targetUserId(), post.body(),
                     noteLabel + (post.reviewNote() == null ? "无原始说明" : post.reviewNote())
-                    + "\n审核重点：正文是否符合冻结语言且自然（英文避免直译），形式与换行是否有效，开头是否吸引、细节是否具体、结尾是否有余味；"
-                    + "是否与近期内容雷同；虚构是否误导。涉及欲望或亲密关系时确认人物均为成年人且关系自愿、"
-                    + "表达不露骨且不以性唤起为目的；不冒充医疗、心理或研究结论。"
+                    + "\n创作说明仅用于审核，不随正文发布。"
+                    + "\n审核重点：正文是否按冻结语言自然表达、符合冻结内容方向；" + formatReview
+                    + "涉及约会、欲望或亲密关系时确认人物均为成年人且关系自愿，表达不露骨且不以性唤起为目的；"
+                    + "不诊断读者或他人，不冒充心理或性健康专家，不伪造医疗、心理或研究依据；"
+                    + "不承诺挽回，不提供操纵他人的话术或技巧，不保证涨粉或收益。"
                     + "\n内容方向：" + content.direction() + "\n语言：" + content.language() + "\n语气：" + content.tone()
+                    + "\n冻结格式：" + content.format()
                     + "\n字数范围：" + content.minChars() + "–" + content.maxChars()
                     + "\n额外规则：" + content.instructions(), post.expiresAt()));
         } catch (RuntimeException failure) { log.warn("X review delivery unavailable: postId={}", post.id()); }

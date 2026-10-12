@@ -6,12 +6,21 @@ import java.util.Locale;
 
 /** Immutable content settings captured with each draft, independent of provider counting rules. */
 public record XContentPolicy(String direction, String language, String tone, String instructions,
-                             int minChars, int maxChars) {
+                             int minChars, int maxChars, Format format) {
+    public enum Format { FREE_TEXT, CHAT_DIALOGUE }
+
+    public XContentPolicy(String direction, String language, String tone, String instructions,
+                          int minChars, int maxChars) {
+        this(direction, language, tone, instructions, minChars, maxChars, Format.FREE_TEXT);
+    }
+
     public XContentPolicy {
         direction = setting(direction, 1000, "direction");
         language = setting(language, 64, "language");
         tone = setting(tone, 256, "tone");
         instructions = setting(instructions, 4000, "instructions");
+        // Existing saved policy JSON has no format field and must remain free text.
+        format = format == null ? Format.FREE_TEXT : format;
         if (minChars < 1 || maxChars < minChars || maxChars > 280) {
             throw new IllegalArgumentException("X content must have Unicode character bounds between 1 and 280");
         }
@@ -27,7 +36,29 @@ public record XContentPolicy(String direction, String language, String tone, Str
         if (length < minChars || length > maxChars) {
             throw new IllegalArgumentException("X post body is outside its Unicode character bounds");
         }
+        if (format == Format.CHAT_DIALOGUE) validateDialogue(body);
         return body;
+    }
+
+    private static void validateDialogue(String body) {
+        String[] lines = body.split("\\R", -1);
+        if (lines.length < 2 || lines.length > 6) {
+            throw new IllegalArgumentException("X dialogue must contain 2 to 6 quoted lines");
+        }
+        for (String line : lines) {
+            if (line.length() < 3 || !line.equals(line.strip()) || line.indexOf('\t') >= 0) {
+                throw new IllegalArgumentException("X dialogue lines must be nonempty with no outer whitespace or tabs");
+            }
+            char opening = line.charAt(0);
+            char closing = line.charAt(line.length() - 1);
+            if (!((opening == '"' && closing == '"') || (opening == '“' && closing == '”'))) {
+                throw new IllegalArgumentException("X dialogue lines must use paired double quotes");
+            }
+            String text = line.substring(1, line.length() - 1);
+            if (text.strip().isEmpty() || text.indexOf(opening) >= 0 || text.indexOf(closing) >= 0) {
+                throw new IllegalArgumentException("X dialogue lines must contain text without nested matching quotes");
+            }
+        }
     }
 
     static boolean hasInvalidCharacters(String value) {
