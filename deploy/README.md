@@ -1,25 +1,29 @@
-# Ubuntu 生产部署
+# Ubuntu 生产部署（默认 SSH 私有访问）
 
-本方案部署后端、交易驾驶舱和 X 控制台。代码在构建机打包成带版本号的 Linux 镜像，国内 Ubuntu 只负责拉取和运行；后续更新继续使用同一套发布脚本。
+本方案把后端、交易驾驶舱和 X 控制台一起部署到国内 Ubuntu，不使用 Vercel。代码在构建机打包成带版本号的 Linux 镜像，服务器只负责拉取和运行；后续更新继续使用同一套发布脚本。默认通过 SSH 隧道访问两个页面，无需准备域名或 TLS 证书。
 
 ```text
-浏览器 ── HTTPS + 网关密码 ── 国内 gateway
-                               ├─ trade.example.com → cockpit:3000
-                               ├─ x.example.com     → x-console:8080
-                               └─ /api/             → backend:8080
-                                                        ├─ mysql:3306 / redis:6379
-                                                        ├─ DeepSeek：直接访问
-                                                        └─ egress:13128
-                                                             └─ 加密 SSH 隧道 → 德国 127.0.0.1:3128 Squid
-                                                                                 └─ OKX / Telegram / X
+电脑浏览器 ── localhost:18080 / localhost:18081
+                       └─ SSH 加密隧道 → 国内服务器 127.0.0.1:18080 / :18081
+                                               └─ gateway + 网关密码
+                                                    ├─ 18080 → cockpit:3000
+                                                    ├─ 18081 → x-console:8080
+                                                    └─ /api/ → backend:8080
+                                                                 ├─ mysql:3306 / redis:6379
+                                                                 ├─ DeepSeek：直接访问
+                                                                 └─ egress:13128
+                                                                      └─ SSH → 德国 127.0.0.1:3128 Squid
+                                                                                └─ OKX / Telegram / X
 ```
 
-公网只开放网关的 80 / 443 和受限制的 SSH 管理入口；数据库、Redis、后端、两个前端和代理端口都不发布到宿主机。HTTP 只用于跳转 HTTPS 和证书验证。两个前端各占一个域名的根路径。
+默认只开放受限制的 SSH 管理入口。两个 Web 入口绑定宿主机 `127.0.0.1`；安全组和防火墙不开放 80、443、18080、18081、数据库、后端或代理端口。电脑访问的 HTTP 地址在本机回环，跨公网传输由 SSH 加密。网关密码与应用管理令牌仍保留。
+
+电脑到国内服务器的访问隧道，与国内服务器到德国 VPS 的 `egress` 隧道独立。关闭电脑上的 SSH 连接只会中断页面访问，服务器上的 PAPER 策略、X 生成、Telegram 审核和发布任务继续运行。此方案是私人运维访问安排；公网网站的备案与接入要求另按托管方式和服务商规定确认，见后文可选公共模式。
 
 ## 先准备这些内容
 
 1. 国内 Ubuntu 上安装 [Docker Engine + Compose 插件](https://docs.docker.com/engine/install/ubuntu/)，Compose 至少 **2.30**（使用 `env_file.format: raw`）。执行 `docker version`、`docker compose version` 确认 Linux Engine 可用。部署脚本依赖 Bash 和 Ubuntu 的 `flock`。
-2. 两个域名解析到国内服务器，并准备同时覆盖两个域名的 TLS 证书。示例是 `trade.example.com` 和 `x.example.com`，需换成自己的。安全组允许 80 / 443；SSH 限定管理来源。
+2. 国内服务器的 SSH 地址、端口和登录账号；电脑可以通过 SSH 登录。安全组和主机防火墙仅开放所需 SSH 入口，并尽量限定管理来源。服务器账号需能使用 Docker；可使用专用部署账号。
 3. 德国 VPS 上已有可用 Squid；准备一个只用于转发到其 `127.0.0.1:3128` 的 SSH 账号及密钥。Squid 不需要开放公网 3128。
 4. 一个国内服务器能访问的镜像仓库命名空间，例如 `registry.example.com/trade`。构建机拥有推送权限，服务器拥有拉取权限；分别执行 `docker login`。也可以使用后文的 `save/load`。
 
@@ -36,8 +40,8 @@ cd /opt/trade
 umask 077
 cp deploy/.env.example deploy/.env
 cp deploy/backend.env.example deploy/backend.env
-mkdir -p deploy/secrets/tls deploy/acme
-chmod 700 deploy/secrets deploy/secrets/tls
+mkdir -p deploy/secrets
+chmod 700 deploy/secrets
 chmod 600 deploy/.env deploy/backend.env
 ```
 
@@ -45,9 +49,10 @@ chmod 600 deploy/.env deploy/backend.env
 
 | 必填项 | 用途 |
 | --- | --- |
-| `COCKPIT_DOMAIN`、`X_CONSOLE_DOMAIN` | 两个实际域名，只填主机名，不带协议、路径或端口 |
 | `MYSQL_ROOT_PASSWORD`、`MYSQL_PASSWORD`、`REDIS_PASSWORD` | 分别设置长随机密码，生产无缺省密码 |
 | `EGRESS_SSH_HOST`、`EGRESS_SSH_PORT`、`EGRESS_SSH_USER` | 德国 VPS 的实际 SSH 地址、端口、专用用户 |
+
+`COCKPIT_LOCAL_PORT=18080`、`X_CONSOLE_LOCAL_PORT=18081` 是服务器回环监听端口，一般保持默认。无需填写域名、准备证书或设置公网 Web 入口；如改端口，同步修改后文 SSH 转发的服务器目标端口。电脑端也可换未占用端口，并使用对应浏览器地址。
 
 路径相对于仓库根目录。`COMPOSE_PROJECT_NAME`、`DATA_VOLUME_PREFIX` 在首次部署后保持固定，否则会切换容器项目或数据卷。`deploy/.env` 遵循 Compose env 语法，密码含 `$` 时使用单引号包住，避免插值。
 
@@ -59,6 +64,16 @@ chmod 600 deploy/.env deploy/backend.env
 - 两个独立的长随机管理令牌 `TRADE_TRADING_OPERATOR_TOKEN`、`TRADE_X_ADMIN_TOKEN`。
 
 `backend.env` 使用 **raw** 格式：每行 `KEY=value`，不要给值额外加引号，不要 `source`，也不要放 shell 命令。它只在运行时注入后端，不参与镜像构建。
+
+如果 Windows 开发机已经通过 `setx` 或 `application.yml` 配好了这些业务凭据，可在 **Windows PowerShell** 一次同步：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File A:\trade\deploy\scripts\sync-backend-config.ps1 -Server ubuntu@国内服务器公网IP
+```
+
+仓库在其他位置时修改脚本路径；自定义 SSH 端口追加 `-Port 端口`，指定登录私钥追加 `-IdentityFile "私钥路径"`。电脑需已通过 SSH 核验并保存国内服务器主机指纹，服务器需有 Python 3 且登录用户可写 `/opt/trade/deploy`。`-CheckOnly` 只检查本地必填项。
+
+脚本优先读取 Windows 用户、系统、当前进程环境变量，再读取本项目 YAML 对应字段的标量或 `${变量:默认值}`；这样无需重开终端也能读取 `setx` 新保存的值。仅同步上面九项 AI / Telegram / X 凭据和目标 ID，不同步交易所凭据或本地开发配置。缺项时只显示字段名并终止上传。内容经 SSH 标准输入传输，不回显、不放入命令参数或本地中间文件。服务器保留基础设施 `.env`、业务开关和已有管理令牌；空管理令牌会自动生成。更新前保留权限 600 的 `backend.env.before-sync-*` 备份，再原子替换 `backend.env`。同步不会启动或重启服务。
 
 模板已按本次要求配置：OKX 自动策略 **PAPER**、真实下单关闭；X 自动生成、Telegram 人工审核和真实发布开启，每轮完成后等三小时；首次生成约 30 秒后开始。Polymarket、微博、小说任务关闭。DeepSeek 使用 `deepseek-flash` 直连；OKX、Telegram、X 使用隧道代理。容器地址由 Compose 强制覆盖为 `egress:13128`，不要填写 `127.0.0.1`。
 
@@ -101,29 +116,7 @@ chmod 644 deploy/secrets/gateway.htpasswd
 
 `htpasswd` 交互输入网关密码，避免密码出现在命令参数中。哈希文件需允许 Nginx worker 读取，所以文件使用 644、宿主机父目录保持 700；SSH 私钥则仅 UID 10001 可读。容器启动时复制私钥到 tmpfs 并检查权限。每次 SSH 退出由 Docker 重启重连；不会向宿主机发布 13128。
 
-## 3. 放入 TLS 证书
-
-将覆盖两个域名的证书链和私钥放为：
-
-```text
-deploy/secrets/tls/fullchain.pem
-deploy/secrets/tls/privkey.pem
-```
-
-证书文件使用 644、私钥使用 root 所有的 600。复制真实文件，避免把指向容器挂载目录外部的符号链接放进来。
-
-若用 Certbot，首次网关尚未启动且 80 空闲时可用 [standalone 模式](https://eff-certbot.readthedocs.io/en/stable/using.html#standalone)：
-
-```bash
-sudo certbot certonly --standalone --cert-name trade.example.com \
-  -d trade.example.com -d x.example.com
-sudo install -m 644 /etc/letsencrypt/live/trade.example.com/fullchain.pem deploy/secrets/tls/fullchain.pem
-sudo install -m 600 /etc/letsencrypt/live/trade.example.com/privkey.pem deploy/secrets/tls/privkey.pem
-```
-
-Certbot 的安装与邮箱 / 服务条款按其官方流程完成。网关上线后不要让 standalone 续期与网关争抢 80；可改用 webroot `/opt/trade/deploy/acme`（已挂载并允许验证路径）。续期成功后仍须复制新证书并 reload 网关。部署脚本不申请或自动续期证书，投产前应配置 Certbot timer 和相应 deploy hook。
-
-## 4. 构建镜像并发布
+## 3. 构建镜像并发布
 
 在电脑的 WSL / Linux 构建机或 CI 中执行，Docker Desktop 需启动 **Linux Engine**。不需要先手工生成 JAR 或 dist，Dockerfile 会完成 Maven 测试 / 打包和两个前端构建：
 
@@ -149,6 +142,26 @@ bash deploy/scripts/release.sh deploy
 
 发布采用单实例短暂停机。失败返回非零；如果失败发生在停止之后，部分应用可能尚未启动，应查看日志并显式重试或回滚，不会自动继续真实发布。健康检查只证明进程就绪：隧道监听成功不能证明德国 Squid、OKX、Telegram 或 X 已联通。
 
+## 4. 建立电脑访问隧道
+
+在 Windows PowerShell 打开单独窗口执行，把 `deploy-user@国内服务器IP` 换成实际 SSH 账号和地址：
+
+```powershell
+ssh -NT -o ExitOnForwardFailure=yes `
+  -L 127.0.0.1:18080:127.0.0.1:18080 `
+  -L 127.0.0.1:18081:127.0.0.1:18081 `
+  deploy-user@国内服务器IP
+```
+
+SSH 不是 22 端口时，在登录地址前添加 `-p 实际端口`；有专用登录密钥时添加 `-i 密钥路径`。这里的登录密钥属于电脑访问国内服务器，不能使用德国代理的 `egress_key`。首次连接核对国内服务器主机指纹。命令成功后通常没有输出，保留该窗口；电脑休眠或网络中断后重新运行即可。
+
+浏览器访问：
+
+- 交易驾驶舱：`http://127.0.0.1:18080`；
+- X 控制台：`http://127.0.0.1:18081`。
+
+两个页面都先输入 `operator` 和网关密码；X 控制台还需输入 `TRADE_X_ADMIN_TOKEN`。电脑本地端口已占用时，例如把第一条改为 `-L 127.0.0.1:28080:127.0.0.1:18080`，浏览器对应使用 `http://127.0.0.1:28080`。不要把 `-L` 的监听地址改成 `0.0.0.0`。
+
 ## 5. 部署验收
 
 在服务器 Bash 定义一个便于日常排障的命令；不使用 `source`：
@@ -171,13 +184,13 @@ dc exec -T backend curl --noproxy '' -fsS --max-time 20 \
   --proxy http://egress:13128 https://www.okx.com/api/v5/public/time
 
 # -u 只给用户名，由 curl 交互询问网关密码。
-curl -fsS -u operator 'https://trade.example.com/api/trading/market/candles?instId=BTC-USDT&bar=5m&limit=2'
-curl -fsS -u operator https://trade.example.com/api/automation/tasks
+curl -fsS -u operator 'http://127.0.0.1:18080/api/trading/market/candles?instId=BTC-USDT&bar=5m&limit=2'
+curl -fsS -u operator http://127.0.0.1:18080/api/automation/tasks
 ```
 
-浏览器打开两个域名，输入网关密码；X 控制台再输入 `TRADE_X_ADMIN_TOKEN`。确认行情、运行状态和 X 草稿列表加载正常；确认策略运行模式为 PAPER。再完成一次真实 AI 生成 → Telegram 审核 → X 发布的人工验收，这一步会产生 AI 费用和真实 X 发帖。上线配置开关已经开启，请自行选择要批准的草稿。
+以上两个网关请求可直接在服务器上验证；Windows 电脑建立隧道后也可用 `curl.exe` 请求同一地址。浏览器确认行情、运行状态和 X 草稿列表加载正常；确认策略运行模式为 PAPER。再完成一次真实 AI 生成 → Telegram 审核 → X 发布的人工验收，这一步会产生 AI 费用和真实 X 发帖。上线配置开关已经开启，请自行选择要批准的草稿。
 
-`/healthz` 只报告网关，不能代表业务验收；公开网关没有转发 `/actuator/`。backend 自检在容器内部访问 `/actuator/health/readiness`。
+`/healthz` 只报告网关，不能代表业务验收；网关没有转发 `/actuator/`。backend 自检在容器内部访问 `/actuator/health/readiness`。从其他机器直接请求国内服务器的 18080 / 18081 应无法连接；如果能连接，检查是否仍使用旧 Compose 配置或存在其他进程监听。
 
 ## 后续更新和回滚
 
@@ -201,11 +214,13 @@ bash deploy/scripts/release.sh rollback
 bash deploy/scripts/release.sh rollback --release deploy/releases/某份历史清单.env
 ```
 
-单独更新前端用 `cockpit` 或 `x-console`；只更换网关配置、密码或证书可执行 `deploy gateway`，更换隧道 key / VPS 地址可执行 `deploy egress`。选中的应用始终重建，单独发布不会启动或重建其依赖，首次必须先完成全量部署。
+单独更新前端用 `cockpit` 或 `x-console`；只更换网关配置或密码可执行 `deploy gateway`，更换隧道 key / VPS 地址可执行 `deploy egress`。选中的应用始终重建，单独发布不会启动或重建其依赖，首次必须先完成全量部署。
 
 `deploy/releases/current.env` 保存当前成功镜像，`previous.env` 保存前一成功版本，还有时间戳快照。失败保持 `current.env`；失败的回滚目标保存在 `target-*.env`，可以显式传入重试。成功回滚后再次回滚会切回刚才版本。一次只允许一个发布进程运行。
 
 镜像回滚不会撤销数据库变化、已经发生的发帖、当前 `backend.env` 或仓库内网关配置。更新代码同时更改部署配置时，也要自行保留并恢复相应配置版本；保留历史镜像仓库 tag，不要清理掉回滚需要的镜像。
+
+以上命令默认私有模式。访问模式不存入镜像清单；使用后文公共模式时，每次校验、发布、单服务更新和回滚均显式添加 `--access public`。
 
 ### 没有镜像仓库时
 
@@ -248,8 +263,61 @@ dc --profile monitoring up -d --no-deps prometheus grafana
 
 监控只监听宿主机回环 `127.0.0.1:9090` 和 `127.0.0.1:3001`，通过 SSH 本地转发访问。复用现有交易告警规则和仪表盘；默认保留七天指标。发布脚本不更新这两个可选服务，数据库 / 缓存 / 监控的版本升级单独安排。
 
-## 本次验证边界
+## 可选：双域名 HTTPS 公共模式
 
-已做离线后端测试、两个前端 Docker 配置构建、X 前端测试、Nginx 配置语法检查、Compose 配置解析以及隔离的发布脚本模拟验证。当前电脑的 Docker Linux Engine 未运行，因此没有完成实际镜像构建和 Linux 容器运行验收；服务器仍需按上面的步骤检查网络、证书、内存和外部服务。未使用真实凭据调用 AI、Telegram、X 或交易接口。
+以后需要公网 Web 访问时，才启用 `compose.public.yaml`，它在基础配置上替换网关端口、域名和证书挂载。部署地区、备案和接入要求先按服务商确认，见 [阿里云ICP备案要求](https://help.aliyun.com/zh/icp-filing/basic-icp-service/product-overview/icp-filing-requirements-for-a-regular-website)。仅把访问地址改成公网 IP 不能作为免备案方案。
 
-驾驶舱现有 HTML 测试的第一项依赖 Cloudflare `worker.fetch`，不能直接验证 Node 构建；本次另做了隔离的 Node SSR 首页检查。vinext 在原生 Windows 上的静态资源缓存还有路径分隔符差异，模拟 Linux 路径后资源检查通过，但不能替代真正的 Linux 镜像验收。额外的本地 Nginx HTTP 冒烟服务启动被自动批准审查拒绝，返回原因只有“策略阻止”；因此只完成了 Nginx 配置语法验证。
+准备两个域名解析到国内服务器，例如 `trade.example.com`、`x.example.com`；在 `deploy/.env` 增加 `COCKPIT_DOMAIN`、`X_CONSOLE_DOMAIN`，只填主机名，不带协议、路径或端口。安全组允许 80 / 443，其他业务端口继续不公开。准备同时覆盖两个域名的证书链与私钥：
+
+```bash
+mkdir -p deploy/secrets/tls deploy/acme
+chmod 700 deploy/secrets/tls
+```
+
+```text
+deploy/secrets/tls/fullchain.pem
+deploy/secrets/tls/privkey.pem
+```
+
+证书文件使用 644、私钥使用 root 所有的 600。复制真实文件，避免把指向容器挂载目录外部的符号链接放进来。公共模式的路径可用 `TLS_DIRECTORY`、`ACME_DIRECTORY` 覆盖，均相对于仓库根目录。
+
+若用 Certbot，首次网关尚未启动且 80 空闲时可用 [standalone 模式](https://eff-certbot.readthedocs.io/en/stable/using.html#standalone)：
+
+```bash
+sudo certbot certonly --standalone --cert-name trade.example.com \
+  -d trade.example.com -d x.example.com
+sudo install -m 644 /etc/letsencrypt/live/trade.example.com/fullchain.pem deploy/secrets/tls/fullchain.pem
+sudo install -m 600 /etc/letsencrypt/live/trade.example.com/privkey.pem deploy/secrets/tls/privkey.pem
+```
+
+Certbot 的安装与邮箱 / 服务条款按其官方流程完成。网关上线后不要让 standalone 续期与网关争抢 80；可改用 webroot `/opt/trade/deploy/acme`（已挂载并允许验证路径）。续期成功后仍须复制新证书并 reload 网关。部署脚本不申请或自动续期证书，投产前应配置 Certbot timer 和相应 deploy hook。
+
+公共模式的所有发布操作都加 `--access public`，例如：
+
+```bash
+bash deploy/scripts/release.sh validate --access public
+bash deploy/scripts/release.sh deploy --access public
+bash deploy/scripts/release.sh deploy gateway --access public
+bash deploy/scripts/release.sh rollback --access public
+```
+
+公共模式排障的 `dc` 函数也必须同时传两个 Compose 文件：
+
+```bash
+dc() {
+  docker compose --env-file deploy/.env --env-file deploy/release.env \
+    -f compose.prod.yaml -f compose.public.yaml "$@"
+}
+```
+
+浏览器改为访问两个 `https://` 域名，仍需网关密码和应用管理令牌；HTTP 仅处理证书验证和跳转 HTTPS。私有模式的回环 Web 端口会被替换，不与公共端口同时发布。
+
+切换私有 / 公共模式时保留相同项目名、数据卷前缀和运行配置，并执行目标模式的**全量发布**，不要只更新 `gateway` 或某个单服务，因为后端的来源配置也随模式变化。切到公共模式用 `deploy --access public`；切回私有模式用 `deploy --access private`。访问模式不存入镜像历史，镜像回滚不会恢复旧访问模式，回滚时须明确选择当前要使用的模式。
+
+## 验证边界
+
+本轮已通过私有 / 公共模式的真实 Compose 配置解析（使用虚构凭据）、Linux Nginx `-t` 语法检查、发布脚本 13 项隔离模拟检查，以及后端完整离线测试：503 项，0 失败、1 项外部集成测试跳过。验证没有启动业务服务或连接你的服务器。
+
+离线构建、配置解析、Nginx 语法检查和发布脚本模拟验证不能替代完整应用镜像及服务器运行验收。Docker Linux Engine 可用也不代表这套应用已运行通过；服务器仍需按上面的步骤检查 SSH 转发、监听地址、内存和外部服务，公共模式另需验收域名、证书和续期。部署文件更新本身不会连接你的服务器，也不会验证真实 AI、Telegram、X 或交易接口。
+
+驾驶舱现有 HTML 测试的第一项依赖 Cloudflare `worker.fetch`，不能直接验证 Node 构建；此前另做过隔离的 Node SSR 首页检查。vinext 在原生 Windows 上的静态资源缓存还有路径分隔符差异，模拟 Linux 路径后的资源检查不能替代真正的 Linux 镜像验收。

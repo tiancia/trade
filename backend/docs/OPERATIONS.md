@@ -2,7 +2,9 @@
 
 本手册描述后端的通用安全运行流程。生产环境的主机、网关、密钥保管和告警平台由部署系统管理，不写入仓库。
 
-Ubuntu Docker 部署见 [生产部署说明](../../deploy/README.md)：包含后端、交易驾驶舱、X 控制台、德国 VPS 隧道和发布 / 回滚。该方案会把 OKX、Telegram、X 代理地址覆盖为容器服务名 `egress:13128`，并持久化整个 `/app/data` 目录。
+Ubuntu Docker 部署见 [生产部署说明](../../deploy/README.md)：包含后端、交易驾驶舱、X 控制台、德国 VPS 隧道和发布 / 回滚。默认 `compose.prod.yaml` 仅在国内服务器回环监听两个 Web 入口，电脑通过 SSH 转发后访问 `http://127.0.0.1:18080` 和 `http://127.0.0.1:18081`，无需域名或 TLS 证书；仍需网关密码及应用管理令牌。公网只开放所需 SSH 入口。可选公共 HTTPS 模式另叠加 `compose.public.yaml`，每次发布 / 回滚须指定 `--access public`。
+
+该方案会把 OKX、Telegram、X 代理地址覆盖为容器服务名 `egress:13128`，并持久化整个 `/app/data` 目录。电脑访问国内服务器的 SSH 隧道，与国内后端通过 `egress` 访问德国 Squid 的隧道独立；关闭电脑访问隧道不影响后台任务继续运行。
 
 ## 运行依赖
 

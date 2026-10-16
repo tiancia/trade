@@ -16,6 +16,8 @@ backend/data/trading-state.json
 # Production deployment secrets and release records (server-local).
 /deploy/secrets/
 /deploy/releases/
+/deploy/backend.env.before-sync-*
+/deploy/.backend-sync-*
 /deploy/acme/
 /backups/
 

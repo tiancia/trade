@@ -11,6 +11,7 @@ NO_PULL=false
 TARGETS=()
 IMAGE_KEYS=(BACKEND_IMAGE COCKPIT_IMAGE X_CONSOLE_IMAGE EGRESS_IMAGE)
 WAIT_TIMEOUT=${DEPLOY_WAIT_TIMEOUT:-180}
+ACCESS_MODE=${DEPLOY_ACCESS_MODE:-private}
 manifest_tmp=''
 record_tmp=''
 mutation_started=false
@@ -29,6 +30,7 @@ Commands:
 Options:
   --config FILE   Runtime secrets/config; defaults to deploy/.env
   --release FILE  Non-secret image manifest; deploy/validate: deploy/release.env
+  --access MODE   private (default), or public with compose.public.yaml
   --no-pull       Require all needed images already loaded locally; never pull
   --help          Show this help
 
@@ -36,6 +38,11 @@ Services: backend cockpit x-console egress gateway.
 Omit services for the initial/full deployment. Full deployment also starts
 mysql/redis with --no-recreate. A selected-service update does not start or
 change dependencies; deploy the full stack before using selected updates.
+
+Private access uses only compose.prod.yaml. Public access adds compose.public.yaml
+and requires its domain/TLS configuration. Pass --access public for every public
+validate, deploy, and rollback command (or export DEPLOY_ACCESS_MODE=public).
+The access mode is not stored in image manifests or read from the runtime config.
 
 The script never sources or prints the runtime config, runs database migrations,
 uses compose down, or removes volumes. Image manifests accept only four *_IMAGE
@@ -62,6 +69,7 @@ while (($#)); do
   case "$1" in
     --config) require_value "$@"; CONFIG_FILE=$2; shift 2 ;;
     --release) require_value "$@"; RELEASE_FILE=$2; shift 2 ;;
+    --access) require_value "$@"; ACCESS_MODE=$2; shift 2 ;;
     --no-pull) NO_PULL=true; shift ;;
     --help|-h) usage; exit 0 ;;
     validate|deploy|rollback)
@@ -73,6 +81,7 @@ while (($#)); do
 done
 
 [[ -n $ACTION ]] || { usage >&2; exit 1; }
+case "$ACCESS_MODE" in private|public) ;; *) fail 'Access mode must be private or public' ;; esac
 [[ $WAIT_TIMEOUT =~ ^[1-9][0-9]*$ ]] || fail 'DEPLOY_WAIT_TIMEOUT must be a positive number of seconds'
 for service in "${TARGETS[@]}"; do
   case "$service" in backend|cockpit|x-console|egress|gateway) ;; *) fail "Unsupported application service: $service" ;; esac
@@ -92,6 +101,9 @@ fi
 [[ -f $CONFIG_FILE ]] || fail "Runtime configuration not found: $CONFIG_FILE"
 [[ -f $RELEASE_FILE ]] || fail "Image manifest not found: $RELEASE_FILE"
 [[ -f $ROOT_DIR/compose.prod.yaml ]] || fail 'compose.prod.yaml not found at repository root'
+if [[ $ACCESS_MODE == public ]]; then
+  [[ -f $ROOT_DIR/compose.public.yaml ]] || fail 'compose.public.yaml not found at repository root'
+fi
 command -v docker >/dev/null || fail 'docker is required'
 
 # Never source an env file. Accept a deliberately narrow non-secret manifest.
@@ -161,6 +173,9 @@ done
 manifest_tmp=$(mktemp "${TMPDIR:-/tmp}/trade-release.XXXXXX")
 write_manifest "$manifest_tmp" activated
 compose=(docker compose --project-directory "$ROOT_DIR" --env-file "$CONFIG_FILE" --env-file "$manifest_tmp" -f "$ROOT_DIR/compose.prod.yaml")
+if [[ $ACCESS_MODE == public ]]; then
+  compose+=(-f "$ROOT_DIR/compose.public.yaml")
+fi
 image_environment=()
 for key in "${IMAGE_KEYS[@]}"; do
   image_environment+=("$key=${activated[$key]}")
@@ -169,7 +184,7 @@ compose_run() { env "${image_environment[@]}" "${compose[@]}" "$@"; }
 
 compose_run config -q
 if [[ $ACTION == validate ]]; then
-  printf 'Compose configuration and image manifest are valid. No containers changed.\n'
+  printf 'Compose configuration and image manifest are valid (%s access). No containers changed.\n' "$ACCESS_MODE"
   exit 0
 fi
 

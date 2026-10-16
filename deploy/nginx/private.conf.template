@@ -1,0 +1,39 @@
+# Private dashboard entry points are exposed only through SSH port forwarding.
+# Docker DNS is queried again after upstream containers are replaced.
+resolver 127.0.0.11 valid=10s ipv6=off;
+resolver_timeout 5s;
+server_tokens off;
+
+server {
+    listen 8080;
+    listen [::]:8080;
+    server_name _;
+
+    auth_basic "Trade dashboard";
+    auth_basic_user_file /run/secrets/gateway.htpasswd;
+
+    include /etc/nginx/includes/proxy-common.conf;
+    include /etc/nginx/includes/api.conf;
+
+    location / {
+        set $frontend_upstream cockpit:3000;
+        proxy_pass http://$frontend_upstream;
+    }
+}
+
+server {
+    listen 8081;
+    listen [::]:8081;
+    server_name _;
+
+    auth_basic "Trade dashboard";
+    auth_basic_user_file /run/secrets/gateway.htpasswd;
+
+    include /etc/nginx/includes/proxy-common.conf;
+    include /etc/nginx/includes/api.conf;
+
+    location / {
+        set $frontend_upstream x-console:8080;
+        proxy_pass http://$frontend_upstream;
+    }
+}

@@ -1,0 +1,22 @@
+# Optional override for a public, domain-based HTTPS gateway.
+# docker compose ... -f compose.prod.yaml -f compose.public.yaml ...
+# !override replaces the private ports completely (Compose >= 2.24.4;
+# the runtime env_file.format: raw already requires >= 2.30).
+services:
+  backend:
+    environment:
+      TRADE_TRADING_FRONTEND_ALLOWED_ORIGIN_PATTERNS: https://${COCKPIT_DOMAIN:?Set COCKPIT_DOMAIN for public access}
+
+  gateway:
+    ports: !override
+      - "${HTTP_BIND_ADDRESS:-0.0.0.0}:${HTTP_PORT:-80}:80"
+      - "${HTTPS_BIND_ADDRESS:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+    environment:
+      COCKPIT_DOMAIN: ${COCKPIT_DOMAIN:?Set COCKPIT_DOMAIN for public access}
+      X_CONSOLE_DOMAIN: ${X_CONSOLE_DOMAIN:?Set X_CONSOLE_DOMAIN for public access}
+    volumes:
+      - ./deploy/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${TLS_DIRECTORY:-./deploy/secrets/tls}:/etc/nginx/tls:ro
+      - ${ACME_DIRECTORY:-./deploy/acme}:/var/www/acme:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate -q -O /dev/null https://127.0.0.1/healthz"]
