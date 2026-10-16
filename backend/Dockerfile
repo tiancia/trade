@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1
+# Build from the repository root: docker build -f backend/Dockerfile .
+ARG BUILD_JAVA_IMAGE=eclipse-temurin:21-jdk-jammy
+ARG RUNTIME_JAVA_IMAGE=eclipse-temurin:21-jre-jammy
+FROM ${BUILD_JAVA_IMAGE} AS build
+WORKDIR /workspace/backend
+COPY backend/.mvn/ .mvn/
+COPY backend/mvnw backend/pom.xml ./
+RUN sed -i 's/\r$//' mvnw && chmod +x mvnw
+COPY backend/src/ src/
+# The existing full test suite also validates these infrastructure files.
+COPY backend/infrastructure/ infrastructure/
+COPY compose.yaml /workspace/compose.yaml
+# Package runs the offline provider tests; the opt-in exchange test stays off.
+RUN --mount=type=cache,target=/root/.m2 \
+    RUN_INTEGRATION_TESTS=false ./mvnw -B -ntp clean package
+
+FROM ${RUNTIME_JAVA_IMAGE} AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 trade \
+    && useradd --uid 10001 --gid 10001 --no-create-home trade \
+    && install -d -o trade -g trade /app/data
+WORKDIR /app
+COPY --from=build --chown=10001:10001 /workspace/backend/target/trade-0.0.1-SNAPSHOT.jar /app/app.jar
+USER 10001:10001
+EXPOSE 8080
+HEALTHCHECK --interval=20s --timeout=6s --start-period=90s --retries=6 \
+    CMD curl --fail --silent --max-time 5 http://127.0.0.1:8080/actuator/health/readiness || exit 1
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]

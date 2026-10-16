@@ -13,6 +13,12 @@ backend/data/trading-state.json
 *.env
 *.local
 
+# Production deployment secrets and release records (server-local).
+/deploy/secrets/
+/deploy/releases/
+/deploy/acme/
+/backups/
+
 # Python generated files
 **/__pycache__/
 **/*.py[cod]

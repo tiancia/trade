@@ -1,0 +1,62 @@
+# Render only COCKPIT_DOMAIN and X_CONSOLE_DOMAIN via NGINX_ENVSUBST_FILTER.
+# Docker DNS is queried again after upstream containers are replaced.
+resolver 127.0.0.11 valid=10s ipv6=off;
+resolver_timeout 5s;
+server_tokens off;
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${COCKPIT_DOMAIN} ${X_CONSOLE_DOMAIN};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/acme;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name ${COCKPIT_DOMAIN};
+
+    ssl_certificate /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    auth_basic "Trade dashboard";
+    auth_basic_user_file /run/secrets/gateway.htpasswd;
+
+    include /etc/nginx/includes/proxy-common.conf;
+    include /etc/nginx/includes/api.conf;
+
+    location / {
+        set $frontend_upstream cockpit:3000;
+        proxy_pass http://$frontend_upstream;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name ${X_CONSOLE_DOMAIN};
+
+    ssl_certificate /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    auth_basic "Trade dashboard";
+    auth_basic_user_file /run/secrets/gateway.htpasswd;
+
+    include /etc/nginx/includes/proxy-common.conf;
+    include /etc/nginx/includes/api.conf;
+
+    location / {
+        set $frontend_upstream x-console:8080;
+        proxy_pass http://$frontend_upstream;
+    }
+}

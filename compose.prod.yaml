@@ -1,0 +1,229 @@
+name: ${COMPOSE_PROJECT_NAME:-trade-production}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  mysql:
+    image: ${MYSQL_IMAGE:-mysql:8.0}
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in deploy/.env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-trade_system}
+      MYSQL_USER: ${MYSQL_USER:-trade}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in deploy/.env}
+    command: ["--innodb-buffer-pool-size=256M", "--max-connections=100"]
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks: [data]
+    mem_limit: ${MYSQL_MEMORY_LIMIT:-768m}
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql --protocol=TCP -h 127.0.0.1 -u \"$${MYSQL_USER}\" \"$${MYSQL_DATABASE}\" -Nse 'SELECT 1' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *logging
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in deploy/.env}
+    command: ["sh", "-ec", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --maxmemory 64mb --maxmemory-policy allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    networks: [data]
+    mem_limit: ${REDIS_MEMORY_LIMIT:-192m}
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging: *logging
+
+  egress:
+    image: ${EGRESS_IMAGE:?Set EGRESS_IMAGE in the release env file}
+    restart: unless-stopped
+    environment:
+      EGRESS_SSH_HOST: ${EGRESS_SSH_HOST:?Set the German VPS host in deploy/.env}
+      EGRESS_SSH_PORT: ${EGRESS_SSH_PORT:-22}
+      EGRESS_SSH_USER: ${EGRESS_SSH_USER:-trade-proxy}
+      EGRESS_REMOTE_PORT: ${EGRESS_REMOTE_PORT:-3128}
+    secrets:
+      - egress_key
+      - egress_known_hosts
+    # No published port: only the backend can reach the local forwarding listener.
+    networks: [outbound]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=8m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    logging: *logging
+
+  backend:
+    image: ${BACKEND_IMAGE:?Set BACKEND_IMAGE in the release env file}
+    restart: unless-stopped
+    env_file:
+      - path: ${BACKEND_ENV_FILE:-./deploy/backend.env}
+        required: true
+        format: raw
+    environment:
+      TZ: Asia/Shanghai
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-trade_system}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-trade}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in deploy/.env}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in deploy/.env}
+      # These container-specific addresses take precedence over backend.env.
+      TRADE_OKX_PROXY_HOST: egress
+      TRADE_OKX_PROXY_PORT: "13128"
+      TRADE_TELEGRAM_PROXY_HOST: egress
+      TRADE_TELEGRAM_PROXY_PORT: "13128"
+      TRADE_X_PROXY_HOST: egress
+      TRADE_X_PROXY_PORT: "13128"
+      TRADE_TRADING_STATE_FILE: /app/data/trading-state.json
+      TRADE_TRADING_FRONTEND_ALLOWED_ORIGIN_PATTERNS: https://${COCKPIT_DOMAIN:?Set COCKPIT_DOMAIN in deploy/.env}
+      TRADE_METRICS_ENVIRONMENT: production
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_FORWARD_HEADERS_STRATEGY: framework
+      SERVER_SHUTDOWN: graceful
+      SPRING_LIFECYCLE_TIMEOUT_PER_SHUTDOWN_PHASE: 60s
+      JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=65.0 -XX:+ExitOnOutOfMemoryError}
+    volumes:
+      - backend_data:/app/data
+    networks: [app, data, outbound]
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      egress: {condition: service_healthy}
+    stop_grace_period: 90s
+    read_only: true
+    tmpfs: ["/tmp:rw,nosuid,size=128m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: ${BACKEND_MEMORY_LIMIT:-1g}
+    logging: *logging
+
+  cockpit:
+    image: ${COCKPIT_IMAGE:?Set COCKPIT_IMAGE in the release env file}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=384
+    networks: [app]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: ${COCKPIT_MEMORY_LIMIT:-512m}
+    stop_grace_period: 30s
+    logging: *logging
+
+  x-console:
+    image: ${X_CONSOLE_IMAGE:?Set X_CONSOLE_IMAGE in the release env file}
+    restart: unless-stopped
+    networks: [app]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    logging: *logging
+
+  gateway:
+    image: ${NGINX_IMAGE:-nginx:1.30.6-alpine}
+    restart: unless-stopped
+    ports:
+      - "${HTTP_BIND_ADDRESS:-0.0.0.0}:${HTTP_PORT:-80}:80"
+      - "${HTTPS_BIND_ADDRESS:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+    environment:
+      COCKPIT_DOMAIN: ${COCKPIT_DOMAIN:?Set COCKPIT_DOMAIN in deploy/.env}
+      X_CONSOLE_DOMAIN: ${X_CONSOLE_DOMAIN:?Set X_CONSOLE_DOMAIN in deploy/.env}
+      NGINX_ENVSUBST_FILTER: ^(COCKPIT_DOMAIN|X_CONSOLE_DOMAIN)$$
+    volumes:
+      - ./deploy/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./deploy/nginx/includes:/etc/nginx/includes:ro
+      - ${TLS_DIRECTORY:-./deploy/secrets/tls}:/etc/nginx/tls:ro
+      - ${ACME_DIRECTORY:-./deploy/acme}:/var/www/acme:ro
+    secrets:
+      - source: gateway_htpasswd
+        target: gateway.htpasswd
+    networks: [app]
+    depends_on:
+      backend: {condition: service_healthy}
+      cockpit: {condition: service_healthy}
+      x-console: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate -q -O /dev/null https://127.0.0.1/healthz"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    mem_limit: 96m
+    logging: *logging
+
+  prometheus:
+    profiles: [monitoring]
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.12.0}
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=7d"]
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./backend/infrastructure/observability/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    networks: [app]
+    ports: ["127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"]
+    mem_limit: 256m
+    logging: *logging
+
+  grafana:
+    profiles: [monitoring]
+    image: ${GRAFANA_IMAGE:-grafana/grafana:13.1.0}
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - 'test -n "$$GF_SECURITY_ADMIN_PASSWORD" || { echo "Set GRAFANA_ADMIN_PASSWORD before enabling monitoring" >&2; exit 1; }; exec /run.sh'
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    volumes:
+      - ./backend/infrastructure/observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./backend/infrastructure/observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./backend/infrastructure/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    networks: [app]
+    ports: ["127.0.0.1:${GRAFANA_PORT:-3001}:3000"]
+    depends_on: [prometheus]
+    mem_limit: 256m
+    logging: *logging
+
+networks:
+  app: {}
+  data: {internal: true}
+  outbound: {}
+
+volumes:
+  mysql_data: {name: "${DATA_VOLUME_PREFIX:-trade-production}_mysql"}
+  redis_data: {name: "${DATA_VOLUME_PREFIX:-trade-production}_redis"}
+  backend_data: {name: "${DATA_VOLUME_PREFIX:-trade-production}_backend"}
+  prometheus_data: {name: "${DATA_VOLUME_PREFIX:-trade-production}_prometheus"}
+  grafana_data: {name: "${DATA_VOLUME_PREFIX:-trade-production}_grafana"}
+
+secrets:
+  egress_key:
+    file: ${SECRETS_DIRECTORY:-./deploy/secrets}/egress_key
+  egress_known_hosts:
+    file: ${SECRETS_DIRECTORY:-./deploy/secrets}/egress_known_hosts
+  gateway_htpasswd:
+    file: ${SECRETS_DIRECTORY:-./deploy/secrets}/gateway.htpasswd

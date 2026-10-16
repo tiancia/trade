@@ -1,0 +1,6 @@
+# Linux entrypoints must remain executable by sh after a Windows checkout.
+*.sh text eol=lf
+**/Dockerfile text eol=lf
+*.conf text eol=lf
+*.template text eol=lf
+backend/mvnw text eol=lf

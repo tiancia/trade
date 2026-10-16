@@ -1,0 +1,21 @@
+# This Dockerfile uses the repository root as its build context.
+# Send only sources and the infrastructure fixtures used by the offline tests.
+**
+!compose.yaml
+!backend/
+!backend/.mvn/
+!backend/.mvn/**
+!backend/mvnw
+!backend/pom.xml
+!backend/src/
+!backend/src/**
+!backend/infrastructure/
+!backend/infrastructure/**
+**/.env*
+**/*.env
+**/*.local
+**/*.pem
+**/*.key
+**/id_rsa
+**/id_ed25519
+**/secrets/**
