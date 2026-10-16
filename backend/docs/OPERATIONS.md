@@ -12,6 +12,25 @@
 
 `.env.example` 是变量清单，Spring Boot 不会自动加载 `.env`。不要把真实值写回示例文件、启动脚本、日志或问题单。
 
+## 当前部署配置
+
+当前 `application.yml` 和 `.env.example` 按以下方案配置，环境变量仍可覆盖这些值：
+
+| 能力 | 配置及行为 |
+| --- | --- |
+| OKX | `TRADE_AUTOMATION_TRADING_AUTO_START=true`、`TRADE_TRADING_ENABLED=true`、`TRADE_TRADING_EXECUTION_MODE=paper`、`TRADE_TRADING_LIVE_ENABLED=false`；自动运行策略，仅模拟成交 |
+| X | auto-start、client、workflow、generation、Telegram review、publishing 和 live-publishing 均开启；只有经人工审核批准的版本可发布 |
+| X 节奏 | `TRADE_X_GENERATION_FIXED_DELAY_MS=10800000`，每轮完成后等待三小时；首次延迟 30 秒；UTC 日生成 / 发布尝试额度各 8 次 |
+| Polymarket | auto-start、业务、真实执行和代理均关闭 |
+| 代理 | OKX、Telegram、X 使用 `127.0.0.1:13128`；国内主机须独立建立并维护到德国 Squid `3128` 的 SSH 隧道 |
+| AI | DeepSeek 直连 `https://api.deepseek.com`，使用 `deepseek-flash`；供应商、型号、基础地址和密钥环境变量名可用 `TRADE_AI_PROVIDER`、`TRADE_AI_MODEL`、`TRADE_AI_BASE_URL`、`TRADE_AI_API_KEY_ENV_NAME` 覆盖 |
+
+2026-10-16 核实的 [DeepSeek 官方更新日志](https://api-docs.deepseek.com/updates/)将 `deepseek-flash` 指向 DeepSeek-V4.1-Flash；Java 的 DeepSeek 缺省型号已同步。OKX 公共 / 私有 WebSocket 地址使用默认 443 端口，可分别用 `TRADE_OKX_WS_PUBLIC_URL` / `TRADE_OKX_WS_PRIVATE_URL` 覆盖；WebSocket 订阅开关仍由 `TRADE_TRADING_WEBSOCKET_ENABLED` 单独控制。
+
+开启 X 前，运行环境必须提供 `TRADE_X_TARGET_USER_ID`、`TRADE_X_TELEGRAM_CHAT_ID`、`TRADE_X_TELEGRAM_REVIEWER_USER_IDS`、Telegram Bot Token、DeepSeek API Key 和 X OAuth 1.0a 凭据。缺少必需的目标 / 审核配置会在启动校验时拒绝；发布权限、额度和实际网络连接需另行联调。启动后的发布扫描可能处理数据库中已有、未过期且审核仍有效的 `APPROVED` 草稿；`PENDING_REVIEW` 不发布，`UNKNOWN` 不自动重发。详细说明见 [X 工作流](X_WORKFLOW.md)。
+
+本地代理验收曾使用 `TRADE_AUTOMATION_TRADING_AUTO_START=false`、`TRADE_AUTOMATION_X_AUTO_START=false` 等临时覆盖值；如继续沿用同一 Shell / IDE / systemd 环境，应显式更新这些值并重启 Java 进程。仅修改 YAML 不会覆盖已有环境变量。systemd 部署可通过服务的 `EnvironmentFile=/etc/trade/trade.env` 注入运行配置；实际文件不进入仓库。SSH 隧道和 Java 服务需分别常驻，普通进程与容器中的 `127.0.0.1` 指向各自网络环境。
+
 ## 安全启动
 
 首次启动或未知环境中，至少确认以下能力关闭：
@@ -21,6 +40,8 @@ $env:TRADE_AUTOMATION_STORY_AUTO_START="false"
 $env:TRADE_AUTOMATION_TRADING_AUTO_START="false"
 $env:TRADE_AUTOMATION_POLYMARKET_AUTO_START="false"
 $env:TRADE_TRADING_ENABLED="false"
+$env:TRADE_TRADING_EXECUTION_MODE="paper"
+$env:TRADE_TRADING_LIVE_ENABLED="false"
 $env:TRADE_POLYMARKET_ENABLED="false"
 $env:TRADE_POLYMARKET_EXECUTION_ENABLED="false"
 $env:TRADE_STORY_ENABLED="false"
@@ -30,10 +51,13 @@ $env:TRADE_WEIBO_GENERATION_ENABLED="false"
 $env:TRADE_WEIBO_PUBLISHING_ENABLED="false"
 $env:TRADE_WEIBO_LIVE_PUBLISHING_ENABLED="false"
 $env:TRADE_AUTOMATION_X_AUTO_START="false"
+$env:TRADE_X_CLIENT_ENABLED="false"
 $env:TRADE_X_WORKFLOW_ENABLED="false"
 $env:TRADE_X_GENERATION_ENABLED="false"
 $env:TRADE_X_PUBLISHING_ENABLED="false"
 $env:TRADE_X_LIVE_PUBLISHING_ENABLED="false"
+$env:TRADE_X_TELEGRAM_REVIEW_ENABLED="false"
+$env:TRADE_TELEGRAM_ENABLED="false"
 
 .\mvnw.cmd spring-boot:run
 ```
@@ -50,7 +74,7 @@ OKX 真实下单还要求 `trade.trading.execution-mode=live` 与 `live-enabled=
 
 1. `GET /actuator/health` 返回健康；
 2. 日志中没有数据库初始化、Mapper 或配置绑定失败；
-3. `GET /api/automation/tasks` 中任务默认未运行；
+3. `GET /api/automation/tasks` 与所选启动配置一致；安全启动覆盖值下任务未运行，当前部署方案下 `trading` 和 `x` 自动运行；
 4. `GET /api/trading/runtime/events` 的队列容量、深度和消费者状态合理；
 5. `GET /api/trading/runtime/status` 中 `fundSafety.status=ACTIVE`、对账无连续失败；若为 `HALTED`，先查明原因，不得直接改库；
 6. 若启用 Redis，确认缓存写入成功且没有持续连接重试；

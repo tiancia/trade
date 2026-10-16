@@ -2,8 +2,8 @@ package com.trade.client.okx;
 
 public final class OkxEndpoints {
     public static final String DEFAULT_BASE_URL = "https://www.okx.com";
-    public static final String DEFAULT_WS_PUBLIC_URL = "wss://ws.okx.com:8443/ws/v5/public";
-    public static final String DEFAULT_WS_PRIVATE_URL = "wss://ws.okx.com:8443/ws/v5/private";
+    public static final String DEFAULT_WS_PUBLIC_URL = "wss://ws.okx.com/ws/v5/public";
+    public static final String DEFAULT_WS_PRIVATE_URL = "wss://ws.okx.com/ws/v5/private";
 
     public static final String INSTRUMENT_INFO = "/api/v5/account/instruments";
     public static final String SYSTEM_TIME = "/api/v5/public/time";

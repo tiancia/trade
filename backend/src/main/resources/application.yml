@@ -110,7 +110,7 @@ trade:
       auto-start: ${TRADE_AUTOMATION_STORY_AUTO_START:false}
     trading:
       # 应用就绪后是否启动交易决策、事件扫描、对账循环和行情运行时。
-      auto-start: ${TRADE_AUTOMATION_TRADING_AUTO_START:false}
+      auto-start: ${TRADE_AUTOMATION_TRADING_AUTO_START:true}
     polymarket:
       # 应用就绪后是否启动 Polymarket AI 决策循环。
       auto-start: ${TRADE_AUTOMATION_POLYMARKET_AUTO_START:false}
@@ -164,7 +164,7 @@ trade:
       # Telegram HTTP 代理主机地址。
       host: ${TRADE_TELEGRAM_PROXY_HOST:127.0.0.1}
       # Telegram HTTP 代理 TCP 端口。
-      port: ${TRADE_TELEGRAM_PROXY_PORT:7897}
+      port: ${TRADE_TELEGRAM_PROXY_PORT:13128}
 
 
   weibo:
@@ -231,17 +231,17 @@ trade:
       # 微博 HTTP 代理主机地址。
       host: ${TRADE_WEIBO_PROXY_HOST:127.0.0.1}
       # 微博 HTTP 代理 TCP 端口。
-      port: ${TRADE_WEIBO_PROXY_PORT:7897}
+      port: ${TRADE_WEIBO_PROXY_PORT:13128}
 
   # X 单账号文本工作流；复用 Telegram Bot 时必须关闭微博 review.telegram.enabled。
   x:
     # X 草稿管理 API 的鉴权令牌；留空时管理接口关闭。
     admin-token: ${TRADE_X_ADMIN_TOKEN:}
     # X 真实发布的总门禁；还需工作流发布开关、客户端和有效用户授权。
-    live-publishing-enabled: ${TRADE_X_LIVE_PUBLISHING_ENABLED:false}
+    live-publishing-enabled: ${TRADE_X_LIVE_PUBLISHING_ENABLED:true}
     client:
       # X API 客户端开关，调用查询和发布前均检查。
-      enabled: ${TRADE_X_CLIENT_ENABLED:false}
+      enabled: ${TRADE_X_CLIENT_ENABLED:true}
       # OAuth 1.0a 应用 Consumer Key / API Key。
       api-key: ${X_API_KEY:}
       # 与 Consumer Key 配对的 Consumer Secret / API Secret。
@@ -262,7 +262,7 @@ trade:
         # X HTTP 代理主机地址。
         host: ${TRADE_X_PROXY_HOST:127.0.0.1}
         # X HTTP 代理 TCP 端口。
-        port: ${TRADE_X_PROXY_PORT:7897}
+        port: ${TRADE_X_PROXY_PORT:13128}
     review:
       telegram:
         # 开启 X Telegram 审核投递和轮询；同时要求共享 Telegram 客户端和 X 工作流开启。
@@ -279,7 +279,7 @@ trade:
       # 允许调用 AI 生成草稿；需开启工作流并配置内容方向和目标账号。
       generation-enabled: ${TRADE_X_GENERATION_ENABLED:true}
       # 允许发布已审核草稿；仍受真实发布门禁、TTL、账号、额度和最小间隔限制。
-      publishing-enabled: ${TRADE_X_PUBLISHING_ENABLED:false}
+      publishing-enabled: ${TRADE_X_PUBLISHING_ENABLED:true}
       # 目标 X 账号数字用户 ID；发布前查询 /2/users/me 校验授权账号一致。
       target-user-id: ${TRADE_X_TARGET_USER_ID:}
       content:
@@ -298,17 +298,17 @@ trade:
         # 正文最多 Unicode 字符数，配置上限 280；还校验 X 普通帖 280 加权上限（中文通常计 2）。
         max-chars: ${TRADE_X_CONTENT_MAX_CHARS:120}
       # 目标账号每个 UTC 日最多预留的 AI 生成次数；失败的生成仍占额度。
-      daily-generation-limit: ${TRADE_X_DAILY_GENERATION_LIMIT:5}
+      daily-generation-limit: ${TRADE_X_DAILY_GENERATION_LIMIT:8}
       # 目标账号每个 UTC 日最多预留的发布尝试次数；失败或结果未知的尝试仍占额度。
-      daily-publish-limit: ${TRADE_X_DAILY_PUBLISH_LIMIT:3}
+      daily-publish-limit: ${TRADE_X_DAILY_PUBLISH_LIMIT:8}
       # 自生成预约创建起的有效期，单位小时；修改 / 审核不续期，过期后不发布。
       review-ttl-hours: ${TRADE_X_REVIEW_TTL_HOURS:24}
       # 从最近一次发布尝试开始计时的最小间隔，单位秒；1800 = 30 分钟。
       publish-interval-seconds: ${TRADE_X_PUBLISH_INTERVAL_SECONDS:1800}
       # 发布扫描识别卡住生成 / 发布的恢复阈值，单位秒；不是 HTTP 超时，未知发布不自动重发。
       claim-timeout-seconds: ${TRADE_X_CLAIM_TIMEOUT_SECONDS:300}
-      # 每轮生成结束后等待的毫秒数；当前 YAML 回退 180000 = 3 分钟，仍受日额度和时间槽去重限制，并非精确排期。
-      generation-fixed-delay-ms: ${TRADE_X_GENERATION_FIXED_DELAY_MS:180000}
+      # 每轮生成结束后等待的毫秒数；10800000 = 3 小时，仍受日额度和时间槽去重限制，并非整点排期。
+      generation-fixed-delay-ms: ${TRADE_X_GENERATION_FIXED_DELAY_MS:10800000}
       # 每轮发布扫描结束后等待的毫秒数；60000 = 1 分钟，补偿审核投递、过期和发布恢复。
       publishing-fixed-delay-ms: ${TRADE_X_PUBLISHING_FIXED_DELAY_MS:60000}
       # X 任务启动后，三个循环首次执行前的等待时间，单位毫秒；30000 = 30 秒。
@@ -319,16 +319,16 @@ trade:
     # OKX REST API 基础地址。
     base-url: "https://www.okx.com"
     # OKX 公共 WebSocket 地址，用于行情等公开频道。
-    ws-public-url: "wss://ws.okx.com:8443/ws/v5/public"
+    ws-public-url: ${TRADE_OKX_WS_PUBLIC_URL:wss://ws.okx.com/ws/v5/public}
     # OKX 私有 WebSocket 地址，用于账户、订单等需要登录的频道。
-    ws-private-url: "wss://ws.okx.com:8443/ws/v5/private"
+    ws-private-url: ${TRADE_OKX_WS_PRIVATE_URL:wss://ws.okx.com/ws/v5/private}
     proxy:
       # 是否给 OKX HTTP/WebSocket 请求启用代理。
-      enabled: ${TRADE_OKX_PROXY_ENABLED:false}
+      enabled: ${TRADE_OKX_PROXY_ENABLED:true}
       # OKX 代理主机地址。
       host: ${TRADE_OKX_PROXY_HOST:127.0.0.1}
       # OKX HTTP / WebSocket 代理 TCP 端口。
-      port: ${TRADE_OKX_PROXY_PORT:7897}
+      port: ${TRADE_OKX_PROXY_PORT:13128}
 
   # Polymarket 独立 AI 决策模块；默认关闭，避免启动后直接读取市场并下注。
   polymarket:
@@ -385,7 +385,7 @@ trade:
         # Polymarket HTTP 代理主机地址。
         host: ${TRADE_POLYMARKET_PROXY_HOST:127.0.0.1}
         # Polymarket HTTP 代理 TCP 端口。
-        port: ${TRADE_POLYMARKET_PROXY_PORT:7897}
+        port: ${TRADE_POLYMARKET_PROXY_PORT:13128}
     execution:
       # 是否启用真实下单；false 时只记录 dry-run。
       enabled: ${TRADE_POLYMARKET_EXECUTION_ENABLED:false}
@@ -430,14 +430,14 @@ trade:
   ai:
     client:
       # AI 服务提供商；可选值：gemini、openai-compatible、deepseek、kimi。
-      provider: deepseek
+      provider: ${TRADE_AI_PROVIDER:deepseek}
       # 使用的 AI 模型名称；未配置时会使用 provider 对应的默认模型。
-#      model: deepseek-v4-pro
-      model: deepseek-flash
+      # deepseek-flash 是 DeepSeek-V4.1-Flash 的官方 API 名称。
+      model: ${TRADE_AI_MODEL:deepseek-flash}
       # 保存 AI API Key 的环境变量名；实际密钥建议放在环境变量里。
-      api-key-env-name: DEEPSEEK_API_KEY
+      api-key-env-name: ${TRADE_AI_API_KEY_ENV_NAME:DEEPSEEK_API_KEY}
       # AI 服务基础地址，应与 provider 对应；OpenAI 兼容客户端按下方路径发送请求。
-      base-url: "https://api.deepseek.com"
+      base-url: ${TRADE_AI_BASE_URL:https://api.deepseek.com}
       # OpenAI 兼容接口的 chat completions 路径；未配置时会使用 provider 对应的默认路径。
       # chat-completions-path:
       # 是否要求 OpenAI 兼容接口返回 JSON object 格式。
@@ -452,7 +452,7 @@ trade:
         # AI 请求代理主机地址。
         host: ${TRADE_AI_PROXY_HOST:127.0.0.1}
         # AI HTTP 请求代理 TCP 端口。
-        port: ${TRADE_AI_PROXY_PORT:7897}
+        port: ${TRADE_AI_PROXY_PORT:13128}
 
   # AI 自动短篇小说生成模块
   story:
@@ -499,7 +499,7 @@ trade:
       # 热点页面 HTTP 代理主机地址。
       host: ${TRADE_STORY_TREND_PROXY_HOST:127.0.0.1}
       # 热点页面 HTTP 代理 TCP 端口。
-      port: ${TRADE_STORY_TREND_PROXY_PORT:7897}
+      port: ${TRADE_STORY_TREND_PROXY_PORT:13128}
 
   # OKX 自动交易模块配置。
   trading:

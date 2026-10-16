@@ -45,7 +45,7 @@ class AiClientPropertiesTest {
         properties.setProvider(AiClientProperties.Provider.DEEPSEEK);
 
         assertEquals("https://api.deepseek.com", properties.normalizedBaseUrl());
-        assertEquals("deepseek-v4-flash", properties.requiredModel());
+        assertEquals("deepseek-flash", properties.requiredModel());
         assertEquals("/chat/completions", properties.normalizedChatCompletionsPath());
     }
 

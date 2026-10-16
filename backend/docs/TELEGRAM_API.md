@@ -35,6 +35,8 @@
 | `proxy.host` | `127.0.0.1` |
 | `proxy.port` | `7897` |
 
+当前 `application.yml` 与 `.env.example` 将 Telegram 客户端和代理开启，并将代理端口覆盖为 `13128`，连接本机到德国 VPS 的 SSH 隧道；上表仍描述独立创建 Java 属性对象时的安全默认值。
+
 以下示例由调用方显式读取 `TRADE_TELEGRAM_BOT_TOKEN`，创建客户端并调用 API；创建实例不会发送消息或启动后台轮询：
 
 ```java

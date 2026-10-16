@@ -14,12 +14,12 @@ public class XWorkflowProperties {
     private boolean publishingEnabled = false;
     private String targetUserId = "";
     private Content content = new Content();
-    private int dailyGenerationLimit = 5;
-    private int dailyPublishLimit = 3;
+    private int dailyGenerationLimit = 8;
+    private int dailyPublishLimit = 8;
     private long reviewTtlHours = 24;
     private long publishIntervalSeconds = 1800;
     private long claimTimeoutSeconds = 300;
-    private long generationFixedDelayMs = 14400000;
+    private long generationFixedDelayMs = 10800000;
     private long publishingFixedDelayMs = 60000;
     private long initialDelayMs = 30000;
 

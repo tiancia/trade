@@ -35,7 +35,7 @@ TRADE_X_CONTENT_MAX_CHARS=120
 
 这是当前代码、YAML 和 `.env.example` 的默认内容方向。部署环境中已有的 `TRADE_X_CONTENT_*` 值会覆盖默认值：切换聊天样式时需同步更新方向、语气、额外规则、`FORMAT=CHAT_DIALOGUE` 和字数范围后重启；若从英文切换，还需同步语言。旧散文或前缀标识要求会与聊天格式冲突，不能只改语言或格式。仅修改仓库不会覆盖环境变量；已有草稿不会被自动改写。
 
-属性类和 `.env.example` 的 X workflow、generation、review、client、live、publishing 和 automation auto-start 开关默认 false。当前 `application.yml` 的 auto-start、workflow、generation 和 review 回退为 true，client、live 和 publishing 回退为 false；部署环境仍应显式配置，不能仅凭属性类默认值判断实际运行状态。启用生成或审核而缺少目标账号、聊天或审核人配置时，启动校验会拒绝。共享 Telegram 客户端使用独立配置；X 审核关闭时不会通过它轮询或送审。本次风格调整保留运行开关和频率，不读取或改写实际 `.env`、凭据或生产数据。不能从 Bean 存在或任务运行推断已经允许发布。
+按本次部署要求，`application.yml` 和 `.env.example` 已开启 X auto-start、workflow、generation、review、client、live 和 publishing，以及共享 Telegram 客户端和相应代理；Java 属性类的布尔安全默认值仍为 false。生成间隔统一为完成上一轮后等待 3 小时，每个 UTC 日最多预约 8 次生成和 8 次发布尝试。部署环境仍应显式配置，不能仅凭属性类默认值判断实际运行状态。启用生成或审核而缺少目标账号、聊天或审核人配置时，启动校验会拒绝；缺少 X 凭据时发布等待。共享 Telegram 客户端使用独立配置；X 审核关闭时不会通过它轮询或送审。本次不读取或改写实际 `.env`、凭据或生产数据，配置开启也不代表外部联调已经完成。
 
 ## 创作与筛选流程
 
@@ -107,26 +107,51 @@ TRADE_WEIBO_LIVE_PUBLISHING_ENABLED=false
 
 同一应用同时启用微博和 X 的 Telegram review 会启动失败，防止两个 poller 消费彼此的更新。X 只处理 `x:a:` / `x:r:` 按钮，旧微博按钮不能审批 X 草稿。Bot 不可同时由其他程序轮询或使用 webhook；切换后待处理的微博按钮不会在 X 流程中恢复审批。
 
-## 启用生成和审核
+## 本次启用配置
 
-属性类和 `.env.example` 默认关闭 X 工作流，YAML 的回退值存在上述差异，务必显式设置部署值。完成以上准备后在部署环境设置：
+本次启用自动生成、Telegram 人工审核及审核后真实发布。仓库 YAML 回退值和 `.env.example` 与以下开关一致；数字账号、聊天和审核人标识仍需通过部署环境提供：
 
 ```ini
+TRADE_AUTOMATION_X_AUTO_START=true
+TRADE_X_CLIENT_ENABLED=true
 TRADE_X_WORKFLOW_ENABLED=true
 TRADE_X_GENERATION_ENABLED=true
+TRADE_X_PUBLISHING_ENABLED=true
+TRADE_X_LIVE_PUBLISHING_ENABLED=true
 TRADE_TELEGRAM_ENABLED=true
 TRADE_X_TELEGRAM_REVIEW_ENABLED=true
+TRADE_WEIBO_TELEGRAM_REVIEW_ENABLED=false
 TRADE_X_TARGET_USER_ID=替换为X账号数字ID
 TRADE_X_TELEGRAM_CHAT_ID=替换为Telegram数字ChatID
 TRADE_X_TELEGRAM_REVIEWER_USER_IDS=替换为Telegram数字用户ID
 
-# 初次联调先审核，确认状态与内容；以下两个发布开关保持关闭。
+TRADE_X_GENERATION_FIXED_DELAY_MS=10800000
+TRADE_X_DAILY_GENERATION_LIMIT=8
+TRADE_X_DAILY_PUBLISH_LIMIT=8
+
+TRADE_X_PROXY_ENABLED=true
+TRADE_X_PROXY_HOST=127.0.0.1
+TRADE_X_PROXY_PORT=13128
+TRADE_TELEGRAM_PROXY_ENABLED=true
+TRADE_TELEGRAM_PROXY_HOST=127.0.0.1
+TRADE_TELEGRAM_PROXY_PORT=13128
+```
+
+国内主机通过本机 `127.0.0.1:13128` 的 HTTP 代理入口访问 X 和 Telegram；该端口须由通往德国 Squid 的 SSH 隧道提供。OKX 也可共用这个入口。若 Java 部署在容器中，容器内的 `127.0.0.1` 指向容器自身，须根据实际网络方式设置代理主机地址。应用本身不会创建或维持隧道。
+
+Spring Boot 不自动加载 `.env`。将部署值注入 Shell、IDE、systemd `EnvironmentFile` 或容器环境后重启；已有进程环境变量会覆盖 YAML 回退值，修改示例或 YAML 不会改变运行中的进程。任务随应用就绪自动启动，三个循环首次执行前等待 30 秒。已有同账号、已批准且未过期的旧草稿也可能在启动后的发布扫描中发布；待审核草稿仍须点击有效审核按钮。
+
+### 可选：分阶段联调覆盖值
+
+如需先验收生成和审核而暂不发帖，下面是临时覆盖值，与本次启用配置不同：
+
+```ini
 TRADE_X_PUBLISHING_ENABLED=false
 TRADE_X_LIVE_PUBLISHING_ENABLED=false
 TRADE_AUTOMATION_X_AUTO_START=false
 ```
 
-Spring Boot 不自动加载 `.env`。设置到 Shell、IDE 或部署环境，重启后显式启动任务：
+设置临时覆盖值并重启后，显式启动任务：
 
 ```powershell
 Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/automation/tasks/x/start
@@ -137,7 +162,7 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/automation/tasks/x/stop
 
 automation API 沿用现有运维访问控制，须置于受保护的部署控制面。手工启动不会打开业务开关；注册 Bean 不发起外部请求。
 
-确认联调后，设置 `TRADE_X_CLIENT_ENABLED=true`、`TRADE_X_PUBLISHING_ENABLED=true`、`TRADE_X_LIVE_PUBLISHING_ENABLED=true` 并重启，再启动 `x` 任务。也可按需设置 `TRADE_AUTOMATION_X_AUTO_START=true`。
+完成分阶段验收后，移除临时覆盖或恢复 `TRADE_X_PUBLISHING_ENABLED=true`、`TRADE_X_LIVE_PUBLISHING_ENABLED=true`、`TRADE_AUTOMATION_X_AUTO_START=true`，重启生效。以上操作说明不代表已完成真实 AI、Telegram 或 X API 联调。
 
 Bot 消息展示目标账号、草稿 ID、版本、过期时间和完整待发布正文。审核上下文优先展示中文 AI 创作说明，并显示冻结格式：`CHAT_DIALOGUE` 检查2～6句成对引号、自然来回、潜台词与情绪，识别旁白、角色名、解释和总结，确认没有冒充真实聊天；`FREE_TEXT` 只按旧稿冻结的风格和规则判断，不强制聊天格式。共同核对冻结语言与方向、成年人边界，以及是否冒充专家或承诺操纵、挽回、涨粉与收益。审核说明不会发布，过长说明可能被截断，正文完整保留。只有指定聊天、审核人、Bot 与绑定消息匹配的按钮才有效。点击“通过并发布”后立即尝试发布；开关未开、本地配额不足或发布间隔未到时保持 APPROVED，后续 publishing 循环继续检查。拒绝不发布；修改正文使旧批准失效，必须审核新版本。按钮反馈表示审核受理，发布结果需查看草稿状态。
 
@@ -145,12 +170,12 @@ Bot 消息展示目标账号、草稿 ID、版本、过期时间和完整待发�
 
 | 环境变量 | 默认 | 含义 |
 | --- | --- | --- |
-| `TRADE_X_GENERATION_FIXED_DELAY_MS` | 属性类和示例 14400000；YAML 180000 | 分别为每次生成结束后等 4 小时和 3 分钟；按 UTC 时间段与账号保留唯一生成键，不是按钟点或每周排期 |
+| `TRADE_X_GENERATION_FIXED_DELAY_MS` | 10800000 | 每次生成结束后等待 3 小时；按 UTC 时间段与账号保留唯一生成键，不是按钟点或每周排期 |
 | `TRADE_X_TELEGRAM_POLLING_FIXED_DELAY_MS` | 5000 | 按钮审核轮询间隔，短轮询 |
 | `TRADE_X_PUBLISHING_FIXED_DELAY_MS` | 60000 | 扫描待审核、已批准及中断状态的间隔 |
 | `TRADE_X_INITIAL_DELAY_MS` | 30000 | 任务开始后的首次循环延迟 |
-| `TRADE_X_DAILY_GENERATION_LIMIT` | 5 | UTC 日生成预约上限，失败生成也占用 |
-| `TRADE_X_DAILY_PUBLISH_LIMIT` | 3 | UTC 日发布尝试上限，失败或不确定尝试也占用 |
+| `TRADE_X_DAILY_GENERATION_LIMIT` | 8 | UTC 日生成预约上限，失败生成也占用 |
+| `TRADE_X_DAILY_PUBLISH_LIMIT` | 8 | UTC 日发布尝试上限，失败或不确定尝试也占用 |
 | `TRADE_X_PUBLISH_INTERVAL_SECONDS` | 1800 | 同账号两次发布尝试的最小间隔 |
 | `TRADE_X_REVIEW_TTL_HOURS` | 24 | 自预约创建起的草稿审核及发布有效期，改稿/批准不续期 |
 | `TRADE_X_CLAIM_TIMEOUT_SECONDS` | 300 | 中断生成/发布的恢复超时，至少 60 秒 |
@@ -185,7 +210,7 @@ Invoke-RestMethod -Uri http://127.0.0.1:8080/api/x/posts -Headers $xHeaders
 
 | 结果 | 含义和排查 |
 | --- | --- |
-| `APPROVED` + `Waiting to publish: ...` | 发布扫描遇到 workflow publishing、client、live、凭据或账号门禁；也可能等待本地每天 3 次尝试或最小 30 分钟间隔。此时没有 POST；同一原因不反复写历史 |
+| `APPROVED` + `Waiting to publish: ...` | 发布扫描遇到 workflow publishing、client、live、凭据或账号门禁；也可能等待本地每天 8 次尝试或最小 30 分钟间隔。此时没有 POST；同一原因不反复写历史 |
 | `APPROVED` 且没有等待记录 | 可能尚未运行 publishing 扫描；检查 x 任务是否运行、当前版本是否已部署和扫描是否异常。仅查询 API 不会触发扫描 |
 | `FAILED` + `preflight HTTP ...` | `GET /2/users/me` 失败，创建帖子请求尚未发送；HTTP 状态保留，查询失败也会占本地尝试额度 |
 | `FAILED` + `X request failed: HTTP ...` | POST 收到明确拒绝；检查开发者控制台余额、spending limit、OAuth 权限及平台错误，不自动重发 |

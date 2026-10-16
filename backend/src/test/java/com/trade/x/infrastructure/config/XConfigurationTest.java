@@ -58,7 +58,7 @@ class XConfigurationTest {
             when(posts.reserveGeneration(any(), any(), anyInt())).thenReturn(false);
             context.getBean(XScheduler.class).generate();
             verify(posts).reserveGeneration(argThat(post -> "scheduled:0".equals(post.generationKey())),
-                    any(), eq(5));
+                    any(), eq(8));
             verifyNoInteractions(store, context.getBean(XDraftGenerator.class), context.getBean(XPostPublisher.class));
         });
     }

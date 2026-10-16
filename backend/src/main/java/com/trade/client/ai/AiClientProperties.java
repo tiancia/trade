@@ -91,7 +91,7 @@ public class AiClientProperties {
         ),
         DEEPSEEK(
                 "https://api.deepseek.com",
-                "deepseek-v4-flash",
+                "deepseek-flash",
                 "DEEPSEEK_API_KEY",
                 "/chat/completions"
         ),
