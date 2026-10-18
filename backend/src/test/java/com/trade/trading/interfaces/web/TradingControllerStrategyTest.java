@@ -28,65 +28,44 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.mockito.Mockito.*;
 
 class TradingControllerStrategyTest {
-    private static final String TOKEN = "test-operator-token";
     private static final String ENDPOINT = "/api/trading/strategies/active";
     private static final String BODY = "{\"strategyId\":\"defensive\",\"expectedRevision\":4}";
     private final TradingProperties properties = new TradingProperties();
     private final TradingStrategySelectionService selection = mock(TradingStrategySelectionService.class);
 
     @Test
-    void blankOperatorConfigurationDisablesStrategyMutation() throws Exception {
-        mvc().perform(put(ENDPOINT).contentType(MediaType.APPLICATION_JSON).content(BODY))
-                .andExpect(status().isServiceUnavailable());
-        verifyNoInteractions(selection);
-    }
-
-    @Test
-    void missingAndWrongTokensCannotChangeStrategy() throws Exception {
-        properties.getFundSafety().setOperatorToken(TOKEN);
-        MockMvc mvc = mvc();
-        mvc.perform(put(ENDPOINT).contentType(MediaType.APPLICATION_JSON).content(BODY))
-                .andExpect(status().isForbidden());
-        mvc.perform(put(ENDPOINT).header("X-Trading-Operator-Token", "wrong")
-                        .contentType(MediaType.APPLICATION_JSON).content(BODY))
-                .andExpect(status().isForbidden());
-        verifyNoInteractions(selection);
-    }
-
-    @Test
-    void authorizedSelectionPreservesRevisionAndErrorResponses() throws Exception {
-        properties.getFundSafety().setOperatorToken(TOKEN);
+    void selectionWithoutTokenPreservesRevisionAndErrorResponses() throws Exception {
         when(selection.activate("defensive", 4L))
                 .thenReturn(new ActiveStrategySelection("defensive", 5L, null))
                 .thenThrow(new ConcurrentModificationException("stale revision"))
                 .thenThrow(new IllegalArgumentException("unknown strategy"));
         MockMvc mvc = mvc();
-        mvc.perform(put(ENDPOINT).header("X-Trading-Operator-Token", TOKEN)
+        mvc.perform(put(ENDPOINT)
                         .contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.strategyId").value("defensive"))
                 .andExpect(jsonPath("$.revision").value(5));
-        mvc.perform(put(ENDPOINT).header("X-Trading-Operator-Token", TOKEN)
+        mvc.perform(put(ENDPOINT)
                         .contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isConflict());
-        mvc.perform(put(ENDPOINT).header("X-Trading-Operator-Token", TOKEN)
+        mvc.perform(put(ENDPOINT)
                         .contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isBadRequest());
         verify(selection, times(3)).activate("defensive", 4L);
     }
 
     @Test
-    void allowedBrowserOriginCanPreflightOperatorHeaderButOtherOriginsCannot() throws Exception {
+    void allowedBrowserOriginCanPreflightJsonButOtherOriginsCannot() throws Exception {
         MockMvc mvc = mvc();
         mvc.perform(options(ENDPOINT).header("Origin", "http://localhost:3000")
                         .header("Access-Control-Request-Method", "PUT")
-                        .header("Access-Control-Request-Headers", "Content-Type,X-Trading-Operator-Token"))
+                        .header("Access-Control-Request-Headers", "Content-Type"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:3000"))
-                .andExpect(header().string("Access-Control-Allow-Headers", "Content-Type, X-Trading-Operator-Token"));
+                .andExpect(header().string("Access-Control-Allow-Headers", "Content-Type"));
         mvc.perform(options(ENDPOINT).header("Origin", "https://untrusted.example")
                         .header("Access-Control-Request-Method", "PUT")
-                        .header("Access-Control-Request-Headers", "X-Trading-Operator-Token"))
+                        .header("Access-Control-Request-Headers", "Content-Type"))
                 .andExpect(status().isForbidden());
         verifyNoInteractions(selection);
     }
@@ -95,7 +74,7 @@ class TradingControllerStrategyTest {
         TradingController controller = new TradingController(
                 mock(TradingStrategyRegistry.class), mock(TradingStrategyEngine.class), selection,
                 mock(BacktestService.class), mock(OrderLifecycleService.class), mock(FundSafetyService.class),
-                properties, mock(OrderReconciliationService.class), mock(TradingLeadershipService.class));
+                mock(OrderReconciliationService.class), mock(TradingLeadershipService.class));
         ExposedCorsRegistry cors = new ExposedCorsRegistry();
         new TradingWebConfiguration(properties).addCorsMappings(cors);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

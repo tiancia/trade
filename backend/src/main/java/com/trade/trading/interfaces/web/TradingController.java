@@ -24,15 +24,12 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.ConcurrentModificationException;
 import java.util.List;
 
@@ -40,8 +37,8 @@ import java.util.List;
  * HTTP operator and backtest API for the OKX strategy domain.
  *
  * <p>Live decision execution remains scheduler-driven. Fund stop, resume, and
- * manual reconciliation are explicit operator mutations protected by the
- * configured trading operator token.</p>
+ * manual reconciliation are explicit operator mutations behind the deployment
+ * gateway.</p>
  */
 @RestController
 @RequestMapping("/api/trading")
@@ -52,7 +49,6 @@ public class TradingController {
     private final BacktestService backtestService;
     private final OrderLifecycleService orderLifecycleService;
     private final FundSafetyService fundSafetyService;
-    private final TradingProperties tradingProperties;
     private final OrderReconciliationService orderReconciliationService;
     private final TradingLeadershipService leadershipService;
 
@@ -63,7 +59,6 @@ public class TradingController {
             BacktestService backtestService,
             OrderLifecycleService orderLifecycleService,
             FundSafetyService fundSafetyService,
-            TradingProperties tradingProperties,
             OrderReconciliationService orderReconciliationService,
             TradingLeadershipService leadershipService
     ) {
@@ -73,7 +68,6 @@ public class TradingController {
         this.backtestService = backtestService;
         this.orderLifecycleService = orderLifecycleService;
         this.fundSafetyService = fundSafetyService;
-        this.tradingProperties = tradingProperties;
         this.orderReconciliationService = orderReconciliationService;
         this.leadershipService = leadershipService;
     }
@@ -85,10 +79,8 @@ public class TradingController {
 
     @PutMapping("/strategies/active")
     public ActiveStrategySelection activateStrategy(
-            @RequestHeader(value = "X-Trading-Operator-Token", required = false) String operatorToken,
             @RequestBody ActivateStrategyRequest request
     ) {
-        requireOperatorToken(operatorToken);
         try {
             if (request == null) {
                 throw new IllegalArgumentException("request body is required");
@@ -119,10 +111,8 @@ public class TradingController {
 
     @PostMapping("/safety/stop")
     public FundSafetyState stopFunds(
-            @RequestHeader(value = "X-Trading-Operator-Token", required = false) String operatorToken,
             @RequestBody FundStopRequest request
     ) {
-        requireOperatorToken(operatorToken);
         if (request == null || request.reason() == null || request.reason().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Fund stop reason is required");
         }
@@ -131,10 +121,8 @@ public class TradingController {
 
     @PostMapping("/safety/resume")
     public FundSafetyState resumeFunds(
-            @RequestHeader(value = "X-Trading-Operator-Token", required = false) String operatorToken,
             @RequestBody FundResumeRequest request
     ) {
-        requireOperatorToken(operatorToken);
         if (request == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Request body is required");
         }
@@ -154,10 +142,7 @@ public class TradingController {
     }
 
     @PostMapping("/reconciliation/run")
-    public OrderReconciliationStatus reconcileNow(
-            @RequestHeader(value = "X-Trading-Operator-Token", required = false) String operatorToken
-    ) {
-        requireOperatorToken(operatorToken);
+    public OrderReconciliationStatus reconcileNow() {
         try {
             boolean executed = leadershipService.runIfLeader(
                     "manual-reconciliation",
@@ -231,23 +216,6 @@ public class TradingController {
             return backtestService.equityCurve(runId, offset, limit);
         } catch (IllegalArgumentException e) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage(), e);
-        }
-    }
-
-    private void requireOperatorToken(String suppliedToken) {
-        String configuredToken = tradingProperties.getFundSafety().getOperatorToken();
-        if (configuredToken == null || configuredToken.isBlank()) {
-            throw new ResponseStatusException(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "Trading operator mutations are disabled until an operator token is configured"
-            );
-        }
-        byte[] expected = configuredToken.getBytes(StandardCharsets.UTF_8);
-        byte[] supplied = suppliedToken == null
-                ? new byte[0]
-                : suppliedToken.getBytes(StandardCharsets.UTF_8);
-        if (!MessageDigest.isEqual(expected, supplied)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Invalid trading operator token");
         }
     }
 

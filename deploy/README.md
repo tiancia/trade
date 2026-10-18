@@ -39,7 +39,7 @@
                                                                                 └─ OKX / Telegram / X
 ```
 
-默认只开放受限制的 SSH 管理入口。两个 Web 入口绑定宿主机 `127.0.0.1`；安全组和防火墙不开放 80、443、18080、18081、数据库、后端或代理端口。电脑访问的 HTTP 地址在本机回环，跨公网传输由 SSH 加密。网关密码与应用管理令牌仍保留。
+默认只开放受限制的 SSH 管理入口。两个 Web 入口绑定宿主机 `127.0.0.1`；安全组和防火墙不开放 80、443、18080、18081、数据库、后端或代理端口。电脑访问的 HTTP 地址在本机回环，跨公网传输由 SSH 加密。页面和 API 统一使用网关账号密码限制访问。
 
 电脑到国内服务器的访问隧道，与国内服务器到德国 VPS 的 `egress` 隧道独立。关闭电脑上的 SSH 连接只会中断页面访问，服务器上的 PAPER 策略、X 生成、Telegram 审核和发布任务继续运行。此方案是私人运维访问安排；公网网站的备案与接入要求另按托管方式和服务商规定确认，见后文可选公共模式。
 
@@ -85,7 +85,8 @@ chmod 600 deploy/.env deploy/backend.env
 - `TRADE_TELEGRAM_BOT_TOKEN`、`TRADE_X_TELEGRAM_CHAT_ID`、`TRADE_X_TELEGRAM_REVIEWER_USER_IDS`（多个审核人用逗号分隔）；
 - `TRADE_X_TARGET_USER_ID`，以及 `X_API_KEY`、`X_API_SECRET`、`X_ACCESS_TOKEN`、`X_ACCESS_TOKEN_SECRET`；
 - `OKX_ACCESS_KEY`、`OKX_SECRET_KEY`、`OKX_ACCESS_PASSPHRASE`：当前 PAPER 决策仍读取 OKX 账户余额、订单和产品规则，需要只读 API 凭据；
-- 两个独立的长随机管理令牌 `TRADE_TRADING_OPERATOR_TOKEN`、`TRADE_X_ADMIN_TOKEN`。
+
+两个前端无需应用令牌，页面和管理 API 统一由网关账号密码及网络隔离限制访问；保持后端端口仅在容器网络内可达。
 
 `backend.env` 使用 **raw** 格式：每行 `KEY=value`，不要给值额外加引号，不要 `source`，也不要放 shell 命令。它只在运行时注入后端，不参与镜像构建。
 
@@ -103,7 +104,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File A:\trade\deploy\scripts\sync
 powershell -NoProfile -ExecutionPolicy Bypass -File A:\trade\deploy\scripts\sync-backend-config.ps1 -Server ubuntu@国内服务器公网IP -OnlyOkx
 ```
 
-缺项时只显示字段名并终止上传。内容经 SSH 标准输入传输，不回显、不放入命令参数或本地中间文件。服务器保留基础设施 `.env`、其他业务配置和已有管理令牌；空管理令牌会自动生成。更新前保留权限 600 的 `backend.env.before-sync-*` 备份，再原子替换 `backend.env`。同步不会启动或重启服务。运行中的容器需要通过发布脚本重新创建 `backend` 才能加载新环境；单纯 `docker compose restart` 不会加载 env 文件更新。
+缺项时只显示字段名并终止上传。内容经 SSH 标准输入传输，不回显、不放入命令参数或本地中间文件。服务器保留基础设施 `.env` 和其他业务配置，不再生成管理令牌。更新前保留权限 600 的 `backend.env.before-sync-*` 备份，再原子替换 `backend.env`。同步不会启动或重启服务。运行中的容器需要通过发布脚本重新创建 `backend` 才能加载新环境；单纯 `docker compose restart` 不会加载 env 文件更新。
 
 模板已按本次要求配置：OKX 自动策略 **PAPER**、真实下单关闭；X 自动生成、Telegram 人工审核和真实发布开启，每轮完成后等三小时；首次生成约 30 秒后开始。Polymarket、微博、小说任务关闭。DeepSeek 使用 `deepseek-flash` 直连；OKX、Telegram、X 使用隧道代理。容器地址由 Compose 强制覆盖为 `egress:13128`，不要填写 `127.0.0.1`。
 
@@ -192,7 +193,7 @@ SSH 不是 22 端口时，在登录地址前添加 `-p 实际端口`；有专用
 - 交易驾驶舱：`http://127.0.0.1:18080`；
 - X 控制台：`http://127.0.0.1:18081`。
 
-两个页面都先输入 `operator` 和网关密码；X 控制台还需输入 `TRADE_X_ADMIN_TOKEN`。电脑本地端口已占用时，例如把第一条改为 `-L 127.0.0.1:28080:127.0.0.1:18080`，浏览器对应使用 `http://127.0.0.1:28080`。不要把 `-L` 的监听地址改成 `0.0.0.0`。
+两个页面都先输入 `operator` 和网关密码，之后无需填写应用令牌，X 控制台会自动读取内容。电脑本地端口已占用时，例如把第一条改为 `-L 127.0.0.1:28080:127.0.0.1:18080`，浏览器对应使用 `http://127.0.0.1:28080`。不要把 `-L` 的监听地址改成 `0.0.0.0`。
 
 ## 5. 部署验收
 
@@ -342,7 +343,7 @@ dc() {
 }
 ```
 
-浏览器改为访问两个 `https://` 域名，仍需网关密码和应用管理令牌；HTTP 仅处理证书验证和跳转 HTTPS。私有模式的回环 Web 端口会被替换，不与公共端口同时发布。
+浏览器改为访问两个 `https://` 域名，仍需网关密码；HTTP 仅处理证书验证和跳转 HTTPS。私有模式的回环 Web 端口会被替换，不与公共端口同时发布。
 
 切换私有 / 公共模式时保留相同项目名、数据卷前缀和运行配置，并执行目标模式的**全量发布**，不要只更新 `gateway` 或某个单服务，因为后端的来源配置也随模式变化。切到公共模式用 `deploy --access public`；切回私有模式用 `deploy --access private`。访问模式不存入镜像历史，镜像回滚不会恢复旧访问模式，回滚时须明确选择当前要使用的模式。
 

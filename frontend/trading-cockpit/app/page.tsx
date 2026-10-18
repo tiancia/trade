@@ -20,7 +20,6 @@ import {
   Plus,
   RefreshCw,
   Search,
-  Settings2,
   ShieldCheck,
   Sparkles,
   SquareActivity,
@@ -323,10 +322,10 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "请求失败，请稍后重试";
 }
 
-async function request<T>(path: string, init?: RequestInit, operatorToken?: string): Promise<T> {
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: createJsonRequestHeaders({ headers: init?.headers, operatorToken }),
+    headers: createJsonRequestHeaders({ headers: init?.headers }),
   });
   if (!response.ok) {
     const problem = await response.json().catch(() => null);
@@ -370,9 +369,6 @@ export default function Home() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [backtestOpen, setBacktestOpen] = useState(false);
   const [backtestRange, setBacktestRange] = useState({ from: "", to: "" });
-  const [operatorSettingsOpen, setOperatorSettingsOpen] = useState(false);
-  const [operatorToken, setOperatorToken] = useState("");
-  const [operatorTokenDraft, setOperatorTokenDraft] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [clock, setClock] = useState(new Date());
@@ -482,7 +478,6 @@ export default function Home() {
       if (event.key === "Escape") {
         setCommandOpen(false);
         setBacktestOpen(false);
-        setOperatorSettingsOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -530,11 +525,6 @@ export default function Home() {
     setBacktestOpen(true);
   }, []);
 
-  const openOperatorSettings = () => {
-    setOperatorTokenDraft(operatorToken);
-    setOperatorSettingsOpen(true);
-  };
-
   const filteredCommands = useMemo(() => {
     const commands = [
       { label: "打开运行总览", hint: "Overview", action: () => setActiveView("overview") },
@@ -574,11 +564,6 @@ export default function Home() {
 
   const activateStrategy = async (strategyId: string) => {
     if (strategyId === snapshot.runtime.activeStrategyId || strategyPending) return;
-    if (dataMode === "live" && !operatorToken) {
-      openOperatorSettings();
-      setToast("请先填写交易操作员令牌，再切换策略");
-      return;
-    }
     setStrategyPending(strategyId);
     if (dataMode === "live") {
       try {
@@ -588,7 +573,7 @@ export default function Home() {
             strategyId,
             expectedRevision: snapshot.runtime.activeStrategyRevision ?? 0,
           }),
-        }, operatorToken);
+        });
         setSnapshot((current) => ({
           ...current,
           runtime: {
@@ -601,7 +586,7 @@ export default function Home() {
         }));
         setToast(`当前策略已切换为 ${selection.strategyId}`);
       } catch (error) {
-        const hint = error instanceof ApiRequestError && error.status === 403 ? "请检查设置中的操作员令牌；" : "";
+        const hint = error instanceof ApiRequestError && error.status === 403 ? "请检查网关登录状态或访问权限；" : "";
         setToast(`策略切换失败：${hint}${errorMessage(error)}`);
         await refresh(true);
       }
@@ -717,7 +702,6 @@ export default function Home() {
           })}
         </nav>
         <div className="sidebar-bottom">
-          <button onClick={openOperatorSettings}><Settings2 size={19} /><span>设置</span></button>
           <div className="environment-mark">PAPER</div>
         </div>
       </aside>
@@ -892,19 +876,6 @@ export default function Home() {
               <label><span>初始资金（USDT）</span><input name="initialCash" type="number" min="100" step="100" required defaultValue="10000" /></label>
               <div className="safety-note"><ShieldCheck size={17} /><p><strong>安全执行</strong>回测仅使用模拟 Broker，不会触发真实下单。</p></div>
               <div className="form-actions"><button type="button" className="secondary-button" onClick={() => setBacktestOpen(false)}>取消</button><button type="submit" className="primary-button" disabled={backtestPending}>{backtestPending ? <LoaderCircle size={15} className="spin" /> : <Play size={15} />}开始回测</button></div>
-            </form>
-          </section>
-        </div>
-      )}
-
-      {operatorSettingsOpen && (
-        <div className="modal-backdrop" onMouseDown={() => setOperatorSettingsOpen(false)}>
-          <section className="form-modal" role="dialog" aria-modal="true" aria-labelledby="operator-settings-title" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="form-modal-heading"><div><h2 id="operator-settings-title">交易操作员令牌</h2><p>切换策略需要服务器的 TRADE_TRADING_OPERATOR_TOKEN。</p></div><button className="icon-button" onClick={() => setOperatorSettingsOpen(false)} aria-label="关闭"><X size={18} /></button></div>
-            <form onSubmit={(event) => { event.preventDefault(); setOperatorToken(operatorTokenDraft.trim()); setOperatorSettingsOpen(false); setToast(operatorTokenDraft.trim() ? "操作员令牌已应用，请重新选择策略" : "操作员令牌已清除"); }}>
-              <label><span>操作员令牌</span><input type="password" autoComplete="off" spellCheck={false} value={operatorTokenDraft} onChange={(event) => setOperatorTokenDraft(event.target.value)} /></label>
-              <p className="form-help">仅保存在当前页面内存中，刷新页面后需重新输入。该令牌与网关密码、X 管理令牌各自独立。</p>
-              <div className="form-actions"><button type="button" className="secondary-button" onClick={() => { setOperatorToken(""); setOperatorTokenDraft(""); setOperatorSettingsOpen(false); setToast("操作员令牌已清除"); }}>清除</button><button type="submit" className="primary-button">应用</button></div>
             </form>
           </section>
         </div>

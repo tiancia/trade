@@ -24,7 +24,7 @@ public class TradingWebConfiguration implements WebMvcConfigurer {
         registry.addMapping("/api/trading/**")
                 .allowedOriginPatterns(patterns.toArray(String[]::new))
                 .allowedMethods("GET", "POST", "PUT", "OPTIONS")
-                .allowedHeaders("Content-Type", "Accept", "X-Trading-Operator-Token")
+                .allowedHeaders("Content-Type", "Accept")
                 .allowCredentials(false)
                 .maxAge(3600L);
     }

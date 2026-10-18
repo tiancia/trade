@@ -70,22 +70,18 @@ test("keeps absent and malformed runtime timestamps unavailable", () => {
   assert.equal(apiTimestampMillis(0), 0);
 });
 
-test("includes the operator credential only when explicitly supplied by the caller", () => {
+test("builds JSON request headers without application credentials", () => {
   const normal = createJsonRequestHeaders();
   assert.equal(normal.get("Content-Type"), "application/json");
   assert.equal(normal.has("X-Trading-Operator-Token"), false);
-  assert.equal(createJsonRequestHeaders({ operatorToken: " " }).has("X-Trading-Operator-Token"), false);
-
-  const mutation = createJsonRequestHeaders({ operatorToken: " test-operator-token " });
-  assert.equal(mutation.get("X-Trading-Operator-Token"), "test-operator-token");
-  assert.equal(mutation.has("Authorization"), false);
+  assert.equal(normal.has("Authorization"), false);
 });
 
 test("preserves explicit headers without mutating the caller's Headers object", () => {
   const original = new Headers({ "Content-Type": "application/problem+json", "X-Request-Id": "test-id" });
-  const result = createJsonRequestHeaders({ headers: original, operatorToken: "test-token" });
+  const result = createJsonRequestHeaders({ headers: original });
   assert.equal(result.get("Content-Type"), "application/problem+json");
   assert.equal(result.get("X-Request-Id"), "test-id");
-  assert.equal(result.get("X-Trading-Operator-Token"), "test-token");
+  assert.equal(result.has("X-Trading-Operator-Token"), false);
   assert.equal(original.has("X-Trading-Operator-Token"), false);
 });

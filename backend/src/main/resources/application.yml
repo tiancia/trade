@@ -235,8 +235,6 @@ trade:
 
   # X 单账号文本工作流；复用 Telegram Bot 时必须关闭微博 review.telegram.enabled。
   x:
-    # X 草稿管理 API 的鉴权令牌；留空时管理接口关闭。
-    admin-token: ${TRADE_X_ADMIN_TOKEN:}
     # X 真实发布的总门禁；还需工作流发布开关、客户端和有效用户授权。
     live-publishing-enabled: ${TRADE_X_LIVE_PUBLISHING_ENABLED:true}
     client:
@@ -768,8 +766,6 @@ trade:
       # LIVE 提交订单前是否强制校验有效领导者租约；未启用租约或丢失租约时拒绝下单。
       required-for-live: ${TRADE_TRADING_LEADERSHIP_REQUIRED_FOR_LIVE:true}
     fund-safety:
-      # 策略切换、stop/resume 和手工对账共用操作令牌；留空时这些 HTTP 写操作禁用，内部硬风控仍有效。
-      operator-token: ${TRADE_TRADING_OPERATOR_TOKEN:}
       # 资金停止后设置 OKX cancel-all-after 的超时秒数；对账循环重申，失联后由交易所撤单。
       dead-man-timeout-seconds: ${TRADE_TRADING_DEAD_MAN_TIMEOUT_SECONDS:10}
       # HTTP 恢复 LIVE 交易时必须逐字匹配的确认文本。

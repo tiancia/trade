@@ -147,23 +147,19 @@ $env:TRADE_TRADING_LEADERSHIP_HEARTBEAT_INTERVAL_MS="5000"
 
 ## 资金级停止与恢复
 
-先在部署环境设置长随机值 `TRADE_TRADING_OPERATOR_TOKEN`；策略切换、HTTP stop/resume 和手工对账共用此令牌。留空时这些写操作返回 503，令牌缺失或错误返回 403；内部硬风控和定时对账仍能自动停止。不要把 token 放进 URL、日志或仓库。
+策略切换、HTTP stop/resume 和手工对账无需单独的应用令牌。生产环境统一通过网关账号密码和容器网络隔离限制访问，保持后端端口不直接对公网开放；本地开发只在受信任的本机环境调用。
 
-`PUT /api/trading/strategies/active` 也必须携带 `X-Trading-Operator-Token`，请求体仍为 `strategyId` 和可选 `expectedRevision`，版本冲突仍返回 409。PAPER 与 LIVE 都执行鉴权。浏览器只对 `trade.trading.frontend-allowed-origin-patterns` 中允许的来源放行该请求头；跨域许可不替代令牌校验。当前驾驶舱已支持在“设置”填写交易操作员令牌，刷新后需重填；旧镜像未携带该请求头时仍会被拒绝。也可通过以下命令操作本地后端。
+`PUT /api/trading/strategies/active` 请求体仍为 `strategyId` 和可选 `expectedRevision`，版本冲突仍返回 409。浏览器跨域访问只放行 `trade.trading.frontend-allowed-origin-patterns` 中允许的来源，CORS 不替代网关认证。以下命令用于本地后端；生产访问使用网关地址并完成网关认证。
 
 ```powershell
-$headers = @{ "X-Trading-Operator-Token" = $env:TRADE_TRADING_OPERATOR_TOKEN }
-
 # expectedRevision 使用 GET /api/trading/runtime/status 返回的 activeStrategyRevision。
 Invoke-RestMethod -Method Put `
   -Uri http://127.0.0.1:8080/api/trading/strategies/active `
-  -Headers $headers `
   -ContentType "application/json" `
   -Body '{"strategyId":"threshold-event-defensive","expectedRevision":1}'
 
 Invoke-RestMethod -Method Post `
   -Uri http://127.0.0.1:8080/api/trading/safety/stop `
-  -Headers $headers `
   -ContentType "application/json" `
   -Body '{"reason":"operator incident response"}'
 
@@ -179,8 +175,7 @@ Invoke-RestMethod http://127.0.0.1:8080/api/trading/safety
 
 ```powershell
 Invoke-RestMethod -Method Post `
-  -Uri http://127.0.0.1:8080/api/trading/reconciliation/run `
-  -Headers $headers
+  -Uri http://127.0.0.1:8080/api/trading/reconciliation/run
 
 $body = @{
   expectedVersion = 3
@@ -190,7 +185,6 @@ $body = @{
 
 Invoke-RestMethod -Method Post `
   -Uri http://127.0.0.1:8080/api/trading/safety/resume `
-  -Headers $headers `
   -ContentType "application/json" `
   -Body $body
 ```

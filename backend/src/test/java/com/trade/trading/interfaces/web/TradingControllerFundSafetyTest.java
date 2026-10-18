@@ -10,81 +10,89 @@ import com.trade.trading.application.strategy.TradingStrategyRegistry;
 import com.trade.trading.application.strategy.TradingStrategySelectionService;
 import com.trade.trading.domain.risk.FundSafetyState;
 import com.trade.trading.domain.risk.FundSafetyStatus;
-import com.trade.trading.infrastructure.config.TradingProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class TradingControllerFundSafetyTest {
     @Test
-    void operatorTokenProtectsFundMutations() {
-        TradingProperties properties = new TradingProperties();
-        properties.getFundSafety().setOperatorToken("long-random-operator-secret");
+    void fundStopDoesNotRequireApplicationToken() throws Exception {
         FundSafetyService fundSafetyService = mock(FundSafetyService.class);
         OrderReconciliationService reconciliationService = mock(OrderReconciliationService.class);
-        TradingController controller = controller(properties, fundSafetyService, reconciliationService);
-
-        ResponseStatusException forbidden = assertThrows(
-                ResponseStatusException.class,
-                () -> controller.stopFunds(
-                        "wrong-secret",
-                        new TradingController.FundStopRequest("incident")
-                )
-        );
-        assertEquals(HttpStatus.FORBIDDEN, forbidden.getStatusCode());
-        verifyNoInteractions(fundSafetyService);
+        TradingController controller = controller(fundSafetyService, reconciliationService);
 
         FundSafetyState halted = new FundSafetyState()
                 .setStatus(FundSafetyStatus.HALTED)
                 .setReason("incident");
         when(fundSafetyService.halt("operator-api", "incident")).thenReturn(halted);
 
-        assertSame(
-                halted,
-                controller.stopFunds(
-                        "long-random-operator-secret",
-                        new TradingController.FundStopRequest("incident")
-                )
-        );
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
+        mvc.perform(post("/api/trading/safety/stop").contentType("application/json")
+                        .content("{\"reason\":\"incident\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("HALTED"));
         verify(fundSafetyService).halt("operator-api", "incident");
     }
 
     @Test
-    void blankConfiguredTokenDisablesManualReconciliation() {
-        TradingProperties properties = new TradingProperties();
+    void blankStopReasonIsStillRejected() {
+        FundSafetyService fundSafetyService = mock(FundSafetyService.class);
+        TradingController controller = controller(fundSafetyService, mock(OrderReconciliationService.class));
+        ResponseStatusException invalid = assertThrows(ResponseStatusException.class,
+                () -> controller.stopFunds(new TradingController.FundStopRequest(" ")));
+        assertEquals(HttpStatus.BAD_REQUEST, invalid.getStatusCode());
+        verifyNoInteractions(fundSafetyService);
+    }
+
+    @Test
+    void fundResumePassesVersionAndConfirmationWithoutApplicationToken() throws Exception {
+        FundSafetyService fundSafetyService = mock(FundSafetyService.class);
+        TradingController controller = controller(fundSafetyService, mock(OrderReconciliationService.class));
+        when(fundSafetyService.resume(3L, "reconciled", "RESUME_LIVE_TRADING"))
+                .thenReturn(new FundSafetyState().setStatus(FundSafetyStatus.ACTIVE));
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
+        mvc.perform(post("/api/trading/safety/resume").contentType("application/json")
+                        .content("{\"expectedVersion\":3,\"reason\":\"reconciled\",\"confirmation\":\"RESUME_LIVE_TRADING\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACTIVE"));
+        verify(fundSafetyService).resume(3L, "reconciled", "RESUME_LIVE_TRADING");
+    }
+
+    @Test
+    void leaderCanReconcileWithoutApplicationToken() {
         OrderReconciliationService reconciliationService = mock(OrderReconciliationService.class);
+        TradingLeadershipService leadershipService = mock(TradingLeadershipService.class);
         TradingController controller = controller(
-                properties,
                 mock(FundSafetyService.class),
-                reconciliationService
+                reconciliationService,
+                leadershipService
         );
-
-        ResponseStatusException unavailable = assertThrows(
-                ResponseStatusException.class,
-                () -> controller.reconcileNow("any-token")
-        );
-
-        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, unavailable.getStatusCode());
-        verifyNoInteractions(reconciliationService);
+        when(leadershipService.runIfLeader(eq("manual-reconciliation"), any(Runnable.class)))
+                .thenAnswer(invocation -> { invocation.<Runnable>getArgument(1).run(); return true; });
+        controller.reconcileNow();
+        verify(reconciliationService).reconcileOnce();
+        verify(reconciliationService).status();
     }
 
     @Test
     void followerRejectsManualReconciliationWithoutRunningIt() {
-        TradingProperties properties = new TradingProperties();
-        properties.getFundSafety().setOperatorToken("long-random-operator-secret");
         FundSafetyService fundSafetyService = mock(FundSafetyService.class);
         OrderReconciliationService reconciliationService = mock(OrderReconciliationService.class);
         TradingLeadershipService leadershipService = mock(TradingLeadershipService.class);
         TradingController controller = controller(
-                properties,
                 fundSafetyService,
                 reconciliationService,
                 leadershipService
@@ -92,7 +100,7 @@ class TradingControllerFundSafetyTest {
 
         ResponseStatusException conflict = assertThrows(
                 ResponseStatusException.class,
-                () -> controller.reconcileNow("long-random-operator-secret")
+                controller::reconcileNow
         );
 
         assertEquals(HttpStatus.CONFLICT, conflict.getStatusCode());
@@ -100,12 +108,10 @@ class TradingControllerFundSafetyTest {
     }
 
     private static TradingController controller(
-            TradingProperties properties,
             FundSafetyService fundSafetyService,
             OrderReconciliationService reconciliationService
     ) {
         return controller(
-                properties,
                 fundSafetyService,
                 reconciliationService,
                 mock(TradingLeadershipService.class)
@@ -113,7 +119,6 @@ class TradingControllerFundSafetyTest {
     }
 
     private static TradingController controller(
-            TradingProperties properties,
             FundSafetyService fundSafetyService,
             OrderReconciliationService reconciliationService,
             TradingLeadershipService leadershipService
@@ -125,7 +130,6 @@ class TradingControllerFundSafetyTest {
                 mock(BacktestService.class),
                 mock(OrderLifecycleService.class),
                 fundSafetyService,
-                properties,
                 reconciliationService,
                 leadershipService
         );

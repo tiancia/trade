@@ -178,16 +178,14 @@ Prometheus、Grafana 归可选 `monitoring` profile，默认不启动。启用�
 
 配置以 `.example` 模板创建，真实文件不会随代码自动生成。Compose 的 `environment` 可以覆盖 `backend.env` 中的同名项，例如容器代理地址和数据库连接。镜像构建不携带生产凭据；修改环境文件后需要**重新创建 backend**，仅 `docker compose restart` 不会重新加载 env 文件。
 
-### 4.2 四种常见认证不要混用
+### 4.2 访问认证与外部服务凭据
 
 | 认证 | 在哪里输入或使用 | 作用 |
 | --- | --- | --- |
 | 国内服务器 SSH 密码或登录密钥 | 电脑 SSH/SFTP | 登录、建立访问隧道、传发布包 |
 | gateway 用户 `operator` 与网关密码 | 浏览器弹出的登录框；curl 的 `-u operator` | 进入私有 Web 网关 |
-| `TRADE_TRADING_OPERATOR_TOKEN` | 驾驶舱左下角“设置” | 携带 `X-Trading-Operator-Token` 进行策略切换等受保护交易管理操作 |
-| `TRADE_X_ADMIN_TOKEN` | X 控制台连接设置 | 携带 `X-X-Admin-Token` 读取 X 草稿与历史 |
 
-两个前端的应用令牌只保存在当前页面内存，刷新后要重新输入。网关会移除向后端转发的 Basic Authorization；应用管理令牌使用自己的请求头。
+两个前端无需额外的应用令牌，X 控制台打开后自动读取内容。网关完成账号密码认证后移除向后端转发的 Basic Authorization；后端仅在容器网络内提供 API，由网关和网络隔离限制访问。
 
 德国转发密钥只用于国内主机/容器连接德国专用用户，不能拿它当电脑登录国内主机的密钥。OKX 只读凭据、X OAuth 凭据、Telegram Bot Token、DeepSeek Key 均属于后端运行配置，不输入前端、不打进镜像。
 
@@ -296,7 +294,7 @@ MySQL 是金融状态权威，JSON 不是跨实例共享资金状态。发布应
 
 ## 7. 新人连接现有环境：十分钟操作
 
-先向维护者取得国内 SSH 地址/端口、登录方式、网关账号密码，以及必要的应用令牌授权。以下电脑命令均在 **Windows PowerShell** 执行；服务器命令明确标为 Ubuntu Bash。
+先向维护者取得国内 SSH 地址/端口、登录方式和网关账号密码。以下电脑命令均在 **Windows PowerShell** 执行；服务器命令明确标为 Ubuntu Bash。
 
 ### 第一步：打开访问隧道
 
@@ -309,24 +307,7 @@ ssh -NT -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCoun
 
 打开交易驾驶舱 `http://127.0.0.1:18080` 和 X 控制台 `http://127.0.0.1:18081`，先输入网关账号密码。若电脑本地端口冲突，可将 `-L` 前半段换成未占用端口，远端目标端口不变，并使用相应浏览器地址。
 
-### 第二步：将应用令牌安全复制到剪贴板
-
-另开一个 PowerShell 窗口，重新设置 `$DomesticSsh`。以下默认复制交易操作员令牌；复制 X 管理令牌时仅将 `$key` 改为 `TRADE_X_ADMIN_TOKEN`。
-
-```powershell
-$DomesticSsh = 'ubuntu@CN_HOST'
-$key = 'TRADE_TRADING_OPERATOR_TOKEN'
-if ($key -notin @('TRADE_TRADING_OPERATOR_TOKEN', 'TRADE_X_ADMIN_TOKEN')) { throw '令牌名称无效' }
-$reader = 'import sys; from pathlib import Path; print(next(line.split("=",1)[1] for line in Path("/opt/trade/deploy/backend.env").read_text().splitlines() if line.startswith(sys.argv[1]+"=")), end="")'
-$token = $reader | ssh -T $DomesticSsh python3 - $key
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($token)) { throw '读取令牌失败' }
-Set-Clipboard -Value $token
-Remove-Variable token
-```
-
-交易令牌粘贴到驾驶舱“设置”并应用，然后重新选择策略；X 令牌粘贴到 X 控制台的连接设置。不要在聊天或工单中发送令牌，也不要打印整个环境文件。
-
-### 第三步：只读验收，分清进程健康与业务结果
+### 第二步：只读验收，分清进程健康与业务结果
 
 在电脑 PowerShell 检查网关和业务 API，curl 会询问网关密码：
 

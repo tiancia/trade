@@ -184,7 +184,7 @@ Bot 消息展示目标账号、草稿 ID、版本、过期时间和完整待发�
 
 ## 管理草稿与失败状态
 
-设置 `TRADE_X_ADMIN_TOKEN` 后才注册管理 API，请求头为 `X-X-Admin-Token`：
+管理 API 随应用注册，无需单独的应用令牌。生产访问由网关账号密码和容器网络隔离保护，后端端口不直接对公网开放：
 
 | 方法与路径 | 用途 |
 | --- | --- |
@@ -197,9 +197,8 @@ Bot 消息展示目标账号、草稿 ID、版本、过期时间和完整待发�
 没有绕过审核的 HTTP 发布或批准接口。例：
 
 ```powershell
-$xHeaders = @{ "X-X-Admin-Token" = $env:TRADE_X_ADMIN_TOKEN }
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/api/x/posts -Headers $xHeaders
-Invoke-RestMethod -Uri http://127.0.0.1:8080/api/x/posts -Headers $xHeaders
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/api/x/posts
+Invoke-RestMethod -Uri http://127.0.0.1:8080/api/x/posts
 ```
 
 发布前完成审核和持久化 claim，再调用 `POST /2/tweets`，仅发送审核过的正文。收到明确 4xx 拒绝（除 408）记为 FAILED；超时、5xx、解析失败或中断发送记为 UNKNOWN。两种状态都不自动重发；必须先在 X 核对实际结果。审核投递的不确定发送也不自动重复，同版本无绑定记录的按钮不能审批。

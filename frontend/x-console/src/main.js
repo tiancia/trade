@@ -4,7 +4,7 @@ import { STATUS_META, formatTime, reviewSummary, publishSummary, filterPosts, ge
 
 const $ = (id) => document.getElementById(id);
 const state = {
-  token: '', posts: [], selected: null, history: [], filter: 'ALL', query: '',
+  posts: [], selected: null, history: [], filter: 'ALL', query: '',
   limit: 30, loaded: false, busy: false, connected: false, updatedAt: null,
   listError: '', detailError: '', historyError: '', detailBusy: false, detailTab: 'details',
 };
@@ -34,10 +34,8 @@ function renderHeader() {
   const label = state.busy ? '正在读取' : state.listError ? '连接异常' : state.connected ? '已连接' : '未连接';
   connection.className = `connection-pill ${state.busy ? 'loading' : state.listError ? 'error' : state.connected ? 'connected' : ''}`;
   connection.innerHTML = `<span class="dot"></span>${label}`;
-  $('connect-button').querySelector('span').textContent = state.token ? '连接设置' : '连接后端';
-  $('refresh-button').disabled = !state.token || state.busy;
+  $('refresh-button').disabled = state.busy;
   $('refresh-icon').classList.toggle('spinning', state.busy);
-  $('disconnect-button').hidden = !state.token;
   const stats = getStats(state.posts);
   for (const [id, key] of [['stat-total', 'total'], ['stat-pending', 'pendingReview'], ['stat-published', 'published'], ['stat-attention', 'attention']]) {
     $(id).textContent = state.loaded ? stats[key] : '—';
@@ -66,7 +64,7 @@ function renderList() {
   notice.textContent = state.listError + (state.loaded ? ' 仍显示上次读取的记录，请刷新后再确认。' : '');
   $('table-region').setAttribute('aria-busy', String(state.busy));
   if (!state.loaded) {
-    $('table-region').innerHTML = `<div class="empty-state"><span class="empty-icon">${icon(state.busy ? 'refresh' : state.listError ? 'alert' : 'connect', state.busy ? 'spinning' : '')}</span><h3>${state.busy ? '正在读取最近内容' : state.listError ? '暂时无法读取内容' : '让每条内容的进展清晰可见'}</h3><p>${state.busy ? '正在获取 X 模块的最新记录，请稍候。' : state.listError ? '检查连接设置后，重新读取内容记录。' : '连接 X 模块，查看生成内容、审核反馈和发布结果。'}</p>${state.busy ? '' : `<button class="button primary" data-action="connect">${icon('connect')}${state.listError ? '检查连接' : '连接后端'}</button>`}</div>`;
+    $('table-region').innerHTML = `<div class="empty-state"><span class="empty-icon">${icon(state.busy ? 'refresh' : state.listError ? 'alert' : 'file', state.busy ? 'spinning' : '')}</span><h3>${state.busy ? '正在读取最近内容' : state.listError ? '暂时无法读取内容' : '让每条内容的进展清晰可见'}</h3><p>${state.busy ? '正在获取 X 模块的最新记录，请稍候。' : state.listError ? '检查后端服务和访问权限后，重新读取内容记录。' : '自动读取 X 模块的生成内容、审核反馈和发布结果。'}</p>${state.busy ? '' : `<button class="button primary" data-action="refresh">${icon('refresh')}重新读取</button>`}</div>`;
   } else if (!posts.length) {
     $('table-region').innerHTML = `<div class="empty-state"><span class="empty-icon">${icon('file')}</span><h3>${state.posts.length ? '没有匹配的内容' : '还没有内容记录'}</h3><p>${state.posts.length ? '试试其他关键词，或调整内容状态筛选。' : '后端当前没有生成记录，产生内容后可在这里查看。'}</p>${state.posts.length ? '<button class="button secondary" data-action="reset-filter">清除筛选</button>' : ''}</div>`;
   } else {
@@ -77,7 +75,7 @@ function renderList() {
       return `<tr data-post-id="${escape(post.id)}" class="${selected ? 'selected' : ''}"><td class="content-cell"><p class="content-snippet">${escape(post.body || (post.status === 'GENERATING' ? '内容正在生成…' : '暂无生成正文'))}</p><div class="row-meta"><span class="version-tag">V${escape(post.contentVersion)}</span><span>${escape(meta(post.status).label)}</span><span class="mono" title="${escape(post.id)}">${escape(String(post.id).slice(0, 8))}</span></div></td><td>${badge(review)}<div class="status-reason">${escape(post.reviewer ? `审核人 ${post.reviewer}` : post.status === 'PENDING_REVIEW' ? '等待审核反馈' : '—')}</div></td><td>${badge(publish)}<div class="status-reason">${post.status === 'UNKNOWN' ? '需核对平台结果' : post.postId ? `ID ${escape(post.postId)}` : post.status === 'FAILED' ? '查看失败原因' : '—'}</div></td><td class="date-cell"><time datetime="${escape(post.createdAt)}">${escape(formatTime(post.createdAt))}</time></td><td><button class="button icon-button row-button" aria-label="查看内容 ${escape(String(post.id).slice(0, 8))}" aria-pressed="${selected}">${icon('chevron')}</button></td></tr>`;
     }).join('')}</tbody></table>`;
   }
-  $('list-summary').textContent = state.loaded ? `显示 ${posts.length} / ${state.posts.length} 条 · 最近 ${state.limit} 条范围内` : '连接后查看最近生成的内容';
+  $('list-summary').textContent = state.loaded ? `显示 ${posts.length} / ${state.posts.length} 条 · 最近 ${state.limit} 条范围内` : '自动读取最近生成的内容';
   $('updated-time').textContent = state.updatedAt ? `更新于 ${formatTime(state.updatedAt)} · 北京时间` : '时间均为北京时间';
   if (focusedRow) {
     [...$('table-region').querySelectorAll('[data-post-id]')].find((row) => row.dataset.postId === focusedRow)?.querySelector('button')?.focus({ preventScroll: true });
@@ -152,7 +150,7 @@ async function loadDetail(post, { scroll = false } = {}) {
   renderList();
   renderDetail();
   if (scroll && window.matchMedia('(max-width: 1100px)').matches) $('detail-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  const options = { token: state.token, id: post.id, signal: controller.signal };
+  const options = { id: post.id, signal: controller.signal };
   const [detail, history] = await Promise.allSettled([fetchPost(options), fetchHistory(options)]);
   if (controller.signal.aborted || detailController !== controller) return;
   state.detailBusy = false;
@@ -164,7 +162,6 @@ async function loadDetail(post, { scroll = false } = {}) {
 }
 
 async function refresh() {
-  if (!state.token) return;
   listController?.abort();
   if (state.detailBusy && state.selected) {
     state.detailError = '详情读取已取消，请刷新详情重新读取。';
@@ -178,7 +175,7 @@ async function refresh() {
   state.listError = '';
   render();
   try {
-    const posts = await fetchRecent({ token: state.token, limit: state.limit, signal: controller.signal });
+    const posts = await fetchRecent({ limit: state.limit, signal: controller.signal });
     if (listController !== controller || controller.signal.aborted) return;
     state.posts = posts;
     state.connected = true;
@@ -198,41 +195,6 @@ async function refresh() {
   }
 }
 
-function disconnect() {
-  listController?.abort();
-  listController = null;
-  clearDetail();
-  Object.assign(state, { token: '', posts: [], loaded: false, busy: false, connected: false, updatedAt: null, listError: '', filter: 'ALL', query: '' });
-  $('token-input').value = '';
-  $('search-input').value = '';
-  render();
-}
-
-function openConnection() {
-  $('form-error').hidden = true;
-  $('token-input').value = '';
-  $('disconnect-button').hidden = !state.token;
-  $('connection-dialog').showModal();
-  $('token-input').focus();
-}
-
-$('connect-button').addEventListener('click', openConnection);
-$('dialog-close').addEventListener('click', () => $('connection-dialog').close());
-$('connection-dialog').addEventListener('close', () => { $('token-input').value = ''; });
-$('connection-form').addEventListener('submit', (event) => {
-  event.preventDefault();
-  const token = $('token-input').value.trim();
-  if (!token) {
-    $('form-error').textContent = '请输入管理员令牌。';
-    $('form-error').hidden = false;
-    return;
-  }
-  disconnect();
-  state.token = token;
-  $('connection-dialog').close();
-  void refresh();
-});
-$('disconnect-button').addEventListener('click', () => { disconnect(); $('connection-dialog').close(); });
 $('refresh-button').addEventListener('click', () => void refresh());
 $('limit-select').addEventListener('change', (event) => { state.limit = Number(event.target.value); void refresh(); });
 $('status-select').addEventListener('change', (event) => selectFilter(event.target.value));
@@ -241,7 +203,7 @@ document.addEventListener('click', (event) => {
   const filter = event.target.closest('[data-filter]');
   if (filter) { selectFilter(filter.dataset.filter); return; }
   const action = event.target.closest('[data-action]')?.dataset.action;
-  if (action === 'connect') openConnection();
+  if (action === 'refresh') void refresh();
   if (action === 'reset-filter') { state.query = ''; $('search-input').value = ''; selectFilter('ALL'); }
   if (action === 'close-detail') {
     const id = state.selected?.id;
@@ -258,5 +220,6 @@ document.addEventListener('click', (event) => {
     if (post) { state.detailTab = 'details'; void loadDetail(post, { scroll: true }); }
   }
 });
-window.addEventListener('pagehide', disconnect);
+window.addEventListener('pagehide', () => { listController?.abort(); detailController?.abort(); });
 render();
+void refresh();

@@ -147,7 +147,7 @@ function Get-BackendConfigPatch {
 
 function Get-RemoteConfigWriter {
     return @'
-import base64, json, os, re, secrets, sys, tempfile
+import base64, json, os, re, sys, tempfile
 from pathlib import Path
 
 BUSINESS_KEYS = {
@@ -157,7 +157,6 @@ BUSINESS_KEYS = {
     'X_ACCESS_TOKEN', 'X_ACCESS_TOKEN_SECRET',
 }
 OKX_KEYS = {'OKX_ACCESS_KEY', 'OKX_SECRET_KEY', 'OKX_ACCESS_PASSPHRASE'}
-TOKENS = {'TRADE_TRADING_OPERATOR_TOKEN', 'TRADE_X_ADMIN_TOKEN'}
 
 def write_private(directory, prefix, content):
     fd, name = tempfile.mkstemp(dir=directory, prefix=prefix)
@@ -194,15 +193,15 @@ def main():
     lines, seen = [], set()
     for line in original.splitlines():
         match = re.match(r'^[ \t]*([A-Z][A-Z0-9_]*)[ \t]*=(.*)$', line)
-        if match and match[1] in keys | TOKENS:
-            key, value = match[1], match[2]
+        if match and match[1] in keys:
+            key = match[1]
             if key in seen:
                 raise ValueError()
             seen.add(key)
-            line = key + '=' + (patch[key] if key in keys else value or secrets.token_hex(24))
+            line = key + '=' + patch[key]
         lines.append(line)
-    for key in sorted((keys | TOKENS) - seen):
-        lines.append(key + '=' + (patch[key] if key in keys else secrets.token_hex(24)))
+    for key in sorted(keys - seen):
+        lines.append(key + '=' + patch[key])
     staged = write_private(directory, '.backend-sync-', '\n'.join(lines) + '\n')
     try:
         if target.exists():
@@ -212,7 +211,7 @@ def main():
         if staged.exists():
             staged.unlink()
     print(f'Synced {len(patch)} settings to deploy/backend.env (mode 600).')
-    print('Existing management tokens and business switches were preserved.')
+    print('Other settings and business switches were preserved.')
 
 try:
     main()

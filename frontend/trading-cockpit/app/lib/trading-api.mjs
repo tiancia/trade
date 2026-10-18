@@ -67,13 +67,12 @@ export function buildBacktestPayload(values) {
 }
 
 /**
- * Only requests whose caller supplies an operator token receive that credential.
- * @param {{headers?: HeadersInit, operatorToken?: string}} [options]
+ * Build JSON headers while preserving caller-provided headers.
+ * @param {{headers?: HeadersInit}} [options]
  * @returns {Headers}
  */
-export function createJsonRequestHeaders({ headers, operatorToken } = {}) {
+export function createJsonRequestHeaders({ headers } = {}) {
   const result = new Headers(headers);
   if (!result.has("Content-Type")) result.set("Content-Type", "application/json");
-  if (operatorToken?.trim()) result.set("X-Trading-Operator-Token", operatorToken.trim());
   return result;
 }

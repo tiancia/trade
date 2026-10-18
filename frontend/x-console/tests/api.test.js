@@ -11,44 +11,41 @@ function withFetch(mock, action) {
   return Promise.resolve().then(action).finally(() => { globalThis.fetch = original; });
 }
 
-test('all endpoints use only same-origin GET with token in header and no cache', async () => {
+test('all endpoints work without a token using same-origin GET and no cache', async () => {
   const calls = [];
   await withFetch(async (url, options) => {
     calls.push({ url, options });
     return Response.json(url.endsWith('/history') ? [historyFixture] : url.includes('?') ? [postFixture] : postFixture);
   }, async () => {
-    await fetchRecent({ token: 'private-token' });
-    await fetchPost({ token: 'private-token', id: 'a/b?c' });
-    await fetchHistory({ token: 'private-token', id: 'a/b?c' });
+    await fetchRecent();
+    await fetchPost({ id: 'a/b?c' });
+    await fetchHistory({ id: 'a/b?c' });
   });
   assert.deepEqual(calls.map(call => call.url), [
     '/api/x/posts?limit=30', '/api/x/posts/a%2Fb%3Fc', '/api/x/posts/a%2Fb%3Fc/history',
   ]);
   for (const { url, options } of calls) {
     assert.equal(options.method, 'GET');
-    assert.equal(options.headers['X-X-Admin-Token'], 'private-token');
+    assert.deepEqual(options.headers, { Accept: 'application/json' });
     assert.equal(options.cache, 'no-store');
     assert.equal(options.credentials, 'same-origin');
     assert.ok(options.signal instanceof AbortSignal);
-    assert.ok(!url.includes('private-token'));
     assert.ok(!('body' in options));
   }
 });
 
-test('missing token and invalid IDs/limits fail before any request', async () => {
+test('invalid IDs and limits fail before any request', async () => {
   await withFetch(() => { assert.fail('request must not start'); }, async () => {
-    await assert.rejects(fetchRecent(), { code: 'TOKEN_REQUIRED' });
-    await assert.rejects(fetchRecent({ token: 'x', limit: 101 }), { code: 'LIMIT_INVALID' });
-    await assert.rejects(fetchRecent({ token: 'x', limit: 1.5 }), { code: 'LIMIT_INVALID' });
-    await assert.rejects(fetchPost({ token: 'x', id: ' ' }), { code: 'ID_REQUIRED' });
-    await assert.rejects(fetchRecent({ token: 'x\r\ny' }), { code: 'TOKEN_INVALID' });
+    await assert.rejects(fetchRecent({ limit: 101 }), { code: 'LIMIT_INVALID' });
+    await assert.rejects(fetchRecent({ limit: 1.5 }), { code: 'LIMIT_INVALID' });
+    await assert.rejects(fetchPost({ id: ' ' }), { code: 'ID_REQUIRED' });
   });
 });
 
-test('HTTP failures give clear messages without exposing the admin token', async () => {
+test('HTTP failures give clear messages without echoing response bodies', async () => {
   for (const [status, code] of [[401, 'UNAUTHORIZED'], [403, 'UNAUTHORIZED'], [404, 'NOT_FOUND'], [500, 'HTTP_ERROR']]) {
     await withFetch(async () => new Response('private-token', { status }), async () => {
-      await assert.rejects(fetchRecent({ token: 'private-token' }), error => {
+      await assert.rejects(fetchRecent(), error => {
         assert.equal(error.code, code);
         assert.ok(!error.message.includes('private-token'));
         return true;
@@ -56,7 +53,7 @@ test('HTTP failures give clear messages without exposing the admin token', async
     });
   }
   await withFetch(async () => Response.json({ error: 'X post not found' }, { status: 400 }), async () => {
-    await assert.rejects(fetchPost({ token: 'x', id: 'missing' }), { code: 'POST_NOT_FOUND' });
+    await assert.rejects(fetchPost({ id: 'missing' }), { code: 'POST_NOT_FOUND' });
   });
 });
 
@@ -68,14 +65,14 @@ test('HTML, malformed JSON, and unexpected shapes are rejected', async () => {
     Response.json(null),
   ]) {
     await withFetch(async () => response, async () => {
-      await assert.rejects(fetchRecent({ token: 'x' }), { code: 'INVALID_RESPONSE' });
+      await assert.rejects(fetchRecent(), { code: 'INVALID_RESPONSE' });
     });
   }
   await withFetch(async () => Response.json([]), async () => {
-    await assert.rejects(fetchPost({ token: 'x', id: 'a' }), { code: 'INVALID_RESPONSE' });
+    await assert.rejects(fetchPost({ id: 'a' }), { code: 'INVALID_RESPONSE' });
   });
   await withFetch(async () => Response.json({}), async () => {
-    await assert.rejects(fetchHistory({ token: 'x', id: 'a' }), { code: 'INVALID_RESPONSE' });
+    await assert.rejects(fetchHistory({ id: 'a' }), { code: 'INVALID_RESPONSE' });
   });
 });
 
@@ -88,29 +85,29 @@ test('post and list records require safe minimum fields without rejecting future
   ];
   for (const record of invalidPosts) {
     await withFetch(async () => Response.json(record), async () => {
-      await assert.rejects(fetchPost({ token: 'x', id: 'a' }), { code: 'INVALID_RESPONSE' });
+      await assert.rejects(fetchPost({ id: 'a' }), { code: 'INVALID_RESPONSE' });
     });
     await withFetch(async () => Response.json([record]), async () => {
-      await assert.rejects(fetchRecent({ token: 'x' }), { code: 'INVALID_RESPONSE' });
+      await assert.rejects(fetchRecent(), { code: 'INVALID_RESPONSE' });
     });
   }
   for (const record of [null, [], {}, { ...historyFixture, revision: -1 }, { ...historyFixture, contentVersion: 0 }]) {
     await withFetch(async () => Response.json([record]), async () => {
-      await assert.rejects(fetchHistory({ token: 'x', id: 'a' }), { code: 'INVALID_RESPONSE' });
+      await assert.rejects(fetchHistory({ id: 'a' }), { code: 'INVALID_RESPONSE' });
     });
   }
   const futurePost = { ...postFixture, status: 'NEW_BACKEND_STATE' };
   await withFetch(async () => Response.json(futurePost), async () => {
-    assert.deepEqual(await fetchPost({ token: 'x', id: 'a' }), futurePost);
+    assert.deepEqual(await fetchPost({ id: 'a' }), futurePost);
   });
   await withFetch(async () => Response.json([historyFixture]), async () => {
-    assert.deepEqual(await fetchHistory({ token: 'x', id: 'a' }), [historyFixture]);
+    assert.deepEqual(await fetchHistory({ id: 'a' }), [historyFixture]);
   });
 });
 
 test('network errors are readable and do not echo transport diagnostics', async () => {
   await withFetch(async () => { throw new TypeError('private-token is invalid'); }, async () => {
-    await assert.rejects(fetchRecent({ token: 'private-token' }), error => {
+    await assert.rejects(fetchRecent(), error => {
       assert.equal(error.code, 'NETWORK_ERROR');
       assert.ok(!error.message.includes('private-token'));
       return true;
@@ -123,7 +120,7 @@ test('caller cancellation reaches transport and is distinguishable from failure'
   await withFetch((_url, { signal }) => new Promise((_resolve, reject) => {
     signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
   }), async () => {
-    const pending = fetchRecent({ token: 'x', signal: controller.signal });
+    const pending = fetchRecent({ signal: controller.signal });
     controller.abort();
     await assert.rejects(pending, { name: 'AbortError' });
   });
@@ -134,7 +131,7 @@ test('request timeout aborts transport, reports timeout, and removes timers', as
   await withFetch((_url, { signal }) => new Promise((_resolve, reject) => {
     signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
   }), async () => {
-    const pending = fetchRecent({ token: 'x' });
+    const pending = fetchRecent();
     t.mock.timers.tick(15_000);
     await assert.rejects(pending, { code: 'TIMEOUT' });
   });
@@ -154,7 +151,7 @@ test('cancellation while parsing JSON remains cancellation for success and error
         });
       },
     }), async () => {
-      const pending = fetchRecent({ token: 'x', signal: controller.signal });
+      const pending = fetchRecent({ signal: controller.signal });
       await started;
       controller.abort();
       await assert.rejects(pending, { name: 'AbortError' });
@@ -175,7 +172,7 @@ test('timeout while parsing JSON is not masked by a response format error', asyn
       });
     },
   }), async () => {
-    const pending = fetchRecent({ token: 'x' });
+    const pending = fetchRecent();
     await started;
     t.mock.timers.tick(15_000);
     await assert.rejects(pending, { code: 'TIMEOUT' });

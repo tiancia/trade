@@ -8,16 +8,6 @@ function apiError(message, code) {
   return error;
 }
 
-function requireToken(token) {
-  if (typeof token !== 'string' || !token.trim()) {
-    throw apiError('请先填写 X 管理员令牌。', 'TOKEN_REQUIRED');
-  }
-  if (/[\r\n]/.test(token)) {
-    throw apiError('管理员令牌格式无效。', 'TOKEN_INVALID');
-  }
-  return token;
-}
-
 function postPath(id) {
   if (typeof id !== 'string' || !id.trim()) {
     throw apiError('缺少内容 ID，请重新选择内容。', 'ID_REQUIRED');
@@ -36,8 +26,7 @@ function validPost(value) {
   return validRevision(value) && typeof value.id === 'string' && Boolean(value.id.trim());
 }
 
-async function request(path, { token, signal }, shape) {
-  const adminToken = requireToken(token);
+async function request(path, { signal }, shape) {
   const controller = new AbortController();
   let timedOut = false;
   const abort = () => controller.abort(signal?.reason);
@@ -51,17 +40,17 @@ async function request(path, { token, signal }, shape) {
   try {
     const response = await fetch(path, {
       method: 'GET',
-      headers: { Accept: 'application/json', 'X-X-Admin-Token': adminToken },
+      headers: { Accept: 'application/json' },
       credentials: 'same-origin',
       cache: 'no-store',
       signal: controller.signal,
     });
 
     if (response.status === 401 || response.status === 403) {
-      throw apiError('管理员令牌无效或没有访问权限，请检查后重新连接。', 'UNAUTHORIZED');
+      throw apiError('访问被拒绝，请检查网关登录状态或访问权限。', 'UNAUTHORIZED');
     }
     if (response.status === 404) {
-      throw apiError('未找到 X 接口或内容，请检查后端地址以及管理员令牌配置。', 'NOT_FOUND');
+      throw apiError('未找到 X 接口或内容，请检查后端地址或刷新列表。', 'NOT_FOUND');
     }
     if (!response.ok) {
       let detail = null;
@@ -108,17 +97,17 @@ async function request(path, { token, signal }, shape) {
   }
 }
 
-export async function fetchRecent({ token, limit = 30, signal } = {}) {
+export async function fetchRecent({ limit = 30, signal } = {}) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
     throw apiError('查询条数必须为 1 到 100 的整数。', 'LIMIT_INVALID');
   }
-  return request(`${BASE_URL}?limit=${limit}`, { token, signal }, 'recent');
+  return request(`${BASE_URL}?limit=${limit}`, { signal }, 'recent');
 }
 
-export async function fetchPost({ token, id, signal } = {}) {
-  return request(postPath(id), { token, signal }, 'post');
+export async function fetchPost({ id, signal } = {}) {
+  return request(postPath(id), { signal }, 'post');
 }
 
-export async function fetchHistory({ token, id, signal } = {}) {
-  return request(`${postPath(id)}/history`, { token, signal }, 'history');
+export async function fetchHistory({ id, signal } = {}) {
+  return request(`${postPath(id)}/history`, { signal }, 'history');
 }

@@ -46,7 +46,6 @@
           <div class="breadcrumb">工作空间 <span>/</span> <strong>内容总览</strong></div>
           <div class="connection-controls">
             <span class="connection-pill" id="connection-status" role="status"><span class="dot"></span>未连接</span>
-            <button class="button secondary small" id="connect-button"><svg><use href="#i-connect"/></svg><span>连接后端</span></button>
           </div>
         </header>
         <section class="page-heading">
@@ -68,23 +67,12 @@
             </div>
             <div class="notice error" id="list-notice" role="alert" hidden></div>
             <div class="table-scroll" id="table-region" aria-live="polite"></div>
-            <footer class="board-footer"><span id="list-summary">连接后查看最近生成的内容</span><span id="updated-time">时间均为北京时间</span></footer>
+            <footer class="board-footer"><span id="list-summary">自动读取最近生成的内容</span><span id="updated-time">时间均为北京时间</span></footer>
           </section>
           <aside class="detail-panel" id="detail-panel" aria-label="内容详情"></aside>
         </div>
       </main>
     </div>
-    <dialog class="connection-dialog" id="connection-dialog" aria-labelledby="connection-title">
-      <div class="dialog-heading"><div><div class="eyebrow">BACKEND CONNECTION</div><h2 id="connection-title">连接 X 模块</h2></div><button class="button icon-button dialog-close" id="dialog-close" aria-label="关闭连接设置"><svg><use href="#i-close"/></svg></button></div>
-      <p class="dialog-description">输入后端配置的管理员令牌，读取内容和状态记录。</p>
-      <form class="connection-form" id="connection-form">
-        <label class="field-label" for="token-input">管理员令牌</label>
-        <input id="token-input" type="password" autocomplete="off" spellcheck="false" required placeholder="输入管理员令牌" />
-        <p class="field-help">令牌对应后端的 TRADE_X_ADMIN_TOKEN，仅在当前页面内存中使用，刷新页面后需要重新输入。</p>
-        <p class="form-error" id="form-error" role="alert" hidden></p>
-        <div class="dialog-actions"><button class="button secondary" id="disconnect-button" type="button" hidden>断开连接</button><button class="button primary" type="submit"><svg><use href="#i-connect"/></svg>连接并读取</button></div>
-      </form>
-    </dialog>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
