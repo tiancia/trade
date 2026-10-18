@@ -8,11 +8,16 @@ async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
+  const request = new Request("http://localhost/", { headers: { accept: "text/html" } });
+  const context = { waitUntil() {}, passThroughOnException() {} };
 
+  // Node SSR exports a request handler; the Sites build exports a Worker object.
+  // Exercise either build directly in memory without opening a listening server.
+  if (typeof worker === "function") return worker(request, context);
   return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html" } }),
+    request,
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
-    { waitUntil() {}, passThroughOnException() {} },
+    context,
   );
 }
 

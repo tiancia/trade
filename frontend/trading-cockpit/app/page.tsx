@@ -31,8 +31,10 @@ import {
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { apiTimestampMillis, buildBacktestPayload, createJsonRequestHeaders, formatDateTimeLocal } from "./lib/trading-api.mjs";
 
 type View = "overview" | "strategies" | "events" | "backtests";
+type ApiTimestamp = string | number;
 
 type Strategy = {
   id: string;
@@ -48,11 +50,11 @@ type RuntimeStatus = {
   runningStrategyIds: string[];
   activeStrategyId?: string | null;
   activeStrategyRevision?: number;
-  activeStrategyChangedAt?: string | null;
+  activeStrategyChangedAt?: ApiTimestamp | null;
   lastDecision?: {
     decisionId?: string;
     strategyId?: string;
-    timestamp?: string;
+    timestamp?: ApiTimestamp;
     action?: string;
     reason?: string;
     confidence?: number;
@@ -62,8 +64,8 @@ type RuntimeStatus = {
     executionStatus?: string;
   } | null;
   lastError?: string | null;
-  lastRunStartedAt?: string | null;
-  lastRunCompletedAt?: string | null;
+  lastRunStartedAt?: ApiTimestamp | null;
+  lastRunCompletedAt?: ApiTimestamp | null;
   marketDataStale: boolean;
 };
 
@@ -83,9 +85,9 @@ type AutomationLoop = {
   id: string;
   initialDelayMs: number;
   fixedDelayMs: number;
-  nextRunAt?: string | null;
-  lastRunStartedAt?: string | null;
-  lastRunCompletedAt?: string | null;
+  nextRunAt?: ApiTimestamp | null;
+  lastRunStartedAt?: ApiTimestamp | null;
+  lastRunCompletedAt?: ApiTimestamp | null;
   lastRunSuccessful?: boolean | null;
   lastError?: string | null;
 };
@@ -107,7 +109,8 @@ type BacktestRun = {
     bar: string;
     initialCash?: number;
   };
-  createdAt: string;
+  createdAt: ApiTimestamp;
+  error?: string | null;
   totalReturn?: number | null;
   maxDrawdown?: number | null;
   winRate?: number | null;
@@ -140,7 +143,7 @@ type CandleSeries = {
   instrumentId: string;
   bar: string;
   source: string;
-  asOf: string;
+  asOf: ApiTimestamp;
   candles: Candle[];
 };
 
@@ -148,14 +151,14 @@ type CandleStreamUpdate = {
   eventId: string;
   instrumentId: string;
   bar: string;
-  receivedAt: string;
+  receivedAt: ApiTimestamp;
   candles: Candle[];
 };
 
 type ActiveStrategySelection = {
   strategyId: string;
   revision: number;
-  changedAt?: string | null;
+  changedAt?: ApiTimestamp | null;
 };
 
 type StreamState = "connecting" | "live" | "polling" | "demo";
@@ -231,7 +234,7 @@ const demoSnapshot: Snapshot = {
   backtests: [
     {
       runId: "bt_20260717_01",
-      status: "COMPLETED",
+      status: "SUCCEEDED",
       request: { strategyId: "threshold-event-default", instId: "BTC-USDT", bar: "1m" },
       createdAt: new Date(Date.now() - 3_900_000).toISOString(),
       totalReturn: 0.1268,
@@ -243,7 +246,7 @@ const demoSnapshot: Snapshot = {
     },
     {
       runId: "bt_20260716_04",
-      status: "COMPLETED",
+      status: "SUCCEEDED",
       request: { strategyId: "threshold-event-defensive", instId: "BTC-USDT", bar: "5m" },
       createdAt: new Date(Date.now() - 86_400_000).toISOString(),
       totalReturn: 0.0842,
@@ -301,20 +304,35 @@ function pct(value?: number | null, digits = 2) {
   return `${(Math.abs(value) <= 1 ? value * 100 : value).toFixed(digits)}%`;
 }
 
-function timeAgo(value?: string | null) {
-  if (!value) return "暂无记录";
-  const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+function timeAgo(value?: ApiTimestamp | null) {
+  const timestamp = apiTimestampMillis(value);
+  if (timestamp == null) return "暂无记录";
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
   if (seconds < 60) return `${seconds} 秒前`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
   return `${Math.floor(seconds / 3600)} 小时前`;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+class ApiRequestError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "请求失败，请稍后重试";
+}
+
+async function request<T>(path: string, init?: RequestInit, operatorToken?: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: createJsonRequestHeaders({ headers: init?.headers, operatorToken }),
   });
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  if (!response.ok) {
+    const problem = await response.json().catch(() => null);
+    const detail = problem?.detail ?? problem?.message ?? problem?.error;
+    throw new ApiRequestError(response.status, `${response.status} ${typeof detail === "string" ? detail : response.statusText}`);
+  }
   return response.json() as Promise<T>;
 }
 
@@ -351,6 +369,10 @@ export default function Home() {
   const [refreshing, setRefreshing] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [backtestOpen, setBacktestOpen] = useState(false);
+  const [backtestRange, setBacktestRange] = useState({ from: "", to: "" });
+  const [operatorSettingsOpen, setOperatorSettingsOpen] = useState(false);
+  const [operatorToken, setOperatorToken] = useState("");
+  const [operatorTokenDraft, setOperatorTokenDraft] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [clock, setClock] = useState(new Date());
@@ -359,7 +381,7 @@ export default function Home() {
   const [strategyPending, setStrategyPending] = useState<string | null>(null);
   const [chartBar, setChartBar] = useState("1m");
   const [market, setMarket] = useState<CandleSeries>(demoMarket);
-  const [streamState, setStreamState] = useState<StreamState>("demo");
+  const [streamState, setStreamState] = useState<StreamState>("connecting");
   const [query, setQuery] = useState("");
 
   const refresh = useCallback(async (quiet = false) => {
@@ -403,10 +425,11 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    refresh(true);
+    const initialRefresh = window.setTimeout(() => { void refresh(true); }, 0);
     const clockTimer = window.setInterval(() => setClock(new Date()), 1000);
     const refreshTimer = window.setInterval(() => refresh(true), 30_000);
     return () => {
+      window.clearTimeout(initialRefresh);
       window.clearInterval(clockTimer);
       window.clearInterval(refreshTimer);
     };
@@ -414,13 +437,14 @@ export default function Home() {
 
   useEffect(() => {
     let active = true;
-    setStreamState("connecting");
-    void loadMarket(chartBar).then((connected) => {
-      if (!active) return;
-      if (!connected) {
-        setMarket({ ...demoMarket, bar: chartBar, asOf: new Date().toISOString() });
-      }
-    });
+    const initialMarket = window.setTimeout(() => {
+      void loadMarket(chartBar).then((connected) => {
+        if (!active) return;
+        if (!connected) {
+          setMarket({ ...demoMarket, bar: chartBar, asOf: new Date().toISOString() });
+        }
+      });
+    }, 0);
 
     const streamUrl = `${API_BASE}/api/trading/market/candles/stream?instId=BTC-USDT&bar=${encodeURIComponent(chartBar)}&limit=80`;
     const source = new EventSource(streamUrl);
@@ -443,6 +467,7 @@ export default function Home() {
     }, 15_000);
     return () => {
       active = false;
+      window.clearTimeout(initialMarket);
       source.close();
       window.clearInterval(pollTimer);
     };
@@ -457,6 +482,7 @@ export default function Home() {
       if (event.key === "Escape") {
         setCommandOpen(false);
         setBacktestOpen(false);
+        setOperatorSettingsOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -498,16 +524,27 @@ export default function Home() {
     return { items, latest, change, min, max, range, priceScale, priceTop, times, quoteVolume };
   }, [market]);
 
+  const openBacktest = useCallback(() => {
+    const now = Date.now();
+    setBacktestRange({ from: formatDateTimeLocal(now - 86_400_000), to: formatDateTimeLocal(now) });
+    setBacktestOpen(true);
+  }, []);
+
+  const openOperatorSettings = () => {
+    setOperatorTokenDraft(operatorToken);
+    setOperatorSettingsOpen(true);
+  };
+
   const filteredCommands = useMemo(() => {
     const commands = [
       { label: "打开运行总览", hint: "Overview", action: () => setActiveView("overview") },
       { label: "查看策略矩阵", hint: "Strategies", action: () => setActiveView("strategies") },
       { label: "检查事件背压", hint: "Events", action: () => setActiveView("events") },
-      { label: "新建策略回测", hint: "Backtest", action: () => setBacktestOpen(true) },
+      { label: "新建策略回测", hint: "Backtest", action: openBacktest },
       { label: "同步后端状态", hint: "Refresh", action: () => refresh() },
     ];
     return commands.filter((item) => item.label.toLowerCase().includes(query.toLowerCase()));
-  }, [query, refresh]);
+  }, [query, refresh, openBacktest]);
 
   const navigate = (view: View) => {
     setActiveView(view);
@@ -522,8 +559,8 @@ export default function Home() {
         const next = await request<AutomationTask>(`/api/automation/tasks/${task.id}/${task.running ? "stop" : "start"}`, { method: "POST" });
         setSnapshot((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === next.id ? next : item) }));
         setToast(next.running ? "交易自动化已启动" : "交易自动化已安全停止");
-      } catch {
-        setToast("任务状态更新失败，请检查后端连接");
+      } catch (error) {
+        setToast(`任务状态更新失败：${errorMessage(error)}`);
       }
     } else {
       setSnapshot((current) => ({
@@ -537,6 +574,11 @@ export default function Home() {
 
   const activateStrategy = async (strategyId: string) => {
     if (strategyId === snapshot.runtime.activeStrategyId || strategyPending) return;
+    if (dataMode === "live" && !operatorToken) {
+      openOperatorSettings();
+      setToast("请先填写交易操作员令牌，再切换策略");
+      return;
+    }
     setStrategyPending(strategyId);
     if (dataMode === "live") {
       try {
@@ -546,7 +588,7 @@ export default function Home() {
             strategyId,
             expectedRevision: snapshot.runtime.activeStrategyRevision ?? 0,
           }),
-        });
+        }, operatorToken);
         setSnapshot((current) => ({
           ...current,
           runtime: {
@@ -558,8 +600,9 @@ export default function Home() {
           },
         }));
         setToast(`当前策略已切换为 ${selection.strategyId}`);
-      } catch {
-        setToast("策略切换失败，状态可能已被其他操作员更新");
+      } catch (error) {
+        const hint = error instanceof ApiRequestError && error.status === 403 ? "请检查设置中的操作员令牌；" : "";
+        setToast(`策略切换失败：${hint}${errorMessage(error)}`);
         await refresh(true);
       }
     } else {
@@ -580,27 +623,30 @@ export default function Home() {
 
   const submitBacktest = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setBacktestPending(true);
     const data = new FormData(event.currentTarget);
-    const payload = {
-      strategyId: String(data.get("strategyId")),
-      instId: String(data.get("instId")),
-      bar: String(data.get("bar")),
-      initialCash: Number(data.get("initialCash")),
-      feeRate: 0.001,
-      slippageRate: 0.0002,
-      forceCloseAtEnd: true,
-      includeUnconfirmed: false,
-      maxCandles: 10_000,
-    };
+    let payload: ReturnType<typeof buildBacktestPayload>;
+    try {
+      payload = buildBacktestPayload({
+        strategyId: String(data.get("strategyId") ?? ""),
+        instId: String(data.get("instId") ?? ""),
+        bar: String(data.get("bar") ?? ""),
+        initialCash: Number(data.get("initialCash")),
+        from: String(data.get("from") ?? ""),
+        to: String(data.get("to") ?? ""),
+      });
+    } catch (error) {
+      setToast(errorMessage(error));
+      return;
+    }
+    setBacktestPending(true);
 
     if (dataMode === "live") {
       try {
         const run = await request<BacktestRun>("/api/trading/backtests", { method: "POST", body: JSON.stringify(payload) });
         setSnapshot((current) => ({ ...current, backtests: [run, ...current.backtests] }));
         setToast(`回测 ${run.runId} 已进入队列`);
-      } catch {
-        setToast("回测提交失败，请检查参数或后端状态");
+      } catch (error) {
+        setToast(`回测提交失败：${errorMessage(error)}`);
         setBacktestPending(false);
         return;
       }
@@ -671,7 +717,7 @@ export default function Home() {
           })}
         </nav>
         <div className="sidebar-bottom">
-          <button onClick={() => setToast("系统设置面板将在下一版本开放")}><Settings2 size={19} /><span>设置</span></button>
+          <button onClick={openOperatorSettings}><Settings2 size={19} /><span>设置</span></button>
           <div className="environment-mark">PAPER</div>
         </div>
       </aside>
@@ -685,16 +731,16 @@ export default function Home() {
           </div>
           <div className="heading-actions">
             <button className="secondary-button" onClick={() => refresh()}><RefreshCw size={15} />同步状态</button>
-            <button className="primary-button" onClick={() => setBacktestOpen(true)}><Plus size={16} />新建回测</button>
+            <button className="primary-button" onClick={openBacktest}><Plus size={16} />新建回测</button>
           </div>
         </div>
 
         {activeView === "overview" && (
           <>
             <section className="metric-grid" aria-label="核心指标">
-              <MetricCard icon={WalletCards} label="模拟资产净值" value="$52,841.30" delta="+3.82%" positive detail="本月 +$1,942.18" />
-              <MetricCard icon={TrendingUp} label="已实现盈亏" value="+$1,284.62" delta="+12.4%" positive detail="过去 30 天" />
-              <MetricCard icon={Gauge} label="风险利用率" value="38.2%" delta="安全" positive detail="上限 72%" progress={38.2} />
+              <MetricCard icon={WalletCards} label="模拟资产净值" value={dataMode === "demo" ? "$52,841.30" : "—"} delta={dataMode === "demo" ? "演示值" : "暂无数据"} detail={dataMode === "demo" ? "本月 +$1,942.18" : "资产汇总尚未接入"} />
+              <MetricCard icon={TrendingUp} label="已实现盈亏" value={dataMode === "demo" ? "+$1,284.62" : "—"} delta={dataMode === "demo" ? "演示值" : "暂无数据"} detail={dataMode === "demo" ? "过去 30 天" : "盈亏汇总尚未接入"} />
+              <MetricCard icon={Gauge} label="风险利用率" value={dataMode === "demo" ? "38.2%" : "—"} delta={dataMode === "demo" ? "演示值" : "暂无数据"} detail={dataMode === "demo" ? "上限 72%" : "风险利用率尚未接入"} progress={dataMode === "demo" ? 38.2 : undefined} />
               <MetricCard icon={Clock3} label="下次策略决策" value={decisionLoop?.nextRunAt ? timeAgoFuture(decisionLoop.nextRunAt) : "待调度"} delta={task?.running ? "运行中" : "已暂停"} positive={Boolean(task?.running)} detail="decision loop" />
             </section>
 
@@ -708,7 +754,7 @@ export default function Home() {
                   <div className="market-price"><strong>${number(chart.latest?.close)}</strong><span className={chart.change < 0 ? "market-down" : ""}><ArrowUpRight size={13} /> {chart.change >= 0 ? "+" : ""}{chart.change.toFixed(2)}%</span></div>
                 </div>
                 <div className="chart-toolbar">
-                  <div>{["1m", "5m", "15m", "1H", "4H"].map((bar) => <button key={bar} className={chartBar === bar ? "active" : ""} onClick={() => setChartBar(bar)}>{bar}</button>)}</div>
+                  <div>{["1m", "5m", "15m", "1H", "4H"].map((bar) => <button key={bar} className={chartBar === bar ? "active" : ""} onClick={() => { if (bar !== chartBar) { setStreamState("connecting"); setChartBar(bar); } }}>{bar}</button>)}</div>
                   <div className="ohlc"><span>O {number(chart.latest?.open)}</span><span>H {number(chart.latest?.high)}</span><span>L {number(chart.latest?.low)}</span><span className="up">C {number(chart.latest?.close)}</span></div>
                 </div>
                 <div className="chart" aria-label={`BTC USDT ${market.bar} 实时 K 线图`}>
@@ -774,16 +820,17 @@ export default function Home() {
 
         {activeView === "strategies" && <StrategiesView snapshot={snapshot} onActivate={activateStrategy} pendingId={strategyPending} dataMode={dataMode} />}
         {activeView === "events" && <EventsView events={snapshot.events} queueUtilization={queueUtilization} />}
-        {activeView === "backtests" && <BacktestsView runs={snapshot.backtests} onCreate={() => setBacktestOpen(true)} />}
+        {activeView === "backtests" && <BacktestsView runs={snapshot.backtests} onCreate={openBacktest} />}
       </section>
 
       <aside className="right-rail">
         <section className="rail-card system-card">
           <div className="rail-card-heading"><span>系统状态</span><Activity size={16} /></div>
           <div className="system-state"><span className="pulse-ring"><i /></span><div><strong>{snapshot.runtime.lastError ? "需要关注" : "系统运行稳定"}</strong><small>{dataMode === "live" ? "来自实时后端" : "安全演示快照"}</small></div></div>
+          {snapshot.runtime.lastError && <p className="runtime-error danger-text">{snapshot.runtime.lastError}</p>}
           <div className="health-list">
             <div><span>事件总线</span><b><i className={snapshot.events.running ? "healthy" : "warning"} />{snapshot.events.running ? "正常" : "停止"}</b></div>
-            <div><span>行情新鲜度</span><b><i className={!snapshot.runtime.marketDataStale ? "healthy" : "warning"} />{snapshot.runtime.marketDataStale ? "过期" : "正常"}</b></div>
+            <div><span>WebSocket 行情</span><b><i className={!snapshot.runtime.marketDataStale ? "healthy" : "warning"} />{snapshot.runtime.marketDataStale ? "未就绪" : "正常"}</b></div>
             <div><span>执行模式</span><b><i className="neutral" />{snapshot.runtime.executionMode}</b></div>
           </div>
         </section>
@@ -803,13 +850,13 @@ export default function Home() {
         </section>
 
         <section className="rail-card strategy-card">
-          <div className="rail-card-heading"><span>活跃策略</span><button onClick={() => navigate("strategies")}>全部 {snapshot.strategies.length}</button></div>
+          <div className="rail-card-heading"><span>可用策略</span><button onClick={() => navigate("strategies")}>全部 {snapshot.strategies.length}</button></div>
           <div className="mini-strategy-list">
             {snapshot.strategies.slice(0, 3).map((strategy, index) => (
               <button key={strategy.id} onClick={() => navigate("strategies")}>
                 <span className={`strategy-glyph glyph-${index + 1}`}><Layers3 size={15} /></span>
                 <span><strong>{strategy.id}</strong><small>{strategy.type} · {strategy.bar}</small></span>
-                <i className={strategy.enabled ? "healthy" : "neutral"} />
+                <i className={strategy.id === snapshot.runtime.activeStrategyId ? "healthy" : "neutral"} title={strategy.id === snapshot.runtime.activeStrategyId ? "当前策略" : "候选策略"} />
               </button>
             ))}
           </div>
@@ -818,9 +865,9 @@ export default function Home() {
         <section className="rail-card activity-card">
           <div className="rail-card-heading"><span>最近活动</span><Clock3 size={16} /></div>
           <div className="activity-list">
-            <ActivityItem color="green" title="策略决策完成" detail={`${decision?.action ?? "HOLD"} · ${timeAgo(decision?.timestamp)}`} />
+            <ActivityItem color="green" title={decision ? "策略决策完成" : "策略决策"} detail={decision ? `${decision.action ?? "HOLD"} · ${timeAgo(decision.timestamp)}` : "暂无决策记录"} />
             <ActivityItem color="blue" title="行情事件已消费" detail={`累计 ${compact(snapshot.events.consumed)} 条`} />
-            <ActivityItem color="violet" title="最近回测完成" detail={snapshot.backtests[0] ? `${snapshot.backtests[0].request.strategyId} · ${pct(snapshot.backtests[0].totalReturn)}` : "暂无记录"} />
+            <ActivityItem color="violet" title="最近回测" detail={snapshot.backtests[0] ? `${snapshot.backtests[0].request.strategyId} · ${snapshot.backtests[0].status} · ${pct(snapshot.backtests[0].totalReturn)}` : "暂无记录"} />
           </div>
         </section>
       </aside>
@@ -841,9 +888,23 @@ export default function Home() {
             <form onSubmit={submitBacktest}>
               <label><span>策略</span><select name="strategyId" defaultValue={snapshot.strategies[0]?.id}>{snapshot.strategies.map((strategy) => <option key={strategy.id} value={strategy.id}>{strategy.id}</option>)}</select></label>
               <div className="form-row"><label><span>交易标的</span><select name="instId" defaultValue="BTC-USDT"><option>BTC-USDT</option><option>ETH-USDT</option></select></label><label><span>K 线周期</span><select name="bar" defaultValue="1m"><option>1m</option><option>5m</option><option>15m</option><option>1H</option></select></label></div>
-              <label><span>初始资金（USDT）</span><input name="initialCash" type="number" min="100" step="100" defaultValue="10000" /></label>
+              <div className="form-row"><label><span>开始时间（本地时间）</span><input name="from" type="datetime-local" required defaultValue={backtestRange.from} /></label><label><span>结束时间（本地时间）</span><input name="to" type="datetime-local" required defaultValue={backtestRange.to} /></label></div>
+              <label><span>初始资金（USDT）</span><input name="initialCash" type="number" min="100" step="100" required defaultValue="10000" /></label>
               <div className="safety-note"><ShieldCheck size={17} /><p><strong>安全执行</strong>回测仅使用模拟 Broker，不会触发真实下单。</p></div>
               <div className="form-actions"><button type="button" className="secondary-button" onClick={() => setBacktestOpen(false)}>取消</button><button type="submit" className="primary-button" disabled={backtestPending}>{backtestPending ? <LoaderCircle size={15} className="spin" /> : <Play size={15} />}开始回测</button></div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {operatorSettingsOpen && (
+        <div className="modal-backdrop" onMouseDown={() => setOperatorSettingsOpen(false)}>
+          <section className="form-modal" role="dialog" aria-modal="true" aria-labelledby="operator-settings-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="form-modal-heading"><div><h2 id="operator-settings-title">交易操作员令牌</h2><p>切换策略需要服务器的 TRADE_TRADING_OPERATOR_TOKEN。</p></div><button className="icon-button" onClick={() => setOperatorSettingsOpen(false)} aria-label="关闭"><X size={18} /></button></div>
+            <form onSubmit={(event) => { event.preventDefault(); setOperatorToken(operatorTokenDraft.trim()); setOperatorSettingsOpen(false); setToast(operatorTokenDraft.trim() ? "操作员令牌已应用，请重新选择策略" : "操作员令牌已清除"); }}>
+              <label><span>操作员令牌</span><input type="password" autoComplete="off" spellCheck={false} value={operatorTokenDraft} onChange={(event) => setOperatorTokenDraft(event.target.value)} /></label>
+              <p className="form-help">仅保存在当前页面内存中，刷新页面后需重新输入。该令牌与网关密码、X 管理令牌各自独立。</p>
+              <div className="form-actions"><button type="button" className="secondary-button" onClick={() => { setOperatorToken(""); setOperatorTokenDraft(""); setOperatorSettingsOpen(false); setToast("操作员令牌已清除"); }}>清除</button><button type="submit" className="primary-button">应用</button></div>
             </form>
           </section>
         </div>
@@ -880,11 +941,13 @@ function EventStat({ label, value, note }: { label: string; value: string; note:
 }
 
 function BacktestsView({ runs, onCreate }: { runs: BacktestRun[]; onCreate: () => void }) {
-  return <div className="detail-layout"><section className="panel backtest-summary"><div><span className="panel-kicker"><TestTube2 size={13} /> EXPERIMENT HISTORY</span><h2>最近回测</h2><p>每次运行都保留参数、进度与绩效结果，便于复现和比较。</p></div><button className="primary-button" onClick={onCreate}><Plus size={15} />新建回测</button></section><section className="panel backtest-table-wrap"><table className="backtest-table"><thead><tr><th>运行 ID</th><th>策略 / 标的</th><th>状态</th><th>收益率</th><th>最大回撤</th><th>胜率</th><th>交易数</th><th /></tr></thead><tbody>{runs.map((run) => <tr key={run.runId}><td><strong>{run.runId}</strong><small>{timeAgo(run.createdAt)}</small></td><td><strong>{run.request.strategyId}</strong><small>{run.request.instId} · {run.request.bar}</small></td><td><span className={`status-badge ${run.status === "COMPLETED" ? "healthy" : run.status === "FAILED" ? "danger" : "idle"}`}>{run.status}</span></td><td className={(run.totalReturn ?? 0) >= 0 ? "positive-text" : "danger-text"}>{pct(run.totalReturn)}</td><td>{pct(run.maxDrawdown)}</td><td>{pct(run.winRate, 1)}</td><td>{run.tradeCount ?? "—"}</td><td><button className="icon-button" aria-label={`查看回测 ${run.runId}`}><ChevronRight size={15} /></button></td></tr>)}</tbody></table></section></div>;
+  return <div className="detail-layout"><section className="panel backtest-summary"><div><span className="panel-kicker"><TestTube2 size={13} /> EXPERIMENT HISTORY</span><h2>最近回测</h2><p>每次运行都保留参数、进度与绩效结果，便于复现和比较。</p></div><button className="primary-button" onClick={onCreate}><Plus size={15} />新建回测</button></section><section className="panel backtest-table-wrap"><table className="backtest-table"><thead><tr><th>运行 ID</th><th>策略 / 标的</th><th>状态</th><th>收益率</th><th>最大回撤</th><th>胜率</th><th>交易数</th><th /></tr></thead><tbody>{runs.map((run) => <tr key={run.runId}><td><strong>{run.runId}</strong><small>{timeAgo(run.createdAt)}</small></td><td><strong>{run.request.strategyId}</strong><small>{run.request.instId} · {run.request.bar}</small></td><td><span className={`status-badge ${run.status === "SUCCEEDED" ? "healthy" : run.status === "FAILED" ? "danger" : "idle"}`}>{run.status}</span>{run.error && <small className="danger-text">{run.error}</small>}</td><td className={(run.totalReturn ?? 0) >= 0 ? "positive-text" : "danger-text"}>{pct(run.totalReturn)}</td><td>{pct(run.maxDrawdown)}</td><td>{pct(run.winRate, 1)}</td><td>{run.tradeCount ?? "—"}</td><td><button className="icon-button" aria-label={`查看回测 ${run.runId}`}><ChevronRight size={15} /></button></td></tr>)}</tbody></table></section></div>;
 }
 
-function timeAgoFuture(value: string) {
-  const seconds = Math.max(0, Math.round((new Date(value).getTime() - Date.now()) / 1000));
+function timeAgoFuture(value: ApiTimestamp) {
+  const timestamp = apiTimestampMillis(value);
+  if (timestamp == null) return "待调度";
+  const seconds = Math.max(0, Math.round((timestamp - Date.now()) / 1000));
   if (seconds < 60) return `${seconds} 秒`;
   const minutes = Math.floor(seconds / 60);
   return `${minutes}分 ${String(seconds % 60).padStart(2, "0")}秒`;

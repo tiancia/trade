@@ -61,6 +61,7 @@ chmod 600 deploy/.env deploy/backend.env
 - `DEEPSEEK_API_KEY`；
 - `TRADE_TELEGRAM_BOT_TOKEN`、`TRADE_X_TELEGRAM_CHAT_ID`、`TRADE_X_TELEGRAM_REVIEWER_USER_IDS`（多个审核人用逗号分隔）；
 - `TRADE_X_TARGET_USER_ID`，以及 `X_API_KEY`、`X_API_SECRET`、`X_ACCESS_TOKEN`、`X_ACCESS_TOKEN_SECRET`；
+- `OKX_ACCESS_KEY`、`OKX_SECRET_KEY`、`OKX_ACCESS_PASSPHRASE`：当前 PAPER 决策仍读取 OKX 账户余额、订单和产品规则，需要只读 API 凭据；
 - 两个独立的长随机管理令牌 `TRADE_TRADING_OPERATOR_TOKEN`、`TRADE_X_ADMIN_TOKEN`。
 
 `backend.env` 使用 **raw** 格式：每行 `KEY=value`，不要给值额外加引号，不要 `source`，也不要放 shell 命令。它只在运行时注入后端，不参与镜像构建。
@@ -73,11 +74,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File A:\trade\deploy\scripts\sync
 
 仓库在其他位置时修改脚本路径；自定义 SSH 端口追加 `-Port 端口`，指定登录私钥追加 `-IdentityFile "私钥路径"`。电脑需已通过 SSH 核验并保存国内服务器主机指纹，服务器需有 Python 3 且登录用户可写 `/opt/trade/deploy`。`-CheckOnly` 只检查本地必填项。
 
-脚本优先读取 Windows 用户、系统、当前进程环境变量，再读取本项目 YAML 对应字段的标量或 `${变量:默认值}`；这样无需重开终端也能读取 `setx` 新保存的值。仅同步上面九项 AI / Telegram / X 凭据和目标 ID，不同步交易所凭据或本地开发配置。缺项时只显示字段名并终止上传。内容经 SSH 标准输入传输，不回显、不放入命令参数或本地中间文件。服务器保留基础设施 `.env`、业务开关和已有管理令牌；空管理令牌会自动生成。更新前保留权限 600 的 `backend.env.before-sync-*` 备份，再原子替换 `backend.env`。同步不会启动或重启服务。
+脚本优先读取 Windows 用户、系统、当前进程环境变量，再读取本项目 YAML 对应字段的标量或 `${变量:默认值}`；这样无需重开终端也能读取 `setx` 新保存的值。默认仅同步上面九项 AI / Telegram / X 凭据和目标 ID。补齐 OKX 配置时单独执行下面的命令，仅更新三个 `OKX_*` 字段；也兼容后端已有的 `ak`、`sk`、`ap` 环境变量别名：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File A:\trade\deploy\scripts\sync-backend-config.ps1 -Server ubuntu@国内服务器公网IP -OnlyOkx
+```
+
+缺项时只显示字段名并终止上传。内容经 SSH 标准输入传输，不回显、不放入命令参数或本地中间文件。服务器保留基础设施 `.env`、其他业务配置和已有管理令牌；空管理令牌会自动生成。更新前保留权限 600 的 `backend.env.before-sync-*` 备份，再原子替换 `backend.env`。同步不会启动或重启服务。运行中的容器需要通过发布脚本重新创建 `backend` 才能加载新环境；单纯 `docker compose restart` 不会加载 env 文件更新。
 
 模板已按本次要求配置：OKX 自动策略 **PAPER**、真实下单关闭；X 自动生成、Telegram 人工审核和真实发布开启，每轮完成后等三小时；首次生成约 30 秒后开始。Polymarket、微博、小说任务关闭。DeepSeek 使用 `deepseek-flash` 直连；OKX、Telegram、X 使用隧道代理。容器地址由 Compose 强制覆盖为 `egress:13128`，不要填写 `127.0.0.1`。
 
-PAPER 不需要 OKX 交易凭据，三个 `OKX_*` 可留空。缺少 X 目标账号或必需的审核配置会拒绝启动；AI / X 凭据、账号权限和外部连接仍需运行验收，进程健康不代表这些已验证。现有数据库中已批准、未过期且审核有效的草稿可能在启动后的扫描中发布。不要让旧电脑进程和服务器同时消费同一个 Telegram Bot；迁移前停止旧的审核 / 生成 / 发布任务。X 控制台本身是只读页面，审核在 Telegram 完成，浏览器查询另需输入 X 管理令牌。
+当前 PAPER 只模拟成交，尚无独立模拟现金账本，账户余额仍从 OKX 读取；三个 `OKX_*` 不能留空。API Key 仅开启 `Read`，关闭 `Trade` / `Withdraw`；绑定 IP 时填写实际出口德国 VPS 的公网 IP。权限说明参见 [OKX 官方文档](https://www.okx.com/docs-v5/en/#overview-api-key)。公开行情成功不能证明私有账户接口可用，自动化循环未抛异常也不能证明策略决策成功，应同时检查运行状态 `lastError` 和最新决策。
+
+缺少 X 目标账号或必需的审核配置会拒绝启动；AI / X 凭据、账号权限和外部连接仍需运行验收，进程健康不代表这些已验证。现有数据库中已批准、未过期且审核有效的草稿可能在启动后的扫描中发布。不要让旧电脑进程和服务器同时消费同一个 Telegram Bot；迁移前停止旧的审核 / 生成 / 发布任务。X 控制台本身是只读页面，审核在 Telegram 完成，浏览器查询另需输入 X 管理令牌。
 
 ## 2. 配置德国隧道和网关密码
 

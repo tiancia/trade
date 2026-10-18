@@ -5,6 +5,7 @@ param(
     [ValidateRange(1, 65535)][int]$Port = 22,
     [string]$IdentityFile,
     [string]$RemoteRoot = '/opt/trade',
+    [switch]$OnlyOkx,
     [switch]$CheckOnly
 )
 
@@ -75,9 +76,13 @@ function Resolve-SettingScalar {
 }
 
 function Get-BackendConfigPatch {
-    param([string]$YamlPath)
+    param([string]$YamlPath, [switch]$OnlyOkx)
     # Fixed mappings for this repository; this is not a general YAML loader.
-    $fields = [ordered]@{
+    $fields = if ($OnlyOkx) { [ordered]@{
+        OKX_ACCESS_KEY = 'trade.okx.access-key'
+        OKX_SECRET_KEY = 'trade.okx.secret-key'
+        OKX_ACCESS_PASSPHRASE = 'trade.okx.passphrase'
+    } } else { [ordered]@{
         DEEPSEEK_API_KEY = ''
         TRADE_TELEGRAM_BOT_TOKEN = 'trade.telegram.bot-token'
         TRADE_X_TELEGRAM_CHAT_ID = 'trade.x.review.telegram.chat-id'
@@ -87,9 +92,16 @@ function Get-BackendConfigPatch {
         X_API_SECRET = 'trade.x.client.api-secret'
         X_ACCESS_TOKEN = 'trade.x.client.access-token'
         X_ACCESS_TOKEN_SECRET = 'trade.x.client.access-token-secret'
+    } }
+    $okxAliases = @{
+        OKX_ACCESS_KEY = @('OKX-ACCESS-KEY', 'ak')
+        OKX_SECRET_KEY = @('OKX-SECRET-KEY', 'sk')
+        OKX_ACCESS_PASSPHRASE = @('OKX-ACCESS-PASSPHRASE', 'ap')
     }
     $selectorPath = 'trade.ai.client.api-key-env-name'
-    $scalars = Read-SettingScalars -Path $YamlPath -Paths (@($fields.Values) + $selectorPath)
+    $paths = @($fields.Values)
+    if (-not $OnlyOkx) { $paths += $selectorPath }
+    $scalars = Read-SettingScalars -Path $YamlPath -Paths $paths
     $patch = [ordered]@{}
     $missing = [System.Collections.Generic.List[string]]::new()
     foreach ($name in $fields.Keys) {
@@ -97,6 +109,12 @@ function Get-BackendConfigPatch {
         $pathKey = $fields[$name]
         if ([string]::IsNullOrWhiteSpace($value) -and $pathKey -and $scalars.ContainsKey($pathKey)) {
             $value = Resolve-SettingScalar -Scalar $scalars[$pathKey]
+        }
+        if ([string]::IsNullOrWhiteSpace($value) -and $OnlyOkx) {
+            foreach ($alias in $okxAliases[$name]) {
+                $value = Get-LocalSetting -Name $alias
+                if (-not [string]::IsNullOrWhiteSpace($value)) { break }
+            }
         }
         if ([string]::IsNullOrWhiteSpace($value) -and $name -eq 'DEEPSEEK_API_KEY') {
             $selector = Get-LocalSetting -Name 'TRADE_AI_API_KEY_ENV_NAME'
@@ -132,12 +150,13 @@ function Get-RemoteConfigWriter {
 import base64, json, os, re, secrets, sys, tempfile
 from pathlib import Path
 
-KEYS = {
+BUSINESS_KEYS = {
     'DEEPSEEK_API_KEY', 'TRADE_TELEGRAM_BOT_TOKEN',
     'TRADE_X_TELEGRAM_CHAT_ID', 'TRADE_X_TELEGRAM_REVIEWER_USER_IDS',
     'TRADE_X_TARGET_USER_ID', 'X_API_KEY', 'X_API_SECRET',
     'X_ACCESS_TOKEN', 'X_ACCESS_TOKEN_SECRET',
 }
+OKX_KEYS = {'OKX_ACCESS_KEY', 'OKX_SECRET_KEY', 'OKX_ACCESS_PASSPHRASE'}
 TOKENS = {'TRADE_TRADING_OPERATOR_TOKEN', 'TRADE_X_ADMIN_TOKEN'}
 
 def write_private(directory, prefix, content):
@@ -158,8 +177,9 @@ def main():
     if len(encoded) > 131072:
         raise ValueError()
     patch = json.loads(base64.b64decode(encoded, validate=True).decode('utf-8'))
-    if not isinstance(patch, dict) or set(patch) != KEYS:
+    if not isinstance(patch, dict) or set(patch) not in (BUSINESS_KEYS, OKX_KEYS):
         raise ValueError()
+    keys = set(patch)
     for value in patch.values():
         if not isinstance(value, str) or not value.strip() or len(value) > 8192:
             raise ValueError()
@@ -174,15 +194,15 @@ def main():
     lines, seen = [], set()
     for line in original.splitlines():
         match = re.match(r'^[ \t]*([A-Z][A-Z0-9_]*)[ \t]*=(.*)$', line)
-        if match and match[1] in KEYS | TOKENS:
+        if match and match[1] in keys | TOKENS:
             key, value = match[1], match[2]
             if key in seen:
                 raise ValueError()
             seen.add(key)
-            line = key + '=' + (patch[key] if key in KEYS else value or secrets.token_hex(24))
+            line = key + '=' + (patch[key] if key in keys else value or secrets.token_hex(24))
         lines.append(line)
-    for key in sorted((KEYS | TOKENS) - seen):
-        lines.append(key + '=' + (patch[key] if key in KEYS else secrets.token_hex(24)))
+    for key in sorted((keys | TOKENS) - seen):
+        lines.append(key + '=' + (patch[key] if key in keys else secrets.token_hex(24)))
     staged = write_private(directory, '.backend-sync-', '\n'.join(lines) + '\n')
     try:
         if target.exists():
@@ -191,7 +211,7 @@ def main():
     finally:
         if staged.exists():
             staged.unlink()
-    print('Synced 9 settings to deploy/backend.env (mode 600).')
+    print(f'Synced {len(patch)} settings to deploy/backend.env (mode 600).')
     print('Existing management tokens and business switches were preserved.')
 
 try:
@@ -204,7 +224,7 @@ except Exception:
 
 function Invoke-BackendConfigSync {
     $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-    $patch = Get-BackendConfigPatch -YamlPath (Join-Path $root 'backend/src/main/resources/application.yml')
+    $patch = Get-BackendConfigPatch -YamlPath (Join-Path $root 'backend/src/main/resources/application.yml') -OnlyOkx:$OnlyOkx
     Write-Host ('Ready: ' + ($patch.Keys -join ', '))
     if ($CheckOnly) { Write-Host 'Local check passed. No upload performed.'; return }
     if (-not $Server) { $Server = Read-Host 'Domestic server SSH address (ubuntu@IP)' }
