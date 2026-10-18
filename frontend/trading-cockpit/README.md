@@ -2,9 +2,11 @@
 
 `frontend/trading-cockpit` 是面向本仓库 Spring Boot 交易模块的独立运行驾驶舱。它集中展示实时 K 线、当前策略、最新决策、自动化任务、事件总线背压和回测历史，并保留安全的演示数据降级路径。
 
+[项目文档总导航](../../docs/README.md) · [系统通信与接手指南](../../docs/PROJECT_GUIDE.md) · [生产 Docker 部署](../../deploy/README.md)
+
 ## 本地启动
 
-需要 Node.js `>=22.13.0`。
+需要 Node.js `>=22.13.0`。以下命令在 `frontend/trading-cockpit/` 执行。
 
 ```powershell
 npm install
@@ -19,7 +21,7 @@ npm run dev
 NEXT_PUBLIC_TRADE_API_URL=https://your-backend.example.com
 ```
 
-Sites 部署推荐设置运行时 `TRADE_API_URL=https://your-backend.example.com`，站点 Worker 会把同源 `/api/*` 请求（包括 K 线 SSE 流）转发到该后端；未设置时继续展示安全演示快照。
+当前生产方案使用 Docker Node SSR，由 gateway 转发同源 `/api/`，按生产部署说明操作。若另外选择 Sites/Cloudflare Worker 部署，可设置运行时 `TRADE_API_URL=https://your-backend.example.com`，站点 Worker 会把同源 `/api/*` 请求（包括 K 线 SSE 流）转发到该后端；未设置时继续展示安全演示快照。这是另一种部署方式，不是当前生产入口。
 
 后端不可达时，页面会清楚标记为“演示数据”，任务启停和回测交互也只修改浏览器内的演示快照，不会触发真实交易。
 

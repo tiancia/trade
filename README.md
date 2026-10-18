@@ -2,6 +2,8 @@
 
 这个仓库按运行职责拆成后端、前端、工具脚本、生成内容和文档，避免业务代码、调试脚本、运行产物混在同一层。
 
+文档统一从 [项目文档总导航](docs/README.md) 进入。第一次接手项目，先读 [项目架构与部署上手指南](docs/PROJECT_GUIDE.md)：包含电脑、国内主机、德国 VPS 的通信图，端口和令牌说明，业务调用链、接入步骤、迭代发布与排障入口。
+
 ## 目录
 
 ```text
@@ -10,6 +12,7 @@ compose.yaml         MySQL、Redis、Prometheus、Grafana 的统一 Docker 入�
 compose.prod.yaml    Ubuntu 生产部署：后端、交易驾驶舱、X 控制台、代理隧道和基础服务
 compose.public.yaml  可选的双域名 HTTPS 公共访问覆盖配置
 deploy/              生产配置模板、私有 / 公共网关、构建 / 发布 / 回滚脚本
+docs/                文档总导航、全局交接指南及 backend/ 后端专题文档
 frontend/trading-cockpit/  交易驾驶舱：Node SSR
 frontend/x-console/  X 内容只读控制台：静态站点
 frontend/text-game/  React + Vite 文字游戏前端：浏览器交互和界面状态

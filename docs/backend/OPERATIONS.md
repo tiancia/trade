@@ -1,22 +1,20 @@
 # 运维手册
 
-本手册描述后端的通用安全运行流程。生产环境的主机、网关、密钥保管和告警平台由部署系统管理，不写入仓库。
+本手册负责后端应用的安全启动、任务控制、资金停止/恢复、观测和业务排障。全项目资料见 [文档总导航](../README.md)，三台机器与端口通信见 [全局上手指南](../PROJECT_GUIDE.md)，Ubuntu Docker、密钥、发布/回滚和备份见 [生产部署说明](../../deploy/README.md)。
 
-Ubuntu Docker 部署见 [生产部署说明](../../deploy/README.md)：包含后端、交易驾驶舱、X 控制台、德国 VPS 隧道和发布 / 回滚。默认 `compose.prod.yaml` 仅在国内服务器回环监听两个 Web 入口，电脑通过 SSH 转发后访问 `http://127.0.0.1:18080` 和 `http://127.0.0.1:18081`，无需域名或 TLS 证书；仍需网关密码及应用管理令牌。公网只开放所需 SSH 入口。可选公共 HTTPS 模式另叠加 `compose.public.yaml`，每次发布 / 回滚须指定 `--access public`。
-
-该方案会把 OKX、Telegram、X 代理地址覆盖为容器服务名 `egress:13128`，并持久化整个 `/app/data` 目录。电脑访问国内服务器的 SSH 隧道，与国内后端通过 `egress` 访问德国 Squid 的隧道独立；关闭电脑访问隧道不影响后台任务继续运行。
+下文 Maven 命令从 `backend/` 执行，直连 `127.0.0.1:8080` 的 API 示例面向宿主机运行的 Java 进程。Docker 私有部署通过 SSH 转发后的 `127.0.0.1:18080` 及网关认证访问，不能直接套用本地直连地址。
 
 ## 运行依赖
 
 - JDK 21；
 - MySQL，连接信息通过 `SPRING_DATASOURCE_*` 提供；
 - Redis 仅用于 trading 热行情缓存。环境没有 Redis 时设置 `TRADE_TRADING_HOT_MARKET_CACHE_ENABLED=false`；
-- Polymarket 真实执行额外依赖 Python 与仓库外的桥接脚本；
+- Polymarket 真实执行额外依赖 Python 与仓库 `tools/polymarket/` 中的桥接脚本；
 - 供应商 API 凭据只通过部署环境注入。
 
 `.env.example` 是变量清单，Spring Boot 不会自动加载 `.env`。不要把真实值写回示例文件、启动脚本、日志或问题单。
 
-## 当前部署配置
+## 仓库配置与运行环境
 
 当前 `application.yml` 和 `.env.example` 按以下方案配置，环境变量仍可覆盖这些值：
 
@@ -26,10 +24,12 @@ Ubuntu Docker 部署见 [生产部署说明](../../deploy/README.md)：包含后
 | X | auto-start、client、workflow、generation、Telegram review、publishing 和 live-publishing 均开启；只有经人工审核批准的版本可发布 |
 | X 节奏 | `TRADE_X_GENERATION_FIXED_DELAY_MS=10800000`，每轮完成后等待三小时；首次延迟 30 秒；UTC 日生成 / 发布尝试额度各 8 次 |
 | Polymarket | auto-start、业务、真实执行和代理均关闭 |
-| 代理 | OKX、Telegram、X 使用 `127.0.0.1:13128`；国内主机须独立建立并维护到德国 Squid `3128` 的 SSH 隧道 |
+| 代理 | 宿主机直接运行 Java 时可使用 `127.0.0.1:13128` 的隧道入口；生产 Compose 将 OKX、Telegram、X 地址覆盖为 `egress:13128`，其容器负责连接德国 Squid |
 | AI | DeepSeek 直连 `https://api.deepseek.com`，使用 `deepseek-flash`；供应商、型号、基础地址和密钥环境变量名可用 `TRADE_AI_PROVIDER`、`TRADE_AI_MODEL`、`TRADE_AI_BASE_URL`、`TRADE_AI_API_KEY_ENV_NAME` 覆盖 |
 
-2026-10-16 核实的 [DeepSeek 官方更新日志](https://api-docs.deepseek.com/updates/)将 `deepseek-flash` 指向 DeepSeek-V4.1-Flash；Java 的 DeepSeek 缺省型号已同步。OKX 公共 / 私有 WebSocket 地址使用默认 443 端口，可分别用 `TRADE_OKX_WS_PUBLIC_URL` / `TRADE_OKX_WS_PRIVATE_URL` 覆盖；WebSocket 订阅开关仍由 `TRADE_TRADING_WEBSOCKET_ENABLED` 单独控制。
+模型名在这里记录仓库配置，不代表供应商最新型号或账户实际可用权限。OKX 公共 / 私有 WebSocket 地址使用默认 443 端口，可分别用 `TRADE_OKX_WS_PUBLIC_URL` / `TRADE_OKX_WS_PRIVATE_URL` 覆盖；WebSocket 订阅开关仍由 `TRADE_TRADING_WEBSOCKET_ENABLED` 单独控制。
+
+当前 PAPER 模拟成交，但决策采集仍读取真实 OKX 账户，需要三个只读凭据；它不是独立虚拟现金钱包。完整配置与代理验收按生产部署说明执行。
 
 开启 X 前，运行环境必须提供 `TRADE_X_TARGET_USER_ID`、`TRADE_X_TELEGRAM_CHAT_ID`、`TRADE_X_TELEGRAM_REVIEWER_USER_IDS`、Telegram Bot Token、DeepSeek API Key 和 X OAuth 1.0a 凭据。缺少必需的目标 / 审核配置会在启动校验时拒绝；发布权限、额度和实际网络连接需另行联调。启动后的发布扫描可能处理数据库中已有、未过期且审核仍有效的 `APPROVED` 草稿；`PENDING_REVIEW` 不发布，`UNKNOWN` 不自动重发。详细说明见 [X 工作流](X_WORKFLOW.md)。
 
@@ -80,7 +80,7 @@ OKX 真实下单还要求 `trade.trading.execution-mode=live` 与 `live-enabled=
 2. 日志中没有数据库初始化、Mapper 或配置绑定失败；
 3. `GET /api/automation/tasks` 与所选启动配置一致；安全启动覆盖值下任务未运行，当前部署方案下 `trading` 和 `x` 自动运行；
 4. `GET /api/trading/runtime/events` 的队列容量、深度和消费者状态合理；
-5. `GET /api/trading/runtime/status` 中 `fundSafety.status=ACTIVE`、对账无连续失败；若为 `HALTED`，先查明原因，不得直接改库；
+5. `GET /api/trading/runtime/status` 中执行模式、live 开关、lastError 和最新决策符合预期；LIVE 放行前还需确认 `fundSafety.status=ACTIVE` 且对账无连续失败，HALTED 时先查明原因，不得直接改库；
 6. 若启用 Redis，确认缓存写入成功且没有持续连接重试；
 7. 再按任务逐个启用业务开关和 auto-start，避免一次打开多个外部副作用。
 
@@ -149,7 +149,7 @@ $env:TRADE_TRADING_LEADERSHIP_HEARTBEAT_INTERVAL_MS="5000"
 
 先在部署环境设置长随机值 `TRADE_TRADING_OPERATOR_TOKEN`；策略切换、HTTP stop/resume 和手工对账共用此令牌。留空时这些写操作返回 503，令牌缺失或错误返回 403；内部硬风控和定时对账仍能自动停止。不要把 token 放进 URL、日志或仓库。
 
-`PUT /api/trading/strategies/active` 也必须携带 `X-Trading-Operator-Token`，请求体仍为 `strategyId` 和可选 `expectedRevision`，版本冲突仍返回 409。PAPER 与 LIVE 都执行鉴权。浏览器只对 `trade.trading.frontend-allowed-origin-patterns` 中允许的来源放行该请求头；跨域许可不替代令牌校验。旧驾驶舱尚未发送该请求头，其策略切换会被拒绝，调用方需适配；在此之前可使用以下操作命令。
+`PUT /api/trading/strategies/active` 也必须携带 `X-Trading-Operator-Token`，请求体仍为 `strategyId` 和可选 `expectedRevision`，版本冲突仍返回 409。PAPER 与 LIVE 都执行鉴权。浏览器只对 `trade.trading.frontend-allowed-origin-patterns` 中允许的来源放行该请求头；跨域许可不替代令牌校验。当前驾驶舱已支持在“设置”填写交易操作员令牌，刷新后需重填；旧镜像未携带该请求头时仍会被拒绝。也可通过以下命令操作本地后端。
 
 ```powershell
 $headers = @{ "X-Trading-Operator-Token" = $env:TRADE_TRADING_OPERATOR_TOKEN }
@@ -199,8 +199,7 @@ Invoke-RestMethod -Method Post `
 
 ## 观测
 
-X 内容生成沿用 `TRADE_X_CONTENT_DIRECTION/LANGUAGE/TONE/INSTRUCTIONS`，默认面向成年英文读者写欲望、亲密关系与沟通，范围为 40–260 个 Unicode 码点且仍须满足 280 加权字符上限。
-修改这些部署变量并重启后只影响新草稿。一次 AI 请求包含三个不同形式的候选，仅一条送审；分行对话、微清单和空行会完整保存、送审与发布。候选全部无效或与近期正文重复时生成失败，不会自动再次付费重试。部署与审核步骤见 [X 工作流](X_WORKFLOW.md)。
+X 内容方向、语言、格式、字数与生成协议统一以 [X 工作流](X_WORKFLOW.md) 为准。本手册侧重运行状态与失败定位，不另存一份内容默认值。修改内容配置后只影响新草稿，已有正文仍按保存的规则快照审核和发布。
 
 审核通过只代表 `APPROVED`。发布扫描会把关闭开关、缺凭据、账号不符、本地日额度或间隔等待写入现有 `lastError` 与历史，同一等待原因不反复写入。`FAILED` 的发布前检查和发布请求错误保留安全的 HTTP 状态；`UNKNOWN` 必须在 X 核对，均不会自动重发。automation 循环成功不表示帖子发布成功，需查看草稿状态、`postId`、`lastError` 和历史。
 
@@ -236,10 +235,10 @@ X 内容生成沿用 `TRADE_X_CONTENT_DIRECTION/LANGUAGE/TONE/INSTRUCTIONS`，�
 
 ## 数据库升级
 
-应用每次启动按 `spring.sql.init.schema-locations` 的显式顺序执行 `db/schema/<module>/schema.sql`。`CREATE TABLE IF NOT EXISTS` 会创建缺失的表，但不会自动补齐已有表字段或修改索引。模块位置见 [数据库目录](../src/main/resources/db/README.md)，存量库按以下流程升级：
+应用每次启动按 `spring.sql.init.schema-locations` 的显式顺序执行 `db/schema/<module>/schema.sql`。`CREATE TABLE IF NOT EXISTS` 会创建缺失的表，但不会自动补齐已有表字段或修改索引。模块位置见 [数据库目录](../../backend/src/main/resources/db/README.md)，存量库按以下流程升级：
 
 1. 备份并记录当前 schema；
-2. 阅读 [db/upgrade/README.md](../src/main/resources/db/upgrade/README.md) 的依赖和重叠说明，按模块选择适用补丁；
+2. 阅读 [db/upgrade/README.md](../../backend/src/main/resources/db/upgrade/README.md) 的依赖和重叠说明，按模块选择适用补丁；
 3. 在隔离库执行目标脚本；
 4. 验证表、索引、历史数据和应用测试；
 5. 在维护窗口执行并保留结果；

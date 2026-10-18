@@ -2,6 +2,8 @@
 
 `frontend/x-console` 是 X 模块的独立展示前端，使用 Vite + 原生 HTML/CSS/JavaScript。展示最近生成内容、当前版本审核结果、发布结果和历史状态快照。
 
+[项目文档总导航](../../docs/README.md) · [系统通信与接手指南](../../docs/PROJECT_GUIDE.md) · [生产 Docker 部署](../../deploy/README.md)
+
 ## 启动
 
 需要 Node.js 22.12 或更新版本。

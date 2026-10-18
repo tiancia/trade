@@ -1,5 +1,7 @@
 # 本地基础设施
 
+本页仅介绍开发环境中间件。[项目文档总导航](../../docs/README.md) 收录全部说明；服务器生产环境请使用 [部署说明](../../deploy/README.md) 中的 `compose.prod.yaml`，不要直接套用本页的本地入口和默认密码。
+
 仓库根目录 `A:\trade\compose.yaml` 是本地中间件的统一命令入口，它加载 `backend/infrastructure/compose.yaml` 中的服务定义。目前包含：
 
 - MySQL：业务主存储；

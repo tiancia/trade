@@ -1,5 +1,7 @@
 # Trading 可观测性
 
+本页主要说明本地开发环境的指标与监控。全项目环境见 [上手指南](../PROJECT_GUIDE.md)，生产容器的启用方式见 [部署说明](../../deploy/README.md)；本地与生产使用不同 Compose 和抓取配置。
+
 本项目用 Spring Boot Actuator + Micrometer 暴露指标，由 Prometheus 抓取和计算告警，Grafana 负责查询与展示。监控服务已纳入仓库根目录 `A:\trade\compose.yaml` 统一管理，专属配置位于 `backend/infrastructure/observability/`；启动基础设施不会开启 trading、自动任务或真实下单开关。
 
 当前范围是指标、看板和 Prometheus 告警规则。日志仍由应用日志系统负责；如果需要跨服务日志检索和调用链追踪，可在此基础上继续接入 Loki、OpenTelemetry 和 Tempo。
@@ -16,6 +18,8 @@ Trading runtime
 
 Prometheus 默认从 `host.docker.internal:8080/actuator/prometheus` 抓取宿主机上的后端。Docker Compose 为 Linux 同时配置了 `host-gateway`。如果后端不在宿主机的 `8080` 端口，修改 `backend/infrastructure/observability/prometheus/prometheus.yml` 的 target；如果后端也运行在容器中，改成对应 Compose 服务 DNS。
 
+生产 `compose.prod.yaml` 已通过可选 monitoring profile 使用 [deploy/prometheus/prometheus.yml](../../deploy/prometheus/prometheus.yml)，抓取目标为 `backend:8080`，不需要改成本地的 host.docker.internal。生产监控入口默认为宿主机回环 9090 / 3001；下文 3000 是本地 Grafana 入口。
+
 ## 本地启动
 
 前置条件：
@@ -31,7 +35,7 @@ Copy-Item .env.example .env
 docker compose up -d
 ```
 
-把仓库根目录 `.env` 中的 MySQL/Redis 账号密码同步到 `backend/.env` 的后端连接变量；完整对应关系见 [基础设施说明](../infrastructure/README.md)。然后进入 `backend/` 启动后端，并保持危险能力关闭：
+把仓库根目录 `.env` 中的 MySQL/Redis 账号密码同步到 `backend/.env` 的后端连接变量；完整对应关系见 [基础设施说明](../../backend/infrastructure/README.md)。然后进入 `backend/` 启动后端，并保持危险能力关闭：
 
 ```powershell
 cd A:\trade\backend

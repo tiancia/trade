@@ -7,7 +7,7 @@
 | 模块 | 类型 | 主要入口 | 配置前缀 / 数据 |
 | --- | --- | --- | --- |
 | `automation` | 跨域编排 | `AutomationTaskController`、`AutomationTaskRegistrar`、`AutomationTaskManager` | `trade.automation.*`；不拥有业务表 |
-| `trading` | 业务域 | `TradingController`、`TradingScheduler`、`TradingStrategyEngine` | `trade.trading.*`、`trade.okx.*`；OKX 行情、决策、订单、资金状态和回测表，本地策略记忆，Redis 热缓存 |
+| `trading` | 业务域 | `TradingController`、`TradingScheduler`、`TradingStrategyEngine` | `trade.trading.*`、`trade.okx.*`；MySQL 行情、订单与金融状态，本地策略/近期决策记忆，Redis 热缓存；当前回测运行结果保存在进程内存 |
 | `polymarket` | 业务域 | `AiPolymarketScheduler`、`AiPolymarketService` | `trade.polymarket.*`；决策审计表 |
 | `story` | 业务域 | `AiStoryScheduler`、`AiStoryService` | `trade.story.*`；配置目录下的生成文件 |
 | `textgame` | 业务域 | `TextGameController`、`TextGameAdminController` | `trade.text-game.*`；故事、版本、会话和事件表 |
@@ -162,4 +162,4 @@ RSS/Atom 源在 `infrastructure/trend`，AI Prompt 在 `application/decision`，
 | `textgame/stories/` | textgame 内置故事定义 |
 | `data/trading-state.example.json` | trading 非资金策略记忆格式示例；仓位/成本/风险不在此保存 |
 
-数据库模块索引和启动、升级边界见 [数据库目录](../src/main/resources/db/README.md)。模块入口、配置前缀或资源所有权变化时，必须同步更新本页、对应 `package-info.java` 和架构测试。
+数据库模块索引和启动、升级边界见 [数据库目录](../../backend/src/main/resources/db/README.md)。模块入口、配置前缀或资源所有权变化时，必须同步更新本页、对应 `package-info.java` 和架构测试。

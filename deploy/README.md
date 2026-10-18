@@ -1,5 +1,28 @@
 # Ubuntu 生产部署（默认 SSH 私有访问）
 
+[项目文档总导航](../docs/README.md) · [架构与部署上手指南](../docs/PROJECT_GUIDE.md) · [后端运维](../docs/backend/OPERATIONS.md)
+
+首次接手项目，先读上手指南理解三台机器、三条独立通信链路和配置职责；本文件负责首次安装及生产运维的详细步骤。
+
+## deploy 目录放什么
+
+`deploy` 存放生产部署需要的工具与配置，不放业务代码。其 README 与脚本就近维护，全局文档导航统一在仓库根目录 `docs/`。
+
+| 路径 | 用途 |
+| --- | --- |
+| [scripts/build-images.sh](scripts/build-images.sh) | 在构建机生成四个应用镜像及版本清单 |
+| [scripts/release.sh](scripts/release.sh) | 在服务器校验、发布选定服务和显式回滚 |
+| [scripts/sync-backend-config.ps1](scripts/sync-backend-config.ps1) | Windows 向服务器安全同步选定业务配置；本身不重启服务 |
+| `egress/` | 业务出站 SSH 隧道的 Dockerfile 和入口脚本 |
+| `nginx/` | 私有 / 公共网关、API 路由和 SSE 转发配置 |
+| `prometheus/` | 生产容器网络使用的指标抓取配置 |
+| `.env.example`、`backend.env.example`、`release.env.example` | 基础设施、后端业务、镜像版本的配置模板 |
+| `.env`、`backend.env`、`secrets/`、`releases/` | 在实际环境创建的运行配置、密钥及发布记录，Git 不保存真实值 |
+
+本地开发中间件使用根目录 `compose.yaml`；生产使用 `compose.prod.yaml`。不要因为目录里也有配置模板，就把真实凭据或运行数据放入共享文档。
+
+## 部署方案
+
 本方案把后端、交易驾驶舱和 X 控制台一起部署到国内 Ubuntu，不使用 Vercel。代码在构建机打包成带版本号的 Linux 镜像，服务器只负责拉取和运行；后续更新继续使用同一套发布脚本。默认通过 SSH 隧道访问两个页面，无需准备域名或 TLS 证书。
 
 ```text
@@ -325,8 +348,8 @@ dc() {
 
 ## 验证边界
 
-本轮已通过私有 / 公共模式的真实 Compose 配置解析（使用虚构凭据）、Linux Nginx `-t` 语法检查、发布脚本 13 项隔离模拟检查，以及后端完整离线测试：503 项，0 失败、1 项外部集成测试跳过。验证没有启动业务服务或连接你的服务器。
+部署准备阶段曾通过私有 / 公共 Compose 配置解析（虚构凭据）、Linux Nginx `-t`、发布脚本隔离检查及后端完整离线测试。后续已收到七个容器健康、OKX 公共时间接口经业务代理访问成功、驾驶舱行情与 X 列表可读取、Telegram 审核消息可收到的服务器验收输出；这些是已发生的验收记录，不是实时状态报告。
 
-离线构建、配置解析、Nginx 语法检查和发布脚本模拟验证不能替代完整应用镜像及服务器运行验收。Docker Linux Engine 可用也不代表这套应用已运行通过；服务器仍需按上面的步骤检查 SSH 转发、监听地址、内存和外部服务，公共模式另需验收域名、证书和续期。部署文件更新本身不会连接你的服务器，也不会验证真实 AI、Telegram、X 或交易接口。
+离线构建、配置解析和进程健康均不能代替业务验收。2026-10-18 文档核对时，最近的驾驶舱修复、OKX 凭据生效后的 PAPER 决策以及真实 X 发布仍需分别确认；最新核对入口见 [上手指南的验收步骤](../docs/PROJECT_GUIDE.md)。公共模式还需另外验收域名、证书和续期，不能沿用私有模式的成功结论。
 
-驾驶舱现有 HTML 测试的第一项依赖 Cloudflare `worker.fetch`，不能直接验证 Node 构建；此前另做过隔离的 Node SSR 首页检查。vinext 在原生 Windows 上的静态资源缓存还有路径分隔符差异，模拟 Linux 路径后的资源检查不能替代真正的 Linux 镜像验收。
+驾驶舱 HTML 测试现已兼容 Node SSR 请求处理函数和 Cloudflare Worker 的 `fetch` 导出。离线内存渲染与接口契约测试、Linux 镜像构建，仍不能证明生产环境已加载对应镜像或外部账户权限已配置正确。

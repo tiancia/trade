@@ -1,15 +1,17 @@
-# 项目文档导航
+# 后端文档导航
 
-本目录是后端的长期知识入口。文档只记录稳定约定、运行事实和重要取舍；具体字段、方法签名与默认值仍以当前代码和测试为准。
+[返回项目文档总导航](../README.md) · [全局架构与接手指南](../PROJECT_GUIDE.md) · [生产部署说明](../../deploy/README.md)
+
+本目录集中保存后端的架构、业务、接口与运维专题，路径为仓库根目录的 `docs/backend/`。文档只记录稳定约定、运行事实和重要取舍；具体字段、方法签名与默认值仍以当前代码和测试为准。文档迁移不改变运行目录：Maven 命令仍在 `backend/` 执行，生产部署命令按部署说明从仓库根目录执行。
 
 ## 按阅读目标选择
 
-### 第一次接触项目
+### 第一次接触后端
 
-1. [根 README](../README.md)：能力范围、快速启动和安全开关；
+1. [后端 README](../../backend/README.md)：能力范围、快速启动和安全开关；
 2. [模块目录](MODULES.md)：每个模块的职责、入口、配置和数据归属；
 3. [架构说明](ARCHITECTURE.md)：标准分层、依赖方向和典型调用链；
-4. [贡献指南](../CONTRIBUTING.md)：开发流程、测试门禁和文档更新规则。
+4. [贡献指南](../../backend/CONTRIBUTING.md)：开发流程、测试门禁和文档更新规则。
 
 ### 开发或评审代码
 
@@ -18,20 +20,22 @@
 - [ADR-0001](adr/0001-domain-first-modular-monolith.md)：理解为什么采用模块化单体；
 - [ADR-0002](adr/0002-four-layer-module-layout.md)：理解为什么业务域内部统一四层，再按能力细分；
 - [Trading 回测说明](TRADING_BACKTEST.md)：回测请求、成交模型和指标口径；
-- [Trading 结构评审与演进](TRADING_EVOLUTION.md)：当前边界、已修复问题与分阶段路线；
 - [Telegram Bot API](TELEGRAM_API.md)：客户端方法、显式实例化、更新和失败处理；
 - [微博审核工作流](WEIBO_WORKFLOW.md)：热点、AI、审核门禁、Telegram 审核待办和迁移；
 - [X 客户端](X_API.md)：OAuth 1.0a 四凭据、账号查询与文本发布协议；
 - [X 审核工作流](X_WORKFLOW.md)：配置内容方向、语气和长度，Telegram 审核及审核后发布；
 - [ADR-0003](adr/0003-shared-human-review-capability.md)：历史上的共享审核布局；当前审核类型归微博域，Telegram 仅保留客户端；
-- [AI 开发约定](../AGENTS.md)：AI 编码助手必须遵守的边界与交付格式。
+- [AI 开发约定](../../backend/AGENTS.md)：AI 编码助手必须遵守的边界与交付格式。
 
 ### 部署、值守或排障
 
+- [全局架构与接手指南](../PROJECT_GUIDE.md)：三台机器、三条通信链路、端口、令牌与接手验收；
+- [生产部署说明](../../deploy/README.md)：Ubuntu Docker、配置、构建、发布、回滚与备份；
+- [本地基础设施](../../backend/infrastructure/README.md)：开发环境的 MySQL、Redis 和监控；
 - [运维手册](OPERATIONS.md)：安全启动、任务启停、观测、停机和故障处理；
 - [Trading 可观测性](OBSERVABILITY.md)：Prometheus 抓取、Grafana 仪表盘、告警规则和排障；
-- [数据库目录](../src/main/resources/db/README.md)：模块 schema 索引与启动执行范围；
-- [数据库升级说明](../src/main/resources/db/upgrade/README.md)：手工补丁、前置依赖与历史脚本重叠；
+- [数据库目录](../../backend/src/main/resources/db/README.md)：模块 schema 索引与启动执行范围；
+- [数据库升级说明](../../backend/src/main/resources/db/upgrade/README.md)：手工补丁、前置依赖与历史脚本重叠；
 - `.env.example`：环境变量清单，不包含真实凭据；
 - `application.yml`：应用运行配置默认值；显式创建的客户端属性默认值以对应 Properties 类为准。
 
@@ -39,7 +43,9 @@
 
 | 文档 | 负责回答 | 不负责保存 |
 | --- | --- | --- |
-| `README.md` | 项目是什么、如何首次运行 | 完整运维步骤、所有配置项 |
+| `backend/README.md` | 后端是什么、如何首次运行 | 全项目通信图、完整生产部署步骤 |
+| `docs/README.md`、`docs/PROJECT_GUIDE.md` | 总导航、系统全貌与接手路径 | 每个业务流程的全部配置细节 |
+| `deploy/README.md` | 生产基础设施、配置与发布步骤 | 业务规则、密钥及实时环境状态 |
 | `ARCHITECTURE.md` | 代码如何分层、允许哪些依赖 | 某个 API 的临时实现细节 |
 | `MODULES.md` | 能力属于哪个模块、从哪里进入 | 每个类的逐项清单 |
 | `OPERATIONS.md` | 如何安全启动、观测、停止和排障 | 密钥或环境专属地址 |

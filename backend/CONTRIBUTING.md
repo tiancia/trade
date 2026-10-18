@@ -1,12 +1,12 @@
 # 贡献指南
 
-本项目按“业务域优先、域内分层”的方式维护。提交代码前请先阅读 [文档导航](docs/README.md) 和 [架构说明](docs/ARCHITECTURE.md)。
+本项目按“业务域优先、域内分层”的方式维护。全项目资料见 [文档总导航](../docs/README.md)；提交后端代码前请先阅读 [后端文档导航](../docs/backend/README.md) 和 [架构说明](../docs/backend/ARCHITECTURE.md)。以下文件路径在更新矩阵中按仓库根目录表示，Maven 命令仍从 `backend/` 执行。
 
 ## 开发流程
 
 1. 从最新代码创建短生命周期分支，保持一次变更只解决一个主题。
 2. 用 `git status --short` 识别并保护已有工作区改动。
-3. 在 [模块目录](docs/MODULES.md) 中确认归属、入口和依赖边界。
+3. 在 [模块目录](../docs/backend/MODULES.md) 中确认归属、入口和依赖边界。
 4. 先补测试或明确验收条件，再实现最小完整改动。
 5. 更新与行为变化直接相关的配置、数据库、接口和运维文档。
 6. 运行定向测试和完整 `clean test`，再提交评审。
@@ -48,7 +48,7 @@
 - `src/main/resources/application.yml` 中的默认值和说明；
 - 对应 `@ConfigurationProperties`；
 - `.env.example` 中的环境变量名，不填写真实值；
-- [运维手册](docs/OPERATIONS.md) 中的启动、回滚或观测步骤；
+- [运维手册](../docs/backend/OPERATIONS.md) 中的启动、回滚或观测步骤；
 - 配置绑定或安全门禁测试。
 
 ## 数据库变更
@@ -87,12 +87,14 @@
 
 | 变更 | 同步更新 |
 | --- | --- |
-| 新模块、入口或依赖方向 | `docs/MODULES.md`、`docs/ARCHITECTURE.md`、对应 `package-info.java` |
-| 启动、停机、监控或故障处理 | `docs/OPERATIONS.md` |
-| 架构级取舍 | `docs/adr/` 新增 ADR，不覆盖历史决策 |
-| 新环境变量 | `.env.example` 和相关运维说明 |
-| 数据库升级 | 模块 schema、upgrade 脚本和升级 README；新增模块同步启动列表 |
-| 开发/测试命令变化 | 本文件、根 README、`AGENTS.md` |
+| 全局机器、网络、端口和接手路径 | `docs/PROJECT_GUIDE.md`，新增阅读入口时更新 `docs/README.md` |
+| 生产基础设施、配置同步或发布脚本 | `deploy/README.md`；涉及系统通信时同步全局上手指南 |
+| 新模块、入口或依赖方向 | `docs/backend/MODULES.md`、`docs/backend/ARCHITECTURE.md`、对应 `package-info.java` |
+| 应用启动、停机、监控或业务故障处理 | `docs/backend/OPERATIONS.md`、必要时 `docs/backend/OBSERVABILITY.md` |
+| 架构级取舍 | `docs/backend/adr/` 新增 ADR，不覆盖历史决策 |
+| 新环境变量 | `backend/.env.example` 和相关运维说明；生产部署变量另核对 `deploy/` 模板 |
+| 数据库升级 | `backend/src/main/resources/db/` 下模块 schema、upgrade 脚本和升级 README；新增模块同步启动列表 |
+| 开发/测试命令变化 | `backend/CONTRIBUTING.md`、`backend/README.md`、`backend/AGENTS.md`；全局入口变化同步根 README |
 
 ## 评审清单
 

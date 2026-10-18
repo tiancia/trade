@@ -2,7 +2,7 @@
 
 基于 Spring Boot 4 和 Java 21 的后端服务，包含 OKX 策略交易、Polymarket AI 决策、AI 小说生成、文字游戏、二手集市、微博与 X 发布以及后台任务编排。
 
-如果是第一次接触项目，建议先看本页的模块导航，再进入 [项目文档导航](docs/README.md)。代码采用“业务域优先、域内分层”的模块化单体结构，不按 Controller、Service、Mapper 建立全局大目录。
+全项目文档统一从 [文档总导航](../docs/README.md) 进入；机器通信和接手步骤见 [全局上手指南](../docs/PROJECT_GUIDE.md)。本页负责后端能力与启动，详细专题集中在 [后端文档导航](../docs/backend/README.md)。代码采用“业务域优先、域内分层”的模块化单体结构，不按 Controller、Service、Mapper 建立全局大目录。
 
 ## 快速启动
 
@@ -23,7 +23,7 @@ cd backend
 
 `.env.example` 是环境变量清单，不会被 Spring Boot 自动加载。请把所需变量配置到当前 Shell、IDE Run Configuration 或部署环境中。默认数据库账号为 `root`、密码为空；实际环境应显式设置 `SPRING_DATASOURCE_*`。
 
-当前运行配置启用 OKX 自动 PAPER 交易，以及每三小时生成、经 Telegram 人工审核后发布的 X 工作流；OKX 真实下单、Polymarket 和小说生成保持关闭。首次在未知环境验收时，按 [运维手册](docs/OPERATIONS.md) 的安全启动覆盖值关闭自动任务。X 需要由运行环境提供目标账号、审核会话 / 审核人以及供应商凭据。
+当前运行配置启用 OKX 自动 PAPER 交易，以及每三小时生成、经 Telegram 人工审核后发布的 X 工作流；OKX 真实下单、Polymarket 和小说生成保持关闭。首次在未知环境验收时，按 [运维手册](../docs/backend/OPERATIONS.md) 的安全启动覆盖值关闭自动任务。X 需要由运行环境提供目标账号、审核会话 / 审核人以及供应商凭据。
 
 ## 模块导航
 
@@ -35,15 +35,15 @@ cd backend
 | `story` | 热点采集、AI 分段生成和文件落盘 | `AiStoryService` | 任务 ID `story` |
 | `textgame` | 剧情发布、会话推进和规则计算 | `TextGameController`、`TextGameAdminController` | `/api/text-game`；配置管理员令牌后才创建 `/admin` API |
 | `marketplace` | 用户认证、商品、会话聊天和 OSS 上传凭证 | 三个 `Marketplace*Controller` | `/api/marketplace` |
-| `weibo` | OAuth、热点 AI 草稿、审核状态与发布 | `WeiboController` | `/api/weibo`；管理员保护，[工作流说明](docs/WEIBO_WORKFLOW.md) |
-| `x` | 配置方向与长度的 AI 草稿、Telegram 审核和发布 | `XPostService`、`XPostController` | `/api/x/posts`；任务 ID `x`，[工作流说明](docs/X_WORKFLOW.md) |
+| `weibo` | OAuth、热点 AI 草稿、审核状态与发布 | `WeiboController` | `/api/weibo`；管理员保护，[工作流说明](../docs/backend/WEIBO_WORKFLOW.md) |
+| `x` | 配置方向与长度的 AI 草稿、Telegram 审核和发布 | `XPostService`、`XPostController` | `/api/x/posts`；任务 ID `x`，[工作流说明](../docs/backend/X_WORKFLOW.md) |
 | `client` | AI、OKX、Polymarket、微博、Telegram 等外部传输适配 | `AiClientConfiguration`、各 provider client | 由业务模块调用 |
 | `ai` | 跨业务的 AI 解析失败审计契约与持久化 | `AiResponseParseErrorSink` | 内部能力 |
 | `common` | 无业务归属的纯工具 | `TradingMath` | 内部能力 |
 
-Telegram 协议与共享客户端装配位于 `client/telegram`，微博与 X 各自负责草稿投递、按钮审核和发布；复用同一机器人时必须先停用微博审核。配置及启动见 [微博工作流](docs/WEIBO_WORKFLOW.md)、[X 工作流](docs/X_WORKFLOW.md)，协议使用见 [Telegram Bot API](docs/TELEGRAM_API.md)。
+Telegram 协议与共享客户端装配位于 `client/telegram`，微博与 X 各自负责草稿投递、按钮审核和发布；复用同一机器人时必须先停用微博审核。配置及启动见 [微博工作流](../docs/backend/WEIBO_WORKFLOW.md)、[X 工作流](../docs/backend/X_WORKFLOW.md)，协议使用见 [Telegram Bot API](../docs/backend/TELEGRAM_API.md)。
 
-交易行情由 REST/WebSocket 生产者发布到模块级有界事件队列，再由独立消费者持久化；生产线程不直接访问数据库。LIVE 订单由后台对账循环持续收敛，订单状态、累计成交、仓位/成本、风险和资金停止状态以 MySQL 为权威。多实例部署可启用数据库领导租约，保证同一 OKX 账户只有一个实例执行决策、对账和真实下单。运行状态可通过 `GET /api/trading/runtime/events` 和 `GET /api/trading/runtime/status` 查看。驾驶舱通过 `GET /api/trading/market/candles` 读取 K 线快照，并通过 `/api/trading/market/candles/stream` 的 SSE 流接收增量；`PUT /api/trading/strategies/active` 会以乐观版本号持久化切换当前策略。回测的请求、成交和指标口径见 [Trading 回测说明](docs/TRADING_BACKTEST.md)。
+交易行情由 REST/WebSocket 生产者发布到模块级有界事件队列，再由独立消费者持久化；生产线程不直接访问数据库。LIVE 订单由后台对账循环持续收敛，订单状态、累计成交、仓位/成本、风险和资金停止状态以 MySQL 为权威。多实例部署可启用数据库领导租约，保证同一 OKX 账户只有一个实例执行决策、对账和真实下单。运行状态可通过 `GET /api/trading/runtime/events` 和 `GET /api/trading/runtime/status` 查看。驾驶舱通过 `GET /api/trading/market/candles` 读取 K 线快照，并通过 `/api/trading/market/candles/stream` 的 SSE 流接收增量；`PUT /api/trading/strategies/active` 会以乐观版本号持久化切换当前策略。回测的请求、成交和指标口径见 [Trading 回测说明](../docs/backend/TRADING_BACKTEST.md)。
 
 ## 目录速览
 
@@ -51,13 +51,6 @@ Telegram 协议与共享客户端装配位于 `client/telegram`，微博与 X �
 backend/
 ├─ AGENTS.md                    # AI 编码助手的仓库约束
 ├─ CONTRIBUTING.md              # 开发、测试和评审规范
-├─ docs/
-│  ├─ README.md                 # 文档索引和事实来源边界
-│  ├─ ARCHITECTURE.md           # 分层、依赖方向和扩展规则
-│  ├─ MODULES.md                # 模块职责、入口、配置和数据归属
-│  ├─ OPERATIONS.md             # 启停、观测、迁移和故障处理
-│  ├─ TRADING_BACKTEST.md       # 回测 API、成交与指标口径
-│  └─ adr/                      # 只追加的架构决策记录
 ├─ data/
 │  └─ trading-state.example.json
 ├─ src/main/java/com/trade/
@@ -81,9 +74,9 @@ backend/
 └─ src/test/java/com/trade/    # 与生产包路径镜像的测试
 ```
 
-业务模块内部统一按 `interfaces`（HTTP/定时入口）、`application`（用例和 port）、`domain`（数据和纯规则）、`infrastructure`（persistence、broker、market、event、config 等实现）四层组织，再按能力细分。详细目录、允许依赖和典型调用链见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+后端专题文档位于仓库根目录的 `docs/backend/`，不再放在后端源码目录中。业务模块内部统一按 `interfaces`（HTTP/定时入口）、`application`（用例和 port）、`domain`（数据和纯规则）、`infrastructure`（persistence、broker、market、event、config 等实现）四层组织，再按能力细分。详细目录、允许依赖和典型调用链见 [后端架构说明](../docs/backend/ARCHITECTURE.md)。
 
-维护者应同时阅读 [贡献指南](CONTRIBUTING.md)；使用 AI 介入开发时，先让工具读取根目录 [AGENTS.md](AGENTS.md)。模块定位、运维和值守分别以 [模块目录](docs/MODULES.md) 和 [运维手册](docs/OPERATIONS.md) 为准。Prometheus、Grafana 和 trading 告警的本地搭建见 [Trading 可观测性](docs/OBSERVABILITY.md)。
+维护者应同时阅读 [贡献指南](CONTRIBUTING.md)；使用 AI 介入开发时，先让工具读取后端目录的 [AGENTS.md](AGENTS.md)。模块定位、运维和值守分别以 [模块目录](../docs/backend/MODULES.md) 和 [运维手册](../docs/backend/OPERATIONS.md) 为准。Prometheus、Grafana 和 trading 告警的本地搭建见 [Trading 可观测性](../docs/backend/OBSERVABILITY.md)。
 
 ## 配置与安全开关
 
