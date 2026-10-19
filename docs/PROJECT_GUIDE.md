@@ -347,8 +347,10 @@ Registry `/v2/` 返回 HTTP 401 是到达鉴权入口的正常挑战，不能证
 
 长期发布流程是“代码 → 构建带版本号镜像 → 传输镜像和清单 → 校验 → 发布 → 业务验收”。服务器运行镜像，不需要长期保留前端 node_modules 或在小规格主机上执行 Maven/npm 构建。
 
+日常可用 [build-upload.sh](../deploy/scripts/build-upload.sh) 把构建、导出、上传和远端 SHA256 校验串成一个命令，例如 `bash deploy/scripts/build-upload.sh backend`。首次在 Git 忽略的 `deploy/upload-server.local` 保存 SSH 目标；脚本自动下载当前成功镜像清单并生成版本号，结束时打印单独执行的服务器发布命令。配置及参数见 [一键构建上传说明](../deploy/README.md#一个命令构建并上传)。
+
 1. 在电脑、WSL/Linux 或 CI 修改代码并完成离线测试；Docker Desktop 使用 Linux Engine，当前主机目标为 linux/amd64。
-2. 用 [build-images.sh](../deploy/scripts/build-images.sh) 生成 backend、cockpit、x-console、egress 镜像和版本清单；Dockerfile 内部完成打包。镜像仓库可达时推送/拉取；当前环境也可使用 `docker save`、SFTP、`docker load`。
+2. 用 [build-images.sh](../deploy/scripts/build-images.sh) 构建镜像；命令末尾可指定 `backend`、`cockpit`、`x-console`、`egress`，支持多个服务，不指定时全量构建。部分构建用 `--base` 指向目标服务器当前成功镜像清单（默认读取本地 `deploy/release.env`），只替换选中服务的镜像引用，仍输出完整清单；具体构建命令见 [部署说明](../deploy/README.md#后续更新和回滚)。Dockerfile 内部完成打包，`--push` 只推送本次构建的镜像；也可只对选中的镜像使用 `docker save`、SFTP、`docker load`。
 3. 上传时保留 SHA256 校验。SFTP 可续传，但续传基于已有部分文件，最终仍要校验完整内容。首次离线部署还需 MySQL、Redis、Nginx 基础镜像。
 4. 保留服务器原有业务配置、密钥和数据卷；如果改了部署模板或脚本，同步上传相应文件。不是每次只传镜像就一定足够。
 5. 在服务器先 validate，再发布选定服务；发布脚本会重建选中的容器。后端重建会中断 API，并按原配置重新启动后台任务。

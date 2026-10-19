@@ -10,7 +10,8 @@
 
 | 路径 | 用途 |
 | --- | --- |
-| [scripts/build-images.sh](scripts/build-images.sh) | 在构建机生成四个应用镜像及版本清单 |
+| [scripts/build-images.sh](scripts/build-images.sh) | 在构建机按需生成应用镜像及完整版本清单，默认构建四个服务 |
+| [scripts/build-upload.sh](scripts/build-upload.sh) | 一个命令按需构建、导出、上传镜像与完整清单，并核验 SHA256 |
 | [scripts/release.sh](scripts/release.sh) | 在服务器校验、发布选定服务和显式回滚 |
 | [scripts/sync-backend-config.ps1](scripts/sync-backend-config.ps1) | Windows 向服务器安全同步选定业务配置；本身不重启服务 |
 | `egress/` | 业务出站 SSH 隧道的 Dockerfile 和入口脚本 |
@@ -159,7 +160,7 @@ bash deploy/scripts/build-images.sh \
   --tag 20261016-a1b2c3d --push
 ```
 
-将仓库命名空间和版本号换成实际值。默认生成 `linux/amd64`，ARM 服务器用 `--platform linux/arm64`。每次发布用新版本号，不复用 tag，不使用 `latest`。构建产物是 backend、cockpit、x-console、egress 四个镜像，以及只有镜像引用的 `deploy/release.env`；后者可传给服务器，不包含业务密钥。
+将仓库命名空间和版本号换成实际值。默认生成 `linux/amd64`，ARM 服务器用 `--platform linux/arm64`。每次发布用新版本号，不复用 tag，不使用 `latest`。不指定服务时构建 backend、cockpit、x-console、egress 四个镜像；指定服务时只构建选中的镜像。两种方式都生成包含四项镜像引用的完整清单，默认输出到 `deploy/release.env`；后者可传给服务器，不包含业务密钥。
 
 后端构建上下文是仓库根，由 `backend/Dockerfile.dockerignore` 白名单限制；两个前端和隧道各有独立上下文。实际 `.env`、密钥、数据目录和历史构建产物不进入镜像。前端有独立 Docker Vite 配置，原本地 / Cloudflare 开发流程保持不变。
 
@@ -227,18 +228,45 @@ curl -fsS -u operator http://127.0.0.1:18080/api/automation/tasks
 
 ## 后续更新和回滚
 
+### 一个命令构建并上传
+
+在电脑的 Git Bash / WSL 中使用 [build-upload.sh](scripts/build-upload.sh)。首次把 SSH 目标保存到 Git 忽略的本地文件，替换示例中的账号和服务器地址：
+
+```bash
+printf '%s\n' 'deploy-user@国内服务器IP' > deploy/upload-server.local
+```
+
+以后在仓库根目录按服务执行：
+
+```bash
+bash deploy/scripts/build-upload.sh backend
+bash deploy/scripts/build-upload.sh cockpit
+bash deploy/scripts/build-upload.sh x-console
+bash deploy/scripts/build-upload.sh backend cockpit
+bash deploy/scripts/build-upload.sh all
+```
+
+脚本自动生成 UTC 时间加进程号组成的版本号。部分构建会先下载目标服务器的 `deploy/releases/current.env`，随后调用已有构建脚本、只导出选中的镜像，并将 `images.tar.gz`、完整 `release.env` 和 `SHA256SUMS` 上传到 `/opt/trade/deploy/incoming/<版本号>/`，远端校验成功后才报告完成。基线下载失败、构建或传输失败时会中止，本地产物保留用于排查；不会回退到本地旧清单。
+
+默认本地产物放在仓库同级的 `trade-deployments/<版本号>/`；仓库位于 `A:\trade` 时，即 `A:\trade-deployments\<版本号>\`。可通过 `--output-dir` 修改版本目录的父目录，通过 `--tag` 指定版本号。Git Bash 默认优先使用 Windows 自带的 OpenSSH，沿用 Windows 中已有的配置和 agent；WSL/Linux 使用 PATH 中的 SSH。主机指纹校验保持开启，首次连接先通过正常 SSH 核对主机指纹。可选 `--server 用户@主机`、`--port 端口`、`--identity 私钥路径`、`--remote-root /服务器仓库路径` 和 `--platform linux/arm64`。`--server` 优先于 `TRADE_DEPLOY_SERVER`，后者优先于本地目标文件；`--port` 未传时沿用 SSH 配置。需要自定义 SSH/SCP 程序时，可分别设置 `TRADE_SSH_COMMAND`、`TRADE_SCP_COMMAND` 为程序路径。
+
+该命令只构建、上传和校验，结束时会打印服务器加载、校验和发布的命令；容器重建由你在服务器单独执行。若本次更改了 Compose、Nginx 或部署脚本，同步对应部署文件后再发布。使用公共 HTTPS 时，在打印出的两条 `release.sh` 命令都加 `--access public`；全量离线发布仍要求服务器已有 MySQL、Redis、Nginx 镜像。`--help` 可查看完整参数。
+
+### 分步构建和发布
+
 每次修改代码后，在构建机生成新版本镜像和清单，传输对应代码 / 部署文件与新清单到服务器。可以用 `--output` 保留旧清单：
 
 ```bash
-# 构建机
+# 构建机：下载服务器当前成功清单，作为未更新服务的版本基线
+scp deploy-user@国内服务器IP:/opt/trade/deploy/releases/current.env deploy/base-release.env
+
+# 只构建并推送后端
 bash deploy/scripts/build-images.sh --registry registry.example.com/trade \
-  --tag 20261017-b2c3d4e --output deploy/new-release.env --push
+  --tag 20261019-b2c3d4e --base deploy/base-release.env \
+  --output deploy/new-release.env --push backend
 
 # 服务器：只更新后端；其他镜像记录保持现有版本
 bash deploy/scripts/release.sh deploy backend --release deploy/new-release.env
-
-# 或更新全部应用
-bash deploy/scripts/release.sh deploy --release deploy/new-release.env
 
 # 回到上一次成功版本；首次成功部署还没有 previous，不能用此命令
 bash deploy/scripts/release.sh rollback
@@ -246,6 +274,10 @@ bash deploy/scripts/release.sh rollback
 # 明确恢复某份历史镜像清单
 bash deploy/scripts/release.sh rollback --release deploy/releases/某份历史清单.env
 ```
+
+构建命令末尾可选 `backend`（后端）、`cockpit`（交易驾驶舱）、`x-console`（X 控制台）、`egress`（代理隧道），也可组合，例如 `backend cockpit`。只构建前端时将示例末尾的 `backend` 换为对应前端服务名；发布时也指定相同服务。`--push` 只推送本次构建的镜像。不写服务名仍按原方式全量构建；全量发布同样省略发布命令的服务名。
+
+部分构建的 `--base` 默认读取本地 `deploy/release.env`；没有完整基线时会在构建前报错。建议每次从目标服务器下载当前成功清单，并用 `--base` 显式指定，保留其他服务实际部署的镜像引用。基线只接受镜像清单字段，不要传入基础设施 `.env` 或业务 `backend.env`。基线与输出可以是同一文件，但建议用 `--output deploy/new-release.env` 保留原清单。
 
 单独更新前端用 `cockpit` 或 `x-console`；只更换网关配置或密码可执行 `deploy gateway`，更换隧道 key / VPS 地址可执行 `deploy egress`。选中的应用始终重建，单独发布不会启动或重建其依赖，首次必须先完成全量部署。
 
@@ -257,12 +289,18 @@ bash deploy/scripts/release.sh rollback --release deploy/releases/某份历史�
 
 ### 没有镜像仓库时
 
-构建不加 `--push`，然后在构建机 `docker save -o trade-images.tar` 并显式列出清单中的四个镜像；把 tar、代码和 `release.env` 传到服务器：
+构建不加 `--push`，然后只导出本次构建的镜像。下面接续前面的后端部分构建示例：
 
 ```bash
+# 构建机：只打包后端；上传 tar、新清单和本次改动的部署文件
+docker save -o trade-images.tar registry.example.com/trade/backend:20261019-b2c3d4e
+
+# 服务器
 docker load -i trade-images.tar
-bash deploy/scripts/release.sh deploy --no-pull
+bash deploy/scripts/release.sh deploy backend --release deploy/new-release.env --no-pull
 ```
+
+单独构建其他服务时，替换镜像引用和发布服务名；组合构建就显式列出选中的所有镜像及服务。全量构建时导出四个镜像，全量发布时省略服务名。完整清单中未更新的镜像引用继续沿用基线版本，不需要为单服务更新重复打包、上传它们。
 
 `--no-pull` 会在停止任何应用前确认所有所需镜像已在本地；首次全量还需要 mysql、redis、nginx 镜像（可先 `dc pull mysql redis gateway` 或一起 save/load）。离线回滚同样加 `--no-pull`。只有应用镜像离线不代表 npm / Maven 首次构建也能离线。
 
