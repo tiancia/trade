@@ -1,18 +1,11 @@
 package com.trade.story.application.decision;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-<<<<<<< HEAD:backend/src/main/java/com/trade/story/application/decision/AiStoryPromptBuilder.java
+import com.trade.story.domain.model.StorySectionDraft;
 import com.trade.story.domain.model.StorySectionPlan;
 import com.trade.story.domain.model.StoryTopicPlan;
 import com.trade.story.domain.model.StoryTrendContext;
 import com.trade.story.infrastructure.config.AiStoryProperties;
-=======
-import com.trade.story.config.AiStoryProperties;
-import com.trade.story.model.StorySectionDraft;
-import com.trade.story.model.StorySectionPlan;
-import com.trade.story.model.StoryTopicPlan;
-import com.trade.story.model.StoryTrendContext;
->>>>>>> ai-story-quality-gate:backend/src/main/java/com/trade/story/decision/AiStoryPromptBuilder.java
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;

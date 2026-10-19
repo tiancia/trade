@@ -1,13 +1,8 @@
 package com.trade.story.application.decision;
 
-<<<<<<< HEAD:backend/src/test/java/com/trade/story/application/decision/AiStoryPromptBuilderTest.java
+import com.trade.story.domain.model.StorySectionDraft;
 import com.trade.story.domain.model.StorySectionPlan;
 import com.trade.story.domain.model.StoryTopicPlan;
-=======
-import com.trade.story.model.StorySectionPlan;
-import com.trade.story.model.StorySectionDraft;
-import com.trade.story.model.StoryTopicPlan;
->>>>>>> ai-story-quality-gate:backend/src/test/java/com/trade/story/decision/AiStoryPromptBuilderTest.java
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

@@ -1,7 +1,7 @@
-package com.trade.story.decision;
+package com.trade.story.application.decision;
 
-import com.trade.story.config.AiStoryProperties;
-import com.trade.story.model.StorySectionDraft;
+import com.trade.story.infrastructure.config.AiStoryProperties;
+import com.trade.story.domain.model.StorySectionDraft;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;

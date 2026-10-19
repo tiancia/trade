@@ -1,4 +1,4 @@
-package com.trade.story.decision;
+package com.trade.story.application.decision;
 
 import java.util.ArrayList;
 import java.util.List;

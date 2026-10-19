@@ -1,16 +1,18 @@
 package com.trade.story.application;
 
-import com.trade.ai.persistence.AiResponseParseErrorSink;
+import com.trade.ai.application.port.AiResponseParseErrorSink;
+import com.trade.ai.domain.model.AiResponseParseErrorRecord;
 import com.trade.client.ai.AiTextClient;
-import com.trade.story.config.AiStoryProperties;
-import com.trade.story.decision.AiStoryPromptBuilder;
-import com.trade.story.decision.AiStoryResponseParser;
-import com.trade.story.model.StoryGenerationResult;
-import com.trade.story.model.StorySectionDraft;
-import com.trade.story.model.StoryTopicPlan;
-import com.trade.story.model.StoryTrendContext;
-import com.trade.story.persistence.StoryFileRepository;
-import com.trade.story.trend.StoryTrendCollector;
+import com.trade.story.application.decision.AiStoryPromptBuilder;
+import com.trade.story.application.decision.AiStoryResponseParser;
+import com.trade.story.application.service.AiStoryService;
+import com.trade.story.domain.model.StoryGenerationResult;
+import com.trade.story.domain.model.StorySectionDraft;
+import com.trade.story.domain.model.StoryTopicPlan;
+import com.trade.story.domain.model.StoryTrendContext;
+import com.trade.story.infrastructure.config.AiStoryProperties;
+import com.trade.story.infrastructure.persistence.StoryFileRepository;
+import com.trade.story.infrastructure.trend.StoryTrendCollector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -94,6 +96,49 @@ class AiStoryServiceTest {
         assertTrue(ai.prompts.stream().anyMatch(prompt -> prompt.contains("质检问题")));
         assertTrue(ai.prompts.stream().anyMatch(prompt -> prompt.contains("最终编辑润色")));
         assertEquals("房东把欠条拍在桌上。林舟反手拨通电话，拿到监控证据。", repository.savedDrafts.get(0).getContent());
+        assertEquals(5, ai.prompts.size());
+    }
+
+    @Test
+    void keepsOriginalDraftAndRecordsParseErrorsWhenOptionalEditsAreInvalid() {
+        AiStoryProperties properties = new AiStoryProperties();
+        properties.setEnabled(true);
+        properties.setOutputDir(tempDir.toString());
+        properties.setTargetCharCount(2_000);
+        properties.setMinAcceptableCharCount(1);
+        properties.setSectionCount(1);
+        properties.setMaxContinuationSections(0);
+        properties.setMaxSectionRewriteAttempts(1);
+        properties.setFinalEditorPassEnabled(true);
+
+        String originalContent = "命运的齿轮开始转动，全场震惊。林舟嘴角勾起一抹弧度，空气凝固了。";
+        FakeAiTextClient ai = new FakeAiTextClient();
+        ai.enqueue(topicPlanJson());
+        ai.enqueue(sectionJson(1, "雨线", originalContent, "原始稿件。"));
+        ai.enqueue("{\"sectionTitle\":\"雨线\"}");
+        ai.enqueue("{\"editedSections\":[]}");
+        List<AiResponseParseErrorRecord> parseErrors = new ArrayList<>();
+        RecordingStoryFileRepository repository = new RecordingStoryFileRepository(properties, tempDir.resolve("story.txt"));
+        AiStoryService service = new AiStoryService(
+                ai,
+                new FixedTrendCollector(properties),
+                new AiStoryPromptBuilder(),
+                new AiStoryResponseParser(),
+                repository,
+                properties,
+                parseErrors::add
+        );
+
+        Optional<StoryGenerationResult> result = service.generateStory();
+
+        assertTrue(result.isPresent());
+        assertEquals(1, repository.savedDrafts.size());
+        assertEquals(originalContent, repository.savedDrafts.get(0).getContent());
+        assertEquals(List.of("SECTION_REWRITE_PAYLOAD", "FINAL_EDIT_PAYLOAD"),
+                parseErrors.stream().map(AiResponseParseErrorRecord::getPhase).toList());
+        assertEquals(List.of("KEEP_ORIGINAL_SECTION_DRAFT", "KEEP_PRE_EDIT_DRAFTS"),
+                parseErrors.stream().map(AiResponseParseErrorRecord::getFallbackAction).toList());
+        assertEquals(4, ai.prompts.size());
     }
 
     private static String topicPlanJson() {
