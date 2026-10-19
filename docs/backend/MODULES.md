@@ -97,6 +97,8 @@ REST / WebSocket market data
 
 真实订单可靠性依赖持久化幂等键、确定性 `clOrdId`、状态机、乐观锁、状态历史和累计成交账本。仓位、成本、风险状态与资金级停止状态以 MySQL 为权威；`data/trading-state.json` 只保存策略选择、策略画像和有界决策记忆。事件管道依赖固定容量、显式队满策略、handler 异常隔离、指标与优雅排空。修改这些路径前应先读对应测试。
 
+页面参数编辑经 `StrategyConfigurationController → TradingStrategyRegistry` 保存 MySQL 当前配置及不可变版本历史；新决策冻结所用配置版本。`application/paper` 编排独立的 PAPER 初始资金、批次、成交与估值账本，`domain/paper` 负责现金、成本和盈亏演进。具体口径与接口见 [策略参数版本与模拟资金](TRADING_SIMULATION.md)。
+
 ### polymarket 与 story
 
 两个域共享 `client.ai.AiTextClient`，但 Prompt、解析器、业务校验和审计仍归各自领域。Polymarket 的真实执行还必须经过 execution 开关、市场约束和 geoblock 检查；story 的输出由 `StoryFileRepository` 写入配置目录。

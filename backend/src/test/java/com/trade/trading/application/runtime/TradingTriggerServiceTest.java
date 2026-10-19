@@ -3,6 +3,7 @@ package com.trade.trading.application.runtime;
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.application.market.TradingEventDetector;
+import com.trade.trading.application.paper.PaperAccountService;
 import com.trade.trading.application.order.OrderReconciliationService;
 import com.trade.trading.application.port.HotMarketDataCache;
 import com.trade.trading.application.strategy.TradingStrategyEngine;
@@ -64,7 +65,8 @@ class TradingTriggerServiceTest {
                 hotCache,
                 detector,
                 stateRepository,
-                properties
+                properties,
+                mock(PaperAccountService.class)
         ).scanEventTriggers();
 
         verify(detector).detect(ticker, candles, state);

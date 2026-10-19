@@ -3,6 +3,8 @@ package com.trade.trading.infrastructure.config;
 import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.application.port.TradingStateStore;
 import com.trade.trading.application.risk.RiskControlService;
+import com.trade.trading.application.paper.PaperAccountService;
+import com.trade.trading.domain.model.ExecutionMode;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.domain.model.TradingState;
@@ -33,8 +35,13 @@ class TradingRiskConfigurationTest {
     private final TradingStateStore stateStore = mock(TradingStateStore.class);
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withUserConfiguration(RiskControlService.class)
-            .withBean(TradingProperties.class, TradingProperties::new)
+            .withBean(TradingProperties.class, () -> {
+                TradingProperties properties = new TradingProperties();
+                properties.setExecutionMode(ExecutionMode.LIVE);
+                return properties;
+            })
             .withBean(TradingStateStore.class, () -> stateStore)
+            .withBean(PaperAccountService.class, () -> mock(PaperAccountService.class))
             .withBean(MeterRegistry.class, SimpleMeterRegistry::new);
 
     @Test

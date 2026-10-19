@@ -363,6 +363,9 @@ public class TradingStateRepository implements TradingStateStore {
         return new TradingDecisionRecord()
                 .setDecisionId(source.getDecisionId())
                 .setStrategyId(source.getStrategyId())
+                .setStrategyConfigVersion(source.getStrategyConfigVersion())
+                .setStrategyConfigSnapshot(source.getStrategyConfigSnapshot() == null ? null
+                        : java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(source.getStrategyConfigSnapshot())))
                 .setTimestamp(source.getTimestamp())
                 .setTriggerType(source.getTriggerType())
                 .setTriggerReason(source.getTriggerReason())

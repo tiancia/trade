@@ -55,4 +55,8 @@ public class TradingDecisionContext {
     private List<PositionResp> positions;
     /** Locally persisted strategy, position-cost, and risk state. */
     private TradingState tradingState;
+    /** Captured PAPER trial identity/revision; stale decisions cannot spend a new trial's cash. */
+    private String paperSessionId;
+    private Long paperSessionVersion;
+    private java.time.Instant paperPriceAt;
 }

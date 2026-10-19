@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.trading.infrastructure.persistence.StrategyConfigurationMapper">
+    <resultMap id="configuration" type="com.trade.trading.infrastructure.persistence.StrategyConfigurationRow">
+        <id property="id" column="id"/>
+        <result property="strategyId" column="strategy_id"/>
+        <result property="strategyType" column="strategy_type"/>
+        <result property="bar" column="bar"/>
+        <result property="configVersion" column="config_version"/>
+        <result property="paramsJson" column="params_json"/>
+        <result property="reason" column="reason"/>
+        <result property="changedAt" column="changed_at"/>
+    </resultMap>
+    <insert id="insertHeadIfAbsent" useGeneratedKeys="true" keyProperty="id">
+        INSERT IGNORE INTO okx_strategy_configuration
+            (strategy_id, strategy_type, bar, config_version, params_json, reason, changed_at)
+        VALUES (#{strategyId}, #{strategyType}, #{bar}, #{configVersion}, #{paramsJson}, #{reason}, #{changedAt})
+    </insert>
+    <select id="findCurrent" resultMap="configuration">
+        SELECT * FROM okx_strategy_configuration WHERE strategy_id = #{strategyId}
+    </select>
+    <select id="lockCurrent" resultMap="configuration">
+        SELECT * FROM okx_strategy_configuration WHERE strategy_id = #{strategyId} FOR UPDATE
+    </select>
+    <update id="updateHead">
+        UPDATE okx_strategy_configuration
+        SET strategy_type = #{strategyType}, bar = #{bar}, config_version = #{configVersion},
+            params_json = #{paramsJson}, reason = #{reason}, changed_at = #{changedAt}
+        WHERE strategy_id = #{strategyId} AND config_version = #{configVersion} - 1
+    </update>
+    <insert id="insertHistory">
+        INSERT INTO okx_strategy_configuration_history
+            (strategy_id, strategy_type, bar, config_version, params_json, reason, changed_at)
+        VALUES (#{strategyId}, #{strategyType}, #{bar}, #{configVersion}, #{paramsJson}, #{reason}, #{changedAt})
+    </insert>
+    <select id="findHistory" resultMap="configuration">
+        SELECT * FROM okx_strategy_configuration_history WHERE strategy_id = #{strategyId}
+        ORDER BY config_version DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+</mapper>

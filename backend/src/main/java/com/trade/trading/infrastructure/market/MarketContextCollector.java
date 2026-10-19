@@ -28,6 +28,8 @@ import com.trade.trading.application.event.TradingEvent;
 import com.trade.trading.application.event.TradingEventSource;
 import com.trade.trading.application.port.TradingEventPublisher;
 import com.trade.trading.application.market.TradingDecisionContext;
+import com.trade.trading.application.paper.PaperAccountService;
+import com.trade.trading.domain.model.ExecutionMode;
 import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.domain.model.TradingTrigger;
 import com.trade.trading.infrastructure.config.TradingProperties;
@@ -51,6 +53,7 @@ public class MarketContextCollector implements TradingMarketSource {
     private final TradingProperties properties;
     private final TradingStateRepository stateRepository;
     private final TradingEventPublisher eventPublisher;
+    private final PaperAccountService paperAccountService;
     private final ObjectMapper objectMapper;
     // Instrument rules change rarely and are needed on every decision, so keep
     // a small process-local cache instead of hitting OKX each cycle.
@@ -60,12 +63,14 @@ public class MarketContextCollector implements TradingMarketSource {
             OkxApi okxApi,
             TradingProperties properties,
             TradingStateRepository stateRepository,
-            TradingEventPublisher eventPublisher
+            TradingEventPublisher eventPublisher,
+            PaperAccountService paperAccountService
     ) {
         this.okxApi = okxApi;
         this.properties = properties;
         this.stateRepository = stateRepository;
         this.eventPublisher = eventPublisher;
+        this.paperAccountService = paperAccountService;
         this.objectMapper = new ObjectMapper()
                 .setSerializationInclusion(JsonInclude.Include.NON_NULL);
     }
@@ -96,59 +101,43 @@ public class MarketContextCollector implements TradingMarketSource {
                 "5m candles"
         );
         publishDecisionMarketData(ticker, orderBook, candles1m, candles5m);
-        AccountBalanceResp balance = OkxResponses.requireFirst(
+        // PAPER uses its own persisted cash and position. Private account data
+        // must neither gate simulation nor leak into its sizing and risk inputs.
+        boolean paper = properties.getExecutionMode() == ExecutionMode.PAPER;
+        AccountBalanceResp balance = paper ? null : OkxResponses.requireFirst(
                 okxApi.getAccountBalance(new AccountBalanceReq()
                         .setCcy(properties.getBaseCcy() + "," + properties.getQuoteCcy())),
                 "account balance"
         );
-        List<OrderInfoResp> pendingOrders = OkxResponses.data(
+        List<OrderInfoResp> pendingOrders = paper ? List.of() : OkxResponses.data(
                 okxApi.getPendingOrders(new PendingOrdersReq()
                         .setInstType(properties.getInstType())
                         .setInstId(properties.getInstId())
                         .setLimit(String.valueOf(properties.getRecentOrderLimit()))),
                 "pending orders"
         );
-        List<OrderInfoResp> recentOrders = OkxResponses.data(
+        List<OrderInfoResp> recentOrders = paper ? List.of() : OkxResponses.data(
                 okxApi.getOrderHistory(new OrderHistoryReq()
                         .setInstType(properties.getInstType())
                         .setInstId(properties.getInstId())
                         .setLimit(String.valueOf(properties.getRecentOrderLimit()))),
                 "recent orders"
         );
-        List<FillResp> recentFills = OkxResponses.data(
+        List<FillResp> recentFills = paper ? List.of() : OkxResponses.data(
                 okxApi.getFills(new FillsReq()
                         .setInstType(properties.getInstType())
                         .setInstId(properties.getInstId())
                         .setLimit(String.valueOf(properties.getRecentFillLimit()))),
                 "recent fills"
         );
-        List<PositionResp> positions = collectPositions();
+        List<PositionResp> positions = paper ? List.of() : collectPositions();
 
         InstrumentInfoResp instrument = getInstrument();
         TradingState tradingState = stateRepository.getState();
         BalanceDetail baseBalance = findBalance(balance, properties.getBaseCcy());
         BalanceDetail quoteBalance = findBalance(balance, properties.getQuoteCcy());
 
-        Map<String, Object> parameters = buildParameters(
-                trigger,
-                ticker,
-                orderBook,
-                candles1m,
-                candles5m,
-                balance,
-                baseBalance,
-                quoteBalance,
-                pendingOrders,
-                recentOrders,
-                recentFills,
-                positions,
-                instrument,
-                tradingState
-        );
-
-        return new TradingDecisionContext()
-                .setAiParameters(parameters)
-                .setAiParametersJson(toJson(parameters))
+        TradingDecisionContext context = new TradingDecisionContext()
                 .setTicker(ticker)
                 .setOrderBook(orderBook)
                 .setOneMinuteCandles(candles1m)
@@ -162,6 +151,14 @@ public class MarketContextCollector implements TradingMarketSource {
                 .setRecentFills(recentFills)
                 .setPositions(positions)
                 .setTradingState(tradingState);
+        if (paper) {
+            paperAccountService.enrichContext(context);
+        }
+        Map<String, Object> parameters = buildParameters(
+                trigger, ticker, orderBook, candles1m, candles5m,
+                context.getAccountBalance(), context.getBaseBalance(), context.getQuoteBalance(),
+                pendingOrders, recentOrders, recentFills, positions, instrument, context.getTradingState());
+        return context.setAiParameters(parameters).setAiParametersJson(toJson(parameters));
     }
 
     public List<CandleResp> getOneMinuteCandles() {
@@ -231,10 +228,11 @@ public class MarketContextCollector implements TradingMarketSource {
             return instrument;
         }
 
+        InstrumentInfoReq request = new InstrumentInfoReq()
+                .setInstType(properties.getInstType()).setInstId(properties.getInstId());
         instrument = OkxResponses.requireFirst(
-                okxApi.getInstrumentInfo(new InstrumentInfoReq()
-                        .setInstType(properties.getInstType())
-                        .setInstId(properties.getInstId())),
+                properties.getExecutionMode() == ExecutionMode.PAPER
+                        ? okxApi.getPublicInstrumentInfo(request) : okxApi.getInstrumentInfo(request),
                 "instrument"
         );
         cachedInstrument = instrument;

@@ -11,6 +11,8 @@ import java.util.Map;
 public class TradingDecisionRecord {
     private String decisionId;
     private String strategyId;
+    private long strategyConfigVersion;
+    private Map<String, Object> strategyConfigSnapshot;
     private String timestamp;
     private String triggerType;
     private String triggerReason;

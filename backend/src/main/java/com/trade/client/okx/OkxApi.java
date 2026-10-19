@@ -77,6 +77,11 @@ public class OkxApi {
         );
     }
 
+    /** Public trading rules, also available when PAPER has no exchange account. */
+    public OkxResponse<InstrumentInfoResp> getPublicInstrumentInfo(InstrumentInfoReq req) {
+        return okxClient.get(OkxEndpoints.PUBLIC_INSTRUMENT_INFO, req, false, InstrumentInfoResp.class);
+    }
+
     /**
      * Gets account balances. Pass ccy to narrow the result to one or more currencies.
      */

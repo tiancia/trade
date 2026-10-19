@@ -12,6 +12,8 @@ import com.trade.trading.domain.risk.RiskStateTransitions;
 import com.trade.trading.domain.risk.RiskViolation;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.application.port.TradingStateStore;
+import com.trade.trading.application.paper.PaperAccountService;
+import com.trade.trading.domain.model.ExecutionMode;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,15 +40,17 @@ public class RiskControlService {
     private final Clock clock;
     private final List<RiskRule> rules;
     private final MeterRegistry meterRegistry;
+    private final PaperAccountService paperAccounts;
 
     @Autowired
     public RiskControlService(
             TradingProperties properties,
             TradingStateStore stateRepository,
             @Qualifier("tradingRiskRules") List<RiskRule> rules,
-            MeterRegistry meterRegistry
+            MeterRegistry meterRegistry,
+            PaperAccountService paperAccounts
     ) {
-        this(properties, stateRepository, Clock.systemUTC(), rules, meterRegistry);
+        this(properties, stateRepository, Clock.systemUTC(), rules, meterRegistry, paperAccounts);
     }
 
     public RiskControlService(
@@ -55,7 +59,7 @@ public class RiskControlService {
             Clock clock,
             List<RiskRule> rules
     ) {
-        this(properties, stateRepository, clock, rules, null);
+        this(properties, stateRepository, clock, rules, null, null);
     }
 
     RiskControlService(
@@ -65,6 +69,22 @@ public class RiskControlService {
             List<RiskRule> rules,
             MeterRegistry meterRegistry
     ) {
+        this(properties, stateRepository, clock, rules, meterRegistry, null);
+    }
+
+    public RiskControlService(TradingProperties properties, TradingStateStore stateRepository,
+                              Clock clock, List<RiskRule> rules, PaperAccountService paperAccounts) {
+        this(properties, stateRepository, clock, rules, null, paperAccounts);
+    }
+
+    private RiskControlService(
+            TradingProperties properties,
+            TradingStateStore stateRepository,
+            Clock clock,
+            List<RiskRule> rules,
+            MeterRegistry meterRegistry,
+            PaperAccountService paperAccounts
+    ) {
         if (rules == null || rules.isEmpty()) {
             throw new IllegalArgumentException("Risk rules must not be null or empty");
         }
@@ -73,6 +93,7 @@ public class RiskControlService {
         this.clock = clock == null ? Clock.systemUTC() : clock;
         this.rules = List.copyOf(rules);
         this.meterRegistry = meterRegistry;
+        this.paperAccounts = paperAccounts;
     }
 
     public RiskAssessment evaluate(StrategyDecision decision, TradingDecisionContext decisionContext) {
@@ -106,8 +127,14 @@ public class RiskControlService {
             return RiskAssessment.allowed(riskState, currentEquity);
         }
 
-        riskState.setLastRiskReason(violations.getFirst().getReason());
-        stateRepository.recordRiskState(riskState);
+        String reason = violations.getFirst().getReason();
+        if (paperRisk()) {
+            riskState = paperAccounts.updateRiskState(decisionContext,
+                    current -> RiskStateTransitions.copyRiskState(current).setLastRiskReason(reason));
+        } else {
+            riskState.setLastRiskReason(reason);
+            stateRepository.recordRiskState(riskState);
+        }
         recordAssessment("blocked", metricValue(violations.getFirst().getCode()), violations);
         return RiskAssessment.blocked(riskState, currentEquity, violations);
     }
@@ -117,10 +144,15 @@ public class RiskControlService {
             return;
         }
 
-        TradingRiskState riskState = transitions().executed(
-                stateRepository.getState().getRiskState(), decision.getAction(),
-                TradingMarketInputs.estimatedEquity(decisionContext), Instant.now(clock));
-        stateRepository.recordRiskState(riskState);
+        BigDecimal equity = TradingMarketInputs.estimatedEquity(decisionContext);
+        Instant now = Instant.now(clock);
+        if (paperRisk()) {
+            paperAccounts.updateRiskState(decisionContext,
+                    current -> transitions().executed(current, decision.getAction(), equity, now));
+        } else {
+            stateRepository.recordRiskState(transitions().executed(
+                    stateRepository.getState().getRiskState(), decision.getAction(), equity, now));
+        }
     }
 
     /**
@@ -141,13 +173,20 @@ public class RiskControlService {
     }
 
     private TradingRiskState refreshRiskState(TradingDecisionContext decisionContext) {
-        TradingRiskState source = stateRepository.getState().getRiskState();
         BigDecimal equity = TradingMarketInputs.estimatedEquity(decisionContext);
-        TradingRiskState state = transitions().refresh(source, equity, Instant.now(clock));
+        Instant now = Instant.now(clock);
+        if (paperRisk()) {
+            return paperAccounts.updateRiskState(decisionContext, current -> transitions().refresh(current, equity, now));
+        }
+        TradingRiskState state = transitions().refresh(stateRepository.getState().getRiskState(), equity, now);
         if (equity.signum() > 0) {
             stateRepository.recordRiskState(state);
         }
         return state;
+    }
+
+    private boolean paperRisk() {
+        return paperAccounts != null && properties.getExecutionMode() == ExecutionMode.PAPER;
     }
 
     private RiskStateTransitions transitions() {

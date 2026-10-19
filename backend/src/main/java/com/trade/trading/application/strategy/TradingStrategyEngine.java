@@ -1,6 +1,7 @@
 package com.trade.trading.application.strategy;
 
 import com.trade.trading.application.market.TradingMarketInputs;
+import com.trade.trading.application.paper.PaperAccountService;
 import com.trade.trading.application.order.OrderReconciliationService;
 import com.trade.trading.application.port.TradingBroker;
 import com.trade.trading.application.risk.FundSafetyService;
@@ -53,6 +54,7 @@ public class TradingStrategyEngine {
     private final FundSafetyService fundSafetyService;
     private final OrderReconciliationService orderReconciliationService;
     private final TradingLeadershipService leadershipService;
+    private final PaperAccountService paperAccountService;
     private final ReentrantLock decisionLock = new ReentrantLock();
     private volatile TradingDecisionRecord lastDecision;
     private volatile String lastError;
@@ -69,7 +71,8 @@ public class TradingStrategyEngine {
             FundSafetyService fundSafetyService,
             OrderReconciliationService orderReconciliationService,
             TradingLeadershipService leadershipService,
-            MeterRegistry meterRegistry
+            MeterRegistry meterRegistry,
+            PaperAccountService paperAccountService
     ) {
         this.contextCollector = contextCollector;
         this.strategySelectionService = strategySelectionService;
@@ -81,6 +84,7 @@ public class TradingStrategyEngine {
         this.orderReconciliationService = orderReconciliationService;
         this.leadershipService = leadershipService;
         this.meterRegistry = meterRegistry;
+        this.paperAccountService = paperAccountService;
         Gauge.builder("trade.trading.decisions.running", decisionLock, lock -> lock.isLocked() ? 1 : 0)
                 .description("Whether a trading strategy decision is currently running")
                 .register(meterRegistry);
@@ -118,6 +122,11 @@ public class TradingStrategyEngine {
             for (ConfiguredTradingStrategy<?> configured : strategySelectionService.activeStrategies()) {
                 StrategyDecision decision = evaluate(configured, trigger, marketContext);
                 TradingDecisionRecord record = decisionRecord(decision, trigger, marketContext);
+                record.setStrategyConfigVersion(configured.configuration().version())
+                        .setStrategyConfigSnapshot(configured.configuration().params());
+                if (properties.getExecutionMode() == ExecutionMode.PAPER) {
+                    paperAccountService.markDecision(marketContext, record);
+                }
                 finalRecord = record;
                 if (decision == null || decision.isHold()) {
                     record.setExecutionStatus("HELD");

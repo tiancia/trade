@@ -5,6 +5,7 @@ import com.trade.client.okx.dto.AccountBalanceReq;
 import com.trade.client.okx.dto.CancelOrderReq;
 import com.trade.client.okx.dto.CandlesReq;
 import com.trade.client.okx.dto.FillsReq;
+import com.trade.client.okx.dto.InstrumentInfoReq;
 import com.trade.client.okx.dto.OrderBookReq;
 import com.trade.client.okx.dto.OrderHistoryReq;
 import com.trade.client.okx.dto.OrderQueryReq;
@@ -35,6 +36,9 @@ class OkxApiMethodTest {
 
         api.getHistoryCandles(new CandlesReq().setInstId("BTC-USDT").setBar("1m"));
         assertCall(client, "GET", OkxEndpoints.MARKET_HISTORY_CANDLES, false);
+
+        api.getPublicInstrumentInfo(new InstrumentInfoReq().setInstType("SPOT").setInstId("BTC-USDT"));
+        assertCall(client, "GET", OkxEndpoints.PUBLIC_INSTRUMENT_INFO, false);
     }
 
     @Test

@@ -6,6 +6,7 @@ public final class OkxEndpoints {
     public static final String DEFAULT_WS_PRIVATE_URL = "wss://ws.okx.com/ws/v5/private";
 
     public static final String INSTRUMENT_INFO = "/api/v5/account/instruments";
+    public static final String PUBLIC_INSTRUMENT_INFO = "/api/v5/public/instruments";
     public static final String SYSTEM_TIME = "/api/v5/public/time";
     public static final String ACCOUNT_BALANCE = "/api/v5/account/balance";
     public static final String ACCOUNT_POSITIONS = "/api/v5/account/positions";

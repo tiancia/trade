@@ -10,6 +10,7 @@ import com.trade.trading.application.port.TradingBroker;
 import com.trade.trading.application.port.TradingMarketSource;
 import com.trade.trading.application.port.TradingMarketFeed;
 import com.trade.trading.application.port.TradingStateStore;
+import com.trade.trading.application.paper.PaperAccountService;
 import com.trade.trading.domain.model.ExecutionMode;
 import com.trade.trading.application.risk.FundSafetyService;
 import com.trade.trading.application.runtime.TradingLeadershipService;
@@ -53,7 +54,7 @@ class TradingStrategyEngineTest {
         TradingStrategyEngine engine = new TradingStrategyEngine(
                 market, selection, broker, state, properties, mock(TradingMarketFeed.class),
                 mock(FundSafetyService.class), mock(OrderReconciliationService.class),
-                mock(TradingLeadershipService.class), metrics);
+                mock(TradingLeadershipService.class), metrics, mock(PaperAccountService.class));
 
         assertFalse(engine.runDecision(TradingTrigger.scheduled()));
 
@@ -152,7 +153,8 @@ class TradingStrategyEngineTest {
                 mock(FundSafetyService.class),
                 mock(OrderReconciliationService.class),
                 mock(TradingLeadershipService.class),
-                meterRegistry
+                meterRegistry,
+                mock(PaperAccountService.class)
         );
     }
 
@@ -224,7 +226,7 @@ class TradingStrategyEngineTest {
         private final TradingDecisionContext context;
 
         FakeMarketContextCollector(TradingDecisionContext context) {
-            super(null, null, null, null);
+            super(null, null, null, null, null);
             this.context = context;
         }
 

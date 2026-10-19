@@ -32,6 +32,11 @@ test("server-renders the Orbit trading cockpit", async () => {
   assert.match(html, /事件总线健康/);
   assert.match(html, /交易自动化/);
   assert.match(html, /安全演示快照|演示数据/);
+  // Time and locale-sensitive labels stay identical until the browser hydrates.
+  assert.match(html, /<span class="clock">--:--:--<\/span>/);
+  assert.match(html, /<div class="chart-time">(?:<span>--:--<\/span>){5}<\/div>/);
+  assert.match(html, /<span class="timestamp">—<\/span>/);
+  assert.doesNotMatch(html, /<span class="candle [^"]*" title=/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });
 

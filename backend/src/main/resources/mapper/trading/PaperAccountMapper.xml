@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.trading.infrastructure.persistence.PaperAccountMapper">
+    <sql id="accountColumns">s.id,s.session_id,s.inst_id,s.quote_ccy,s.status,s.initial_cash,s.cash,s.position_quantity,s.position_cost,s.realized_pnl,s.total_fees_quote,s.last_price,s.valuation_at,s.version,s.risk_state_json,s.created_at,s.updated_at</sql>
+    <sql id="fillColumns">f.id,f.session_id,f.decision_id,f.strategy_id,f.strategy_config_version,f.strategy_config_snapshot_json,f.side,f.requested_size,f.filled_base,f.position_delta,f.price,f.cash_delta,f.fee_quote,f.realized_pnl,f.cash_after,f.position_after,f.equity_after,f.account_version,f.created_at</sql>
+    <sql id="equityColumns">e.id,e.session_id,e.created_at AS timestamp,e.cash,e.position_quantity,e.last_price,e.valuation_at,e.equity,e.realized_pnl,e.unrealized_pnl,e.account_version,e.strategy_id,e.strategy_config_version,e.kind</sql>
+    <insert id="insertHeadIfAbsent">INSERT INTO okx_paper_account_heads(inst_id) VALUES(#{instId}) ON DUPLICATE KEY UPDATE inst_id=VALUES(inst_id)</insert>
+    <select id="lockHead" resultType="string">SELECT session_id FROM okx_paper_account_heads WHERE inst_id=#{instId} FOR UPDATE</select>
+    <update id="updateHead">UPDATE okx_paper_account_heads SET session_id=#{sessionId} WHERE inst_id=#{instId}</update>
+    <select id="active" resultType="com.trade.trading.infrastructure.persistence.PaperAccountRow">
+        SELECT <include refid="accountColumns"/> FROM okx_paper_sessions s JOIN okx_paper_account_heads h ON s.session_id=h.session_id WHERE h.inst_id=#{instId}
+    </select>
+    <select id="session" resultType="com.trade.trading.infrastructure.persistence.PaperAccountRow">
+        SELECT <include refid="accountColumns"/> FROM okx_paper_sessions s WHERE s.inst_id=#{instId} AND s.session_id=#{sessionId}
+    </select>
+    <insert id="insertSession" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO okx_paper_sessions(session_id,inst_id,quote_ccy,status,initial_cash,cash,position_quantity,position_cost,realized_pnl,total_fees_quote,last_price,valuation_at,version,risk_state_json,created_at,updated_at)
+        VALUES(#{sessionId},#{instId},#{quoteCcy},#{status},#{initialCash},#{cash},#{positionQuantity},#{positionCost},#{realizedPnl},#{totalFeesQuote},#{lastPrice},#{valuationAt},#{version},#{riskStateJson},#{createdAt},#{updatedAt})
+    </insert>
+    <update id="updateSession">
+        UPDATE okx_paper_sessions SET cash=#{cash},position_quantity=#{positionQuantity},position_cost=#{positionCost},realized_pnl=#{realizedPnl},total_fees_quote=#{totalFeesQuote},last_price=#{lastPrice},valuation_at=#{valuationAt},version=#{version},updated_at=#{updatedAt} WHERE session_id=#{sessionId} AND status='ACTIVE'
+    </update>
+    <update id="archive">UPDATE okx_paper_sessions SET status='ARCHIVED' WHERE session_id=#{sessionId} AND status='ACTIVE'</update>
+    <update id="updateRisk">UPDATE okx_paper_sessions SET risk_state_json=#{json} WHERE session_id=#{sessionId} AND status='ACTIVE'</update>
+    <select id="findFill" resultType="com.trade.trading.domain.paper.PaperFill">SELECT <include refid="fillColumns"/> FROM okx_paper_fills f WHERE f.decision_id=#{decisionId}</select>
+    <insert id="insertFill">
+        INSERT INTO okx_paper_fills(session_id,decision_id,strategy_id,strategy_config_version,strategy_config_snapshot_json,side,requested_size,filled_base,position_delta,price,cash_delta,fee_quote,realized_pnl,cash_after,position_after,equity_after,account_version,created_at)
+        VALUES(#{sessionId},#{decisionId},#{strategyId},#{strategyConfigVersion},#{strategyConfigSnapshotJson},#{side},#{requestedSize},#{filledBase},#{positionDelta},#{price},#{cashDelta},#{feeQuote},#{realizedPnl},#{cashAfter},#{positionAfter},#{equityAfter},#{accountVersion},#{createdAt})
+    </insert>
+    <insert id="insertEquity">
+        INSERT INTO okx_paper_equity(session_id,created_at,cash,position_quantity,last_price,valuation_at,equity,realized_pnl,unrealized_pnl,account_version,strategy_id,strategy_config_version,kind)
+        VALUES(#{sessionId},#{timestamp},#{cash},#{positionQuantity},#{lastPrice},#{valuationAt},#{equity},#{realizedPnl},#{unrealizedPnl},#{accountVersion},#{strategyId},#{strategyConfigVersion},#{kind})
+    </insert>
+    <select id="lastMark" resultType="com.trade.trading.domain.paper.PaperEquityPoint">SELECT <include refid="equityColumns"/> FROM okx_paper_equity e WHERE e.session_id=#{sessionId} AND e.kind='MARK' ORDER BY e.id DESC LIMIT 1</select>
+    <select id="sessions" resultType="com.trade.trading.infrastructure.persistence.PaperAccountRow">
+        SELECT <include refid="accountColumns"/> FROM okx_paper_sessions s WHERE s.inst_id=#{instId}
+        <if test="beforeId != null">AND s.id &lt; #{beforeId}</if> ORDER BY s.id DESC LIMIT #{limit}
+    </select>
+    <select id="fills" resultType="com.trade.trading.domain.paper.PaperFill">
+        SELECT <include refid="fillColumns"/> FROM okx_paper_fills f JOIN okx_paper_sessions s ON s.session_id=f.session_id WHERE s.inst_id=#{instId} AND f.session_id=#{sessionId}
+        <if test="beforeId != null">AND f.id &lt; #{beforeId}</if> ORDER BY f.id DESC LIMIT #{limit}
+    </select>
+    <select id="equity" resultType="com.trade.trading.domain.paper.PaperEquityPoint">
+        SELECT <include refid="equityColumns"/> FROM okx_paper_equity e JOIN okx_paper_sessions s ON s.session_id=e.session_id WHERE s.inst_id=#{instId} AND e.session_id=#{sessionId}
+        <if test="beforeId != null">AND e.id &lt; #{beforeId}</if> ORDER BY e.id DESC LIMIT #{limit}
+    </select>
+</mapper>

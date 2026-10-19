@@ -1,160 +1,75 @@
 package com.trade.trading.application.execution;
 
-import com.trade.trading.domain.order.ExecutionEligibility;
-import com.trade.trading.domain.order.PaperFillPolicy;
-import com.trade.common.support.TradingMath;
-import com.trade.trading.application.execution.OrderSizingService;
+import com.trade.trading.application.market.TradingDecisionContext;
+import com.trade.trading.application.paper.PaperAccountService;
+import com.trade.trading.application.port.PaperAccountStore;
 import com.trade.trading.application.risk.RiskControlService;
 import com.trade.trading.domain.model.OrderSizing;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
-import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.domain.model.TradingDecisionRecord;
-import com.trade.trading.domain.risk.RiskAssessment;
 import com.trade.trading.infrastructure.config.TradingProperties;
-import com.trade.trading.application.port.TradingStateStore;
 import org.springframework.stereotype.Component;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.math.BigDecimal;
+import java.util.ConcurrentModificationException;
+import java.util.LinkedHashMap;
 
+/** Funded spot PAPER execution. Cash, position, fees and the idempotency ledger commit together. */
 @Component
 public class PaperOrderExecutionService {
-    private final OrderSizingService orderSizingService;
-    private final TradingStateStore stateRepository;
+    private static final Logger log = LoggerFactory.getLogger(PaperOrderExecutionService.class);
+    private final OrderSizingService sizing;
     private final TradingProperties properties;
-    private final RiskControlService riskControlService;
+    private final RiskControlService risk;
+    private final PaperAccountService accounts;
 
-    public PaperOrderExecutionService(
-            OrderSizingService orderSizingService,
-            TradingStateStore stateRepository,
-            TradingProperties properties,
-            RiskControlService riskControlService
-    ) {
-        this.orderSizingService = orderSizingService;
-        this.stateRepository = stateRepository;
+    public PaperOrderExecutionService(OrderSizingService sizing, TradingProperties properties,
+                                      RiskControlService risk, PaperAccountService accounts) {
+        this.sizing = sizing;
         this.properties = properties;
-        this.riskControlService = riskControlService;
+        this.risk = risk;
+        this.accounts = accounts;
     }
 
-    public void execute(
-            StrategyDecision decision,
-            TradingDecisionContext context,
-            TradingDecisionRecord decisionRecord
-    ) {
-        RiskAssessment riskAssessment = riskControlService.evaluate(decision, context);
-        if (!riskAssessment.isAllowed()) {
-            decisionRecord.setExecutionStatus("SKIPPED")
-                    .setSkipReason(riskAssessment.skipReason());
-            return;
+    public void execute(StrategyDecision decision, TradingDecisionContext context, TradingDecisionRecord record) {
+        if (decision == null || decision.isHold()) { record.setExecutionStatus("HELD"); return; }
+        if (!properties.isSpotInstrument() || (decision.getAction() != TradingAction.BUY && decision.getAction() != TradingAction.SELL)) {
+            skip(record, "Funded simulation currently supports spot BUY/SELL only"); return;
         }
-
-        if (decision == null || decision.isHold()) {
-            decisionRecord.setExecutionStatus("HELD");
-            return;
+        if (context == null || context.getPaperSessionId() == null) {
+            skip(record, "Initialize simulated funds before trading"); return;
         }
-
-        if (decision.getAction() == TradingAction.BUY) {
-            paperBuy(decision, context, decisionRecord);
-        } else if (decision.getAction() == TradingAction.SELL) {
-            paperSell(decision, context, decisionRecord);
-        } else if (decision.getAction() != null && decision.getAction().isDerivativeAction()) {
-            paperDerivative(decision, context, decisionRecord);
-        } else {
-            decisionRecord.setExecutionStatus("HELD");
+        var assessment = risk.evaluate(decision, context);
+        if (!assessment.isAllowed()) { skip(record, assessment.skipReason()); return; }
+        OrderSizing order = decision.getAction() == TradingAction.BUY
+                ? sizing.buySize(decision, context) : sizing.sellSize(decision, context);
+        if (!order.isExecutable()) { skip(record, order.getSkipReason()); return; }
+        PaperAccountStore.AppliedFill applied;
+        try {
+            applied = accounts.fill(context, record, decision.getAction().name(), new BigDecimal(order.getSize()));
+        } catch (IllegalArgumentException | IllegalStateException | ConcurrentModificationException exception) {
+            skip(record, exception.getMessage()); return;
+        }
+        var fill = applied.fill();
+        record.setOrderSize(order.getSize()).setExecutionStatus("PAPER_FILLED")
+                .setFilledBaseAmount(fill.filledBase()).setAverageFillPrice(fill.price())
+                .setFee(fill.feeQuote().negate()).setFeeCcy(properties.getQuoteCcy()).setIdempotentReplay(applied.replay());
+        if (!applied.replay()) {
+            try { risk.recordExecutedAction(decision, context); }
+            catch (RuntimeException exception) {
+                // The monetary transaction already committed. A secondary risk-write failure must not turn it into a failed/unfilled order.
+                var metadata = new LinkedHashMap<String, Object>();
+                if (record.getMetadata() != null) metadata.putAll(record.getMetadata());
+                metadata.put("paperRiskUpdateWarning", "Simulated fill committed; risk-state update failed: " + exception.getMessage());
+                record.setMetadata(metadata);
+                log.warn("Simulated fill committed but risk update failed: decisionId={}, sessionId={}, reason={}",
+                        record.getDecisionId(), context.getPaperSessionId(), exception.getMessage(), exception);
+            }
         }
     }
-
-    private void paperBuy(
-            StrategyDecision decision,
-            TradingDecisionContext context,
-            TradingDecisionRecord record
-    ) {
-        String skipReason = ExecutionEligibility.skipReason(decision.getAction(),
-                properties.isSpotInstrument(), properties.isShortEnabled());
-        if (skipReason != null) {
-            record.setExecutionStatus("SKIPPED").setSkipReason(skipReason);
-            return;
-        }
-        OrderSizing sizing = orderSizingService.buySize(decision, context);
-        if (!sizing.isExecutable()) {
-            record.setExecutionStatus("SKIPPED")
-                    .setSkipReason(sizing.getSkipReason());
-            return;
-        }
-        BigDecimal quoteAmount = new BigDecimal(sizing.getSize());
-        BigDecimal price = lastPrice(context);
-        if (price.signum() <= 0) {
-            record.setExecutionStatus("SKIPPED")
-                    .setSkipReason("Paper BUY skipped: last price is unavailable");
-            return;
-        }
-        PaperFillPolicy.BuyFill fill = PaperFillPolicy.buy(quoteAmount, price, properties.getTakerFeeRate());
-        stateRepository.recordBuy(fill.netBase(), fill.averageCost());
-        riskControlService.recordExecutedAction(decision, context);
-        record.setOrderSize(sizing.getSize())
-                .setExecutionStatus("PAPER_FILLED")
-                .setFilledBaseAmount(fill.grossBase())
-                .setAverageFillPrice(price)
-                .setFee(fill.fee())
-                .setFeeCcy(properties.getBaseCcy());
-    }
-
-    private void paperSell(
-            StrategyDecision decision,
-            TradingDecisionContext context,
-            TradingDecisionRecord record
-    ) {
-        String skipReason = ExecutionEligibility.skipReason(decision.getAction(),
-                properties.isSpotInstrument(), properties.isShortEnabled());
-        if (skipReason != null) {
-            record.setExecutionStatus("SKIPPED").setSkipReason(skipReason);
-            return;
-        }
-        OrderSizing sizing = orderSizingService.sellSize(decision, context);
-        if (!sizing.isExecutable()) {
-            record.setExecutionStatus("SKIPPED")
-                    .setSkipReason(sizing.getSkipReason());
-            return;
-        }
-        BigDecimal baseAmount = new BigDecimal(sizing.getSize());
-        BigDecimal price = lastPrice(context);
-        BigDecimal feeQuote = PaperFillPolicy.sellFee(baseAmount, price, properties.getTakerFeeRate());
-        stateRepository.recordSell(baseAmount);
-        riskControlService.recordExecutedAction(decision, context);
-        record.setOrderSize(sizing.getSize())
-                .setExecutionStatus("PAPER_FILLED")
-                .setFilledBaseAmount(baseAmount)
-                .setAverageFillPrice(price)
-                .setFee(feeQuote)
-                .setFeeCcy(properties.getQuoteCcy());
-    }
-
-    private void paperDerivative(
-            StrategyDecision decision,
-            TradingDecisionContext context,
-            TradingDecisionRecord record
-    ) {
-        String skipReason = ExecutionEligibility.skipReason(decision.getAction(),
-                properties.isSpotInstrument(), properties.isShortEnabled());
-        if (skipReason != null) {
-            record.setExecutionStatus("SKIPPED").setSkipReason(skipReason);
-            return;
-        }
-        OrderSizing sizing = orderSizingService.derivativeSize(decision, context);
-        if (!sizing.isExecutable()) {
-            record.setExecutionStatus("SKIPPED")
-                    .setSkipReason(sizing.getSkipReason());
-            return;
-        }
-        riskControlService.recordExecutedAction(decision, context);
-        record.setOrderSize(sizing.getSize())
-                .setExecutionStatus("PAPER_FILLED")
-                .setAverageFillPrice(lastPrice(context));
-    }
-
-    private static BigDecimal lastPrice(TradingDecisionContext context) {
-        return context == null || context.getTicker() == null
-                ? BigDecimal.ZERO
-                : TradingMath.decimal(context.getTicker().getLast());
+    private static void skip(TradingDecisionRecord record, String reason) {
+        record.setExecutionStatus("SKIPPED").setSkipReason(reason);
     }
 }

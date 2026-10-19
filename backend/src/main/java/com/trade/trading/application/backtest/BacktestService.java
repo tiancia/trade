@@ -65,7 +65,9 @@ public class BacktestService {
         PreparedBacktest prepared = prepare(request);
         BacktestRun run = new BacktestRun()
                 .setRunId(UUID.randomUUID().toString())
-                .setRequest(prepared.request());
+                .setRequest(prepared.request())
+                .setStrategyConfigVersion(prepared.strategy().configuration().version())
+                .setStrategyConfigSnapshot(prepared.strategy().configuration().params());
         pruneRuns();
         runs.put(run.getRunId(), run);
         try {

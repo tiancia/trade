@@ -31,13 +31,17 @@ NEXT_PUBLIC_TRADE_API_URL=https://your-backend.example.com
 
 新建回测默认最近 24 小时，可修改本地起止时间；提交时转换为 ISO 时间并检查开始时间早于结束时间。回测提交成功只表示进入队列，运行失败原因会显示在回测列表中。时间展示兼容后端秒级时间戳和 ISO 字符串。
 
-连接后端后，尚未接入资产、盈亏和风险利用率汇总的卡片显示“暂无数据”；固定示例数值只在演示模式显示。WebSocket 未就绪不等于 REST 行情不可用。
+策略页的“修改参数 / 查看版本”读取后端的完整有效参数。保存时携带配置版本号和修改原因，生成不可修改的新版本；参数只对后续新决策生效。版本冲突会保留页面输入，须重新加载最新配置后再修改。历史版本展开后可看到完整值及相对上一个版本的变化。价格与浮亏触发比例 `0.02` 表示 `2%`；K 线窗口还受部署的行情采集上限约束，下单参数仍受全局风控和单笔金额上限约束。
+
+PAPER 总览支持设置初始资金、创建独立模拟会话，查看现金、持仓、净值、已实现与未实现盈亏、累计收益率、手续费、资金曲线与成交明细。新会话从零持仓开始，旧会话归档保留；不能直接覆盖已有会话的初始资金。初始资金最多 8 位小数，上限 1 万亿。创建请求使用当前会话 ID 和版本号检查并发变化，失败时不会显示为创建成功。运行模式未确认或处于 LIVE 时，不开放模拟资金操作。
+
+成交和资金记录可按策略及配置版本筛选。曲线始终展示整段会话净值，并高亮选中版本的记录；版本筛选不把延续持仓产生的累计盈亏当作独立策略收益。需要控制初始资金独立比较时，应分别创建模拟会话。会话列表默认读取最近 20 个，成交与资金记录分别读取最近 100 条，可加载更早记录。估值超过有效期会明确标记为过期。风险利用率仍未接入汇总，连接后端时保持“暂无数据”。WebSocket 未就绪不等于 REST 行情不可用。
 
 ## 可用命令
 
 - `npm run dev`：启动开发环境
 - `npm run build`：生成部署构建
-- `npm test`：构建并验证服务端渲染、回测参数、操作员请求头和时间戳契约
+- `npm test`：构建并验证服务端渲染、配置版本请求、模拟资金请求、记录筛选、回测参数和时间戳契约
 - `npm run lint`：运行静态代码检查
 
 ## 接入的后端接口
@@ -46,6 +50,13 @@ NEXT_PUBLIC_TRADE_API_URL=https://your-backend.example.com
 - `GET /api/trading/runtime/events`
 - `GET /api/trading/strategies`
 - `PUT /api/trading/strategies/active`
+- `GET|PUT /api/trading/strategies/{id}/configuration`
+- `GET /api/trading/strategies/{id}/configuration/history`
+- `GET /api/trading/paper/account`
+- `GET|POST /api/trading/paper/sessions`
+- `GET /api/trading/paper/sessions/{sessionId}`
+- `GET /api/trading/paper/sessions/{sessionId}/equity`
+- `GET /api/trading/paper/sessions/{sessionId}/fills`
 - `GET /api/trading/market/candles`
 - `GET /api/trading/market/candles/stream`（SSE）
 - `GET /api/automation/tasks`

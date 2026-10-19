@@ -236,7 +236,7 @@ trade:
   # X 单账号文本工作流；复用 Telegram Bot 时必须关闭微博 review.telegram.enabled。
   x:
     # X 真实发布的总门禁；还需工作流发布开关、客户端和有效用户授权。
-    live-publishing-enabled: ${TRADE_X_LIVE_PUBLISHING_ENABLED:true}
+    live-publishing-enabled: ${TRADE_X_LIVE_PUBLISHING_ENABLED:false}
     client:
       # X API 客户端开关，调用查询和发布前均检查。
       enabled: ${TRADE_X_CLIENT_ENABLED:true}
@@ -264,7 +264,7 @@ trade:
     review:
       telegram:
         # 开启 X Telegram 审核投递和轮询；同时要求共享 Telegram 客户端和 X 工作流开启。
-        enabled: ${TRADE_X_TELEGRAM_REVIEW_ENABLED:true}
+        enabled: ${TRADE_X_TELEGRAM_REVIEW_ENABLED:false}
         # 接收 X 审核消息的数字 chat ID，可填写现有机器人使用的会话 ID。
         chat-id: ${TRADE_X_TELEGRAM_CHAT_ID:}
         # 允许审核的 Telegram 数字用户 ID 列表，多个 ID 用逗号分隔，须显式配置。

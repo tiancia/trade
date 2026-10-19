@@ -29,8 +29,8 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { apiTimestampMillis, buildBacktestPayload, createJsonRequestHeaders, formatDateTimeLocal } from "./lib/trading-api.mjs";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { apiTimestampMillis, buildBacktestPayload, buildPaperSessionPayload, buildStrategyParametersPayload, createJsonRequestHeaders, filterConfigurationEvents, formatDateTimeLocal, formatReturnFraction, mergeContiguousHistory, strategyParameterFields } from "./lib/trading-api.mjs";
 
 type View = "overview" | "strategies" | "events" | "backtests";
 type ApiTimestamp = string | number;
@@ -53,6 +53,7 @@ type RuntimeStatus = {
   lastDecision?: {
     decisionId?: string;
     strategyId?: string;
+    strategyConfigVersion?: number;
     timestamp?: ApiTimestamp;
     action?: string;
     reason?: string;
@@ -101,12 +102,15 @@ type AutomationTask = {
 
 type BacktestRun = {
   runId: string;
+  strategyConfigVersion?: number;
+  strategyConfigSnapshot?: Record<string, unknown>;
   status: string;
   request: {
     strategyId: string;
     instId: string;
     bar: string;
     initialCash?: number;
+    parameterOverrides?: Record<string, unknown>;
   };
   createdAt: ApiTimestamp;
   error?: string | null;
@@ -158,6 +162,71 @@ type ActiveStrategySelection = {
   strategyId: string;
   revision: number;
   changedAt?: ApiTimestamp | null;
+};
+
+type StrategyConfiguration = {
+  strategyId: string;
+  type: string;
+  bar: string;
+  version: number;
+  changedAt: ApiTimestamp;
+  reason: string;
+  params: Record<string, string | number | boolean | null>;
+};
+
+type PaperAccount = {
+  id: number;
+  sessionId: string;
+  instId: string;
+  quoteCcy: string;
+  status: "ACTIVE" | "ARCHIVED";
+  initialCash: number;
+  cash: number;
+  positionQuantity: number;
+  averageCost: number;
+  realizedPnl: number;
+  totalFeesQuote: number;
+  lastPrice: number | null;
+  equity: number | null;
+  unrealizedPnl: number | null;
+  totalReturnPercent: number | null;
+  version: number;
+  createdAt: ApiTimestamp;
+  updatedAt: ApiTimestamp;
+  valuationAt: ApiTimestamp | null;
+  valuationStale: boolean;
+};
+
+type PaperEquityPoint = {
+  id: number;
+  sessionId: string;
+  timestamp: ApiTimestamp;
+  cash: number;
+  positionQuantity: number;
+  lastPrice: number | null;
+  equity: number | null;
+  realizedPnl: number;
+  unrealizedPnl: number | null;
+  strategyId: string | null;
+  strategyConfigVersion: number | null;
+  kind: "INITIAL" | "MARK" | "FILL";
+};
+
+type PaperFill = {
+  id: number;
+  sessionId: string;
+  decisionId: string;
+  strategyId: string;
+  strategyConfigVersion: number;
+  side: string;
+  filledBase: number;
+  price: number;
+  cashDelta: number;
+  feeQuote: number;
+  realizedPnl: number;
+  cashAfter: number;
+  equityAfter: number;
+  createdAt: ApiTimestamp;
 };
 
 type StreamState = "connecting" | "live" | "polling" | "demo";
@@ -299,14 +368,14 @@ function compact(value: number) {
 }
 
 function pct(value?: number | null, digits = 2) {
-  if (value == null) return "—";
-  return `${(Math.abs(value) <= 1 ? value * 100 : value).toFixed(digits)}%`;
+  return formatReturnFraction(value, digits);
 }
 
-function timeAgo(value?: ApiTimestamp | null) {
+function timeAgo(value: ApiTimestamp | null | undefined, now: Date | null) {
   const timestamp = apiTimestampMillis(value);
   if (timestamp == null) return "暂无记录";
-  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (now == null) return "—";
+  const seconds = Math.max(0, Math.round((now.getTime() - timestamp) / 1000));
   if (seconds < 60) return `${seconds} 秒前`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
   return `${Math.floor(seconds / 3600)} 小时前`;
@@ -335,8 +404,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function number(value?: string | number, digits = 1) {
-  const parsed = Number(value ?? 0);
+function number(value?: string | number | null, digits = 1) {
+  if (value == null || value === "") return "—";
+  const parsed = Number(value);
   return Number.isFinite(parsed)
     ? new Intl.NumberFormat("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(parsed)
     : "—";
@@ -365,13 +435,16 @@ export default function Home() {
   const [activeView, setActiveView] = useState<View>("overview");
   const [snapshot, setSnapshot] = useState<Snapshot>(demoSnapshot);
   const [dataMode, setDataMode] = useState<"live" | "demo">("demo");
+  const [runtimeConnected, setRuntimeConnected] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [backtestOpen, setBacktestOpen] = useState(false);
   const [backtestRange, setBacktestRange] = useState({ from: "", to: "" });
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [clock, setClock] = useState(new Date());
+  // SSR and the first browser render share placeholders until hydration finishes.
+  const [clock, setClock] = useState<Date | null>(null);
+  const clientReady = clock !== null;
   const [taskPending, setTaskPending] = useState(false);
   const [backtestPending, setBacktestPending] = useState(false);
   const [strategyPending, setStrategyPending] = useState<string | null>(null);
@@ -379,6 +452,9 @@ export default function Home() {
   const [market, setMarket] = useState<CandleSeries>(demoMarket);
   const [streamState, setStreamState] = useState<StreamState>("connecting");
   const [query, setQuery] = useState("");
+  const [paperCurrent, setPaperCurrent] = useState<PaperAccount | null>(null);
+  const [paperRefreshToken, setPaperRefreshToken] = useState(0);
+  const paperMode = snapshot.runtime.executionMode === "PAPER";
 
   const refresh = useCallback(async (quiet = false) => {
     if (!quiet) setRefreshing(true);
@@ -391,6 +467,7 @@ export default function Home() {
     ]);
 
     const successful = endpoints.filter((item) => item.status === "fulfilled").length;
+    setRuntimeConnected(endpoints[0].status === "fulfilled");
     if (successful > 0) {
       setSnapshot((current) => ({
         runtime: endpoints[0].status === "fulfilled" ? endpoints[0].value : current.runtime,
@@ -406,6 +483,7 @@ export default function Home() {
       if (!quiet) setToast("后端暂未连接，继续展示安全的演示快照");
     }
     setRefreshing(false);
+    setPaperRefreshToken((current) => current + 1);
   }, []);
 
   const loadMarket = useCallback(async (bar: string) => {
@@ -421,7 +499,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const initialRefresh = window.setTimeout(() => { void refresh(true); }, 0);
+    const initialRefresh = window.setTimeout(() => { setClock(new Date()); void refresh(true); }, 0);
     const clockTimer = window.setInterval(() => setClock(new Date()), 1000);
     const refreshTimer = window.setInterval(() => refresh(true), 30_000);
     return () => {
@@ -514,10 +592,10 @@ export default function Home() {
     const priceScale = Array.from({ length: 5 }, (_, index) => max - (range * index / 4));
     const priceTop = Math.min(96, Math.max(2, ((max - items.at(-1)!.close) / range) * 100));
     const timeIndexes = [0, .25, .5, .75, 1].map((ratio) => Math.round((items.length - 1) * ratio));
-    const times = timeIndexes.map((index) => new Date(Number(items[index].candle.ts)).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }));
+    const times = timeIndexes.map((index) => clientReady ? new Date(Number(items[index].candle.ts)).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }) : "--:--");
     const quoteVolume = items.reduce((sum, item) => sum + Number(item.candle.volCcyQuote ?? 0), 0);
     return { items, latest, change, min, max, range, priceScale, priceTop, times, quoteVolume };
-  }, [market]);
+  }, [market, clientReady]);
 
   const openBacktest = useCallback(() => {
     const now = Date.now();
@@ -678,7 +756,7 @@ export default function Home() {
             <span className="connection-dot" />
             {dataMode === "live" ? "后端已连接" : "演示数据"}
           </div>
-          <span className="clock">{clock.toLocaleTimeString("zh-CN", { hour12: false })}</span>
+          <span className="clock">{clock ? clock.toLocaleTimeString("zh-CN", { hour12: false }) : "--:--:--"}</span>
           <button className="icon-button" aria-label="刷新状态" onClick={() => refresh()}>
             <RefreshCw size={17} className={refreshing ? "spin" : ""} />
           </button>
@@ -702,7 +780,7 @@ export default function Home() {
           })}
         </nav>
         <div className="sidebar-bottom">
-          <div className="environment-mark">PAPER</div>
+          <div className="environment-mark">{snapshot.runtime.executionMode}</div>
         </div>
       </aside>
 
@@ -722,11 +800,13 @@ export default function Home() {
         {activeView === "overview" && (
           <>
             <section className="metric-grid" aria-label="核心指标">
-              <MetricCard icon={WalletCards} label="模拟资产净值" value={dataMode === "demo" ? "$52,841.30" : "—"} delta={dataMode === "demo" ? "演示值" : "暂无数据"} detail={dataMode === "demo" ? "本月 +$1,942.18" : "资产汇总尚未接入"} />
-              <MetricCard icon={TrendingUp} label="已实现盈亏" value={dataMode === "demo" ? "+$1,284.62" : "—"} delta={dataMode === "demo" ? "演示值" : "暂无数据"} detail={dataMode === "demo" ? "过去 30 天" : "盈亏汇总尚未接入"} />
+              <MetricCard icon={WalletCards} label="模拟资产净值" value={paperMode && paperCurrent ? number(paperCurrent.equity, 2) : "—"} delta={paperCurrent && paperMode ? paperCurrent.quoteCcy : "待开始模拟"} detail={paperCurrent && paperMode ? `初始资金 ${number(paperCurrent.initialCash, 2)} · ${paperCurrent.valuationStale ? "估值待更新" : "当前模拟会话"}` : paperMode ? "下方设置资金，开始独立模拟" : "当前为实盘模式"} />
+              <MetricCard icon={TrendingUp} label="已实现盈亏" value={paperMode && paperCurrent ? number(paperCurrent.realizedPnl, 2) : "—"} delta={paperCurrent && paperMode ? paperCurrent.quoteCcy : "暂无模拟"} detail={paperCurrent && paperMode ? `本次模拟 · 手续费 ${number(paperCurrent.totalFeesQuote, 4)}` : "基于模拟实际成交统计"} />
               <MetricCard icon={Gauge} label="风险利用率" value={dataMode === "demo" ? "38.2%" : "—"} delta={dataMode === "demo" ? "演示值" : "暂无数据"} detail={dataMode === "demo" ? "上限 72%" : "风险利用率尚未接入"} progress={dataMode === "demo" ? 38.2 : undefined} />
-              <MetricCard icon={Clock3} label="下次策略决策" value={decisionLoop?.nextRunAt ? timeAgoFuture(decisionLoop.nextRunAt) : "待调度"} delta={task?.running ? "运行中" : "已暂停"} positive={Boolean(task?.running)} detail="decision loop" />
+              <MetricCard icon={Clock3} label="下次策略决策" value={decisionLoop?.nextRunAt ? timeAgoFuture(decisionLoop.nextRunAt, clock) : "待调度"} delta={task?.running ? "运行中" : "已暂停"} positive={Boolean(task?.running)} detail="decision loop" />
             </section>
+
+            <PaperSimulationPanel dataMode={dataMode} executionMode={dataMode === "live" && !runtimeConnected ? "运行模式未确认" : snapshot.runtime.executionMode} refreshToken={paperRefreshToken} onCurrentChange={setPaperCurrent} />
 
             <div className="overview-grid">
               <section className="panel market-panel">
@@ -751,7 +831,7 @@ export default function Home() {
                       const wickBottom = ((chart.max - low) / chart.range) * 100;
                       const bodyTop = ((chart.max - Math.max(open, close)) / chart.range) * 100;
                       const bodyHeight = Math.max(1.4, (Math.abs(close - open) / chart.range) * 100);
-                      return <span key={candle.ts} className={`candle ${rising ? "rise" : "fall"}`} title={`${new Date(Number(candle.ts)).toLocaleString("zh-CN")} O ${candle.open} H ${candle.high} L ${candle.low} C ${candle.close}`} style={{ "--wick-top": `${wickTop}%`, "--wick-height": `${Math.max(1, wickBottom - wickTop)}%`, "--body-top": `${bodyTop}%`, "--body-height": `${bodyHeight}%` } as React.CSSProperties} />;
+                      return <span key={candle.ts} className={`candle ${rising ? "rise" : "fall"}`} title={clientReady ? `${new Date(Number(candle.ts)).toLocaleString("zh-CN")} O ${candle.open} H ${candle.high} L ${candle.low} C ${candle.close}` : undefined} style={{ "--wick-top": `${wickTop}%`, "--wick-height": `${Math.max(1, wickBottom - wickTop)}%`, "--body-top": `${bodyTop}%`, "--body-height": `${bodyHeight}%` } as React.CSSProperties} />;
                     })}
                   </div>
                   {chart.latest && <div className="current-price-line" style={{ top: `${chart.priceTop}%` }}><span>{number(chart.latest.close)}</span></div>}
@@ -767,7 +847,7 @@ export default function Home() {
               <section className="panel decision-panel">
                 <div className="panel-heading">
                   <div><span className="panel-kicker"><Sparkles size={13} /> LATEST DECISION</span><h2>策略决策</h2></div>
-                  <span className="timestamp">{timeAgo(decision?.timestamp)}</span>
+                  <span className="timestamp">{decision?.strategyConfigVersion ? `配置 v${decision.strategyConfigVersion} · ` : ""}{timeAgo(decision?.timestamp, clock)}</span>
                 </div>
                 <div className="decision-orb-wrap">
                   <div className="decision-orb"><span>建议</span><strong>{decision?.action ?? "—"}</strong><i /></div>
@@ -802,9 +882,9 @@ export default function Home() {
           </>
         )}
 
-        {activeView === "strategies" && <StrategiesView snapshot={snapshot} onActivate={activateStrategy} pendingId={strategyPending} dataMode={dataMode} />}
+        {activeView === "strategies" && <StrategiesView snapshot={snapshot} onActivate={activateStrategy} pendingId={strategyPending} dataMode={dataMode} onConfigurationSaved={(configuration) => { setSnapshot((current) => ({ ...current, strategies: current.strategies.map((strategy) => strategy.id === configuration.strategyId ? { ...strategy, params: configuration.params } : strategy) })); setPaperRefreshToken((current) => current + 1); }} />}
         {activeView === "events" && <EventsView events={snapshot.events} queueUtilization={queueUtilization} />}
-        {activeView === "backtests" && <BacktestsView runs={snapshot.backtests} onCreate={openBacktest} />}
+        {activeView === "backtests" && <BacktestsView runs={snapshot.backtests} onCreate={openBacktest} clock={clock} />}
       </section>
 
       <aside className="right-rail">
@@ -828,8 +908,8 @@ export default function Home() {
             </button>
           </div>
           <div className="loop-list">
-            <LoopRow icon={BrainCircuit} name="策略决策" detail="每 30 分钟" when={decisionLoop?.nextRunAt ? timeAgoFuture(decisionLoop.nextRunAt) : "待调度"} active={Boolean(task?.running)} />
-            <LoopRow icon={Zap} name="事件扫描" detail="每 60 秒" when={eventLoop?.nextRunAt ? timeAgoFuture(eventLoop.nextRunAt) : "待调度"} active={Boolean(task?.running)} />
+            <LoopRow icon={BrainCircuit} name="策略决策" detail="每 30 分钟" when={decisionLoop?.nextRunAt ? timeAgoFuture(decisionLoop.nextRunAt, clock) : "待调度"} active={Boolean(task?.running)} />
+            <LoopRow icon={Zap} name="事件扫描" detail="每 60 秒" when={eventLoop?.nextRunAt ? timeAgoFuture(eventLoop.nextRunAt, clock) : "待调度"} active={Boolean(task?.running)} />
           </div>
         </section>
 
@@ -849,7 +929,7 @@ export default function Home() {
         <section className="rail-card activity-card">
           <div className="rail-card-heading"><span>最近活动</span><Clock3 size={16} /></div>
           <div className="activity-list">
-            <ActivityItem color="green" title={decision ? "策略决策完成" : "策略决策"} detail={decision ? `${decision.action ?? "HOLD"} · ${timeAgo(decision.timestamp)}` : "暂无决策记录"} />
+            <ActivityItem color="green" title={decision ? "策略决策完成" : "策略决策"} detail={decision ? `${decision.action ?? "HOLD"} · ${timeAgo(decision.timestamp, clock)}` : "暂无决策记录"} />
             <ActivityItem color="blue" title="行情事件已消费" detail={`累计 ${compact(snapshot.events.consumed)} 条`} />
             <ActivityItem color="violet" title="最近回测" detail={snapshot.backtests[0] ? `${snapshot.backtests[0].request.strategyId} · ${snapshot.backtests[0].status} · ${pct(snapshot.backtests[0].totalReturn)}` : "暂无记录"} />
           </div>
@@ -898,8 +978,301 @@ function ActivityItem({ color, title, detail }: { color: string; title: string; 
   return <div className="activity-item"><span className={color} /><div><strong>{title}</strong><small>{detail}</small></div></div>;
 }
 
-function StrategiesView({ snapshot, onActivate, pendingId, dataMode }: { snapshot: Snapshot; onActivate: (strategyId: string) => void; pendingId: string | null; dataMode: "live" | "demo" }) {
-  return <div className="detail-layout"><section className="panel detail-hero"><div><span className="panel-kicker"><BrainCircuit size={13} /> STRATEGY REGISTRY</span><h2>当前策略：{snapshot.runtime.activeStrategyId ?? "尚未选择"}</h2><p>在这里更换下一轮定时决策使用的策略。选择会由后端持久化并用版本号保护；回测仍可独立选择任意已启用策略。</p></div><div className="hero-stat"><span>当前执行模式</span><strong>{snapshot.runtime.executionMode}</strong><small>{snapshot.runtime.liveEnabled ? "实盘门已开启" : `实盘门保持关闭 · rev ${snapshot.runtime.activeStrategyRevision ?? 0}`}</small></div></section><section className="strategy-grid">{snapshot.strategies.map((strategy, index) => { const running = snapshot.runtime.activeStrategyId === strategy.id; const pending = pendingId === strategy.id; return <article className={`panel strategy-detail-card ${running ? "active-strategy" : ""}`} key={strategy.id}><div className="strategy-detail-top"><span className={`strategy-glyph glyph-${(index % 3) + 1}`}><Layers3 size={18} /></span><span className={`status-badge ${running ? "healthy" : "idle"}`}>{running ? "ACTIVE" : strategy.enabled ? "READY" : "DISABLED"}</span></div><h3>{strategy.id}</h3><p>{strategy.type} strategy</p><div className="strategy-metadata"><div><span>时间周期</span><strong>{strategy.bar}</strong></div><div><span>配置参数</span><strong>{Object.keys(strategy.params ?? {}).length}</strong></div><div><span>决策参与</span><strong>{running ? "当前" : "候选"}</strong></div></div><button className="strategy-activate" disabled={!strategy.enabled || running || Boolean(pendingId)} onClick={() => onActivate(strategy.id)}>{pending ? <LoaderCircle size={14} className="spin" /> : running ? <Check size={14} /> : <Zap size={14} />}{running ? "当前策略" : dataMode === "live" ? "设为当前策略" : "演示切换"}</button></article>; })}</section></div>;
+function StrategiesView({ snapshot, onActivate, pendingId, dataMode, onConfigurationSaved }: { snapshot: Snapshot; onActivate: (strategyId: string) => void; pendingId: string | null; dataMode: "live" | "demo"; onConfigurationSaved: (configuration: StrategyConfiguration) => void }) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  return <div className="detail-layout">
+    <section className="panel detail-hero"><div><span className="panel-kicker"><BrainCircuit size={13} /> STRATEGY REGISTRY</span><h2>当前策略：{snapshot.runtime.activeStrategyId ?? "尚未选择"}</h2><p>参数保存后从下一次新决策开始生效；已开始的决策、历史成交和原有持仓保留原配置版本。</p></div><div className="hero-stat"><span>当前执行模式</span><strong>{snapshot.runtime.executionMode}</strong><small>{snapshot.runtime.liveEnabled ? "实盘门已开启" : `实盘门保持关闭 · rev ${snapshot.runtime.activeStrategyRevision ?? 0}`}</small></div></section>
+    <section className="strategy-grid">{snapshot.strategies.map((strategy, index) => {
+      const running = snapshot.runtime.activeStrategyId === strategy.id;
+      const pending = pendingId === strategy.id;
+      return <article className={`panel strategy-detail-card ${running ? "active-strategy" : ""}`} key={strategy.id}>
+        <div className="strategy-detail-top"><span className={`strategy-glyph glyph-${(index % 3) + 1}`}><Layers3 size={18} /></span><span className={`status-badge ${running ? "healthy" : "idle"}`}>{running ? "ACTIVE" : strategy.enabled ? "READY" : "DISABLED"}</span></div>
+        <h3>{strategy.id}</h3><p>{strategy.type} strategy</p>
+        <div className="strategy-metadata"><div><span>时间周期</span><strong>{strategy.bar}</strong></div><div><span>配置参数</span><strong>{Object.keys(strategy.params ?? {}).length}</strong></div><div><span>决策参与</span><strong>{running ? "当前" : "候选"}</strong></div></div>
+        <button className="strategy-activate" disabled={!strategy.enabled || running || Boolean(pendingId)} onClick={() => onActivate(strategy.id)}>{pending ? <LoaderCircle size={14} className="spin" /> : running ? <Check size={14} /> : <Zap size={14} />}{running ? "当前策略" : dataMode === "live" ? "设为当前策略" : "演示切换"}</button>
+        <button className="strategy-edit" aria-expanded={editingId === strategy.id} onClick={() => setEditingId(editingId === strategy.id ? null : strategy.id)}><Layers3 size={14} />{editingId === strategy.id ? "收起参数与版本" : "修改参数 / 查看版本"}<ChevronRight size={14} /></button>
+      </article>;
+    })}</section>
+    {editingId && <ConfigurationEditor key={`${dataMode}-${editingId}`} strategyId={editingId} connected={dataMode === "live"} onSaved={onConfigurationSaved} />}
+  </div>;
+}
+
+function displayTimestamp(value: ApiTimestamp | null | undefined) {
+  const milliseconds = apiTimestampMillis(value);
+  return milliseconds == null ? "暂无记录" : new Date(milliseconds).toLocaleString("zh-CN", { hour12: false });
+}
+
+function ConfigurationEditor({ strategyId, connected, onSaved }: { strategyId: string; connected: boolean; onSaved: (configuration: StrategyConfiguration) => void }) {
+  const [configuration, setConfiguration] = useState<StrategyConfiguration | null>(null);
+  const [history, setHistory] = useState<StrategyConfiguration[]>([]);
+  const [values, setValues] = useState<Record<string, string | boolean | null>>({});
+  const [reason, setReason] = useState("");
+  const [pending, setPending] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  const [historyPending, setHistoryPending] = useState(false);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const historyOffset = useRef(0);
+  const configurationLoadGeneration = useRef(0);
+  const historyAbort = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const abort = new AbortController();
+    configurationLoadGeneration.current += 1;
+    historyAbort.current?.abort();
+    const timer = window.setTimeout(() => {
+      if (!connected) { setLoading(false); return; }
+      setLoading(true);
+      setError(null);
+      setHistoryError(null);
+      setHistoryPending(false);
+      Promise.all([
+        request<StrategyConfiguration>(`/api/trading/strategies/${encodeURIComponent(strategyId)}/configuration`, { signal: abort.signal }),
+        request<StrategyConfiguration[]>(`/api/trading/strategies/${encodeURIComponent(strategyId)}/configuration/history?offset=0&limit=100`, { signal: abort.signal }),
+      ]).then(([current, versions]) => {
+        if (abort.signal.aborted) return;
+        setConfiguration(current);
+        setHistory(versions);
+        historyOffset.current = versions.length;
+        setHistoryHasMore(versions.length === 100);
+        setValues(Object.fromEntries(Object.entries(current.params).map(([key, value]) => [key, typeof value === "boolean" || value == null ? value : String(value)])));
+        setReason("");
+      }).catch((failure) => { if (!abort.signal.aborted) setError(`配置读取失败：${errorMessage(failure)}`); }).finally(() => { if (!abort.signal.aborted) setLoading(false); });
+    }, 0);
+    return () => { window.clearTimeout(timer); abort.abort(); historyAbort.current?.abort(); };
+  }, [strategyId, connected, reload]);
+
+  const loadOlderVersions = async () => {
+    if (!connected || loading || pending || historyPending || !historyHasMore) return;
+    const abort = new AbortController();
+    const generation = configurationLoadGeneration.current;
+    historyAbort.current = abort;
+    setHistoryPending(true); setHistoryError(null);
+    try {
+      const older = await request<StrategyConfiguration[]>(`/api/trading/strategies/${encodeURIComponent(strategyId)}/configuration/history?offset=${historyOffset.current}&limit=100`, { signal: abort.signal });
+      if (abort.signal.aborted || configurationLoadGeneration.current !== generation) return;
+      // Advance by fetched rows, including duplicates caused by newer versions inserted at the head.
+      historyOffset.current += older.length;
+      setHistory((current) => [...current, ...older.filter((item) => !current.some((existing) => existing.version === item.version))].sort((left, right) => right.version - left.version));
+      setHistoryHasMore(older.length === 100);
+    } catch (failure) {
+      if (!abort.signal.aborted && configurationLoadGeneration.current === generation) setHistoryError(`更早版本读取失败：${errorMessage(failure)}`);
+    } finally {
+      if (!abort.signal.aborted && configurationLoadGeneration.current === generation) setHistoryPending(false);
+    }
+  };
+
+  const save = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!connected || !configuration || pending || historyPending) return;
+    setError(null);
+    setNotice(null);
+    let payload;
+    try { payload = buildStrategyParametersPayload({ expectedVersion: configuration.version, reason, params: values }); }
+    catch (failure) { setError(errorMessage(failure)); return; }
+    setPending(true);
+    try {
+      const updated = await request<StrategyConfiguration>(`/api/trading/strategies/${encodeURIComponent(strategyId)}/configuration`, { method: "PUT", body: JSON.stringify(payload) });
+      setConfiguration(updated);
+      if (!history.some((item) => item.version === updated.version)) historyOffset.current += 1;
+      setHistory((current) => [updated, ...current.filter((item) => item.version !== updated.version)]);
+      setValues(Object.fromEntries(Object.entries(updated.params).map(([key, value]) => [key, typeof value === "boolean" || value == null ? value : String(value)])));
+      setReason("");
+      setNotice(`已保存 v${updated.version}，后续新决策使用此版本。历史数据保留原版本。`);
+      onSaved(updated);
+    } catch (failure) {
+      setError(failure instanceof ApiRequestError && failure.status === 409 ? "配置已被其他页面修改。你的输入尚未保存；先重新加载最新版本，再重新修改。" : `保存失败，参数未生效：${errorMessage(failure)}`);
+    } finally { setPending(false); }
+  };
+
+  return <section className="panel configuration-panel" aria-label={`${strategyId} 参数配置`}>
+    <div className="panel-heading"><div><h2>策略参数</h2><p className="section-description">{strategyId}{configuration && ` · 当前 v${configuration.version} · ${displayTimestamp(configuration.changedAt)}`}</p></div><button className="secondary-button" disabled={!connected || loading || pending} onClick={() => { setNotice(null); setReload((current) => current + 1); }}><RefreshCw size={14} />重新加载</button></div>
+    {!connected ? <p className="empty-message">连接后端后可读取并修改参数。演示数据不会保存配置。</p> : loading ? <p className="empty-message"><LoaderCircle size={15} className="spin" />正在读取配置与历史版本…</p> : null}
+    {error && <p className="inline-error" role="alert">{error}</p>}
+    {notice && <p className="inline-success" role="status">{notice}</p>}
+    {connected && configuration && !loading && <>
+      <form className="configuration-form" onSubmit={save}>
+        <fieldset disabled={pending}><legend className="sr-only">参数值</legend><div className="parameter-grid">
+          {strategyParameterFields.map((field) => <label key={field.key}><span>{field.label}</span><input name={field.key} type="number" required={!field.nullable} min={field.integer ? field.min : undefined} max={field.max} step={field.step} value={String(values[field.key] ?? "")} onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))} /><small>{field.hint}</small></label>)}
+          <label className="checkbox-field"><input type="checkbox" checked={values["require-confirmed-candle"] === true || values["require-confirmed-candle"] === "true"} onChange={(event) => setValues((current) => ({ ...current, "require-confirmed-candle": event.target.checked }))} /><span>仅使用已收盘 K 线</span></label>
+        </div><label className="change-reason"><span>修改原因</span><input name="reason" required maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例如：提高价量门槛，观察交易频率变化" /></label></fieldset>
+        <div className="configuration-footer"><p>基于 v{configuration.version} 保存新版本。K 线窗口还受行情采集上限校验；下单数量仍受全局执行上限约束。</p><button className="primary-button" type="submit" disabled={pending || historyPending}>{pending ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />}保存新版本</button></div>
+      </form>
+      <div className="configuration-history"><h3>配置版本记录</h3><p className="section-description">展开版本可查看当时的完整参数，以及相对上一版本的变化。</p>
+        {history.map((item, index) => {
+          const previous = history[index + 1];
+          return <details key={item.version} className="version-record"><summary><span className="version-badge">v{item.version}</span><strong>{item.reason}</strong><time>{displayTimestamp(item.changedAt)}</time></summary><dl>{Object.entries(item.params).map(([key, value]) => {
+            const before = previous?.params[key];
+            const changed = previous && String(before) !== String(value);
+            return <div key={key} className={changed ? "parameter-changed" : ""}><dt>{strategyParameterFields.find((field) => field.key === key)?.label ?? (key === "require-confirmed-candle" ? "仅使用已收盘 K 线" : key)}</dt><dd>{changed && <><del>{String(before ?? "默认")}</del><span aria-hidden="true"> → </span></>}{String(value ?? "默认")}</dd></div>;
+          })}</dl></details>;
+        })}
+        {historyError && <p className="inline-error" role="alert">{historyError}</p>}
+        {historyHasMore && <button className="secondary-button" disabled={historyPending || pending} onClick={() => void loadOlderVersions()}>{historyPending ? <LoaderCircle size={14} className="spin" /> : <Layers3 size={14} />}{historyPending ? "正在加载…" : "加载更早版本"}</button>}
+      </div>
+    </>}
+  </section>;
+}
+
+function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrentChange }: { dataMode: "live" | "demo"; executionMode: string; refreshToken: number; onCurrentChange: (account: PaperAccount | null) => void }) {
+  const [current, setCurrent] = useState<PaperAccount | null>(null);
+  const [account, setAccount] = useState<PaperAccount | null>(null);
+  const [sessions, setSessions] = useState<PaperAccount[]>([]);
+  const [selection, setSelection] = useState("");
+  const [equity, setEquity] = useState<PaperEquityPoint[]>([]);
+  const [fills, setFills] = useState<PaperFill[]>([]);
+  const [versionFilter, setVersionFilter] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [morePending, setMorePending] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState({ equity: false, fills: false, sessions: false });
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  const [initialCash, setInitialCash] = useState("10000");
+  const visibleSession = useRef<string | null>(null);
+  const loadGeneration = useRef(0);
+  const historyCache = useRef<{ sessionId: string; equity: PaperEquityPoint[]; fills: PaperFill[] } | null>(null);
+  const available = dataMode === "live" && executionMode === "PAPER";
+
+  useEffect(() => {
+    const abort = new AbortController();
+    const timer = window.setTimeout(() => {
+      loadGeneration.current += 1;
+      if (!available) {
+        setCurrent(null); setAccount(null); setSessions([]); setEquity([]); setFills([]); setLoading(false); onCurrentChange(null);
+        return;
+      }
+      setLoading(true); setError(null); setAccount(null); setEquity([]); setFills([]); visibleSession.current = null;
+      const load = async () => {
+        const [active, list] = await Promise.all([
+          request<PaperAccount | null>("/api/trading/paper/account", { signal: abort.signal }),
+          request<PaperAccount[]>("/api/trading/paper/sessions?limit=20", { signal: abort.signal }),
+        ]);
+        const selected = selection && selection !== active?.sessionId ? await request<PaperAccount>(`/api/trading/paper/sessions/${encodeURIComponent(selection)}`, { signal: abort.signal }) : active;
+        const [points, trades] = selected ? await Promise.all([
+          request<PaperEquityPoint[]>(`/api/trading/paper/sessions/${encodeURIComponent(selected.sessionId)}/equity?limit=100`, { signal: abort.signal }),
+          request<PaperFill[]>(`/api/trading/paper/sessions/${encodeURIComponent(selected.sessionId)}/fills?limit=100`, { signal: abort.signal }),
+        ]) : [[], []];
+        if (abort.signal.aborted) return;
+        setCurrent(active); onCurrentChange(active); setAccount(selected);
+        setSessions(selected && !list.some((item) => item.sessionId === selected.sessionId) ? [...list, selected] : list);
+        const cached = historyCache.current?.sessionId === selected?.sessionId ? historyCache.current : null;
+        const mergedEquity = mergeContiguousHistory(points, cached?.equity ?? []) as PaperEquityPoint[];
+        const mergedFills = mergeContiguousHistory(trades, cached?.fills ?? []) as PaperFill[];
+        setEquity(mergedEquity); setFills(mergedFills); visibleSession.current = selected?.sessionId ?? null;
+        historyCache.current = selected ? { sessionId: selected.sessionId, equity: mergedEquity, fills: mergedFills } : null;
+        setHasMore({ equity: points.length === 100, fills: trades.length === 100, sessions: list.length === 20 });
+      };
+      load().catch((failure) => {
+        if (!abort.signal.aborted) { setCurrent(null); onCurrentChange(null); setError(`模拟数据读取失败：${errorMessage(failure)}。请重新加载后操作。`); }
+      }).finally(() => { if (!abort.signal.aborted) setLoading(false); });
+    }, 0);
+    return () => { window.clearTimeout(timer); abort.abort(); };
+  }, [available, refreshToken, selection, reload, onCurrentChange]);
+
+  const startSession = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!available || loading || pending || error) return;
+    let payload;
+    try { payload = buildPaperSessionPayload({ initialCash, expectedSessionId: current?.sessionId ?? null, expectedVersion: current?.version ?? null }); }
+    catch (failure) { setError(errorMessage(failure)); return; }
+    setPending(true); setError(null); setNotice(null);
+    try {
+      const created = await request<PaperAccount>("/api/trading/paper/sessions", { method: "POST", body: JSON.stringify(payload) });
+      setCurrent(created); onCurrentChange(created); setAccount(created); setFills([]); setEquity([]); setVersionFilter(""); setSelection("");
+      setNotice(`新模拟会话已创建，初始资金 ${number(created.initialCash, 2)} ${created.quoteCcy}。此前会话保留在历史中。`);
+      setReload((value) => value + 1);
+    } catch (failure) {
+      setError(failure instanceof ApiRequestError && failure.status === 409 ? "模拟账户或运行状态已变化。新会话未创建；请重新加载后再试。" : `新会话创建失败：${errorMessage(failure)}`);
+    } finally { setPending(false); }
+  };
+
+  const loadMore = async (kind: "equity" | "fills" | "sessions") => {
+    if (!account || morePending || loading) return;
+    const capturedSession = account.sessionId;
+    const capturedGeneration = loadGeneration.current;
+    const list = kind === "equity" ? equity : kind === "fills" ? fills : sessions;
+    const beforeId = Math.min(...list.map((item) => item.id));
+    if (!Number.isFinite(beforeId)) return;
+    setMorePending(kind);
+    try {
+      if (kind === "sessions") {
+        const older = await request<PaperAccount[]>(`/api/trading/paper/sessions?limit=20&beforeId=${beforeId}`);
+        if (visibleSession.current !== capturedSession || loadGeneration.current !== capturedGeneration) return;
+        setSessions((items) => [...items, ...older.filter((item) => !items.some((existing) => existing.id === item.id))]);
+        setHasMore((value) => ({ ...value, sessions: older.length === 20 }));
+      } else if (kind === "equity") {
+        const older = await request<PaperEquityPoint[]>(`/api/trading/paper/sessions/${encodeURIComponent(capturedSession)}/equity?limit=100&beforeId=${beforeId}`);
+        if (visibleSession.current !== capturedSession || loadGeneration.current !== capturedGeneration) return;
+        setEquity((items) => { const merged = [...items, ...older.filter((item) => !items.some((existing) => existing.id === item.id))]; if (historyCache.current?.sessionId === capturedSession) historyCache.current.equity = merged; return merged; });
+        setHasMore((value) => ({ ...value, equity: older.length === 100 }));
+      } else {
+        const older = await request<PaperFill[]>(`/api/trading/paper/sessions/${encodeURIComponent(capturedSession)}/fills?limit=100&beforeId=${beforeId}`);
+        if (visibleSession.current !== capturedSession || loadGeneration.current !== capturedGeneration) return;
+        setFills((items) => { const merged = [...items, ...older.filter((item) => !items.some((existing) => existing.id === item.id))]; if (historyCache.current?.sessionId === capturedSession) historyCache.current.fills = merged; return merged; });
+        setHasMore((value) => ({ ...value, fills: older.length === 100 }));
+      }
+    } catch (failure) { setError(`历史记录读取失败：${errorMessage(failure)}`); }
+    finally { setMorePending(null); }
+  };
+
+  const versions = Array.from(new Set([...equity, ...fills].filter((item) => item.strategyId && item.strategyConfigVersion != null).map((item) => `${item.strategyId}@${item.strategyConfigVersion}`))).sort();
+  const shownFills = filterConfigurationEvents(fills, versionFilter) as PaperFill[];
+  const shownEquity = filterConfigurationEvents(equity, versionFilter) as PaperEquityPoint[];
+
+  return <section className="panel simulation-panel" aria-label="模拟资金与效果">
+    <div className="panel-heading"><div><h2>模拟资金与效果</h2><p className="section-description">独立资金会话保留参数版本、成交和净值，观察策略实际模拟效果。</p></div>{available && <button className="secondary-button" disabled={pending || loading} onClick={() => setReload((value) => value + 1)}><RefreshCw size={14} />重新加载</button>}</div>
+    {executionMode !== "PAPER" ? <p className="empty-message">当前为 {executionMode} 模式。模拟资金操作仅在 PAPER 模式开放。</p> : !available ? <p className="empty-message">连接后端后，在这里设置初始资金并开始模拟。演示快照不会创建资金会话。</p> : <>
+      {error && <p className="inline-error" role="alert">{error}</p>}
+      {notice && <p className="inline-success" role="status">{notice}</p>}
+      {loading && <p className="empty-message" role="status"><LoaderCircle size={15} className="spin" />正在读取模拟资金与历史…</p>}
+      {!loading && !current && !error && <p className="empty-message">尚未设置模拟资金。创建第一个会话后，后续模拟成交会计入这笔资金。</p>}
+      <details className="session-create" open={!current}>
+        <summary>{current ? "设置新初始资金，开始独立模拟" : "设置初始资金"}</summary>
+        <form onSubmit={startSession}><label><span>初始资金（计价币）</span><input name="paperInitialCash" type="number" min="0.00000001" max="1000000000000" step="0.00000001" required value={initialCash} onChange={(event) => { setInitialCash(event.target.value); if (error?.startsWith("初始资金")) setError(null); }} disabled={pending || loading} /></label><button className="primary-button" type="submit" disabled={pending || loading || Boolean(error)}>{pending ? <LoaderCircle size={15} className="spin" /> : <Play size={15} />}创建新模拟会话</button></form>
+        <p>新会话从零持仓开始。旧会话的资金、持仓与历史会保留为归档，不再继续模拟；当前资金不会被直接改写。</p>
+      </details>
+      {sessions.length > 0 && <div className="simulation-toolbar"><label><span>查看模拟会话</span><select aria-label="查看模拟会话" value={selection} disabled={loading || pending || Boolean(morePending)} onChange={(event) => { setSelection(event.target.value); setVersionFilter(""); setError(null); setNotice(null); }}><option value="">当前会话{current ? ` · ${current.sessionId}` : ""}</option>{sessions.filter((item) => item.sessionId !== current?.sessionId).map((item) => <option key={item.sessionId} value={item.sessionId}>{displayTimestamp(item.createdAt)} · {number(item.initialCash, 2)} {item.quoteCcy} · {item.sessionId}</option>)}</select></label>{hasMore.sessions && <button className="secondary-button" disabled={loading || Boolean(morePending)} onClick={() => void loadMore("sessions")}>更早会话</button>}</div>}
+      {account && !loading && <>
+        <div className="session-identity"><span className={`status-badge ${account.status === "ACTIVE" ? "healthy" : "idle"}`}>{account.status === "ACTIVE" ? "当前模拟" : "历史归档"}</span><strong>{account.sessionId}</strong><span>{account.instId} · {account.quoteCcy}</span><span>{displayTimestamp(account.createdAt)} 开始</span></div>
+        <dl className="capital-summary">
+          <div><dt>资产净值</dt><dd>{number(account.equity, 2)}<small>{account.quoteCcy}</small></dd></div>
+          <div><dt>初始资金</dt><dd>{number(account.initialCash, 2)}</dd></div>
+          <div><dt>可用现金</dt><dd>{number(account.cash, 2)}</dd></div>
+          <div><dt>已实现盈亏</dt><dd className={account.realizedPnl < 0 ? "danger-text" : "positive-text"}>{number(account.realizedPnl, 2)}</dd></div>
+          <div><dt>未实现盈亏</dt><dd className={account.unrealizedPnl == null ? "" : account.unrealizedPnl < 0 ? "danger-text" : "positive-text"}>{number(account.unrealizedPnl, 2)}</dd></div>
+          <div><dt>会话累计收益率</dt><dd className={account.totalReturnPercent == null ? "" : account.totalReturnPercent < 0 ? "danger-text" : "positive-text"}>{account.totalReturnPercent == null ? "—" : `${Number(account.totalReturnPercent).toFixed(2)}%`}</dd></div>
+        </dl>
+        <p className={`valuation-note ${account.valuationStale ? "warning-text" : ""}`}>估值时间：{displayTimestamp(account.valuationAt)}{account.valuationStale ? " · 行情估值已过期，等待新价格" : ""}。持仓 {number(account.positionQuantity, 8)}，累计手续费 {number(account.totalFeesQuote, 4)} {account.quoteCcy}。</p>
+        <div className="version-filter"><label><span>按成交 / 估值所属配置筛选</span><select aria-label="按配置版本筛选记录" value={versionFilter} onChange={(event) => setVersionFilter(event.target.value)}><option value="">全部配置版本</option>{versions.map((version) => <option key={version} value={version}>{version.replace(/@(\d+)$/, " · v$1")}</option>)}</select></label><p>版本筛选仅定位记录。净值包含延续持仓与行情变化，不代表该版本独立收益；需要独立比较时创建新模拟。</p></div>
+        <PaperEquityChart points={equity} initialCash={Number(account.initialCash)} versionFilter={versionFilter} quoteCcy={account.quoteCcy} />
+        <div className="ledger-grid">
+          <section className="ledger-section"><h3>模拟成交 <small>{shownFills.length} 条已加载记录</small></h3><div className="ledger-table-wrap"><table className="ledger-table"><thead><tr><th>时间 / 配置</th><th>方向 / 数量</th><th>成交价</th><th>现金变化</th><th>手续费 / 实现盈亏</th></tr></thead><tbody>{shownFills.map((fill) => <tr key={fill.id}><td>{displayTimestamp(fill.createdAt)}<small>{fill.strategyId} · v{fill.strategyConfigVersion}</small></td><td>{fill.side}<small>{number(fill.filledBase, 8)}</small></td><td>{number(fill.price, 2)}</td><td className={fill.cashDelta < 0 ? "danger-text" : "positive-text"}>{number(fill.cashDelta, 2)}</td><td>{number(fill.feeQuote, 4)}<small>{number(fill.realizedPnl, 2)}</small></td></tr>)}</tbody></table>{!shownFills.length && <p className="empty-message">{versionFilter ? "已加载记录中，此配置暂无成交。" : "暂无模拟成交。等待策略产生并通过风控的买卖决策。"}</p>}</div>{hasMore.fills && <button className="secondary-button" disabled={Boolean(morePending)} onClick={() => void loadMore("fills")}>{morePending === "fills" ? "正在加载…" : "加载更早成交"}</button>}</section>
+          <section className="ledger-section"><h3>资金变化记录 <small>{shownEquity.length} 条已加载记录</small></h3><div className="equity-record-list">{shownEquity.map((point) => <div key={point.id}><span>{displayTimestamp(point.timestamp)}<small>{point.kind === "INITIAL" ? "初始资金" : point.kind === "FILL" ? "模拟成交后" : "行情估值"}{point.strategyId && ` · ${point.strategyId} v${point.strategyConfigVersion}`}</small></span><strong>{number(point.equity, 2)}<small>现金 {number(point.cash, 2)}</small></strong></div>)}{!shownEquity.length && <p className="empty-message">{versionFilter ? "已加载记录中，此配置暂无估值。" : "等待首条资金记录。"}</p>}</div>{hasMore.equity && <button className="secondary-button" disabled={Boolean(morePending)} onClick={() => void loadMore("equity")}>{morePending === "equity" ? "正在加载…" : "加载更早资金记录"}</button>}</section>
+        </div>
+      </>}
+    </>}
+  </section>;
+}
+
+function PaperEquityChart({ points, initialCash, versionFilter, quoteCcy }: { points: PaperEquityPoint[]; initialCash: number; versionFilter: string; quoteCcy: string }) {
+  const ordered = [...points].filter((item) => item.equity != null && Number.isFinite(Number(item.equity))).sort((a, b) => (apiTimestampMillis(a.timestamp) ?? 0) - (apiTimestampMillis(b.timestamp) ?? 0) || a.id - b.id);
+  if (!ordered.length) return <p className="empty-message">资金曲线会在模拟开始后生成。</p>;
+  const values = [...ordered.map((point) => Number(point.equity)), initialCash];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const padding = Math.max((max - min) * .12, max * .001, 1);
+  const low = min - padding;
+  const high = max + padding;
+  const start = apiTimestampMillis(ordered[0].timestamp) ?? 0;
+  const end = apiTimestampMillis(ordered.at(-1)!.timestamp) ?? start;
+  const x = (point: PaperEquityPoint) => end === start ? 410 : 22 + (((apiTimestampMillis(point.timestamp) ?? start) - start) / (end - start)) * 776;
+  const y = (value: number) => 144 - ((value - low) / (high - low)) * 124;
+  return <figure className="equity-chart"><figcaption><strong>会话资金曲线</strong><span>净值（{quoteCcy}） · 已加载 {ordered.length} 个快照</span></figcaption><div className="equity-chart-body"><div className="equity-chart-scale"><span>{number(high, 2)}</span><span>{number(low, 2)}</span></div><svg viewBox="0 0 820 166" role="img" aria-label={`模拟会话净值，从 ${number(ordered[0].equity, 2)} 到 ${number(ordered.at(-1)!.equity, 2)} ${quoteCcy}，虚线为初始资金`} preserveAspectRatio="none"><line x1="22" x2="798" y1={y(initialCash)} y2={y(initialCash)} className="initial-capital-line" /><polyline points={ordered.map((point) => `${x(point)},${y(Number(point.equity))}`).join(" ")} className={`equity-line ${versionFilter ? "filtered" : ""}`} />{ordered.filter((point) => !versionFilter || `${point.strategyId}@${point.strategyConfigVersion}` === versionFilter).map((point) => <circle key={point.id} cx={x(point)} cy={y(Number(point.equity))} r={ordered.length === 1 ? 4 : 2.6}><title>{`${displayTimestamp(point.timestamp)} · ${number(point.equity, 2)} ${quoteCcy} · ${point.strategyId ? `${point.strategyId} v${point.strategyConfigVersion}` : "初始资金"}`}</title></circle>)}</svg></div><div className="equity-chart-times"><span>{displayTimestamp(ordered[0].timestamp)}</span><span>{displayTimestamp(ordered.at(-1)!.timestamp)}</span></div><p>虚线为初始资金；{versionFilter ? "高亮点为选定配置的记录，背景线保留整段会话净值。" : "曲线记录整段会话净值。"}行情估值按分钟采样，成交额外留点。</p></figure>;
 }
 
 function EventsView({ events, queueUtilization }: { events: EventBusStatus; queueUtilization: number }) {
@@ -911,14 +1284,24 @@ function EventStat({ label, value, note }: { label: string; value: string; note:
   return <div><span>{label}</span><strong>{value}</strong><small>{note}</small></div>;
 }
 
-function BacktestsView({ runs, onCreate }: { runs: BacktestRun[]; onCreate: () => void }) {
-  return <div className="detail-layout"><section className="panel backtest-summary"><div><span className="panel-kicker"><TestTube2 size={13} /> EXPERIMENT HISTORY</span><h2>最近回测</h2><p>每次运行都保留参数、进度与绩效结果，便于复现和比较。</p></div><button className="primary-button" onClick={onCreate}><Plus size={15} />新建回测</button></section><section className="panel backtest-table-wrap"><table className="backtest-table"><thead><tr><th>运行 ID</th><th>策略 / 标的</th><th>状态</th><th>收益率</th><th>最大回撤</th><th>胜率</th><th>交易数</th><th /></tr></thead><tbody>{runs.map((run) => <tr key={run.runId}><td><strong>{run.runId}</strong><small>{timeAgo(run.createdAt)}</small></td><td><strong>{run.request.strategyId}</strong><small>{run.request.instId} · {run.request.bar}</small></td><td><span className={`status-badge ${run.status === "SUCCEEDED" ? "healthy" : run.status === "FAILED" ? "danger" : "idle"}`}>{run.status}</span>{run.error && <small className="danger-text">{run.error}</small>}</td><td className={(run.totalReturn ?? 0) >= 0 ? "positive-text" : "danger-text"}>{pct(run.totalReturn)}</td><td>{pct(run.maxDrawdown)}</td><td>{pct(run.winRate, 1)}</td><td>{run.tradeCount ?? "—"}</td><td><button className="icon-button" aria-label={`查看回测 ${run.runId}`}><ChevronRight size={15} /></button></td></tr>)}</tbody></table></section></div>;
+function BacktestsView({ runs, onCreate, clock }: { runs: BacktestRun[]; onCreate: () => void; clock: Date | null }) {
+  return <div className="detail-layout">
+    <section className="panel backtest-summary"><div><span className="panel-kicker"><TestTube2 size={13} /> EXPERIMENT HISTORY</span><h2>最近回测</h2><p>每次运行保留入队时的配置版本、实际参数与绩效结果，便于复现和比较。</p></div><button className="primary-button" onClick={onCreate}><Plus size={15} />新建回测</button></section>
+    <section className="panel backtest-table-wrap"><table className="backtest-table"><thead><tr><th>运行 ID</th><th>策略 / 配置 / 标的</th><th>状态</th><th>收益率</th><th>最大回撤</th><th>胜率</th><th>交易数</th><th>参数</th></tr></thead><tbody>{runs.map((run) => <tr key={run.runId}>
+      <td><strong>{run.runId}</strong><small>{timeAgo(run.createdAt, clock)}</small></td>
+      <td><strong>{run.request.strategyId}</strong><small>{run.strategyConfigVersion ? `配置 v${run.strategyConfigVersion}${Object.keys(run.request.parameterOverrides ?? {}).length ? " · 含回测参数覆盖" : ""}` : "历史配置版本未记录"}</small><small>{run.request.instId} · {run.request.bar}</small></td>
+      <td><span className={`status-badge ${run.status === "SUCCEEDED" ? "healthy" : run.status === "FAILED" ? "danger" : "idle"}`}>{run.status}</span>{run.error && <small className="danger-text">{run.error}</small>}</td>
+      <td className={(run.totalReturn ?? 0) >= 0 ? "positive-text" : "danger-text"}>{pct(run.totalReturn)}</td><td>{pct(run.maxDrawdown)}</td><td>{pct(run.winRate, 1)}</td><td>{run.tradeCount ?? "—"}</td>
+      <td>{run.strategyConfigSnapshot ? <details className="backtest-parameters"><summary>实际参数</summary><dl>{Object.entries(run.strategyConfigSnapshot).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value ?? "默认")}</dd></div>)}</dl></details> : <span>—</span>}</td>
+    </tr>)}</tbody></table></section>
+  </div>;
 }
 
-function timeAgoFuture(value: ApiTimestamp) {
+function timeAgoFuture(value: ApiTimestamp, now: Date | null) {
   const timestamp = apiTimestampMillis(value);
   if (timestamp == null) return "待调度";
-  const seconds = Math.max(0, Math.round((timestamp - Date.now()) / 1000));
+  if (now == null) return "—";
+  const seconds = Math.max(0, Math.round((timestamp - now.getTime()) / 1000));
   if (seconds < 60) return `${seconds} 秒`;
   const minutes = Math.floor(seconds / 60);
   return `${minutes}分 ${String(seconds % 60).padStart(2, "0")}秒`;

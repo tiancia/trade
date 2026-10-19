@@ -7,6 +7,9 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 
 @Data
 @Accessors(chain = true)
@@ -14,6 +17,8 @@ public class BacktestRun {
     private String runId;
     private volatile BacktestStatus status = BacktestStatus.QUEUED;
     private BacktestRequest request;
+    private long strategyConfigVersion;
+    private Map<String, Object> strategyConfigSnapshot = Map.of();
     private Instant createdAt = Instant.now();
     private volatile Instant startedAt;
     private volatile Instant completedAt;
@@ -41,4 +46,9 @@ public class BacktestRun {
     private volatile List<BacktestTrade> trades = List.of();
     @JsonIgnore
     private volatile List<BacktestEquityPoint> equityCurve = List.of();
+
+    public BacktestRun setStrategyConfigSnapshot(Map<String, Object> snapshot) {
+        this.strategyConfigSnapshot = Collections.unmodifiableMap(new LinkedHashMap<>(snapshot));
+        return this;
+    }
 }

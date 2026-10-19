@@ -42,7 +42,7 @@ public class ThresholdEventStrategy implements TradingStrategy<ThresholdEventStr
                 settings.getVolumeLookbackCandles(), settings.isRequireConfirmedCandle()));
     }
 
-    private static ThresholdEventStrategyConfig normalize(
+    static ThresholdEventStrategyConfig normalize(
             ThresholdEventStrategyConfig config,
             TradingProperties properties
     ) {

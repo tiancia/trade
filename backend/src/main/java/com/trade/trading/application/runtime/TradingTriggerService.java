@@ -3,11 +3,15 @@ package com.trade.trading.application.runtime;
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.application.market.TradingEventDetector;
+import com.trade.trading.application.market.TradingDecisionContext;
+import com.trade.trading.application.paper.PaperAccountService;
 import com.trade.trading.application.order.OrderReconciliationService;
 import com.trade.trading.application.port.HotMarketDataCache;
 import com.trade.trading.application.strategy.TradingStrategyEngine;
 import com.trade.trading.domain.model.MarketSignal;
 import com.trade.trading.domain.model.TradingTrigger;
+import com.trade.trading.domain.model.TradingState;
+import com.trade.trading.domain.model.ExecutionMode;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.application.port.TradingMarketSource;
 import com.trade.trading.application.port.TradingMarketFeed;
@@ -42,6 +46,7 @@ public class TradingTriggerService {
     private final TradingEventDetector eventDetector;
     private final TradingStateStore stateRepository;
     private final TradingProperties properties;
+    private final PaperAccountService paperAccountService;
     private Instant lastEventDecisionAt = Instant.EPOCH;
 
     public TradingTriggerService(
@@ -53,7 +58,8 @@ public class TradingTriggerService {
             HotMarketDataCache hotMarketDataCache,
             TradingEventDetector eventDetector,
             TradingStateStore stateRepository,
-            TradingProperties properties
+            TradingProperties properties,
+            PaperAccountService paperAccountService
     ) {
         this.tradingEngine = tradingEngine;
         this.orderReconciliationService = orderReconciliationService;
@@ -64,6 +70,7 @@ public class TradingTriggerService {
         this.eventDetector = eventDetector;
         this.stateRepository = stateRepository;
         this.properties = properties;
+        this.paperAccountService = paperAccountService;
     }
 
     public void runScheduledDecision() {
@@ -92,7 +99,13 @@ public class TradingTriggerService {
         try {
             List<CandleResp> candles = eventCandles();
             TickerResp ticker = eventTicker();
-            List<MarketSignal> events = eventDetector.detect(ticker, candles, stateRepository.getState());
+            TradingState state = stateRepository.getState();
+            if (properties.getExecutionMode() == ExecutionMode.PAPER) {
+                TradingDecisionContext context = new TradingDecisionContext().setTicker(ticker).setTradingState(state);
+                paperAccountService.enrichContext(context);
+                state = context.getTradingState();
+            }
+            List<MarketSignal> events = eventDetector.detect(ticker, candles, state);
             if (events.isEmpty()) {
                 return;
             }
