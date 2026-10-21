@@ -1,0 +1,53 @@
+name: Check deployment SSH login
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check-ssh-login:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Verify SSH login and Docker access
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          : "${DEPLOY_HOST:?Missing DEPLOY_HOST}"
+          : "${DEPLOY_PORT:?Missing DEPLOY_PORT}"
+          : "${DEPLOY_USER:?Missing DEPLOY_USER}"
+          : "${DEPLOY_SSH_KEY:?Missing DEPLOY_SSH_KEY}"
+          : "${DEPLOY_KNOWN_HOSTS:?Missing DEPLOY_KNOWN_HOSTS}"
+
+          umask 077
+          key_file="$RUNNER_TEMP/deploy_key"
+          hosts_file="$RUNNER_TEMP/deploy_known_hosts"
+          trap 'rm -f -- "$key_file" "$hosts_file"' EXIT
+
+          printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' > "$key_file"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" | tr -d '\r' > "$hosts_file"
+
+          ssh -T \
+            -i "$key_file" \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o IdentityAgent=none \
+            -o ConnectTimeout=15 \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$hosts_file" \
+            "$DEPLOY_USER@$DEPLOY_HOST" '
+              set -eu
+              echo SSH_LOGIN_OK
+              docker version --format "{{.Server.Version}}"
+              docker compose version
+              echo DOCKER_ACCESS_OK
+            '
