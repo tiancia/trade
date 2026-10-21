@@ -188,7 +188,8 @@ jobs:
           set -euo pipefail
           remote_dir="$DEPLOY_ROOT/deploy/incoming/$IMAGE_TAG"
           ssh -F "$SSH_CONFIG" trade-deploy "mkdir -p '$DEPLOY_ROOT/deploy/incoming' && mkdir '$remote_dir'"
-          scp -F "$SSH_CONFIG" "$RELEASE_DIR/release.env" "trade-deploy:$remote_dir/release.env"
+          scp -F "$SSH_CONFIG" "$RELEASE_DIR/release.env" \
+            deploy/scripts/cleanup-images.sh "trade-deploy:$remote_dir/"
           remote_script=$(cat <<'REMOTE'
           set -euo pipefail
           root=$1
@@ -196,6 +197,7 @@ jobs:
           access=$3
           service=$4
           registry_user=$5
+          registry=$6
           case "$service" in
             backend|cockpit|x-console|egress) targets=("$service") ;;
             frontends) targets=(cockpit x-console) ;;
@@ -212,11 +214,16 @@ jobs:
           bash deploy/scripts/release.sh validate --release "$manifest" --access "$access"
           DEPLOY_WAIT_TIMEOUT=300 bash deploy/scripts/release.sh deploy "${targets[@]}" --release "$manifest" --access "$access"
           echo DEPLOYMENT_OK
+          # Cleanup reacquires the release lock and protects fresh success records.
+          # A cleanup failure must not turn a healthy deployment into a failed one.
+          if ! bash "$(dirname -- "$manifest")/cleanup-images.sh" --root "$root" --registry "$registry" --apply; then
+            echo '::warning::Deployment succeeded, but image cleanup was skipped or incomplete. Check the cleanup log before removing images manually.'
+          fi
           REMOTE
           )
           # The Ubuntu deployment account uses Bash, including for SSH command quoting.
-          printf -v remote_command 'bash -c %q -- %q %q %q %q %q' \
-            "$remote_script" "$DEPLOY_ROOT" "$remote_dir/release.env" "$ACCESS_MODE" "$SERVICE" "$GITHUB_ACTOR"
+          printf -v remote_command 'bash -c %q -- %q %q %q %q %q %q' \
+            "$remote_script" "$DEPLOY_ROOT" "$remote_dir/release.env" "$ACCESS_MODE" "$SERVICE" "$GITHUB_ACTOR" "$IMAGE_REGISTRY"
           printf '%s\n' "$GHCR_TOKEN" | ssh -F "$SSH_CONFIG" trade-deploy "$remote_command"
           printf '\nDeployment succeeded for `%s` (%s access).\n' "$TARGET_SERVICES" "$ACCESS_MODE" >> "$GITHUB_STEP_SUMMARY"
 

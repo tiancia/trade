@@ -13,6 +13,7 @@
 | [scripts/build-images.sh](scripts/build-images.sh) | 在构建机按需生成应用镜像及完整版本清单，默认构建四个服务 |
 | [scripts/build-upload.sh](scripts/build-upload.sh) | 一个命令按需构建、导出、上传镜像与完整清单，并核验 SHA256；可加 `--deploy` 自动发布 |
 | [scripts/release.sh](scripts/release.sh) | 在服务器校验、发布选定服务和显式回滚 |
+| [scripts/cleanup-images.sh](scripts/cleanup-images.sh) | 保留当前、上一成功清单和容器引用的镜像，预览或清理更早的本地 Trade 镜像 |
 | [scripts/sync-backend-config.ps1](scripts/sync-backend-config.ps1) | Windows 向服务器安全同步选定业务配置；本身不重启服务 |
 | `egress/` | 业务出站 SSH 隧道的 Dockerfile 和入口脚本 |
 | `nginx/` | 私有 / 公共网关、API 路由和 SSE 转发配置 |
@@ -258,7 +259,18 @@ curl -fsS -u operator http://127.0.0.1:18080/api/automation/tasks
 
 每次构建成功后，运行摘要列出完整镜像清单，并提供 `image-manifest-<版本>` artifact 下载 `release.env`。首次建议不勾选 `deploy`，确认 GHCR 镜像与清单生成成功；部署成功日志包含 `DEPLOYMENT_OK`。工作流按同一并发组串行运行，不取消正在执行的发布；服务端仍由 `release.sh` 加锁，并在部分部署时重新读取当前版本，保留未选服务的新版本。
 
-服务器须事先具备匹配的 Compose、`release.sh`、Nginx、运行配置和密钥文件；工作流只传镜像清单，不同步这些部署文件。前后端接口存在联动变更时，应安排兼容的发布顺序或全量更新。发布会短暂停止并重建选中服务；失败返回非零，不自动回滚，沿用下文的显式回滚方式。数据库补丁、运行配置变更和访问模式切换仍按各自流程处理。
+勾选 `deploy` 后，只有发布成功才会自动清理更早的本地 Trade 应用镜像：保留 `current.env`、`previous.env` 引用的全部镜像，以及任何运行中或已停止容器引用的镜像及同一镜像 ID 的别名。候选仅限 `ghcr.io/<仓库所有者>/<仓库名>/`、`trade/`、`trade-local/` 下的 `backend`、`cockpit`、`x-console`、`egress`，不会删除基础设施、第三方镜像、容器、数据卷或 GHCR 中的历史版本，也不使用强制删除或全局 prune。这里的“上一代”指整套发布的上一成功清单，不保证每个服务各有两个不同版本。
+
+工作流会将本次 [cleanup-images.sh](scripts/cleanup-images.sh) 一同上传到独立的 incoming 版本目录，无需另行更新服务器的清理脚本。清理重新获取发布锁、读取最新清单，并在完成所有校验和 Docker 查询后才删除；缺少上一成功清单（如首次发布）、清单损坏、Docker 查询失败或发布锁被占用时均不执行删除。清理失败只产生 warning，不把已经成功的部署改判为失败；成功日志包含 `IMAGE_CLEANUP_OK`。
+
+需要手动预览时，在服务器运行本次 incoming 目录下的脚本（替换版本目录和仓库命名空间）；默认不删除，加 `--apply` 才执行：
+
+```bash
+bash /opt/trade/deploy/incoming/<版本>/cleanup-images.sh \
+  --root /opt/trade --registry ghcr.io/tiancia/trade
+```
+
+服务器须事先具备匹配的 Compose、`release.sh`、Nginx、运行配置和密钥文件；工作流只传镜像清单及本次清理脚本，不同步这些部署配置文件。前后端接口存在联动变更时，应安排兼容的发布顺序或全量更新。发布会短暂停止并重建选中服务；失败返回非零，不自动回滚，沿用下文的显式回滚方式。数据库补丁、运行配置变更和访问模式切换仍按各自流程处理。
 
 ### 一个命令构建并上传
 
