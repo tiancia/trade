@@ -1,0 +1,49 @@
+name: Check deployment network
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_host:
+        description: Server public IP address or hostname
+        required: true
+        type: string
+      server_port:
+        description: Server SSH port
+        required: true
+        default: '22'
+        type: string
+
+permissions: {}
+
+jobs:
+  check-ssh-network:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check SSH network access from this runner
+        shell: bash
+        env:
+          SERVER_HOST: ${{ inputs.server_host }}
+          SERVER_PORT: ${{ inputs.server_port }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SERVER_HOST" || "$SERVER_HOST" == -* || "$SERVER_HOST" == *,* || "$SERVER_HOST" == *[[:space:]]* ]]; then
+            echo 'Supply one public IP address or hostname.' >&2
+            exit 1
+          fi
+          if [[ ! "$SERVER_PORT" =~ ^[0-9]{1,5}$ ]]; then
+            echo 'SSH port must be a number from 1 to 65535.' >&2
+            exit 1
+          fi
+          port=$((10#$SERVER_PORT))
+          if ((port < 1 || port > 65535)); then
+            echo 'SSH port must be a number from 1 to 65535.' >&2
+            exit 1
+          fi
+
+          # Probe SSH host keys only. This does not authenticate or trust the keys.
+          timeout 25s ssh-keyscan -T 10 -p "$port" "$SERVER_HOST" \
+            > "$RUNNER_TEMP/deploy-server-host-keys"
+          test -s "$RUNNER_TEMP/deploy-server-host-keys"
+          echo 'RUNNER_SSH_NETWORK_OK'
+          echo 'SSH network access passed. SSH login and deployment permissions still need separate checks.'
