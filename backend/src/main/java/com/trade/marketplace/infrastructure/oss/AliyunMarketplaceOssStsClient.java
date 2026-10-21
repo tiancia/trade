@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.marketplace.application.port.MarketplaceOssStsClient;
 import com.trade.marketplace.domain.exception.MarketplaceUnavailableException;
-import com.trade.marketplace.domain.model.MarketplaceApi;
+import com.trade.marketplace.domain.rule.MarketplaceImageRules;
 import com.trade.marketplace.infrastructure.config.MarketplaceProperties;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -22,6 +22,9 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.HexFormat;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -54,7 +57,15 @@ public class AliyunMarketplaceOssStsClient implements MarketplaceOssStsClient {
     }
 
     @Override
-    public MarketplaceApi.OssCredentials assumeUploadRole(
+    public UploadForm createUploadForm(UploadRequest request) {
+        MarketplaceImageRules.validateSize(request.sizeBytes());
+        MarketplaceImageRules.cleanContentType(request.contentType());
+        StsCredentials credentials = assumeUploadRole(request.roleArn(), request.roleSessionName(),
+                request.bucket(), request.objectKey(), request.durationSeconds());
+        return signedForm(credentials, request, Instant.now());
+    }
+
+    private StsCredentials assumeUploadRole(
             String roleArn,
             String roleSessionName,
             String bucket,
@@ -107,7 +118,7 @@ public class AliyunMarketplaceOssStsClient implements MarketplaceOssStsClient {
         try {
             Map<String, Object> statement = Map.of(
                     "Effect", "Allow",
-                    "Action", List.of("oss:PutObject", "oss:PutObjectAcl", "oss:AbortMultipartUpload", "oss:ListParts"),
+                    "Action", List.of("oss:PutObject", "oss:PutObjectAcl"),
                     "Resource", List.of("acs:oss:*:*:" + bucket + "/" + objectKey)
             );
             return objectMapper.writeValueAsString(Map.of(
@@ -119,7 +130,7 @@ public class AliyunMarketplaceOssStsClient implements MarketplaceOssStsClient {
         }
     }
 
-    private MarketplaceApi.OssCredentials credentials(String body) {
+    private StsCredentials credentials(String body) {
         try {
             JsonNode node = objectMapper.readTree(body).path("Credentials");
             String accessKeyId = node.path("AccessKeyId").asText("");
@@ -129,7 +140,7 @@ public class AliyunMarketplaceOssStsClient implements MarketplaceOssStsClient {
             if (accessKeyId.isBlank() || accessKeySecret.isBlank() || securityToken.isBlank() || expiration.isBlank()) {
                 throw new MarketplaceUnavailableException("Aliyun STS response did not include credentials");
             }
-            return new MarketplaceApi.OssCredentials(
+            return new StsCredentials(
                     accessKeyId,
                     accessKeySecret,
                     securityToken,
@@ -140,6 +151,62 @@ public class AliyunMarketplaceOssStsClient implements MarketplaceOssStsClient {
         } catch (Exception e) {
             throw new MarketplaceUnavailableException("failed to parse Aliyun STS response", e);
         }
+    }
+
+    UploadForm signedForm(StsCredentials credentials, UploadRequest request, Instant now) {
+        Instant expiration = now.plusSeconds(300);
+        if (credentials.expiration().isBefore(expiration)) {
+            expiration = credentials.expiration();
+        }
+        if (!expiration.isAfter(now)) {
+            throw new MarketplaceUnavailableException("Aliyun STS credentials have expired");
+        }
+        String date = DateTimeFormatter.ofPattern("yyyyMMdd").withZone(ZoneOffset.UTC).format(now);
+        String timestamp = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC).format(now);
+        Map<String, String> fields = new LinkedHashMap<>();
+        fields.put("key", request.objectKey());
+        fields.put("content-type", request.contentType());
+        fields.put("x-oss-content-type", request.contentType());
+        fields.put("x-oss-object-acl", "public-read");
+        fields.put("success_action_status", "204");
+        fields.put("x-oss-signature-version", "OSS4-HMAC-SHA256");
+        fields.put("x-oss-credential", credentials.accessKeyId() + "/" + date + "/"
+                + request.region() + "/oss/aliyun_v4_request");
+        fields.put("x-oss-security-token", credentials.securityToken());
+        fields.put("x-oss-date", timestamp);
+        List<Object> conditions = new ArrayList<>();
+        conditions.add(Map.of("bucket", request.bucket()));
+        // Bind every upload field and the actual file size at OSS. The browser
+        // receives only this signature, so it cannot relax the policy itself.
+        fields.forEach((key, value) -> conditions.add(Map.of(key, value)));
+        conditions.add(List.of("content-length-range", request.sizeBytes(), request.sizeBytes()));
+        try {
+            String policy = Base64.getEncoder().encodeToString(objectMapper.writeValueAsBytes(Map.of(
+                    "expiration", expiration.toString(), "conditions", conditions)));
+            fields.put("policy", policy);
+            fields.put("x-oss-signature", postSignature(credentials.accessKeySecret(), date, request.region(), policy));
+            return new UploadForm(Map.copyOf(fields), expiration.toString());
+        } catch (Exception e) {
+            throw new MarketplaceUnavailableException("failed to sign OSS upload form", e);
+        }
+    }
+
+    static String postSignature(String secret, String date, String region, String policy) throws Exception {
+        byte[] signingKey = hmacSha256(("aliyun_v4" + secret).getBytes(StandardCharsets.UTF_8), date);
+        signingKey = hmacSha256(signingKey, region);
+        signingKey = hmacSha256(signingKey, "oss");
+        signingKey = hmacSha256(signingKey, "aliyun_v4_request");
+        return HexFormat.of().formatHex(hmacSha256(signingKey, policy));
+    }
+
+    private static byte[] hmacSha256(byte[] key, String value) throws Exception {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(key, "HmacSHA256"));
+        return mac.doFinal(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    record StsCredentials(String accessKeyId, String accessKeySecret, String securityToken, Instant expiration) {
+        @Override public String toString() { return "StsCredentials[redacted]"; }
     }
 
     private static String signature(Map<String, String> params, String accessKeySecret) {

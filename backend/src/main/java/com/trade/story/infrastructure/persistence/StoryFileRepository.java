@@ -31,6 +31,23 @@ public class StoryFileRepository {
         this.properties = properties;
     }
 
+    /** Check real write access before any paid generation starts. */
+    public void verifyOutputWritable() {
+        Path probe = null;
+        try {
+            Path outputDir = Path.of(properties.getOutputDir());
+            Files.createDirectories(outputDir);
+            probe = Files.createTempFile(outputDir, ".story-write-check-", ".tmp");
+        } catch (IOException e) {
+            throw new IllegalStateException("AI story output directory is not writable", e);
+        } finally {
+            if (probe != null) {
+                try { Files.deleteIfExists(probe); }
+                catch (IOException e) { throw new IllegalStateException("AI story output probe cannot be removed", e); }
+            }
+        }
+    }
+
     public Path save(
             StoryTopicPlan plan,
             List<StorySectionDraft> drafts,

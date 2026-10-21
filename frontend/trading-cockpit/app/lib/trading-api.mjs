@@ -68,12 +68,13 @@ export function buildBacktestPayload(values) {
 
 /**
  * Build JSON headers while preserving caller-provided headers.
- * @param {{headers?: HeadersInit}} [options]
+ * @param {{headers?: HeadersInit, method?: string}} [options]
  * @returns {Headers}
  */
-export function createJsonRequestHeaders({ headers } = {}) {
+export function createJsonRequestHeaders({ headers, method = "GET" } = {}) {
   const result = new Headers(headers);
   if (!result.has("Content-Type")) result.set("Content-Type", "application/json");
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase())) result.set("X-Trade-CSRF", "1");
   return result;
 }
 

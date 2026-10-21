@@ -44,6 +44,15 @@ public class MarketplaceProperties {
             return requiredText(region, "trade.marketplace.oss.region is required");
         }
 
+        public String signingRegion() {
+            String value = requiredRegion();
+            return value.startsWith("oss-") ? value.substring(4) : value;
+        }
+
+        public String uploadUrl() {
+            return "https://" + requiredBucket() + ".oss-" + signingRegion() + ".aliyuncs.com";
+        }
+
         public String normalizedPublicBaseUrl() {
             String regionEndpoint = requiredRegion();
             if (!regionEndpoint.startsWith("oss-")) {

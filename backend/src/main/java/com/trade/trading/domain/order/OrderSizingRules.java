@@ -55,8 +55,17 @@ public final class OrderSizingRules {
     }
 
     public OrderSizing sellSize(StrategyDecision decision, SizingFacts context) {
+        return sellSize(decision, context, context.availableBase());
+    }
+
+    /** A zero managed quantity is a hard limit, never the optional-cap convention. */
+    public OrderSizing sellSize(StrategyDecision decision, SizingFacts context, BigDecimal managedQuantity) {
         BigDecimal requestedAmount = decision.getSellBaseAmount();
-        BigDecimal availableBase = context.availableBase();
+        BigDecimal availableBase = context.availableBase().min(
+                managedQuantity == null ? BigDecimal.ZERO : managedQuantity.max(BigDecimal.ZERO));
+        if (availableBase.signum() <= 0) {
+            return OrderSizing.skipped("SELL skipped: no available managed position");
+        }
         BigDecimal maxByRatio = availableBase.multiply(limits.maxSellPositionRatio());
         BigDecimal amount = TradingMath.clamp(TradingMath.clamp(requestedAmount, maxByRatio), availableBase);
 

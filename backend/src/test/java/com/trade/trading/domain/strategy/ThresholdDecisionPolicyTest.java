@@ -2,6 +2,7 @@ package com.trade.trading.domain.strategy;
 
 import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.domain.model.TradingState;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import java.math.BigDecimal;
@@ -42,6 +43,38 @@ class ThresholdDecisionPolicyTest {
         assertNull(result.getBuyQuoteAmount());
         assertEquals("Tracked position floating loss threshold reached", result.getReason());
         assertEquals("1m", result.getMetadata().get("bar"));
+    }
+
+    @Test
+    void decliningPriceDoesNotTurnManualBalanceIntoManagedPosition() {
+        var facts = new ThresholdDecisionPolicy.Facts("threshold", "1m",
+                List.of(candle("97", "100", true), candle("100", "100", true)),
+                new TradingState(), BigDecimal.ONE, false, new BigDecimal("20"), BigDecimal.ONE);
+
+        assertEquals(TradingAction.HOLD, policy.evaluate(facts, settings).getAction());
+    }
+
+    @Test
+    void configuredExitAmountCannotConsumeManualPartOfMixedHoldings() {
+        var state = new TradingState().setTrackedBaseAmount(new BigDecimal("0.4"))
+                .setAverageCost(new BigDecimal("100"));
+        var configured = new ThresholdDecisionPolicy.Settings(new BigDecimal("0.02"), new BigDecimal("3"),
+                new BigDecimal("0.10"), null, new BigDecimal("5"), null, 2, 1, true);
+        var facts = new ThresholdDecisionPolicy.Facts("threshold", "1m",
+                List.of(candle("97", "100", true), candle("100", "100", true)),
+                state, new BigDecimal("5"), false, new BigDecimal("20"), BigDecimal.ONE);
+
+        assertEquals(new BigDecimal("0.4"), policy.evaluate(facts, configured).getSellBaseAmount());
+    }
+
+    @Test
+    void reverseMoveCanExitAdoptedManagedQuantityWithoutAnAverageCost() {
+        var state = new TradingState().setTrackedBaseAmount(new BigDecimal("0.4"));
+        var result = policy.evaluate(facts(List.of(candle("97", "100", true), candle("100", "100", true)),
+                state, false), settings);
+
+        assertEquals(TradingAction.SELL, result.getAction());
+        assertEquals(new BigDecimal("0.4"), result.getSellBaseAmount());
     }
 
     private static ThresholdDecisionPolicy.Candle candle(String close, String volume, boolean confirmed) {

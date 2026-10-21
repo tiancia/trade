@@ -4,6 +4,8 @@
 
 回测由 `TradingController` 暴露，和后台自动交易任务相互独立：
 
+提交回测属于管理写操作，需携带 `X-Trade-CSRF: 1`；浏览器来源需同源或在允许列表中。驾驶舱会自动携带该头，命令行客户端也需显式设置。
+
 无需把 `trade.trading.execution-mode` 改为 `backtest`。该配置值只会使实时引擎跳过决策，不能启动历史回放，也不会再降级为 PAPER 成交。历史数据通过 `application/port/HistoricalCandleSource` 获取，默认由 `infrastructure/market/HistoricalCandleService` 实现。
 
 | 方法 | 路径 | 作用 |

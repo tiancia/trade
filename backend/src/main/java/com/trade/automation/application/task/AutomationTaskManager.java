@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -118,6 +119,7 @@ public class AutomationTaskManager implements DisposableBean {
     private final class ManagedTask {
         private final AutomationTaskDefinition definition;
         private final AtomicBoolean running = new AtomicBoolean(false);
+        private final AtomicLong generation = new AtomicLong();
         // Shared across loops in one task so a slow loop cannot overlap with
         // another loop that touches the same external account or local state.
         private final ReentrantLock executionLock = new ReentrantLock();
@@ -130,29 +132,32 @@ public class AutomationTaskManager implements DisposableBean {
             }
         }
 
-        private void start() {
+        private synchronized void start() {
             if (!running.compareAndSet(false, true)) {
                 return;
             }
+            long startedGeneration = generation.incrementAndGet();
             try {
                 if (definition.onStart() != null) {
                     definition.onStart().run();
                 }
                 for (ManagedLoop loop : loops.values()) {
-                    loop.schedule(loop.definition.initialDelay());
+                    loop.schedule(loop.definition.initialDelay(), startedGeneration);
                 }
                 log.info("Automation task started: id={}", definition.id());
             } catch (RuntimeException e) {
                 running.set(false);
+                generation.incrementAndGet();
                 cancelLoops();
                 throw e;
             }
         }
 
-        private void stop() {
+        private synchronized void stop() {
             if (!running.compareAndSet(true, false)) {
                 return;
             }
+            generation.incrementAndGet();
             cancelLoops();
             if (definition.onStop() != null) {
                 definition.onStop().run();
@@ -164,6 +169,10 @@ public class AutomationTaskManager implements DisposableBean {
             for (ManagedLoop loop : loops.values()) {
                 loop.cancel();
             }
+        }
+
+        private boolean isCurrent(long expectedGeneration) {
+            return running.get() && generation.get() == expectedGeneration;
         }
 
         private AutomationTaskStatus status() {
@@ -189,17 +198,17 @@ public class AutomationTaskManager implements DisposableBean {
                 this.definition = definition;
             }
 
-            private synchronized void schedule(Duration delay) {
-                if (!running.get()) {
+            private synchronized void schedule(Duration delay, long expectedGeneration) {
+                if (!isCurrent(expectedGeneration)) {
                     return;
                 }
                 Duration normalizedDelay = delay == null || delay.isNegative() ? Duration.ZERO : delay;
                 nextRunAt = Instant.now().plus(normalizedDelay);
-                future = scheduler.schedule(this::runAndReschedule, nextRunAt);
+                future = scheduler.schedule(() -> runAndReschedule(expectedGeneration), nextRunAt);
             }
 
-            private void runAndReschedule() {
-                if (!running.get()) {
+            private void runAndReschedule(long expectedGeneration) {
+                if (!isCurrent(expectedGeneration)) {
                     return;
                 }
 
@@ -207,30 +216,40 @@ public class AutomationTaskManager implements DisposableBean {
                 // keeps scheduler delay bounded without building a backlog.
                 boolean locked = executionLock.tryLock();
                 if (!locked) {
-                    complete(false, "Another loop in the same task is still running");
-                    schedule(definition.fixedDelay());
+                    complete(false, "Another loop in the same task is still running", expectedGeneration);
+                    schedule(definition.fixedDelay(), expectedGeneration);
                     return;
                 }
 
-                startRun();
                 try {
+                    if (!startRun(expectedGeneration)) {
+                        return;
+                    }
                     definition.action().run();
-                    complete(true, null);
+                    complete(true, null, expectedGeneration);
                 } catch (Exception e) {
                     log.error("Automation task loop failed: task={}, loop={}", ManagedTask.this.definition.id(), definition.id(), e);
-                    complete(false, e.getMessage());
+                    complete(false, e.getMessage(), expectedGeneration);
                 } finally {
                     executionLock.unlock();
-                    schedule(definition.fixedDelay());
+                    // An execution from a stopped generation must not revive its old scheduling chain.
+                    schedule(definition.fixedDelay(), expectedGeneration);
                 }
             }
 
-            private synchronized void startRun() {
+            private synchronized boolean startRun(long expectedGeneration) {
+                if (!isCurrent(expectedGeneration)) {
+                    return false;
+                }
                 nextRunAt = null;
                 lastRunStartedAt = Instant.now();
+                return true;
             }
 
-            private synchronized void complete(boolean successful, String error) {
+            private synchronized void complete(boolean successful, String error, long expectedGeneration) {
+                if (!isCurrent(expectedGeneration)) {
+                    return;
+                }
                 lastRunCompletedAt = Instant.now();
                 lastRunSuccessful = successful;
                 lastError = error;

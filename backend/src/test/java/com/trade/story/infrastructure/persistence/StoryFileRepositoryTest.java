@@ -15,10 +15,24 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class StoryFileRepositoryTest {
     @TempDir
     Path tempDir;
+
+    @Test
+    void verifiesActualWritesAndLeavesNoProbeFile() throws Exception {
+        AiStoryProperties properties = new AiStoryProperties();
+        Path output = tempDir.resolve("new-output");
+        properties.setOutputDir(output.toString());
+        new StoryFileRepository(properties).verifyOutputWritable();
+        try (var files = Files.list(output)) { assertEquals(0L, files.count()); }
+        Path blocked = tempDir.resolve("not-a-directory");
+        Files.writeString(blocked, "existing file");
+        properties.setOutputDir(blocked.toString());
+        assertThrows(IllegalStateException.class, () -> new StoryFileRepository(properties).verifyOutputWritable());
+    }
 
     @Test
     void savesStoryAsUtf8TxtAndListsRecentNames() throws Exception {

@@ -51,6 +51,7 @@ import type {
   MarketplaceMessage,
   MarketplaceSession,
 } from './api';
+import { formatDate, formatTime } from './time';
 
 type BusyState = 'auth' | 'publish' | 'delist' | 'conversation' | 'message' | null;
 type ActionSheet = 'account' | 'publish' | null;
@@ -83,25 +84,37 @@ export function MarketplaceApp() {
   const [conversations, setConversations] = useState<MarketplaceConversation[]>([]);
   const [activeConversation, setActiveConversation] = useState<MarketplaceConversation | null>(null);
   const [messages, setMessages] = useState<MarketplaceMessage[]>([]);
-  const [messageDraft, setMessageDraft] = useState('');
+  const [messageDrafts, setMessageDrafts] = useState<Record<number, string>>({});
+  const [chatLoading, setChatLoading] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [busy, setBusy] = useState<BusyState>(null);
   const [booted, setBooted] = useState(false);
   const [itemsLoading, setItemsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const messagesRef = useRef<MarketplaceMessage[]>([]);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const itemRequestRef = useRef(0);
+  const chatRequestRef = useRef(0);
+  const conversationIdRef = useRef<number | null>(null);
+  const sessionTokenRef = useRef(session?.token);
+  const messageCursorRef = useRef<number | undefined>(undefined);
 
   const token = session?.token;
+  const messageDraft = activeConversation ? messageDrafts[activeConversation.id] ?? '' : '';
   const selectedItem = useMemo(
     () => items.find((item) => item.id === selectedItemId) ?? items[0] ?? null,
     [items, selectedItemId],
   );
 
   useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
+    sessionTokenRef.current = token;
+    chatRequestRef.current += 1;
+    conversationIdRef.current = null;
+    messageCursorRef.current = undefined;
+    setActiveConversation(null);
+    setMessages([]);
+    setMessageDrafts({});
+    setChatLoading(false);
+  }, [token]);
 
   useEffect(() => {
     let active = true;
@@ -176,10 +189,11 @@ export function MarketplaceApp() {
     }
     try {
       const next = await fetchConversations(token);
+      if (sessionTokenRef.current !== token) return [] as MarketplaceConversation[];
       setConversations(next);
       return next;
     } catch (cause) {
-      setError(messageOf(cause));
+      if (sessionTokenRef.current === token) setError(messageOf(cause));
       return [] as MarketplaceConversation[];
     }
   }, [token]);
@@ -189,16 +203,22 @@ export function MarketplaceApp() {
   }, [refreshConversations]);
 
   useEffect(() => {
-    if (!chatOpen || !activeConversation || !token) return;
+    if (!chatOpen || !activeConversation || !token || chatLoading) return;
     let stopped = false;
     let polling = false;
+    const conversationId = activeConversation.id;
+    const generation = chatRequestRef.current;
     async function poll() {
       if (polling) return;
       polling = true;
-      const latest = messagesRef.current[messagesRef.current.length - 1];
       try {
-        const next = await fetchMessages(token!, activeConversation!.id, latest?.id);
-        if (!stopped && next.length) appendMessages(next);
+        const next = await fetchMessages(token!, conversationId, messageCursorRef.current);
+        if (!stopped && isCurrentChat(conversationId, generation, token!)) {
+          const matching = next.filter((message) => message.conversationId === conversationId);
+          appendMessages(conversationId, matching);
+          // A send response may jump ahead of unseen incoming messages, so only reads advance this cursor.
+          if (matching.length) messageCursorRef.current = Math.max(...matching.map((message) => message.id));
+        }
       } catch {
         // A transient polling failure should not interrupt the conversation UI.
       } finally {
@@ -210,7 +230,7 @@ export function MarketplaceApp() {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [activeConversation, chatOpen, token]);
+  }, [activeConversation, chatOpen, token, chatLoading]);
 
   useEffect(() => {
     if (!chatOpen) return;
@@ -259,6 +279,7 @@ export function MarketplaceApp() {
       const nextSession = authMode === 'login'
         ? await login(authForm.username, authForm.password)
         : await register(authForm.username, authForm.password, authForm.displayName);
+      sessionTokenRef.current = nextSession.token;
       setSession(nextSession);
       saveStoredSession(nextSession);
       setAuthForm({ username: '', password: '', displayName: '' });
@@ -273,6 +294,9 @@ export function MarketplaceApp() {
 
   async function handleLogout() {
     if (!token) return;
+    chatRequestRef.current += 1;
+    conversationIdRef.current = null;
+    sessionTokenRef.current = undefined;
     setBusy('auth');
     try {
       await logout(token);
@@ -377,28 +401,39 @@ export function MarketplaceApp() {
     }
     setBusy('conversation');
     setError(null);
+    const generation = chatRequestRef.current;
     try {
       const conversation = await createConversation(token, item.id);
-      setActiveConversation(conversation);
-      setMessages(await fetchMessages(token, conversation.id));
+      if (chatRequestRef.current !== generation || sessionTokenRef.current !== token) return;
       setDetailOpen(false);
       setChatOpen(true);
+      await openConversation(conversation);
       await refreshConversations();
     } catch (cause) {
-      setError(messageOf(cause));
+      if (chatRequestRef.current === generation && sessionTokenRef.current === token) setError(messageOf(cause));
     } finally {
-      setBusy(null);
+      setBusy((current) => current === 'conversation' ? null : current);
     }
   }
 
   async function openConversation(conversation: MarketplaceConversation) {
-    if (!token) return;
+    if (!token || sessionTokenRef.current !== token) return;
+    const generation = ++chatRequestRef.current;
+    conversationIdRef.current = conversation.id;
+    messageCursorRef.current = undefined;
     setActiveConversation(conversation);
     setMessages([]);
+    setChatLoading(true);
     try {
-      setMessages(await fetchMessages(token, conversation.id));
+      const next = await fetchMessages(token, conversation.id);
+      if (!isCurrentChat(conversation.id, generation, token)) return;
+      const matching = next.filter((message) => message.conversationId === conversation.id);
+      setMessages(matching);
+      if (matching.length) messageCursorRef.current = Math.max(...matching.map((message) => message.id));
     } catch (cause) {
-      setError(messageOf(cause));
+      if (isCurrentChat(conversation.id, generation, token)) setError(messageOf(cause));
+    } finally {
+      if (isCurrentChat(conversation.id, generation, token)) setChatLoading(false);
     }
   }
 
@@ -410,7 +445,7 @@ export function MarketplaceApp() {
     }
     setChatOpen(true);
     const nextConversations = await refreshConversations();
-    if (!activeConversation && nextConversations.length) {
+    if (sessionTokenRef.current === token && conversationIdRef.current === null && nextConversations.length) {
       await openConversation(nextConversations[0]);
     }
   }
@@ -418,25 +453,36 @@ export function MarketplaceApp() {
   async function handleSendMessage(event: FormEvent) {
     event.preventDefault();
     const body = messageDraft.trim();
-    if (!token || !activeConversation || !body) return;
+    if (!token || !activeConversation || !body || chatLoading || busy === 'message') return;
+    const conversationId = activeConversation.id;
+    const generation = chatRequestRef.current;
+    const sentDraft = messageDraft;
     setBusy('message');
     setError(null);
     try {
-      const sent = await sendMessage(token, activeConversation.id, body);
-      appendMessages([sent]);
-      setMessageDraft('');
+      const sent = await sendMessage(token, conversationId, body);
+      if (sessionTokenRef.current !== token) return;
+      if (isCurrentChat(conversationId, generation, token)) appendMessages(conversationId, [sent]);
+      setMessageDrafts((current) => current[conversationId] === sentDraft ? { ...current, [conversationId]: '' } : current);
       await refreshConversations();
     } catch (cause) {
-      setError(messageOf(cause));
+      if (isCurrentChat(conversationId, generation, token)) setError(messageOf(cause));
     } finally {
-      setBusy(null);
+      setBusy((current) => current === 'message' ? null : current);
     }
   }
 
-  function appendMessages(next: MarketplaceMessage[]) {
+  function isCurrentChat(conversationId: number, generation: number, capturedToken: string) {
+    return chatRequestRef.current === generation && conversationIdRef.current === conversationId && sessionTokenRef.current === capturedToken;
+  }
+
+  function appendMessages(conversationId: number, next: MarketplaceMessage[]) {
+    if (conversationIdRef.current !== conversationId) return;
     setMessages((current) => {
+      if (conversationIdRef.current !== conversationId) return current;
       const seen = new Set(current.map((message) => message.id));
-      return [...current, ...next.filter((message) => !seen.has(message.id))];
+      return [...current, ...next.filter((message) => message.conversationId === conversationId && !seen.has(message.id))]
+        .sort((left, right) => left.id - right.id);
     });
   }
 
@@ -896,11 +942,13 @@ export function MarketplaceApp() {
         messages={messages}
         currentUserId={session?.user.id ?? null}
         draft={messageDraft}
-        busy={busy === 'message'}
+        busy={busy === 'message' || chatLoading}
         messagesEndRef={messagesEndRef}
         onClose={() => setChatOpen(false)}
         onOpenConversation={(conversation) => void openConversation(conversation)}
-        onDraft={setMessageDraft}
+        onDraft={(value) => {
+          if (activeConversation) setMessageDrafts((current) => ({ ...current, [activeConversation.id]: value }));
+        }}
         onSend={(event) => void handleSendMessage(event)}
       />
 
@@ -1060,19 +1108,6 @@ function formatPrice(price: number | null) {
         minimumFractionDigits: price % 1 ? 2 : 0,
         maximumFractionDigits: 2,
       })}`;
-}
-
-function formatDate(value: string) {
-  const date = new Date(value);
-  const today = new Date();
-  if (date.toDateString() === today.toDateString()) {
-    return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(date);
-  }
-  return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(date);
-}
-
-function formatTime(value: string) {
-  return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 }
 
 function messageOf(cause: unknown) {

@@ -22,9 +22,11 @@ import com.trade.trading.application.runtime.TradingLeadershipService;
 import com.trade.trading.domain.model.ExecutionMode;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
+import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.domain.model.TradingDecisionRecord;
 import com.trade.trading.domain.order.OrderStatus;
+import com.trade.trading.domain.order.OrderSubmission;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.infrastructure.config.TradingRiskConfiguration;
 import com.trade.trading.infrastructure.persistence.TradingStateRepository;
@@ -42,8 +44,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 
 class LiveOrderExecutionServiceTest {
     @TempDir
@@ -213,6 +217,140 @@ class LiveOrderExecutionServiceTest {
         assertEquals(OrderStatus.FILLED.name(), replay.getOrderStatus());
     }
 
+    @Test
+    void explicitLiveSellCannotUseManualBalanceOrStaleDecisionOwnership() {
+        TradingProperties properties = liveProperties();
+        FakeOkxApi api = new FakeOkxApi(filledOrder("sell", "1", "50000"));
+        TradingDecisionContext context = context("1", "1000")
+                .setTradingState(new TradingState().setTrackedBaseAmount(BigDecimal.ONE));
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(properties, api).execute(sellDecision("1"), context, record);
+
+        assertNull(api.orderReq);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertTrue(record.getSkipReason().contains("no available managed position"));
+    }
+
+    @Test
+    void liveSellCapsMixedHoldingsToLatestPersistedManagedQuantity() {
+        TradingProperties properties = liveProperties();
+        TradingStateRepository repository = new TradingStateRepository(tempDir.resolve("mixed.json"));
+        repository.recordBuy(new BigDecimal("0.2"), new BigDecimal("50000"));
+        FakeOkxApi api = new FakeOkxApi(filledOrder("sell", "0.2", "50000"));
+        TradingDecisionContext context = context("2", "1000")
+                .setTradingState(new TradingState().setTrackedBaseAmount(new BigDecimal("2")));
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(properties, api, new InMemoryTradingOrderRepository(), mock(FundSafetyService.class),
+                mock(TradingLeadershipService.class), repository).execute(sellDecision("2"), context, record);
+
+        assertEquals("0.2", api.orderReq.getSz());
+        assertEquals("FILLED", record.getExecutionStatus());
+        assertEquals(0, repository.getState().getTrackedBaseAmount().signum());
+    }
+
+    @Test
+    void dedicatedPositionCanBeSoldOnceReconciliationAdoptsItIntoManagedLedger() {
+        TradingProperties properties = liveProperties();
+        properties.getReconciliation().setPositionOwnership(TradingProperties.PositionOwnership.DEDICATED_ACCOUNT);
+        TradingStateRepository repository = new TradingStateRepository(tempDir.resolve("dedicated.json"));
+        repository.recordExchangePosition(BigDecimal.ONE, BigDecimal.ONE, new BigDecimal("50000"), java.time.Instant.now());
+        FakeOkxApi api = new FakeOkxApi(filledOrder("sell", "1", "50000"));
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(properties, api, new InMemoryTradingOrderRepository(), mock(FundSafetyService.class),
+                mock(TradingLeadershipService.class), repository).execute(sellDecision("1"), context("1", "1000"), record);
+
+        assertEquals("1", api.orderReq.getSz());
+        assertEquals("FILLED", record.getExecutionStatus());
+    }
+
+    @Test
+    void managedQuantityLostAfterReservationBlocksSubmissionWithoutUnknownStatus() {
+        TradingProperties properties = liveProperties();
+        TradingStateRepository repository = new TradingStateRepository(tempDir.resolve("shrinking.json"));
+        repository.recordBuy(new BigDecimal("0.2"), new BigDecimal("50000"));
+        FakeOkxApi api = new FakeOkxApi(filledOrder("sell", "0.2", "50000"));
+        TradingLeadershipService leadership = mock(TradingLeadershipService.class);
+        doNothing().doAnswer(invocation -> { repository.recordSell(new BigDecimal("0.2")); return null; })
+                .when(leadership).requireLiveLeadership();
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(properties, api, new InMemoryTradingOrderRepository(), mock(FundSafetyService.class), leadership,
+                repository).execute(sellDecision("0.2"), context("2", "1000"), record);
+
+        assertNull(api.orderReq);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertEquals("REJECTED", record.getOrderStatus());
+        assertTrue(record.getSkipReason().contains("changed before submission"));
+    }
+
+    @Test
+    void ownershipReadFailureAfterReservationIsBlockedRatherThanAmbiguousSubmit() {
+        TradingProperties properties = liveProperties();
+        TradingStateRepository repository = spy(new TradingStateRepository(tempDir.resolve("unreadable.json")));
+        repository.recordBuy(new BigDecimal("0.2"), new BigDecimal("50000"));
+        FakeOkxApi api = new FakeOkxApi(filledOrder("sell", "0.2", "50000"));
+        TradingLeadershipService leadership = mock(TradingLeadershipService.class);
+        doNothing().doAnswer(invocation -> {
+            doThrow(new IllegalStateException("database unavailable")).when(repository).getState();
+            return null;
+        }).when(leadership).requireLiveLeadership();
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(properties, api, new InMemoryTradingOrderRepository(), mock(FundSafetyService.class), leadership,
+                repository).execute(sellDecision("0.2"), context("2", "1000"), record);
+
+        assertNull(api.orderReq);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertEquals("REJECTED", record.getOrderStatus());
+        assertTrue(record.getSkipReason().contains("cannot verify"));
+    }
+
+    @Test
+    void anotherUnsettledOrderPreventsSellingTheSameManagedUnitsAgain() {
+        TradingProperties properties = liveProperties();
+        TradingStateRepository repository = new TradingStateRepository(tempDir.resolve("outstanding.json"));
+        repository.recordBuy(new BigDecimal("0.2"), new BigDecimal("50000"));
+        InMemoryTradingOrderRepository orders = new InMemoryTradingOrderRepository();
+        OrderLifecycleService lifecycle = new OrderLifecycleService(orders, new SimpleMeterRegistry());
+        lifecycle.reserve(new OrderSubmission("earlier", "earlierSell", "earlierDecision", "test", "BTC-USDT",
+                "SELL", "sell", "cash", "market", "base_ccy", new BigDecimal("0.2")));
+        lifecycle.markAccepted("earlier", "earlierExchangeOrder");
+        FakeOkxApi api = new FakeOkxApi(filledOrder("sell", "0.2", "50000"));
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(properties, api, orders, mock(FundSafetyService.class), mock(TradingLeadershipService.class),
+                repository).execute(sellDecision("0.2"), context("2", "1000"), record);
+
+        assertNull(api.orderReq);
+        assertEquals("REJECTED", record.getOrderStatus());
+        assertTrue(record.getSkipReason().contains("reconcile outstanding orders"));
+        assertEquals(OrderStatus.ACCEPTED, lifecycle.find("earlier").orElseThrow().getStatus());
+    }
+
+    @Test
+    void replayOfUnsettledSellStillQueriesWithoutSecondSubmission() {
+        TradingProperties properties = liveProperties();
+        TradingStateRepository repository = new TradingStateRepository(tempDir.resolve("replay-sell.json"));
+        repository.recordBuy(new BigDecimal("0.2"), new BigDecimal("50000"));
+        OrderInfoResp liveOrder = filledOrder("sell", "0", "0");
+        liveOrder.setState("live");
+        FakeOkxApi api = new FakeOkxApi(liveOrder);
+        LiveOrderExecutionService execution = broker(properties, api, new InMemoryTradingOrderRepository(),
+                mock(FundSafetyService.class), mock(TradingLeadershipService.class), repository);
+        TradingDecisionRecord first = new TradingDecisionRecord().setDecisionId("same-sell");
+        TradingDecisionRecord replay = new TradingDecisionRecord().setDecisionId("same-sell");
+
+        execution.execute(sellDecision("0.2"), context("2", "1000"), first);
+        execution.execute(sellDecision("0.2"), context("2", "1000"), replay);
+
+        assertEquals(1, api.placeOrderCount);
+        assertTrue(replay.isIdempotentReplay());
+        assertEquals(first.getIdempotencyKey(), replay.getIdempotencyKey());
+    }
+
     private LiveOrderExecutionService broker(TradingProperties properties, OkxApi okxApi) {
         return broker(properties, okxApi, new InMemoryTradingOrderRepository());
     }
@@ -248,6 +386,14 @@ class LiveOrderExecutionServiceTest {
             TradingLeadershipService leadershipService
     ) {
         TradingStateRepository stateRepository = new TradingStateRepository(tempDir.resolve("state-" + System.nanoTime() + ".json"));
+        return broker(properties, okxApi, orders, fundSafetyService, leadershipService, stateRepository);
+    }
+
+    private LiveOrderExecutionService broker(
+            TradingProperties properties, OkxApi okxApi, InMemoryTradingOrderRepository orders,
+            FundSafetyService fundSafetyService, TradingLeadershipService leadershipService,
+            TradingStateRepository stateRepository
+    ) {
         RiskControlService riskControlService = new RiskControlService(properties, stateRepository, Clock.systemUTC(),
                 new TradingRiskConfiguration().tradingRiskRules());
         OrderLifecycleService lifecycleService = new OrderLifecycleService(orders, new SimpleMeterRegistry());
@@ -265,7 +411,8 @@ class LiveOrderExecutionServiceTest {
                         riskControlService,
                         properties
                 ),
-                new OrderIdempotencyKeyFactory()
+                new OrderIdempotencyKeyFactory(),
+                stateRepository
         );
     }
 
@@ -290,6 +437,10 @@ class LiveOrderExecutionServiceTest {
                 .setAction(TradingAction.BUY)
                 .setReason("test buy")
                 .setBuyQuoteAmount(new BigDecimal("500"));
+    }
+
+    private static StrategyDecision sellDecision(String amount) {
+        return StrategyDecision.sell("test", new BigDecimal(amount), "test sell");
     }
 
     private static TradingDecisionContext context(String baseAvail, String quoteAvail) {

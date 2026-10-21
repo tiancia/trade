@@ -27,6 +27,10 @@ public class OrderSizingService {
         return rules(context).sellSize(decision, TradingMarketInputs.sizingFacts(context));
     }
 
+    public OrderSizing sellSize(StrategyDecision decision, TradingDecisionContext context, BigDecimal managedQuantity) {
+        return rules(context).sellSize(decision, TradingMarketInputs.sizingFacts(context), managedQuantity);
+    }
+
     public OrderSizing derivativeSize(StrategyDecision decision, TradingDecisionContext context) {
         return rules(context).derivativeSize(decision, TradingMarketInputs.sizingFacts(context));
     }

@@ -59,10 +59,10 @@ class TradingControllerStrategyTest {
         MockMvc mvc = mvc();
         mvc.perform(options(ENDPOINT).header("Origin", "http://localhost:3000")
                         .header("Access-Control-Request-Method", "PUT")
-                        .header("Access-Control-Request-Headers", "Content-Type"))
+                        .header("Access-Control-Request-Headers", "Content-Type,X-Trade-CSRF"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:3000"))
-                .andExpect(header().string("Access-Control-Allow-Headers", "Content-Type"));
+                .andExpect(header().string("Access-Control-Allow-Headers", "Content-Type, X-Trade-CSRF"));
         mvc.perform(options(ENDPOINT).header("Origin", "https://untrusted.example")
                         .header("Access-Control-Request-Method", "PUT")
                         .header("Access-Control-Request-Headers", "Content-Type"))

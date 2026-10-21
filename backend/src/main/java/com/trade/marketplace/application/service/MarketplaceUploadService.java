@@ -20,11 +20,10 @@ import java.util.UUID;
  * Creates constrained Aliyun OSS upload intents for authenticated users.
  *
  * <p>Image bytes go directly from the frontend to OSS; this service only
- * validates metadata and issues short-lived credentials.</p>
+ * validates metadata and issues a short-lived, signed upload form.</p>
  */
 @Service
 public class MarketplaceUploadService {
-    private static final String PUBLIC_READ_ACL = "public-read";
     private final MarketplaceProperties properties;
     private final MarketplaceOssStsClient stsClient;
     private final Clock clock;
@@ -59,20 +58,22 @@ public class MarketplaceUploadService {
         String objectKey = objectKey(user, request == null ? null : request.fileName(), contentType);
         MarketplaceProperties.OssProperties oss = properties.getOss();
         try {
-            MarketplaceApi.OssCredentials credentials = stsClient.assumeUploadRole(
+            MarketplaceOssStsClient.UploadForm form = stsClient.createUploadForm(new MarketplaceOssStsClient.UploadRequest(
                     oss.requiredRoleArn(),
                     "marketplace-user-" + user.id() + "-" + UUID.randomUUID().toString().substring(0, 8),
                     oss.requiredBucket(),
                     objectKey,
+                    oss.signingRegion(),
+                    contentType,
+                    request.sizeBytes(),
                     oss.normalizedDurationSeconds()
-            );
+            ));
             return new MarketplaceApi.UploadIntent(
                     objectKey,
                     oss.normalizedPublicBaseUrl() + "/" + objectKey,
-                    oss.requiredBucket(),
-                    oss.requiredRegion(),
-                    PUBLIC_READ_ACL,
-                    credentials
+                    oss.uploadUrl(),
+                    form.formFields(),
+                    form.expiration()
             );
         } catch (IllegalStateException e) {
             throw new MarketplaceUnavailableException(e.getMessage(), e);

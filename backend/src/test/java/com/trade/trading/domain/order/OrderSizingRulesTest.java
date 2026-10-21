@@ -30,4 +30,18 @@ class OrderSizingRulesTest {
         assertTrue(result.isExecutable());
         assertEquals("40.99", result.getSize());
     }
+
+    @Test
+    void managedSellLimitIsStrictEvenWhenZeroAndNeverExceedsExchangeAvailability() {
+        var decision = StrategyDecision.sell("test", new BigDecimal("5"), "exit");
+        var instrument = new OrderSizingRules.InstrumentLimits(BigDecimal.ZERO, new BigDecimal("0.0001"),
+                new BigDecimal("0.0001"), BigDecimal.ZERO);
+        var mixed = new OrderSizingRules.SizingFacts(BigDecimal.ZERO, new BigDecimal("2"), BigDecimal.ONE, instrument);
+
+        assertFalse(rules.sellSize(decision, mixed, BigDecimal.ZERO).isExecutable());
+        assertFalse(rules.sellSize(decision, mixed, null).isExecutable());
+        assertEquals("0.4", rules.sellSize(decision, mixed, new BigDecimal("0.4")).getSize());
+        var lessAvailable = new OrderSizingRules.SizingFacts(BigDecimal.ZERO, new BigDecimal("0.1"), BigDecimal.ONE, instrument);
+        assertEquals("0.1", rules.sellSize(decision, lessAvailable, new BigDecimal("0.4")).getSize());
+    }
 }

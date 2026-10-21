@@ -1,6 +1,6 @@
 /**
  * Second-hand marketplace domain for authentication, listings, conversations,
- * messages, and direct-to-OSS image upload credentials.
+ * messages, and constrained direct-to-OSS image upload forms.
  *
  * <p>HTTP requests enter through
  * {@link com.trade.marketplace.interfaces.web.MarketplaceController},

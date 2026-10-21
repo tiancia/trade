@@ -29,9 +29,25 @@ test('review outcomes remain independent of publishing outcomes and expiration',
 
 test('time is always shown in China timezone and invalid timestamps have a placeholder', () => {
   assert.equal(formatTime('2026-10-03T16:00:00Z'), '2026/10/04 00:00');
+  assert.equal(formatTime(1791043200), '2026/10/04 00:00');
+  assert.equal(formatTime(1791043200000), '2026/10/04 00:00');
+  assert.equal(formatTime(0), '1970/01/01 08:00');
   assert.equal(formatTime(null), '—');
   assert.equal(formatTime(''), '—');
   assert.equal(formatTime('not a date'), '—');
+  assert.equal(formatTime(Infinity), '—');
+  assert.equal(formatTime(1e20), '—');
+});
+
+test('sorts Spring epoch seconds together with millisecond and ISO timestamps', () => {
+  const posts = [
+    { id: 'a-older', createdAt: 1792454400 },
+    { id: 'z-newest', createdAt: 1792627200.125 },
+    { id: 'b-middle', createdAt: '2026-10-21T00:00:00Z' },
+    { id: 'c-middle', createdAt: 1792540800000 },
+    { id: 'invalid', createdAt: 1e20 },
+  ];
+  assert.deepEqual(filterPosts(posts).map(post => post.id), ['z-newest', 'b-middle', 'c-middle', 'a-older', 'invalid']);
 });
 
 test('search and status filtering preserve input and sort newest deterministically', () => {

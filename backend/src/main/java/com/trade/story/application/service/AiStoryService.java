@@ -132,6 +132,7 @@ public class AiStoryService {
         String generationId = UUID.randomUUID().toString();
         long startedAtMillis = System.currentTimeMillis();
         try {
+            fileRepository.verifyOutputWritable();
             log.info(
                     "AI story generation started: generationId={}, targetCharCount={}, sectionCount={}, outputDir={}",
                     generationId,

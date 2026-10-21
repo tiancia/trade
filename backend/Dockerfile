@@ -17,12 +17,24 @@ RUN --mount=type=cache,target=/root/.m2 \
 
 FROM ${RUNTIME_JAVA_IMAGE} AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl python3 python3-venv \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 trade \
     && useradd --uid 10001 --gid 10001 --no-create-home trade \
     && install -d -o trade -g trade /app/data
 WORKDIR /app
+COPY tools/polymarket/requirements.txt /app/tools/polymarket/requirements.txt
+RUN python3 -m venv /opt/polymarket-venv \
+    && /opt/polymarket-venv/bin/pip install --no-cache-dir -r /app/tools/polymarket/requirements.txt \
+    && /opt/polymarket-venv/bin/pip check
+ENV PATH="/opt/polymarket-venv/bin:${PATH}" \
+    POLYMARKET_ORDER_SCRIPT=/app/tools/polymarket/polymarket_place_order.py \
+    TRADE_STORY_OUTPUT_DIR=/app/data/story \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+COPY --chown=10001:10001 tools/polymarket/polymarket_place_order.py /app/tools/polymarket/polymarket_place_order.py
+# Imports and signature inspection only: constructing a client or placing an order is forbidden here.
+RUN python -c "import runpy; bridge = runpy.run_path('/app/tools/polymarket/polymarket_place_order.py'); bridge['load_client_symbols']()"
 COPY --from=build --chown=10001:10001 /workspace/backend/target/trade-0.0.1-SNAPSHOT.jar /app/app.jar
 USER 10001:10001
 EXPOSE 8080

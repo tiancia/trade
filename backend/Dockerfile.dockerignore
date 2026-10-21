@@ -11,6 +11,10 @@
 !backend/src/**
 !backend/infrastructure/
 !backend/infrastructure/**
+!tools/
+!tools/polymarket/
+!tools/polymarket/requirements.txt
+!tools/polymarket/polymarket_place_order.py
 **/.env*
 **/*.env
 **/*.local

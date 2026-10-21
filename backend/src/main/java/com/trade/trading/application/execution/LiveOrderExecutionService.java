@@ -10,6 +10,7 @@ import com.trade.trading.application.order.OrderLifecycleService;
 import com.trade.trading.application.order.OrderSettlementService;
 import com.trade.trading.application.port.ExchangeOrderGateway;
 import com.trade.trading.application.port.ExchangeOrderGateway.OrderRejectedException;
+import com.trade.trading.application.port.TradingStateStore;
 import com.trade.trading.application.risk.FundSafetyService;
 import com.trade.trading.application.risk.RiskControlService;
 import com.trade.trading.application.runtime.TradingLeadershipService;
@@ -45,6 +46,7 @@ public class LiveOrderExecutionService {
     private final OrderLifecycleService orderLifecycleService;
     private final OrderSettlementService orderSettlementService;
     private final OrderIdempotencyKeyFactory idempotencyKeyFactory;
+    private final TradingStateStore stateRepository;
 
     public LiveOrderExecutionService(
             ExchangeOrderGateway orderGateway,
@@ -55,7 +57,8 @@ public class LiveOrderExecutionService {
             TradingLeadershipService leadershipService,
             OrderLifecycleService orderLifecycleService,
             OrderSettlementService orderSettlementService,
-            OrderIdempotencyKeyFactory idempotencyKeyFactory
+            OrderIdempotencyKeyFactory idempotencyKeyFactory,
+            TradingStateStore stateRepository
     ) {
         this.orderGateway = orderGateway;
         this.orderSizingService = orderSizingService;
@@ -66,6 +69,7 @@ public class LiveOrderExecutionService {
         this.orderLifecycleService = orderLifecycleService;
         this.orderSettlementService = orderSettlementService;
         this.idempotencyKeyFactory = idempotencyKeyFactory;
+        this.stateRepository = stateRepository;
     }
 
     public void execute(
@@ -199,7 +203,8 @@ public class LiveOrderExecutionService {
             decisionRecord.setExecutionStatus("SKIPPED").setSkipReason(skipReason);
             return;
         }
-        OrderSizing sizing = orderSizingService.sellSize(decision, context);
+        // A decision's account snapshot can include manual holdings or be stale.
+        OrderSizing sizing = orderSizingService.sellSize(decision, context, managedQuantity());
         if (!sizing.isExecutable()) {
             decisionRecord.setExecutionStatus("SKIPPED")
                     .setSkipReason(sizing.getSkipReason());
@@ -264,7 +269,16 @@ public class LiveOrderExecutionService {
             // an ambiguous external submit because placeOrder was not called.
             fundSafetyService.requireActive();
             leadershipService.requireLiveLeadership();
+            if (decision.getAction() == TradingAction.SELL) {
+                requireManagedSell(request, idempotencyKey);
+            }
             actionResp = orderGateway.placeOrder(request);
+        } catch (ManagedPositionUnavailableException e) {
+            TradingOrder rejected = orderLifecycleService.markSubmissionBlocked(
+                    idempotencyKey, "MANAGED_POSITION_UNAVAILABLE", e.getMessage()).order();
+            applyOrder(record, rejected, false);
+            record.setExecutionStatus("SKIPPED").setSkipReason(e.getMessage());
+            return;
         } catch (TradingLeadershipService.TradingLeadershipUnavailableException e) {
             TradingOrder rejected = orderLifecycleService.markSubmissionBlocked(
                     idempotencyKey,
@@ -311,6 +325,36 @@ public class LiveOrderExecutionService {
             record.setExecutionStatus("FILL_UNCONFIRMED").setError(e.getMessage());
             log.warn("OKX order accepted but fill reconciliation failed: clOrdId={}, err={}",
                     actionResp.getClOrdId(), e.getMessage(), e);
+        }
+    }
+
+    private BigDecimal managedQuantity() {
+        BigDecimal quantity = stateRepository.getState().getTrackedBaseAmount();
+        return quantity == null ? BigDecimal.ZERO : quantity.max(BigDecimal.ZERO);
+    }
+
+    private void requireManagedSell(PlaceOrderReq request, String idempotencyKey) {
+        try {
+            if (orderLifecycleService.hasOtherUnresolvedOrder(properties.getInstId(), idempotencyKey)) {
+                throw new ManagedPositionUnavailableException(
+                        "SELL blocked: reconcile outstanding orders before selling the managed position");
+            }
+            if (new BigDecimal(request.getSz()).compareTo(managedQuantity()) > 0) {
+                throw new ManagedPositionUnavailableException(
+                        "SELL blocked: managed position changed before submission; refresh the decision");
+            }
+        } catch (ManagedPositionUnavailableException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            // No exchange submission occurred; a failed ownership read must not
+            // be recorded as an ambiguous external submit.
+            throw new ManagedPositionUnavailableException("SELL blocked: cannot verify the managed position");
+        }
+    }
+
+    private static final class ManagedPositionUnavailableException extends IllegalStateException {
+        private ManagedPositionUnavailableException(String message) {
+            super(message);
         }
     }
 

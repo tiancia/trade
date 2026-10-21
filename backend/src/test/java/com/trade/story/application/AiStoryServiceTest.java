@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -30,6 +31,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AiStoryServiceTest {
     @TempDir
     Path tempDir;
+
+    @Test
+    void rejectsUnwritableOutputBeforeAnyAiRequest() throws Exception {
+        AiStoryProperties properties = new AiStoryProperties();
+        properties.setEnabled(true);
+        Path blocked = tempDir.resolve("existing-file");
+        Files.writeString(blocked, "not a directory");
+        properties.setOutputDir(blocked.toString());
+        FakeAiTextClient ai = new FakeAiTextClient();
+        var service = new AiStoryService(ai, new FixedTrendCollector(properties), new AiStoryPromptBuilder(),
+                new AiStoryResponseParser(), new StoryFileRepository(properties), properties);
+        assertTrue(service.generateStory().isEmpty());
+        assertTrue(ai.prompts.isEmpty());
+    }
 
     @Test
     void rewritesFailedSectionAndRunsFinalEditorPass() {

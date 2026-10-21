@@ -47,7 +47,6 @@ const worker = {
       upstream.search = url.search;
       const headers = new Headers(request.headers);
       headers.delete("host");
-      headers.delete("origin");
       headers.set("x-forwarded-host", url.host);
       headers.set("x-forwarded-proto", url.protocol.replace(":", ""));
       return fetch(upstream, {

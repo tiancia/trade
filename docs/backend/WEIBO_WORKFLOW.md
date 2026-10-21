@@ -99,8 +99,8 @@ title/link/description/pubDate；Atom 要求 title/alternate link、summary 或 
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8080/api/automation/tasks/weibo
-Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/automation/tasks/weibo/start
-Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/automation/tasks/weibo/stop
+Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/weibo/start
+Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/weibo/stop
 ```
 
 generation、review 和 publishing 三个循环在同一任务内串行。真实发布关闭时 publishing 循环仍扫描过期、
@@ -120,6 +120,8 @@ review 短轮询只订阅 `callback_query`，批准后立即尝试发布；配�
 ## 管理 API
 
 全部要求 `X-Weibo-Admin-Token`，OAuth callback 仍用 state 校验。
+
+管理 POST / PUT / DELETE 还需 `X-Trade-CSRF: 1`，浏览器请求须来自可信 Origin；该标记不替代微博令牌。任务管理的命令行调用同样需要这个头。
 
 | 方法与路径 | 行为 |
 | --- | --- |

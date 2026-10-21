@@ -11,7 +11,7 @@
 | 路径 | 用途 |
 | --- | --- |
 | [scripts/build-images.sh](scripts/build-images.sh) | 在构建机按需生成应用镜像及完整版本清单，默认构建四个服务 |
-| [scripts/build-upload.sh](scripts/build-upload.sh) | 一个命令按需构建、导出、上传镜像与完整清单，并核验 SHA256 |
+| [scripts/build-upload.sh](scripts/build-upload.sh) | 一个命令按需构建、导出、上传镜像与完整清单，并核验 SHA256；可加 `--deploy` 自动发布 |
 | [scripts/release.sh](scripts/release.sh) | 在服务器校验、发布选定服务和显式回滚 |
 | [scripts/sync-backend-config.ps1](scripts/sync-backend-config.ps1) | Windows 向服务器安全同步选定业务配置；本身不重启服务 |
 | `egress/` | 业务出站 SSH 隧道的 Dockerfile 和入口脚本 |
@@ -89,6 +89,8 @@ chmod 600 deploy/.env deploy/backend.env
 
 两个前端无需应用令牌，页面和管理 API 统一由网关账号密码及网络隔离限制访问；保持后端端口仅在容器网络内可达。
 
+管理写接口统一要求 `X-Trade-CSRF: 1`，浏览器请求还校验同源或配置允许的 Origin；驾驶舱自动附加该头，命令行调用也必须带上。后端与驾驶舱应一起更新，避免旧前端的写操作收到 403；读取不受影响。
+
 `backend.env` 使用 **raw** 格式：每行 `KEY=value`，不要给值额外加引号，不要 `source`，也不要放 shell 命令。它只在运行时注入后端，不参与镜像构建。
 
 如果 Windows 开发机已经通过 `setx` 或 `application.yml` 配好了这些业务凭据，可在 **Windows PowerShell** 一次同步：
@@ -163,6 +165,10 @@ bash deploy/scripts/build-images.sh \
 将仓库命名空间和版本号换成实际值。默认生成 `linux/amd64`，ARM 服务器用 `--platform linux/arm64`。每次发布用新版本号，不复用 tag，不使用 `latest`。不指定服务时构建 backend、cockpit、x-console、egress 四个镜像；指定服务时只构建选中的镜像。两种方式都生成包含四项镜像引用的完整清单，默认输出到 `deploy/release.env`；后者可传给服务器，不包含业务密钥。
 
 后端构建上下文是仓库根，由 `backend/Dockerfile.dockerignore` 白名单限制；两个前端和隧道各有独立上下文。实际 `.env`、密钥、数据目录和历史构建产物不进入镜像。前端有独立 Docker Vite 配置，原本地 / Cloudflare 开发流程保持不变。
+
+后端镜像包含现有 Polymarket 桥接所需的 Python 虚拟环境、固定版本客户端和脚本，构建时只检查依赖导入。Compose 固定 `POLYMARKET_ORDER_SCRIPT=/app/tools/polymarket/polymarket_place_order.py`；该模块及真实执行开关仍默认关闭。Story 输出固定到持久卷内的 `/app/data/story`，生成前会验证实际写入权限；这两项路径不应使用开发机的相对目录。
+
+集市图片上传改为后端签发短期 OSS V4 PostObject policy，前端用表单直接上传，不再接收 AccessKey Secret。开启集市时需同时更新后端和集市前端，并在 OSS Bucket CORS 中允许该前端来源的 POST；policy 绑定对象 key、文件字节数、类型、ACL 和过期时间。它限制 HTTP 元数据及文件大小，不进行图片内容识别。真实 STS/OSS 权限与上传仍需部署后独立验收。
 
 把对应版本代码和生成的 `deploy/release.env` 放到服务器。服务器上的 `.env`、`backend.env`、`secrets/` 和数据卷保持原地，再执行：
 
@@ -250,7 +256,21 @@ bash deploy/scripts/build-upload.sh all
 
 默认本地产物放在仓库同级的 `trade-deployments/<版本号>/`；仓库位于 `A:\trade` 时，即 `A:\trade-deployments\<版本号>\`。可通过 `--output-dir` 修改版本目录的父目录，通过 `--tag` 指定版本号。Git Bash 默认优先使用 Windows 自带的 OpenSSH，沿用 Windows 中已有的配置和 agent；WSL/Linux 使用 PATH 中的 SSH。主机指纹校验保持开启，首次连接先通过正常 SSH 核对主机指纹。可选 `--server 用户@主机`、`--port 端口`、`--identity 私钥路径`、`--remote-root /服务器仓库路径` 和 `--platform linux/arm64`。`--server` 优先于 `TRADE_DEPLOY_SERVER`，后者优先于本地目标文件；`--port` 未传时沿用 SSH 配置。需要自定义 SSH/SCP 程序时，可分别设置 `TRADE_SSH_COMMAND`、`TRADE_SCP_COMMAND` 为程序路径。
 
-该命令只构建、上传和校验，结束时会打印服务器加载、校验和发布的命令；容器重建由你在服务器单独执行。若本次更改了 Compose、Nginx 或部署脚本，同步对应部署文件后再发布。使用公共 HTTPS 时，在打印出的两条 `release.sh` 命令都加 `--access public`；全量离线发布仍要求服务器已有 MySQL、Redis、Nginx 镜像。`--help` 可查看完整参数。
+默认只构建、上传和校验，结束时打印服务器加载、校验和发布的命令，容器重建由你在服务器单独执行。加 `--deploy` 后，SHA256 校验成功即通过 SSH 依次加载镜像、执行 `release.sh validate` 和 `release.sh deploy --no-pull`，重新创建本次选中的服务并等待健康检查；`all --deploy` 执行全量发布。Windows CMD 可直接使用本机 Git Bash：
+
+```cmd
+"C:\git\Git\bin\bash.exe" deploy/scripts/build-upload.sh backend --deploy
+"C:\git\Git\bin\bash.exe" deploy/scripts/build-upload.sh backend cockpit --deploy
+"C:\git\Git\bin\bash.exe" deploy/scripts/build-upload.sh all --deploy
+```
+
+访问模式通过 `--access private|public` 指定，默认读取本地 `DEPLOY_ACCESS_MODE`，未设置时使用 `private`。公共 HTTPS 部署示例：
+
+```cmd
+"C:\git\Git\bin\bash.exe" deploy/scripts/build-upload.sh backend cockpit --deploy --access public
+```
+
+自动部署默认等待健康检查 300 秒，可通过本地环境变量 `DEPLOY_WAIT_TIMEOUT` 调整。任一步失败即返回非零，不自动重试或回滚。服务器须事先具备 `release.sh`、Compose 文件和所需配置；脚本不会自动同步代码或配置，若本次更改了 Compose、Nginx 或部署脚本，先同步对应部署文件再发布。全量离线发布仍要求服务器已有 MySQL、Redis、Nginx 镜像。仅上传后手工发布时也要使用相同访问模式。`--help` 可查看完整参数。
 
 ### 分步构建和发布
 

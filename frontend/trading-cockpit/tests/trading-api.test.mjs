@@ -170,3 +170,16 @@ test("preserves explicit headers without mutating the caller's Headers object", 
   assert.equal(result.has("X-Trading-Operator-Token"), false);
   assert.equal(original.has("X-Trading-Operator-Token"), false);
 });
+
+test("marks every management mutation with the fixed CSRF header while leaving reads unchanged", () => {
+  for (const method of ["POST", "put", "PATCH", "DELETE"]) {
+    const original = new Headers({ "X-Request-Id": "test-id" });
+    const result = createJsonRequestHeaders({ headers: original, method });
+    assert.equal(result.get("X-Trade-CSRF"), "1");
+    assert.equal(result.get("X-Request-Id"), "test-id");
+    assert.equal(original.has("X-Trade-CSRF"), false);
+  }
+  for (const method of ["GET", "HEAD", "OPTIONS"]) {
+    assert.equal(createJsonRequestHeaders({ method }).has("X-Trade-CSRF"), false);
+  }
+});

@@ -9,6 +9,7 @@ import com.trade.trading.domain.risk.FundSafetyStatus;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mybatis.spring.SqlSessionFactoryBean;
 import org.mybatis.spring.mapper.MapperFactoryBean;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,16 +22,26 @@ import org.springframework.test.context.jdbc.Sql;
 import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.nio.file.Path;
 import java.util.ConcurrentModificationException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.AdditionalAnswers.delegatesTo;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
 
 @SpringJUnitConfig(MyBatisTradingFinancialStateStoreTest.PersistenceTestConfiguration.class)
 @Sql(statements = {
@@ -84,6 +95,12 @@ class MyBatisTradingFinancialStateStoreTest {
 
     @Autowired
     private FundSafetyRepository fundSafetyRepository;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @TempDir
+    Path tempDir;
 
     @Test
     void positionCostRiskAndCumulativeFillAreDurableAndIdempotent() {
@@ -229,6 +246,56 @@ class MyBatisTradingFinancialStateStoreTest {
         assertDecimal("1", position.getQuantity());
         assertEquals(0, position.getVersion());
         assertEquals(0, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_order_fill_ledger", Integer.class));
+    }
+
+    @Test
+    void concurrentStateReadCannotHoldMemoryLockWhileWaitingForSettlementRow() throws Exception {
+        var readerEnteredDatabase = new CountDownLatch(1);
+        TradingFinancialStateStore observedStore = mock(TradingFinancialStateStore.class, delegatesTo(store));
+        doAnswer(invocation -> {
+            if (Thread.currentThread().getName().equals("financial-state-reader")) {
+                readerEnteredDatabase.countDown();
+            }
+            return store.getOrCreatePosition(invocation.getArgument(0), invocation.getArgument(1),
+                    invocation.getArgument(2), invocation.getArgument(3));
+        }).when(observedStore).getOrCreatePosition(anyString(), anyString(), any(BigDecimal.class), any(BigDecimal.class));
+        var repository = new TradingStateRepository(tempDir.resolve("memory.json"), observedStore, "live", "BTC-USDT");
+        repository.getState();
+        var rowLocked = new CountDownLatch(1);
+        jdbcTemplate.execute("SET DEFAULT_LOCK_TIMEOUT 1000");
+        var executor = Executors.newFixedThreadPool(2);
+        try {
+            var settlement = executor.submit(() -> new TransactionTemplate(transactionManager).execute(status -> {
+                store.applyCumulativeSpotFill(1, "live", "BTC-USDT", "buy", BigDecimal.ONE, BigDecimal.ONE,
+                        new BigDecimal("100"), new BigDecimal("100"), BigDecimal.ZERO, "USDT", "filled", Instant.now());
+                rowLocked.countDown();
+                try {
+                    assertTrue(readerEnteredDatabase.await(5, TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+                // The real settlement risk update re-enters getState before
+                // its outer transaction releases the position row lock.
+                var state = repository.getState();
+                repository.recordRiskState(state.getRiskState().setConsecutiveOpenActions(1));
+                return state;
+            }));
+            assertTrue(rowLocked.await(5, TimeUnit.SECONDS));
+            var reader = executor.submit(() -> {
+                Thread.currentThread().setName("financial-state-reader");
+                return repository.getState();
+            });
+
+            assertDecimal("1", settlement.get(5, TimeUnit.SECONDS).getTrackedBaseAmount());
+            assertDecimal("1", reader.get(5, TimeUnit.SECONDS).getTrackedBaseAmount());
+            assertEquals(1, repository.getState().getRiskState().getConsecutiveOpenActions());
+            assertEquals(1, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_order_fill_ledger", Integer.class));
+        } finally {
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+            jdbcTemplate.execute("SET DEFAULT_LOCK_TIMEOUT 2000");
+        }
     }
 
     private static void assertDecimal(String expected, BigDecimal actual) {

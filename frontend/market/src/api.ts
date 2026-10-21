@@ -1,3 +1,5 @@
+import type { ApiTimestamp } from './time';
+
 export const MARKETPLACE_SESSION_KEY = 'marketplace-session-v1';
 
 export class MarketplaceApiError extends Error {
@@ -15,7 +17,7 @@ export interface MarketplaceUser {
 export interface MarketplaceSession {
   token: string;
   user: MarketplaceUser;
-  expiresAt: string;
+  expiresAt: ApiTimestamp;
 }
 
 export interface MarketplaceCategory {
@@ -33,22 +35,16 @@ export interface MarketplaceItem {
   price: number | null;
   status: 'LISTED' | 'DELISTED';
   seller: MarketplaceUser;
-  createdAt: string;
-  updatedAt: string;
+  createdAt: ApiTimestamp;
+  updatedAt: ApiTimestamp;
 }
 
 export interface UploadIntent {
   objectKey: string;
   publicUrl: string;
-  bucket: string;
-  region: string;
-  objectAcl: string;
-  credentials: {
-    accessKeyId: string;
-    accessKeySecret: string;
-    securityToken: string;
-    expiration: string;
-  };
+  uploadUrl: string;
+  formFields: Record<string, string>;
+  expiration: string;
 }
 
 export interface MarketplaceConversation {
@@ -57,7 +53,7 @@ export interface MarketplaceConversation {
   buyer: MarketplaceUser;
   seller: MarketplaceUser;
   lastMessage: MarketplaceMessage | null;
-  updatedAt: string;
+  updatedAt: ApiTimestamp;
 }
 
 export interface MarketplaceMessage {
@@ -65,7 +61,7 @@ export interface MarketplaceMessage {
   conversationId: number;
   sender: MarketplaceUser;
   body: string;
-  createdAt: string;
+  createdAt: ApiTimestamp;
 }
 
 export interface CreateItemPayload {
@@ -155,22 +151,12 @@ export async function createUploadIntent(token: string, file: File) {
 }
 
 export async function uploadFileToOss(file: File, intent: UploadIntent) {
-  const imported = (await import('ali-oss')) as { default?: new (options: Record<string, unknown>) => { put: (key: string, value: File, options?: Record<string, unknown>) => Promise<unknown> } };
-  const OSS = imported.default ?? (imported as unknown as new (options: Record<string, unknown>) => { put: (key: string, value: File, options?: Record<string, unknown>) => Promise<unknown> });
-  const client = new OSS({
-    region: intent.region,
-    bucket: intent.bucket,
-    accessKeyId: intent.credentials.accessKeyId,
-    accessKeySecret: intent.credentials.accessKeySecret,
-    stsToken: intent.credentials.securityToken,
-    secure: true,
-  });
-  await client.put(intent.objectKey, file, {
-    headers: {
-      'Content-Type': file.type,
-      'x-oss-object-acl': intent.objectAcl,
-    },
-  });
+  const form = new FormData();
+  for (const [name, value] of Object.entries(intent.formFields)) form.append(name, value);
+  // OSS requires the file part last. The browser supplies the multipart boundary.
+  form.append('file', file);
+  const response = await fetch(intent.uploadUrl, { method: 'POST', body: form, credentials: 'omit' });
+  if (!response.ok) throw new Error(`图片上传失败（HTTP ${response.status}），请重新选择图片后重试`);
   return intent.publicUrl;
 }
 

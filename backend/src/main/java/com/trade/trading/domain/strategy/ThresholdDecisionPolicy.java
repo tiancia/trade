@@ -95,7 +95,8 @@ public final class ThresholdDecisionPolicy {
             String reason
     ) {
 
-        BigDecimal sellBaseAmount = firstPositive(config.getSellBaseAmount(), exitBaseAmount(context));
+        BigDecimal owned = exitBaseAmount(context);
+        BigDecimal sellBaseAmount = firstPositive(config.getSellBaseAmount(), owned).min(owned);
         BigDecimal orderSize = firstPositive(config.getOrderSize(), context.getMaxDerivativeOrderSize());
         StrategyDecision decision = context.isDerivativeInstrument()
                 ? StrategyDecision.closeLong(context.getStrategyId(), orderSize, reason)
@@ -198,10 +199,9 @@ public final class ThresholdDecisionPolicy {
     }
 
     private static boolean hasPosition(Facts context) {
-        if (context.getTradingState() != null && context.getTradingState().hasTrackedPosition()) {
-            return true;
-        }
-        return context.getAvailableBase().signum() > 0;
+        // Exchange balances can include manual holdings outside this strategy.
+        TradingState state = context.getTradingState();
+        return state != null && state.getTrackedBaseAmount() != null && state.getTrackedBaseAmount().signum() > 0;
     }
 
     private static BigDecimal exitBaseAmount(Facts context) {
@@ -209,7 +209,7 @@ public final class ThresholdDecisionPolicy {
         if (state != null && state.getTrackedBaseAmount() != null && state.getTrackedBaseAmount().signum() > 0) {
             return state.getTrackedBaseAmount();
         }
-        return context.getAvailableBase();
+        return BigDecimal.ZERO;
     }
 
     private static BigDecimal firstPositive(BigDecimal first, BigDecimal fallback) {

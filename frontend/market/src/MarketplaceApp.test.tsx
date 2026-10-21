@@ -62,6 +62,20 @@ function item(overrides: Partial<MarketplaceItem> = {}): MarketplaceItem {
   };
 }
 
+function conversation(id: number, title: string): MarketplaceConversation {
+  return { id, item: item({ id, title }), buyer, seller, lastMessage: null, updatedAt: '2026-10-21T00:00:00Z' };
+}
+
+function chatMessage(id: number, conversationId: number, body: string): MarketplaceMessage {
+  return { id, conversationId, sender: seller, body, createdAt: 1792540800 };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 function setup(options: { session?: MarketplaceSession | null; items?: MarketplaceItem[]; conversations?: MarketplaceConversation[] } = {}) {
   let currentItems = options.items ?? [item()];
   mockState.storedSession = options.session ?? null;
@@ -105,15 +119,9 @@ describe('marketplace app', () => {
     api.createUploadIntent.mockResolvedValue({
       objectKey: 'marketplace/users/1/phone.png',
       publicUrl: 'https://cdn.example.com/uploaded.png',
-      bucket: 'bucket',
-      region: 'oss-cn-hangzhou',
-      objectAcl: 'public-read',
-      credentials: {
-        accessKeyId: 'ak',
-        accessKeySecret: 'sk',
-        securityToken: 'token',
-        expiration: '2026-06-19T09:00:00Z',
-      },
+      uploadUrl: 'https://bucket.oss-cn-hangzhou.aliyuncs.com',
+      formFields: { key: 'marketplace/users/1/phone.png', policy: 'policy', 'x-oss-signature': 'signature' },
+      expiration: '2026-06-19T09:00:00Z',
     });
     api.uploadFileToOss.mockResolvedValue('https://cdn.example.com/uploaded.png');
     api.fetchMessages.mockResolvedValue([]);
@@ -233,5 +241,86 @@ describe('marketplace app', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('图片大小需要在 10 MB 以内');
     expect(api.createUploadIntent).not.toHaveBeenCalled();
+  });
+
+  it('ignores an old conversation response after switching to another conversation', async () => {
+    const first = conversation(30, '会话 A 商品');
+    const second = conversation(31, '会话 B 商品');
+    const slow = deferred<MarketplaceMessage[]>();
+    const fast = deferred<MarketplaceMessage[]>();
+    api.fetchMessages.mockImplementation((_token: string, id: number) => id === first.id ? slow.promise : fast.promise);
+    setup({ session: buyerSession, conversations: [first, second] });
+    fireEvent.click(within(await screen.findByRole('navigation', { name: '主导航' })).getByRole('button', { name: /消息/ }));
+    await waitFor(() => expect(api.fetchMessages).toHaveBeenCalledWith('buyer-token', first.id));
+    fireEvent.click(within(screen.getByRole('navigation', { name: '会话列表' })).getByRole('button', { name: /会话 B 商品/ }));
+    await act(async () => { fast.resolve([chatMessage(102, second.id, '属于 B 的消息')]); });
+    expect(await screen.findByText('属于 B 的消息')).toBeVisible();
+    await act(async () => { slow.resolve([chatMessage(101, first.id, '属于 A 的旧响应')]); });
+    expect(screen.queryByText('属于 A 的旧响应')).not.toBeInTheDocument();
+    expect(screen.getByText('属于 B 的消息')).toBeVisible();
+    expect(document.querySelector('.marketplace-message-title')).toHaveTextContent('会话 B 商品');
+  });
+
+  it('keeps drafts per conversation and never appends a late send to the newly selected conversation', async () => {
+    const first = conversation(30, '会话 A 商品');
+    const second = conversation(31, '会话 B 商品');
+    const sending = deferred<MarketplaceMessage>();
+    api.sendMessage.mockReturnValue(sending.promise);
+    setup({ session: buyerSession, conversations: [first, second] });
+    fireEvent.click(within(await screen.findByRole('navigation', { name: '主导航' })).getByRole('button', { name: /消息/ }));
+    const draft = await screen.findByRole('textbox', { name: '消息内容' });
+    await waitFor(() => expect(api.fetchMessages).toHaveBeenCalledWith('buyer-token', first.id));
+    fireEvent.change(draft, { target: { value: '发给 A 的内容' } });
+    const list = screen.getByRole('navigation', { name: '会话列表' });
+    fireEvent.click(within(list).getByRole('button', { name: /会话 B 商品/ }));
+    await waitFor(() => expect(api.fetchMessages).toHaveBeenCalledWith('buyer-token', second.id));
+    expect(draft).toHaveValue('');
+    fireEvent.change(draft, { target: { value: 'B 尚未发送的草稿' } });
+    fireEvent.click(within(list).getByRole('button', { name: /会话 A 商品/ }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled());
+    expect(draft).toHaveValue('发给 A 的内容');
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    expect(api.sendMessage).toHaveBeenCalledWith('buyer-token', first.id, '发给 A 的内容');
+    fireEvent.click(within(list).getByRole('button', { name: /会话 B 商品/ }));
+    expect(draft).toHaveValue('B 尚未发送的草稿');
+    await act(async () => { sending.resolve(chatMessage(103, first.id, '发给 A 的内容')); });
+    expect(screen.queryByText('发给 A 的内容')).not.toBeInTheDocument();
+    expect(draft).toHaveValue('B 尚未发送的草稿');
+    fireEvent.click(within(list).getByRole('button', { name: /会话 A 商品/ }));
+    expect(draft).toHaveValue('');
+  });
+
+  it('does not restore private messages from an in-flight response after logout', async () => {
+    const first = conversation(30, '会话 A 商品');
+    const slow = deferred<MarketplaceMessage[]>();
+    api.fetchMessages.mockReturnValue(slow.promise);
+    setup({ session: buyerSession, conversations: [first] });
+    const nav = await screen.findByRole('navigation', { name: '主导航' });
+    fireEvent.click(within(nav).getByRole('button', { name: /消息/ }));
+    await waitFor(() => expect(api.fetchMessages).toHaveBeenCalled());
+    fireEvent.click(within(nav).getByRole('button', { name: /买家/ }));
+    fireEvent.click(screen.getByRole('button', { name: /退出登录/ }));
+    await waitFor(() => expect(within(nav).getByRole('button', { name: /登录/ })).toBeVisible());
+    await act(async () => { slow.resolve([chatMessage(104, first.id, '已退出账号的私信')]); });
+    expect(screen.queryByText('已退出账号的私信')).not.toBeInTheDocument();
+  });
+
+  it('does not skip unread incoming messages when a send response has a later ID', async () => {
+    const first = conversation(30, '会话 A 商品');
+    const initial = chatMessage(10, first.id, '已读消息');
+    const incoming = chatMessage(11, first.id, '轮询前收到的消息');
+    const sent = chatMessage(12, first.id, '我发送的消息');
+    api.fetchMessages.mockResolvedValueOnce([initial]).mockResolvedValue([incoming, sent]);
+    api.sendMessage.mockResolvedValue(sent);
+    setup({ session: buyerSession, conversations: [first] });
+    fireEvent.click(within(await screen.findByRole('navigation', { name: '主导航' })).getByRole('button', { name: /消息/ }));
+    await screen.findByText('已读消息');
+    fireEvent.change(screen.getByRole('textbox', { name: '消息内容' }), { target: { value: '我发送的消息' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    await screen.findByText('我发送的消息');
+    // Reopening is unnecessary: the next poll must continue from the last read, not the send ID.
+    await waitFor(() => expect(api.fetchMessages).toHaveBeenCalledWith('buyer-token', first.id, 10), { timeout: 5000 });
+    expect(await screen.findByText('轮询前收到的消息')).toBeVisible();
+    expect(screen.getAllByText('我发送的消息')).toHaveLength(1);
   });
 });

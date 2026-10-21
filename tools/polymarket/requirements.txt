@@ -1,0 +1,2 @@
+# Pin the client supported by the existing bridge; upgrading protocols is separate.
+py-clob-client-v2==1.2.1

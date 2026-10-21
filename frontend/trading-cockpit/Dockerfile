@@ -7,7 +7,7 @@ RUN npm ci --include=dev --no-audit --no-fund
 COPY app ./app
 COPY public ./public
 COPY next.config.ts postcss.config.mjs tsconfig.json vite.config.docker.ts ./
-RUN npm exec vite -- build --app --config vite.config.docker.ts
+RUN node node_modules/vite/bin/vite.js build --app --config vite.config.docker.ts
 
 FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production \

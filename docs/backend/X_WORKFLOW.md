@@ -91,7 +91,7 @@ TRADE_X_CONTENT_MAX_CHARS=120
 若微博任务已运行，先停止：
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/automation/tasks/weibo/stop
+Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/weibo/stop
 ```
 
 在**所有使用该 Bot 的实例**关闭微博审核，并保持微博任务自动启动关闭。暂时不使用微博时，也关闭其生成和发布开关：
@@ -154,10 +154,10 @@ TRADE_AUTOMATION_X_AUTO_START=false
 设置临时覆盖值并重启后，显式启动任务：
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/automation/tasks/x/start
+Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/x/start
 Invoke-RestMethod http://127.0.0.1:8080/api/automation/tasks/x
 # 停止后续循环
-Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/automation/tasks/x/stop
+Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/x/stop
 ```
 
 automation API 沿用现有运维访问控制，须置于受保护的部署控制面。手工启动不会打开业务开关；注册 Bean 不发起外部请求。
@@ -197,7 +197,7 @@ Bot 消息展示目标账号、草稿 ID、版本、过期时间和完整待发�
 没有绕过审核的 HTTP 发布或批准接口。例：
 
 ```powershell
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/api/x/posts
+Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} -Uri http://127.0.0.1:8080/api/x/posts
 Invoke-RestMethod -Uri http://127.0.0.1:8080/api/x/posts
 ```
 

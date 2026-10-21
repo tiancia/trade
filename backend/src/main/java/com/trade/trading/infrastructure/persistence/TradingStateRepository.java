@@ -44,6 +44,8 @@ public class TradingStateRepository implements TradingStateStore {
     private final TradingFinancialStateStore financialStateStore;
     private final String accountScope;
     private final String instId;
+    /** Protects only file-backed memory. Database calls must never hold this lock. */
+    private final Object memoryLock = new Object();
     private TradingMemoryDocument memory;
     private TradingState legacySeed;
 
@@ -77,9 +79,17 @@ public class TradingStateRepository implements TradingStateStore {
         this.instId = instId;
     }
 
-    public synchronized TradingState getState() {
-        TradingMemoryDocument current = memory();
-        TradingState seed = legacySeed();
+    public TradingState getState() {
+        TradingMemoryDocument current;
+        TradingState seed;
+        synchronized (memoryLock) {
+            current = copyMemory(memory());
+            seed = legacySeed();
+        }
+        return financialSnapshot(current, seed);
+    }
+
+    private TradingState financialSnapshot(TradingMemoryDocument current, TradingState seed) {
         TradingPositionState position = financialStateStore.getOrCreatePosition(
                 accountScope,
                 instId,
@@ -93,21 +103,21 @@ public class TradingStateRepository implements TradingStateStore {
         return compose(current, position, riskState);
     }
 
-    public synchronized void recordBuy(BigDecimal baseAmount, BigDecimal price) {
+    public void recordBuy(BigDecimal baseAmount, BigDecimal price) {
         if (!positive(baseAmount) || !positive(price)) {
             return;
         }
         financialStateStore.recordBuy(accountScope, instId, baseAmount, price);
     }
 
-    public synchronized void recordSell(BigDecimal baseAmount) {
+    public void recordSell(BigDecimal baseAmount) {
         if (!positive(baseAmount)) {
             return;
         }
         financialStateStore.recordSell(accountScope, instId, baseAmount);
     }
 
-    public synchronized TradingPositionState recordExchangePosition(
+    public TradingPositionState recordExchangePosition(
             BigDecimal exchangeQuantity,
             BigDecimal authoritativeQuantity,
             BigDecimal authoritativeAverageCost,
@@ -151,41 +161,49 @@ public class TradingStateRepository implements TradingStateStore {
         );
     }
 
-    public synchronized void recordDecision(TradingDecisionRecord record, int limit) {
+    public void recordDecision(TradingDecisionRecord record, int limit) {
         if (record == null || limit <= 0) {
             return;
         }
-        TradingMemoryDocument current = copyMemory(memory());
-        List<TradingDecisionRecord> recent = new ArrayList<>();
-        recent.add(copyDecision(record));
-        recent.addAll(copyRecentDecisions(current.getRecentDecisions()));
-        if (recent.size() > limit) {
-            recent = new ArrayList<>(recent.subList(0, limit));
+        // Seed legacy financial values before any writer removes them from JSON.
+        // Keep that database work outside the memory/file critical section.
+        getState();
+        synchronized (memoryLock) {
+            TradingMemoryDocument current = copyMemory(memory());
+            List<TradingDecisionRecord> recent = new ArrayList<>();
+            recent.add(copyDecision(record));
+            recent.addAll(copyRecentDecisions(current.getRecentDecisions()));
+            if (recent.size() > limit) {
+                recent = new ArrayList<>(recent.subList(0, limit));
+            }
+            current.setRecentDecisions(recent);
+            writeMemory(current);
         }
-        current.setRecentDecisions(recent);
-        writeMemory(current);
     }
 
-    public synchronized void recordStrategyState(String decisionId, AiTradingDecision decision) {
+    public void recordStrategyState(String decisionId, AiTradingDecision decision) {
         if (decision == null || !hasStrategyUpdate(decision)) {
             return;
         }
-        TradingMemoryDocument current = copyMemory(memory());
-        TradingStrategyState previous = current.getStrategyState();
-        current.setStrategyState(new TradingStrategyState()
-                .setBias(firstText(decision.getStrategyBias(), previous == null ? null : previous.getBias()))
-                .setThesis(firstText(decision.getStrategyThesis(), previous == null ? null : previous.getThesis()))
-                .setInvalidation(firstText(
-                        decision.getStrategyInvalidation(),
-                        previous == null ? null : previous.getInvalidation()
-                ))
-                .setHorizon(firstText(decision.getStrategyHorizon(), previous == null ? null : previous.getHorizon()))
-                .setUpdatedAt(Instant.now().toString())
-                .setSourceDecisionId(decisionId));
-        writeMemory(current);
+        getState();
+        synchronized (memoryLock) {
+            TradingMemoryDocument current = copyMemory(memory());
+            TradingStrategyState previous = current.getStrategyState();
+            current.setStrategyState(new TradingStrategyState()
+                    .setBias(firstText(decision.getStrategyBias(), previous == null ? null : previous.getBias()))
+                    .setThesis(firstText(decision.getStrategyThesis(), previous == null ? null : previous.getThesis()))
+                    .setInvalidation(firstText(
+                            decision.getStrategyInvalidation(),
+                            previous == null ? null : previous.getInvalidation()
+                    ))
+                    .setHorizon(firstText(decision.getStrategyHorizon(), previous == null ? null : previous.getHorizon()))
+                    .setUpdatedAt(Instant.now().toString())
+                    .setSourceDecisionId(decisionId));
+            writeMemory(current);
+        }
     }
 
-    public synchronized void recordRiskState(TradingRiskState riskState) {
+    public void recordRiskState(TradingRiskState riskState) {
         if (riskState == null) {
             return;
         }
@@ -194,14 +212,14 @@ public class TradingStateRepository implements TradingStateStore {
         financialStateStore.saveRiskState(accountScope, copyRiskState(riskState));
     }
 
-    public synchronized TradingRiskState recordReconciliationSuccess(Instant reconciledAt) {
+    public TradingRiskState recordReconciliationSuccess(Instant reconciledAt) {
         // Initialize a legacy risk baseline before using field-specific atomic
         // updates, otherwise an early recovery loop could create an empty row.
         getState();
         return financialStateStore.recordReconciliationSuccess(accountScope, reconciledAt);
     }
 
-    public synchronized TradingRiskState recordReconciliationFailure(Instant reconciledAt, String error) {
+    public TradingRiskState recordReconciliationFailure(Instant reconciledAt, String error) {
         getState();
         return financialStateStore.recordReconciliationFailure(accountScope, reconciledAt, error);
     }
@@ -213,25 +231,31 @@ public class TradingStateRepository implements TradingStateStore {
      * overwriting each other. Re-selecting the current strategy is idempotent
      * and does not advance the revision.</p>
      */
-    public synchronized TradingState selectActiveStrategy(String strategyId, Long expectedRevision) {
+    public TradingState selectActiveStrategy(String strategyId, Long expectedRevision) {
         if (strategyId == null || strategyId.isBlank()) {
             throw new IllegalArgumentException("strategyId is required");
         }
-        TradingMemoryDocument current = copyMemory(memory());
-        if (expectedRevision != null && expectedRevision.longValue() != current.getActiveStrategyRevision()) {
-            throw new ConcurrentModificationException(
-                    "Active strategy revision changed from " + expectedRevision
-                            + " to " + current.getActiveStrategyRevision()
-            );
+        getState();
+        TradingMemoryDocument current;
+        TradingState seed;
+        synchronized (memoryLock) {
+            current = copyMemory(memory());
+            seed = legacySeed();
+            if (expectedRevision != null && expectedRevision.longValue() != current.getActiveStrategyRevision()) {
+                throw new ConcurrentModificationException(
+                        "Active strategy revision changed from " + expectedRevision
+                                + " to " + current.getActiveStrategyRevision()
+                );
+            }
+            String normalized = strategyId.trim();
+            if (!normalized.equals(current.getActiveStrategyId())) {
+                current.setActiveStrategyId(normalized);
+                current.setActiveStrategyRevision(current.getActiveStrategyRevision() + 1L);
+                current.setActiveStrategyChangedAt(Instant.now().toString());
+                writeMemory(current);
+            }
         }
-        String normalized = strategyId.trim();
-        if (!normalized.equals(current.getActiveStrategyId())) {
-            current.setActiveStrategyId(normalized);
-            current.setActiveStrategyRevision(current.getActiveStrategyRevision() + 1L);
-            current.setActiveStrategyChangedAt(Instant.now().toString());
-            writeMemory(current);
-        }
-        return getState();
+        return financialSnapshot(current, seed);
     }
 
     private TradingMemoryDocument memory() {
@@ -287,9 +311,6 @@ public class TradingStateRepository implements TradingStateStore {
     private void writeMemory(TradingMemoryDocument nextMemory) {
         Path temporary = null;
         try {
-            // Initialize legacy financial state before the old JSON values are
-            // intentionally removed from the rewritten memory document.
-            getState();
             Path target = statePath.toAbsolutePath();
             Path parent = target.getParent();
             Files.createDirectories(parent);

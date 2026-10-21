@@ -16,10 +16,18 @@ const timeFormatter = new Intl.DateTimeFormat('zh-CN', {
   hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 });
 
+function timestampMillis(value) {
+  if (value === null || value === undefined || value === '') return null;
+  // Spring emits epoch seconds; saved snapshots may contain milliseconds or ISO text.
+  const milliseconds = typeof value === 'number'
+    ? (Math.abs(value) < 100_000_000_000 ? value * 1000 : value)
+    : typeof value === 'string' ? Date.parse(value) : NaN;
+  return Number.isFinite(milliseconds) && Number.isFinite(new Date(milliseconds).getTime()) ? milliseconds : null;
+}
+
 export function formatTime(value) {
-  if (value === null || value === undefined || value === '') return '—';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '—' : timeFormatter.format(date);
+  const milliseconds = timestampMillis(value);
+  return milliseconds === null ? '—' : timeFormatter.format(milliseconds);
 }
 
 export function reviewSummary(post = {}) {
@@ -50,8 +58,7 @@ export function publishSummary(post = {}) {
 }
 
 function createdTime(post) {
-  const value = post.createdAt ? Date.parse(post.createdAt) : NaN;
-  return Number.isFinite(value) ? value : -Infinity;
+  return timestampMillis(post.createdAt) ?? -Infinity;
 }
 
 export function filterPosts(posts, { query = '', status = 'ALL' } = {}) {

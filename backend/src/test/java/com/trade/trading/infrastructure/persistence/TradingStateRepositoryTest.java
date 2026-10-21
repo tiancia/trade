@@ -14,12 +14,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ConcurrentModificationException;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TradingStateRepositoryTest {
     @TempDir
@@ -221,6 +227,69 @@ class TradingStateRepositoryTest {
 
         assertThrows(ConcurrentModificationException.class,
                 () -> repository.selectActiveStrategy("defensive", 0L));
+    }
+
+    @Test
+    void concurrentMemoryWritersPreserveLegacySeedsAndEachCommittedUpdate() throws Exception {
+        Path file = tempDir.resolve("concurrent-legacy.json");
+        Files.writeString(file, """
+                {"trackedBaseAmount":0.25,"averageCost":42000,
+                 "riskState":{"currentEquity":900},"recentDecisions":[]}
+                """);
+        var financialStore = new InMemoryTradingFinancialStateStore();
+        var repository = repository(file, financialStore);
+        var ready = new CountDownLatch(1);
+        var writes = new ArrayList<Callable<Boolean>>();
+        for (int i = 0; i < 16; i++) {
+            String id = "decision-" + i;
+            writes.add(() -> {
+                ready.await();
+                repository.recordDecision(decision(id, TradingAction.HOLD), 32);
+                return true;
+            });
+        }
+        writes.add(() -> {
+            ready.await();
+            repository.recordStrategyState("thesis", new AiTradingDecision().setStrategyThesis("preserved"));
+            return true;
+        });
+        for (String strategy : java.util.List.of("balanced", "defensive")) {
+            writes.add(() -> {
+                ready.await();
+                try {
+                    repository.selectActiveStrategy(strategy, 0L);
+                    return true;
+                } catch (ConcurrentModificationException expected) {
+                    return false;
+                }
+            });
+        }
+        var executor = Executors.newFixedThreadPool(6);
+        try {
+            var futures = writes.stream().map(executor::submit).toList();
+            ready.countDown();
+            int successes = 0;
+            for (var future : futures) {
+                if (future.get(5, TimeUnit.SECONDS)) successes++;
+            }
+            assertEquals(18, successes); // Sixteen records, one thesis and one revision winner.
+        } finally {
+            executor.shutdownNow();
+        }
+
+        TradingState restored = repository(file, financialStore).getState();
+        assertDecimal("0.25", restored.getTrackedBaseAmount());
+        assertDecimal("42000", restored.getAverageCost());
+        assertDecimal("900", restored.getRiskState().getCurrentEquity());
+        assertEquals(16, restored.getRecentDecisions().size());
+        assertEquals(16, restored.getRecentDecisions().stream().map(TradingDecisionRecord::getTimestamp).distinct().count());
+        assertEquals("preserved", restored.getStrategyState().getThesis());
+        assertEquals(1L, restored.getActiveStrategyRevision());
+        assertTrue(java.util.List.of("balanced", "defensive").contains(restored.getActiveStrategyId()));
+        assertFalse(Files.readString(file).contains("trackedBaseAmount"));
+        try (var files = Files.list(tempDir)) {
+            assertEquals(1, files.count());
+        }
     }
 
     private static void assertDecimal(String expected, BigDecimal actual) {

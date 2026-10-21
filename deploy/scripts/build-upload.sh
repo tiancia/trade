@@ -11,11 +11,14 @@ OUTPUT_ROOT="$(dirname -- "$ROOT_DIR")/trade-deployments"
 VERSION="$(date -u +%Y%m%d-%H%M%S)-$$"
 PLATFORM=${BUILD_PLATFORM:-linux/amd64}
 REGISTRY=${IMAGE_REGISTRY:-trade}
+DEPLOY=false
+ACCESS_MODE=${DEPLOY_ACCESS_MODE:-private}
+WAIT_TIMEOUT=${DEPLOY_WAIT_TIMEOUT:-300}
 TARGETS=()
 
 usage() {
   cat <<'EOF'
-Build selected images, export them, upload, and verify their SHA256 checksums.
+Build selected images, export, upload, verify, and optionally deploy them.
 
 Usage: bash deploy/scripts/build-upload.sh [options] SERVICE [SERVICE ...]
 
@@ -30,14 +33,18 @@ Services: backend cockpit x-console egress, or all for all four images.
   --remote-root DIR    Existing server repository; defaults to /opt/trade
   --output-dir DIR     Parent for local version directories;
                        defaults to ../trade-deployments beside this repository
+  --deploy             Load and deploy on the server after checksum verification
+  --access MODE        private (default), or public; also uses DEPLOY_ACCESS_MODE
   --help               Show this help
 
 The local server file contains one SSH target, not shell commands or passwords.
 SSH host-key verification stays enabled. Existing SSH config and agents apply.
 Partial builds download deploy/releases/current.env from the target server.
 Only the chosen images and the complete release manifest are uploaded to a new
-deploy/incoming/VERSION directory. Containers and active configuration are not
-changed. The script prints the commands for a separate server-side release.
+deploy/incoming/VERSION directory. By default, print the server release commands.
+With --deploy, run the server's existing release.sh with --no-pull and wait for
+health checks (DEPLOY_WAIT_TIMEOUT seconds, default 300). Deployment files and
+runtime configuration must already be in place; they are not uploaded.
 EOF
 }
 
@@ -53,6 +60,8 @@ while (($#)); do
     --platform) require_value "$@"; PLATFORM=$2; shift 2 ;;
     --remote-root) require_value "$@"; REMOTE_ROOT=$2; shift 2 ;;
     --output-dir) require_value "$@"; OUTPUT_ROOT=$2; shift 2 ;;
+    --deploy) DEPLOY=true; shift ;;
+    --access) require_value "$@"; ACCESS_MODE=$2; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     backend|cockpit|x-console|egress|all) TARGETS+=("$1"); shift ;;
     *) fail "Unknown argument: $1" ;;
@@ -77,6 +86,8 @@ fi
 [[ $SERVER =~ ^([A-Za-z0-9_][A-Za-z0-9_.-]*@)?[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || fail 'Set --server user@host (or an SSH alias), or save it in deploy/upload-server.local'
 [[ $VERSION =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ && $VERSION != latest ]] || fail 'Use a valid explicit release tag, not latest'
 [[ $PLATFORM =~ ^linux/(amd64|arm64)(/v[0-9]+)?$ ]] || fail 'Supported target platforms: linux/amd64 or linux/arm64'
+case "$ACCESS_MODE" in private|public) ;; *) fail 'Access mode must be private or public' ;; esac
+[[ $WAIT_TIMEOUT =~ ^[1-9][0-9]*$ ]] || fail 'DEPLOY_WAIT_TIMEOUT must be a positive number of seconds'
 REGISTRY=${REGISTRY%/}
 [[ $REGISTRY =~ ^[a-z0-9][a-z0-9._:/-]*[a-z0-9]$ && $REGISTRY != *://* ]] || fail 'IMAGE_REGISTRY must be a Docker image namespace without a URL scheme'
 REMOTE_ROOT=${REMOTE_ROOT%/}
@@ -119,6 +130,10 @@ ARTIFACT_DIR="$OUTPUT_ROOT/$VERSION"
 REMOTE_DIR="$REMOTE_ROOT/deploy/incoming/$VERSION"
 printf 'Checking SSH and upload destination: %s:%s\n' "$SERVER" "$REMOTE_DIR"
 "$SSH_COMMAND" "${ssh_args[@]}" "$SERVER" "test -d '$REMOTE_ROOT/deploy' && test -w '$REMOTE_ROOT/deploy' && command -v sha256sum >/dev/null && test ! -e '$REMOTE_DIR'"
+if [[ $DEPLOY == true ]]; then
+  printf 'Checking server deployment tools.\n'
+  "$SSH_COMMAND" "${ssh_args[@]}" "$SERVER" "test -f '$REMOTE_ROOT/deploy/scripts/release.sh' && command -v bash >/dev/null && command -v flock >/dev/null && docker info >/dev/null && docker compose version >/dev/null"
+fi
 mkdir -p -- "$OUTPUT_ROOT"
 mkdir -- "$ARTIFACT_DIR"
 # Use absolute local paths for scp even when --output-dir was relative.
@@ -150,14 +165,40 @@ mv -- "$ARTIFACT_DIR/images.tar.gz.partial" "$ARTIFACT_DIR/images.tar.gz"
 "$SSH_COMMAND" "${ssh_args[@]}" "$SERVER" "cd '$REMOTE_DIR' && sha256sum -c SHA256SUMS"
 
 printf '\nUpload and checksum verification succeeded.\nLocal files: %s\nServer files: %s:%s\n' "$ARTIFACT_DIR" "$SERVER" "$REMOTE_DIR"
+if [[ $DEPLOY == true ]]; then
+  printf '\nDeploying with the server deployment files (%s access).\n' "$ACCESS_MODE"
+  # Keep the remote paths in one argument so Git Bash does not convert them
+  # into Windows paths when invoking Windows OpenSSH. All values are validated.
+  remote_deploy_command="bash -se -- '$REMOTE_ROOT' '$REMOTE_DIR' '$ACCESS_MODE' '$WAIT_TIMEOUT'"
+  if ((${#TARGETS[@]} < 4)); then
+    remote_deploy_command+=" ${TARGETS[*]}"
+  fi
+  if "$SSH_COMMAND" "${ssh_args[@]}" "$SERVER" "$remote_deploy_command" <<'REMOTE_DEPLOY'
+set -euo pipefail
+remote_root=$1
+release_dir=$2
+access_mode=$3
+wait_timeout=$4
+shift 4
+cd -- "$remote_root"
+docker load -i "$release_dir/images.tar.gz"
+bash deploy/scripts/release.sh validate --release "$release_dir/release.env" --access "$access_mode"
+DEPLOY_WAIT_TIMEOUT="$wait_timeout" bash deploy/scripts/release.sh deploy "$@" --release "$release_dir/release.env" --access "$access_mode" --no-pull
+REMOTE_DEPLOY
+  then
+    printf '\nAutomatic deployment and health checks succeeded.\n'
+    exit 0
+  else
+    fail 'Automatic deployment failed. Inspect the server output and container state before retrying or rolling back.'
+  fi
+fi
 printf '\nRun these commands separately in the server Bash to load and deploy:\n'
 printf "cd '%s'\n" "$REMOTE_ROOT"
 printf "docker load -i '%s/images.tar.gz'\n" "$REMOTE_DIR"
-printf "bash deploy/scripts/release.sh validate --release '%s/release.env'\n" "$REMOTE_DIR"
-printf 'DEPLOY_WAIT_TIMEOUT=300 bash deploy/scripts/release.sh deploy'
+printf "bash deploy/scripts/release.sh validate --release '%s/release.env' --access '%s'\n" "$REMOTE_DIR" "$ACCESS_MODE"
+printf 'DEPLOY_WAIT_TIMEOUT=%s bash deploy/scripts/release.sh deploy' "$WAIT_TIMEOUT"
 if ((${#TARGETS[@]} < 4)); then
   printf ' %s' "${TARGETS[@]}"
 fi
-printf " --release '%s/release.env' --no-pull\n" "$REMOTE_DIR"
-printf '\nFor public HTTPS, add --access public to both release.sh commands.\n'
+printf " --release '%s/release.env' --access '%s' --no-pull\n" "$REMOTE_DIR" "$ACCESS_MODE"
 printf 'If Compose, Nginx or deployment scripts changed, sync those files before deploying.\n'

@@ -107,10 +107,12 @@ X 的 `x` 任务也包含生成、审核、发布三个循环。启动 schema �
 
 查询、启动和停止任务：
 
+管理写请求（automation、trading、X、微博和文字游戏管理接口）统一要求 `X-Trade-CSRF: 1`。浏览器还必须来自同源或配置允许的 Origin；无 Origin 的命令行客户端也要带这个头。它是跨站请求防护标记，不替代网关认证或各业务已有鉴权。GET 查询和 OAuth 回调保持原有行为。
+
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8080/api/automation/tasks
-Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/automation/tasks/trading/start
-Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/automation/tasks/trading/stop
+Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/trading/start
+Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/trading/stop
 ```
 
 启动前检查所属域的 enabled 开关、凭据、风险参数、外部网络和数据库结构。`start` 是幂等的运行状态切换，不会自动把业务 enabled 开关改成 true。
@@ -153,12 +155,12 @@ $env:TRADE_TRADING_LEADERSHIP_HEARTBEAT_INTERVAL_MS="5000"
 
 ```powershell
 # expectedRevision 使用 GET /api/trading/runtime/status 返回的 activeStrategyRevision。
-Invoke-RestMethod -Method Put `
+Invoke-RestMethod -Method Put -Headers @{'X-Trade-CSRF'='1'} `
   -Uri http://127.0.0.1:8080/api/trading/strategies/active `
   -ContentType "application/json" `
   -Body '{"strategyId":"threshold-event-defensive","expectedRevision":1}'
 
-Invoke-RestMethod -Method Post `
+Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} `
   -Uri http://127.0.0.1:8080/api/trading/safety/stop `
   -ContentType "application/json" `
   -Body '{"reason":"operator incident response"}'
@@ -174,7 +176,7 @@ Invoke-RestMethod http://127.0.0.1:8080/api/trading/safety
 恢复前必须完成订单和仓位对账，确认交易所无挂单、本地无中间态订单，并使用 GET 返回的当前 `version`：
 
 ```powershell
-Invoke-RestMethod -Method Post `
+Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} `
   -Uri http://127.0.0.1:8080/api/trading/reconciliation/run
 
 $body = @{
@@ -183,7 +185,7 @@ $body = @{
   confirmation = "RESUME_LIVE_TRADING"
 } | ConvertTo-Json
 
-Invoke-RestMethod -Method Post `
+Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} `
   -Uri http://127.0.0.1:8080/api/trading/safety/resume `
   -ContentType "application/json" `
   -Body $body

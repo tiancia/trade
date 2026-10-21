@@ -3,6 +3,7 @@ package com.trade.marketplace.domain.model;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 /**
  * JSON request and response contracts exposed by marketplace controllers.
@@ -64,18 +65,9 @@ public final class MarketplaceApi {
     public record UploadIntent(
             String objectKey,
             String publicUrl,
-            String bucket,
-            String region,
-            String objectAcl,
-            OssCredentials credentials
-    ) {
-    }
-
-    public record OssCredentials(
-            String accessKeyId,
-            String accessKeySecret,
-            String securityToken,
-            Instant expiration
+            String uploadUrl,
+            Map<String, String> formFields,
+            String expiration
     ) {
     }
 

@@ -394,7 +394,7 @@ function errorMessage(error: unknown) {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: createJsonRequestHeaders({ headers: init?.headers }),
+    headers: createJsonRequestHeaders({ headers: init?.headers, method: init?.method }),
   });
   if (!response.ok) {
     const problem = await response.json().catch(() => null);

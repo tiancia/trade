@@ -6,7 +6,8 @@ import com.trade.marketplace.domain.model.MarketplacePrincipal;
 import com.trade.marketplace.infrastructure.config.MarketplaceProperties;
 import org.junit.jupiter.api.Test;
 
-import java.time.Instant;
+import java.util.Map;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -14,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MarketplaceUploadServiceTest {
     @Test
-    void createsSingleObjectUploadIntent() {
+    void createsSingleObjectUploadIntent() throws Exception {
         MarketplaceProperties properties = new MarketplaceProperties();
         properties.getOss().setAccessKeyId("ak");
         properties.getOss().setAccessKeySecret("sk");
@@ -30,15 +31,19 @@ class MarketplaceUploadServiceTest {
                 new MarketplaceApi.UploadIntentRequest("phone.png", "image/png", 1024L)
         );
 
-        assertEquals("bucket", intent.bucket());
-        assertEquals("oss-cn-hangzhou", intent.region());
+        assertEquals("https://bucket.oss-cn-hangzhou.aliyuncs.com", intent.uploadUrl());
         assertTrue(intent.objectKey().startsWith("marketplace/users/42/"));
         assertTrue(intent.objectKey().endsWith(".png"));
         assertEquals("https://img.example.com/" + intent.objectKey(), intent.publicUrl());
-        assertEquals("public-read", intent.objectAcl());
-        assertEquals("sts-ak", intent.credentials().accessKeyId());
+        assertEquals("signed-policy", intent.formFields().get("policy"));
+        assertEquals("2026-10-21T09:00:00Z", intent.expiration());
+        String json = new ObjectMapper().writeValueAsString(intent);
+        assertTrue(!json.contains("credentials") && !json.contains("accessKeySecret"));
         assertEquals("bucket", stsClient.bucket);
         assertEquals(intent.objectKey(), stsClient.objectKey);
+        assertEquals("cn-hangzhou", stsClient.request.region());
+        assertEquals("image/png", stsClient.request.contentType());
+        assertEquals(1024L, stsClient.request.sizeBytes());
     }
 
     @Test
@@ -72,26 +77,35 @@ class MarketplaceUploadServiceTest {
         ));
     }
 
+    @Test
+    void regionAliasesUseTheSameUploadEndpointAndSigningScope() {
+        for (String region : new String[]{"cn-hangzhou", "oss-cn-hangzhou"}) {
+            var properties = new MarketplaceProperties();
+            properties.getOss().setRoleArn("acs:ram::1:role/upload");
+            properties.getOss().setBucket("bucket");
+            properties.getOss().setRegion(region);
+            var stsClient = new FakeStsClient();
+            var service = new MarketplaceUploadService(properties, stsClient);
+            var intent = service.createIntent(new MarketplacePrincipal(42L, "alice", "Alice"),
+                    new MarketplaceApi.UploadIntentRequest("image.png", "image/png", 1024L));
+
+            assertEquals("cn-hangzhou", stsClient.request.region());
+            assertEquals("https://bucket.oss-cn-hangzhou.aliyuncs.com", intent.uploadUrl());
+            assertEquals(intent.uploadUrl() + "/" + intent.objectKey(), intent.publicUrl());
+        }
+    }
+
     private static class FakeStsClient implements MarketplaceOssStsClient {
         private String bucket;
         private String objectKey;
+        private UploadRequest request;
 
         @Override
-        public MarketplaceApi.OssCredentials assumeUploadRole(
-                String roleArn,
-                String roleSessionName,
-                String bucket,
-                String objectKey,
-                int durationSeconds
-        ) {
-            this.bucket = bucket;
-            this.objectKey = objectKey;
-            return new MarketplaceApi.OssCredentials(
-                    "sts-ak",
-                    "sts-sk",
-                    "sts-token",
-                    Instant.parse("2026-06-19T09:00:00Z")
-            );
+        public UploadForm createUploadForm(UploadRequest request) {
+            this.request = request;
+            this.bucket = request.bucket();
+            this.objectKey = request.objectKey();
+            return new UploadForm(Map.of("policy", "signed-policy"), "2026-10-21T09:00:00Z");
         }
     }
 }
