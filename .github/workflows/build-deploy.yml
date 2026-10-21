@@ -1,0 +1,227 @@
+name: Build and deploy selected services
+run-name: ${{ inputs.deploy && 'Build and deploy' || 'Build only' }} / ${{ inputs.service }} / ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Service to build and optionally deploy
+        type: choice
+        required: true
+        default: backend
+        options:
+          - backend
+          - cockpit
+          - x-console
+          - frontends
+          - egress
+          - all
+      deploy:
+        description: Deploy the selected services after pushing images
+        type: boolean
+        default: false
+      server_path:
+        description: Existing repository directory on the server
+        type: string
+        required: true
+        default: /opt/trade
+      access:
+        description: Keep the server's existing access mode
+        type: choice
+        required: true
+        default: private
+        options:
+          - private
+          - public
+
+permissions:
+  contents: read
+  packages: write
+
+# Serialize releases across services and branches; never interrupt a running release.
+concurrency:
+  group: trade-production-release
+  cancel-in-progress: false
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      SERVICE: ${{ inputs.service }}
+      DEPLOY_REQUESTED: ${{ inputs.deploy }}
+      DEPLOY_ROOT: ${{ inputs.server_path }}
+      ACCESS_MODE: ${{ inputs.access }}
+    steps:
+      - name: Check out the selected revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Prepare service selection and image version
+        run: |
+          set -euo pipefail
+          case "$SERVICE" in
+            backend|cockpit|x-console|egress) targets=("$SERVICE") ;;
+            frontends) targets=(cockpit x-console) ;;
+            all) targets=(backend cockpit x-console egress) ;;
+            *) echo 'Unsupported service selection.' >&2; exit 1 ;;
+          esac
+          DEPLOY_ROOT=${DEPLOY_ROOT%/}
+          [[ $DEPLOY_ROOT =~ ^/[A-Za-z0-9_./-]+$ && $DEPLOY_ROOT != *'/../'* && $DEPLOY_ROOT != */.. && $DEPLOY_ROOT != *'/./'* && $DEPLOY_ROOT != */. ]] || {
+            echo 'Use an absolute server path without spaces or dot segments.' >&2
+            exit 1
+          }
+          case "$ACCESS_MODE" in private|public) ;; *) exit 1 ;; esac
+          release_dir="$RUNNER_TEMP/trade-release"
+          mkdir -p "$release_dir"
+          {
+            printf 'DEPLOY_ROOT=%s\n' "$DEPLOY_ROOT"
+            printf 'TARGET_SERVICES=%s\n' "${targets[*]}"
+            printf 'IMAGE_REGISTRY=ghcr.io/%s\n' "${GITHUB_REPOSITORY,,}"
+            printf 'IMAGE_TAG=sha-%s-%s-%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf 'RELEASE_DIR=%s\n' "$release_dir"
+          } >> "$GITHUB_ENV"
+
+      - name: Configure SSH from repository secrets
+        if: inputs.service != 'all' || inputs.deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_HOST:?Missing DEPLOY_HOST}"
+          : "${DEPLOY_PORT:?Missing DEPLOY_PORT}"
+          : "${DEPLOY_USER:?Missing DEPLOY_USER}"
+          : "${DEPLOY_SSH_KEY:?Missing DEPLOY_SSH_KEY}"
+          : "${DEPLOY_KNOWN_HOSTS:?Missing DEPLOY_KNOWN_HOSTS}"
+          [[ $DEPLOY_HOST =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || exit 1
+          [[ $DEPLOY_USER =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || exit 1
+          [[ $DEPLOY_PORT =~ ^[0-9]{1,5}$ ]] && ((10#$DEPLOY_PORT >= 1 && 10#$DEPLOY_PORT <= 65535)) || exit 1
+          umask 077
+          ssh_dir="$RUNNER_TEMP/trade-ssh"
+          mkdir -p "$ssh_dir"
+          printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' > "$ssh_dir/key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" | tr -d '\r' > "$ssh_dir/known_hosts"
+          cat > "$ssh_dir/config" <<EOF
+          Host trade-deploy
+            HostName $DEPLOY_HOST
+            Port $DEPLOY_PORT
+            User $DEPLOY_USER
+            IdentityFile "$ssh_dir/key"
+            UserKnownHostsFile "$ssh_dir/known_hosts"
+            BatchMode yes
+            IdentitiesOnly yes
+            IdentityAgent none
+            StrictHostKeyChecking yes
+            ConnectTimeout 15
+            ServerAliveInterval 15
+            ServerAliveCountMax 4
+          EOF
+          printf 'SSH_CONFIG=%s\n' "$ssh_dir/config" >> "$GITHUB_ENV"
+
+      - name: Check server prerequisites and fetch the current image manifest
+        if: inputs.service != 'all' || inputs.deploy
+        run: |
+          set -euo pipefail
+          if [[ $DEPLOY_REQUESTED == true ]]; then
+            ssh -F "$SSH_CONFIG" trade-deploy "
+              set -eu
+              test -w '$DEPLOY_ROOT/deploy'
+              test -f '$DEPLOY_ROOT/deploy/scripts/release.sh'
+              test -f '$DEPLOY_ROOT/compose.prod.yaml'
+              command -v flock >/dev/null
+              docker info >/dev/null
+              docker compose version >/dev/null
+            "
+          fi
+          if [[ $SERVICE != all ]]; then
+            # A failed download must stop the build, never fall back to a local baseline.
+            scp -F "$SSH_CONFIG" \
+              "trade-deploy:$DEPLOY_ROOT/deploy/releases/current.env" \
+              "$RELEASE_DIR/base-release.env"
+          fi
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Build and push only the selected images
+        run: |
+          set -euo pipefail
+          read -r -a targets <<< "$TARGET_SERVICES"
+          args=(--registry "$IMAGE_REGISTRY" --tag "$IMAGE_TAG"
+            --platform linux/amd64 --output "$RELEASE_DIR/release.env" --push)
+          if [[ $SERVICE != all ]]; then
+            args+=(--base "$RELEASE_DIR/base-release.env")
+          fi
+          bash deploy/scripts/build-images.sh "${args[@]}" "${targets[@]}"
+          {
+            printf '### Selected services published\n\nServices: `%s`\n\nVersion: `%s`\n\nComplete release manifest:\n\n' "$TARGET_SERVICES" "$IMAGE_TAG"
+            printf '%s\n' '```dotenv'
+            cat "$RELEASE_DIR/release.env"
+            printf '%s\n' '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save the complete image manifest
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: image-manifest-${{ env.IMAGE_TAG }}
+          path: ${{ runner.temp }}/trade-release/release.env
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Deploy only the selected services
+        if: inputs.deploy
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          remote_dir="$DEPLOY_ROOT/deploy/incoming/$IMAGE_TAG"
+          ssh -F "$SSH_CONFIG" trade-deploy "mkdir -p '$DEPLOY_ROOT/deploy/incoming' && mkdir '$remote_dir'"
+          scp -F "$SSH_CONFIG" "$RELEASE_DIR/release.env" "trade-deploy:$remote_dir/release.env"
+          remote_script=$(cat <<'REMOTE'
+          set -euo pipefail
+          root=$1
+          manifest=$2
+          access=$3
+          service=$4
+          registry_user=$5
+          case "$service" in
+            backend|cockpit|x-console|egress) targets=("$service") ;;
+            frontends) targets=(cockpit x-console) ;;
+            all) targets=() ;;
+            *) exit 1 ;;
+          esac
+          cd "$root"
+          umask 077
+          docker_config=$(mktemp -d)
+          trap 'rm -f -- "$docker_config/config.json"; rmdir -- "$docker_config" 2>/dev/null || true' EXIT
+          export DOCKER_CONFIG="$docker_config"
+          # The job token arrives on stdin, never in remote command arguments.
+          docker login ghcr.io --username "$registry_user" --password-stdin
+          bash deploy/scripts/release.sh validate --release "$manifest" --access "$access"
+          DEPLOY_WAIT_TIMEOUT=300 bash deploy/scripts/release.sh deploy "${targets[@]}" --release "$manifest" --access "$access"
+          echo DEPLOYMENT_OK
+          REMOTE
+          )
+          # The Ubuntu deployment account uses Bash, including for SSH command quoting.
+          printf -v remote_command 'bash -c %q -- %q %q %q %q %q' \
+            "$remote_script" "$DEPLOY_ROOT" "$remote_dir/release.env" "$ACCESS_MODE" "$SERVICE" "$GITHUB_ACTOR"
+          printf '%s\n' "$GHCR_TOKEN" | ssh -F "$SSH_CONFIG" trade-deploy "$remote_command"
+          printf '\nDeployment succeeded for `%s` (%s access).\n' "$TARGET_SERVICES" "$ACCESS_MODE" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove runner credentials
+        if: always()
+        run: |
+          rm -f -- "$RUNNER_TEMP/trade-ssh/key" "$RUNNER_TEMP/trade-ssh/known_hosts" "$RUNNER_TEMP/trade-ssh/config"
+          docker logout ghcr.io >/dev/null 2>&1 || true

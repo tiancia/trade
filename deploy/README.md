@@ -234,6 +234,32 @@ curl -fsS -u operator http://127.0.0.1:18080/api/automation/tasks
 
 ## 后续更新和回滚
 
+### GitHub Actions 手动构建和按服务部署
+
+使用 [build-deploy.yml](../.github/workflows/build-deploy.yml)，仅配置 `workflow_dispatch`；push 不会触发构建或部署。将工作流提交到默认分支后，在 **Actions → Build and deploy selected services → Run workflow** 中选择分支和参数：
+
+| 参数 | 含义 |
+| --- | --- |
+| `service=backend` | 只构建后端；勾选部署时只更新后端 |
+| `service=cockpit` | 只构建、按需部署交易驾驶舱 |
+| `service=x-console` | 只构建、按需部署 X 控制台 |
+| `service=frontends` | 一起构建、按需部署两个前端 |
+| `service=egress` | 只构建、按需部署业务出站隧道 |
+| `service=all` | 构建四个镜像；勾选部署时执行全量发布，包含网关与 MySQL/Redis 前置检查 |
+| `deploy` | 默认不勾选，仅构建并推送 GHCR；勾选后通过 SSH 发布并等待健康检查 |
+| `server_path` | 已准备好的服务器仓库绝对路径，默认 `/opt/trade` |
+| `access` | 沿用服务器现有的 `private` 或 `public` 模式；此参数不用于切换模式 |
+
+仓库 **Settings → Secrets and variables → Actions** 需要五项 Repository Secrets：`DEPLOY_HOST`（公网 IP / 域名）、`DEPLOY_PORT`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`（独立部署私钥完整内容）、`DEPLOY_KNOWN_HOSTS`（经可信渠道核验的 SSH 主机记录，非默认端口使用 `[主机]:端口` 格式）。部署账号需使用 Bash，能读当前成功清单、写入 `deploy/` 并使用 Docker / Compose。沿用前述密钥登录验证方式，保持主机指纹校验开启。
+
+镜像地址为 `ghcr.io/<仓库所有者>/<仓库名>/<服务>:sha-<提交SHA>-<运行ID>-<尝试次数>`，默认构建 `linux/amd64`。推送使用 Actions 自动提供的 `GITHUB_TOKEN`（`contents: read`、`packages: write`），不需要新增 GHCR 写入令牌。部署时，该短期令牌通过 SSH 标准输入供服务器登录 GHCR，Docker 凭据放在临时目录，发布结束后清理；不会改写服务器已有 Docker 登录配置。已存在的 GHCR 包须授予本仓库 Actions 访问权限。以后手工拉取私有镜像仍需自行 `docker login ghcr.io`。
+
+部分构建会先从服务器下载真实的 `deploy/releases/current.env`，仅替换选中服务的镜像，下载失败即中止；即使只构建不部署，部分构建也需要这五项 SSH Secrets 和成功基线。已有部署可以逐个服务迁移到 GHCR，未选中的 `trade-local/*` 镜像仍保留。没有成功基线的新服务器，先选 `all` 构建，并完成前述服务器初始化，再执行全量部署。
+
+每次构建成功后，运行摘要列出完整镜像清单，并提供 `image-manifest-<版本>` artifact 下载 `release.env`。首次建议不勾选 `deploy`，确认 GHCR 镜像与清单生成成功；部署成功日志包含 `DEPLOYMENT_OK`。工作流按同一并发组串行运行，不取消正在执行的发布；服务端仍由 `release.sh` 加锁，并在部分部署时重新读取当前版本，保留未选服务的新版本。
+
+服务器须事先具备匹配的 Compose、`release.sh`、Nginx、运行配置和密钥文件；工作流只传镜像清单，不同步这些部署文件。前后端接口存在联动变更时，应安排兼容的发布顺序或全量更新。发布会短暂停止并重建选中服务；失败返回非零，不自动回滚，沿用下文的显式回滚方式。数据库补丁、运行配置变更和访问模式切换仍按各自流程处理。
+
 ### 一个命令构建并上传
 
 在电脑的 Git Bash / WSL 中使用 [build-upload.sh](scripts/build-upload.sh)。首次把 SSH 目标保存到 Git 忽略的本地文件，替换示例中的账号和服务器地址：
