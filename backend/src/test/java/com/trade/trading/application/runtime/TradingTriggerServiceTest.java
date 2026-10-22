@@ -15,6 +15,9 @@ import com.trade.trading.application.port.TradingStateStore;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.stream.IntStream;
 
@@ -26,6 +29,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class TradingTriggerServiceTest {
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-22T08:04:20Z"), ZoneOffset.UTC);
 
     @Test
     void eventScanUsesRedisWhenProcessLocalWebSocketCacheIsEmpty() {
@@ -66,7 +70,8 @@ class TradingTriggerServiceTest {
                 detector,
                 stateRepository,
                 properties,
-                mock(PaperAccountService.class)
+                mock(PaperAccountService.class),
+                CLOCK
         ).scanEventTriggers();
 
         verify(detector).detect(ticker, candles, state);
@@ -74,11 +79,47 @@ class TradingTriggerServiceTest {
         verify(collector, never()).getOneMinuteCandles();
     }
 
+    @Test
+    void eventScanFetchesRestWhenRedisHasEnoughButOutdatedConfirmedCandles() {
+        TradingMarketSource collector = mock(TradingMarketSource.class);
+        TradingMarketFeed feed = mock(TradingMarketFeed.class);
+        HotMarketDataCache cache = mock(HotMarketDataCache.class);
+        TradingEventDetector detector = mock(TradingEventDetector.class);
+        TradingStateStore stateStore = mock(TradingStateStore.class);
+        TradingProperties properties = new TradingProperties();
+        properties.setOneMinuteCandleLimit(25);
+        TradingLeadershipService leadership = mock(TradingLeadershipService.class);
+        when(leadership.runIfLeader(anyString(), any(Runnable.class))).thenAnswer(call -> {
+            call.<Runnable>getArgument(1).run();
+            return true;
+        });
+        List<CandleResp> stale = confirmedCandles(25).stream().map(candle -> {
+            candle.setTs(String.valueOf(Long.parseLong(candle.getTs()) - 300_000L));
+            return candle;
+        }).toList();
+        List<CandleResp> fresh = confirmedCandles(25);
+        TickerResp ticker = new TickerResp();
+        ticker.setLast("50000");
+        TradingState state = new TradingState();
+        when(cache.recentCandles("BTC-USDT", "1m", 25)).thenReturn(stale);
+        when(cache.latestTicker("BTC-USDT")).thenReturn(Optional.of(ticker));
+        when(collector.getOneMinuteCandles()).thenReturn(fresh);
+        when(stateStore.getState()).thenReturn(state);
+        when(detector.detect(ticker, fresh, state)).thenReturn(List.of());
+
+        new TradingTriggerService(mock(TradingStrategyEngine.class), mock(OrderReconciliationService.class),
+                leadership, collector, feed, cache, detector, stateStore, properties,
+                mock(PaperAccountService.class), CLOCK).scanEventTriggers();
+
+        verify(collector).getOneMinuteCandles();
+        verify(detector).detect(ticker, fresh, state);
+    }
+
     private static List<CandleResp> confirmedCandles(int count) {
         return IntStream.range(0, count)
                 .mapToObj(index -> {
                     CandleResp candle = new CandleResp();
-                    candle.setTs(String.valueOf(1710000000000L - index * 60_000L));
+                    candle.setTs(String.valueOf(CLOCK.millis() / 60_000L * 60_000L - index * 60_000L));
                     candle.setClose("50000");
                     candle.setVolCcyQuote("1");
                     candle.setConfirm("1");

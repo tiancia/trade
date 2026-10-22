@@ -241,7 +241,7 @@ docs/                       文档总导航、交接指南及 backend/ 后端专
 flowchart TD
     Schedule[定时决策 / 定时扫描发现信号]
     Engine[TradingStrategyEngine]
-    Collect[采集公开行情和私有账户只读信息]
+    Collect[采集公共行情；PAPER 读取模拟账本，LIVE 读取私有账户]
     Strategy[当前激活策略的规则评估]
     Hold[HOLD 记录与状态]
     Router[Broker 路由及执行用例]
@@ -257,7 +257,7 @@ flowchart TD
 
 当前启用的是确定性阈值策略，不是每次交易决策都调用 DeepSeek。配置中的 enabled 策略属于候选，实时决策只运行当前激活的一个策略。策略评估先得到动作建议，风控、数量规则和执行门禁仍可使其变为 SKIPPED；调用到 Broker 也不等于已成交。
 
-**PAPER 目前只模拟成交，不是独立虚拟现金账户。** 决策采集器仍读取 OKX 余额、挂单、历史订单、成交及账户产品规则，因此必须配置只读 OKX 凭据。保持 Read 权限、真实下单关闭；若绑定 IP，使用实际出口德国 VPS 公网 IP。此前 `OKX secret key is required` 正是这一读取阶段失败，不能用公共行情成功来排除。
+**PAPER 使用独立的持久化模拟现金和持仓账本。** 决策采集器读取 OKX 公共行情和产品规则，并由模拟账本提供余额及仓位，不读取真实账户余额、挂单和成交，因此不要求 OKX 私有凭据。详见 [策略参数版本与模拟资金](backend/TRADING_SIMULATION.md)。LIVE 的私有账户及订单接口需独立配置凭据和验收，PAPER 或公共行情成功不代表 LIVE 已可用。
 
 实时引擎只执行 PAPER / LIVE。历史回测走独立 `BacktestService`、历史行情源和模拟持仓，不通过切换实时模式来启动。回测请求要有 `from`、`to`；提交成功只是入队，最终检查 SUCCEEDED / FAILED 和错误信息。
 
@@ -385,7 +385,7 @@ bash deploy/scripts/release.sh rollback --no-pull
 | 页面可打开但 API 502 | gateway → backend；检查后端容器健康和日志，不先归因于德国 VPS |
 | 读操作正常，切换策略 403 | 驾驶舱交易令牌是否正确、刷新后是否重新填写；409 则先刷新策略版本 |
 | 新建回测 400 | 起止时间、策略、标的及其他请求参数；进入队列后的 FAILED 另看运行错误 |
-| 行情能读，决策报 OKX GET request error | 查看最底层 Caused by；当前 PAPER 也依赖私有账户读取，检查三个 OKX 配置是否齐全、只读权限和出口 IP |
+| 行情能读，决策报 OKX GET request error | 查看最底层 Caused by 和实际请求接口；PAPER 排查公共行情、产品规则及代理，LIVE 另查私有凭据、权限和出口 IP |
 | WebSocket 未就绪但行情有值 | 当前模板关闭交易所 WS，REST/Redis 仍可供行情；与浏览器 SSE 是不同层次 |
 | Docker pull 超时，业务代理正常 | 宿主机 trade-docker-egress.service 与 Docker daemon 代理；它们不是 egress 容器 |
 | 大镜像上传 Connection reset / Broken pipe | 传输中断；对同一归档续传，完成后 SHA 校验；未执行发布时原容器仍运行 |
@@ -411,7 +411,7 @@ dc logs --since=2h --no-color backend 2>&1 | grep -A 70 -F 'OKX strategy decisio
 | 业务模块边界 | [MODULES](backend/MODULES.md) |
 | 四层职责和调用链 | [ARCHITECTURE](backend/ARCHITECTURE.md) |
 | 后台任务怎么注册/启动 | [Registrar](../backend/src/main/java/com/trade/automation/application/task/AutomationTaskRegistrar.java)、[Manager](../backend/src/main/java/com/trade/automation/application/task/AutomationTaskManager.java) |
-| 决策与 PAPER 账户读取 | [StrategyEngine](../backend/src/main/java/com/trade/trading/application/strategy/TradingStrategyEngine.java)、[MarketContextCollector](../backend/src/main/java/com/trade/trading/infrastructure/market/MarketContextCollector.java) |
+| 决策与 PAPER 账户读取 | [TradingStrategyEngine](../backend/src/main/java/com/trade/trading/application/strategy/TradingStrategyEngine.java)、[MarketContextCollector](../backend/src/main/java/com/trade/trading/infrastructure/market/MarketContextCollector.java) |
 | 回测参数与结果 | [回测说明](backend/TRADING_BACKTEST.md) |
 | X 审核与发布 | [X 工作流](backend/X_WORKFLOW.md)、[XPostService](../backend/src/main/java/com/trade/x/application/service/XPostService.java) |
 | 电脑外的业务 SSH 隧道 | [egress entrypoint](../deploy/egress/entrypoint.sh) |

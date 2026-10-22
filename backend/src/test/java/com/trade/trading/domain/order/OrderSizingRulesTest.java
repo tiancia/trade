@@ -32,6 +32,19 @@ class OrderSizingRulesTest {
     }
 
     @Test
+    void buyRequiresPositiveAvailableFundsEvenWhenConfiguredCapsAreOptional() {
+        var decision = StrategyDecision.buy("test", new BigDecimal("20"), "entry");
+        var instrument = new OrderSizingRules.InstrumentLimits(BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, BigDecimal.ZERO);
+        for (BigDecimal available : new BigDecimal[] {null, BigDecimal.ZERO, BigDecimal.ONE.negate()}) {
+            var facts = new OrderSizingRules.SizingFacts(available, BigDecimal.ZERO, BigDecimal.ONE, instrument);
+            var result = rules.buySize(decision, facts);
+            assertFalse(result.isExecutable());
+            assertTrue(result.getSkipReason().contains("no available quote balance"));
+        }
+    }
+
+    @Test
     void managedSellLimitIsStrictEvenWhenZeroAndNeverExceedsExchangeAvailability() {
         var decision = StrategyDecision.sell("test", new BigDecimal("5"), "exit");
         var instrument = new OrderSizingRules.InstrumentLimits(BigDecimal.ZERO, new BigDecimal("0.0001"),

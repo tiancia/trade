@@ -11,8 +11,13 @@ public record CandleSeries(
         String bar,
         String source,
         Instant asOf,
-        List<CandleResp> candles
+        List<CandleResp> candles,
+        Instant checkedAt
 ) {
+    public CandleSeries(String instrumentId, String bar, String source, Instant asOf, List<CandleResp> candles) {
+        this(instrumentId, bar, source, asOf, candles, Instant.now());
+    }
+
     public CandleSeries {
         candles = candles == null ? List.of() : List.copyOf(candles);
     }

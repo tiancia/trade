@@ -4,6 +4,7 @@ import com.trade.trading.application.event.CandleBatchPayload;
 import com.trade.trading.application.event.MarketSnapshotPayload;
 import com.trade.trading.application.event.TradingEvent;
 import com.trade.trading.application.event.TradingEventHandlingResult;
+import com.trade.trading.application.event.TradingEventSource;
 import com.trade.trading.application.port.HotMarketDataCache;
 import com.trade.trading.application.port.TradingEventHandler;
 import org.springframework.core.annotation.Order;
@@ -43,7 +44,8 @@ public class HotMarketDataCacheEventHandler implements TradingEventHandler {
             result = hotMarketDataCache.putCandles(
                     event.instrumentId(),
                     candleBatch.bar(),
-                    candleBatch.candles()
+                    candleBatch.candles(),
+                    event.source() == TradingEventSource.OKX_REST_HISTORY ? null : event.receivedAt()
             );
         } else {
             return TradingEventHandlingResult.SKIPPED;

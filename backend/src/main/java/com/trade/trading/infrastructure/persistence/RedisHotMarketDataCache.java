@@ -7,16 +7,20 @@ import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.OrderBookLevel;
 import com.trade.client.okx.dto.OrderBookResp;
 import com.trade.client.okx.dto.TickerResp;
+import com.trade.trading.application.market.CandleFreshness;
 import com.trade.trading.application.port.HotMarketDataCache;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -34,18 +38,26 @@ public class RedisHotMarketDataCache implements HotMarketDataCache {
     private final StringRedisTemplate redisTemplate;
     private final TradingProperties.HotMarketDataCacheProperties config;
     private final MeterRegistry meterRegistry;
+    private final Clock clock;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final AtomicLong failureCount = new AtomicLong();
     private final AtomicLong retryAfterNanos = new AtomicLong();
 
+    @Autowired
     public RedisHotMarketDataCache(
             StringRedisTemplate redisTemplate,
             TradingProperties properties,
             MeterRegistry meterRegistry
     ) {
+        this(redisTemplate, properties, meterRegistry, Clock.systemUTC());
+    }
+
+    RedisHotMarketDataCache(StringRedisTemplate redisTemplate, TradingProperties properties,
+                           MeterRegistry meterRegistry, Clock clock) {
         this.redisTemplate = redisTemplate;
         this.config = properties.getHotMarketDataCache();
         this.meterRegistry = meterRegistry;
+        this.clock = clock;
     }
 
     @Override
@@ -82,6 +94,11 @@ public class RedisHotMarketDataCache implements HotMarketDataCache {
 
     @Override
     public CacheWriteResult putCandles(String instId, String bar, List<CandleResp> candles) {
+        return putCandles(instId, bar, candles, clock.instant());
+    }
+
+    @Override
+    public CacheWriteResult putCandles(String instId, String bar, List<CandleResp> candles, Instant observedAt) {
         if (!canAccessRedis() || candles == null || candles.isEmpty()) {
             return CacheWriteResult.SKIPPED;
         }
@@ -89,11 +106,12 @@ public class RedisHotMarketDataCache implements HotMarketDataCache {
         String key = candleKey(instId, bar);
         int retained = Math.max(config.getCandleLimit(), 1);
         int cached = 0;
+        long newestWritten = 0L;
         try {
             ZSetOperations<String, String> values = redisTemplate.opsForZSet();
             for (CandleResp candle : candles) {
                 Long timestamp = timestamp(candle);
-                if (timestamp == null) {
+                if (timestamp == null || timestamp <= 0 || timestamp > clock.millis()) {
                     continue;
                 }
                 String json = objectMapper.writeValueAsString(toArray(candle));
@@ -101,6 +119,7 @@ public class RedisHotMarketDataCache implements HotMarketDataCache {
                 values.removeRangeByScore(key, score, score);
                 values.add(key, json, score);
                 cached++;
+                newestWritten = Math.max(newestWritten, timestamp);
             }
             if (cached == 0) {
                 return CacheWriteResult.SKIPPED;
@@ -111,6 +130,21 @@ public class RedisHotMarketDataCache implements HotMarketDataCache {
                 values.removeRange(key, 0, size - retained - 1);
             }
             redisTemplate.expire(key, positiveDuration(config.getCandleTtlMs()));
+            // Historical pages may extend retention, but must not revive live-market freshness.
+            if (CandleFreshness.isCurrent(candles, bar, clock.instant())) {
+                long remainingFreshness = remainingFreshnessMs(observedAt);
+                if (remainingFreshness > 0) {
+                    redisTemplate.opsForValue().set(
+                            observationKey(instId, bar),
+                            observedAt.toEpochMilli() + ":" + newestWritten,
+                            Duration.ofMillis(remainingFreshness)
+                    );
+                } else {
+                    // These values may have overwritten the same opening timestamp with an
+                    // older observation. A previous live marker must no longer bless them.
+                    redisTemplate.delete(observationKey(instId, bar));
+                }
+            }
             recordOperation("write", "candles", "cached");
             markAvailable();
             return CacheWriteResult.CACHED;
@@ -138,6 +172,13 @@ public class RedisHotMarketDataCache implements HotMarketDataCache {
         }
 
         try {
+            String observation = redisTemplate.opsForValue().get(observationKey(instId, bar));
+            long observedTimestamp = observationTimestamp(observation);
+            if (observedTimestamp <= 0) {
+                recordOperation("read", "candles", "stale");
+                markAvailable();
+                return List.of();
+            }
             Set<String> values = redisTemplate.opsForZSet()
                     .reverseRange(candleKey(instId, bar), 0, limit - 1L);
             if (values == null || values.isEmpty()) {
@@ -149,12 +190,22 @@ public class RedisHotMarketDataCache implements HotMarketDataCache {
             List<CandleResp> candles = new ArrayList<>(values.size());
             for (String value : values) {
                 try {
-                    candles.add(new CandleResp(objectMapper.readValue(value, STRING_LIST)));
+                    CandleResp candle = new CandleResp(objectMapper.readValue(value, STRING_LIST));
+                    long timestamp = CandleFreshness.timestampMillis(candle);
+                    if (timestamp > 0 && timestamp <= clock.millis()) {
+                        candles.add(candle);
+                    }
                 } catch (JsonProcessingException e) {
                     recordFailure("decode_candle", e);
                 }
             }
-            recordOperation("read", "candles", candles.isEmpty() ? "miss" : "hit");
+            if (!CandleFreshness.isCurrent(candles, bar, clock.instant())
+                    || CandleFreshness.latestTimestampMillis(candles) != observedTimestamp) {
+                recordOperation("read", "candles", "stale");
+                markAvailable();
+                return List.of();
+            }
+            recordOperation("read", "candles", "hit");
             markAvailable();
             return List.copyOf(candles);
         } catch (Exception e) {
@@ -229,6 +280,35 @@ public class RedisHotMarketDataCache implements HotMarketDataCache {
 
     private String candleKey(String instId, String bar) {
         return key("candles", instId, normalized(bar));
+    }
+
+    private String observationKey(String instId, String bar) {
+        return candleKey(instId, bar) + ":observation";
+    }
+
+    private long observationTimestamp(String observation) {
+        if (observation == null) {
+            return 0L;
+        }
+        String[] parts = observation.split(":", -1);
+        if (parts.length != 2) {
+            return 0L;
+        }
+        try {
+            return remainingFreshnessMs(Instant.ofEpochMilli(Long.parseLong(parts[0]))) > 0
+                    ? Long.parseLong(parts[1]) : 0L;
+        } catch (NumberFormatException ignored) {
+            return 0L;
+        }
+    }
+
+    private long remainingFreshnessMs(Instant observedAt) {
+        if (observedAt == null || observedAt.isAfter(clock.instant())) {
+            return 0L;
+        }
+        long age = Duration.between(observedAt, clock.instant()).toMillis();
+        long freshness = Math.max(config.getCandleFreshnessMs(), 1L);
+        return age < freshness ? freshness - age : 0L;
     }
 
     private String key(String... parts) {

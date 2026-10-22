@@ -140,8 +140,10 @@ public class MarketplaceItemService {
 
     private void validateImageUrl(MarketplacePrincipal seller, String imageUrl) {
         String expectedPrefix = null;
-        if (properties != null && properties.getOss().getPublicBaseUrl() != null
-                && !properties.getOss().getPublicBaseUrl().isBlank()) {
+        if (properties != null && ((properties.getOss().getPublicBaseUrl() != null
+                && !properties.getOss().getPublicBaseUrl().isBlank())
+                || (properties.getOss().getBucket() != null && !properties.getOss().getBucket().isBlank()))) {
+            // The upload flow also derives its public URL from bucket/region when no custom base is set.
             expectedPrefix = properties.getOss().normalizedPublicBaseUrl()
                     + "/" + properties.getOss().normalizedKeyPrefix()
                     + "/users/" + seller.id() + "/";

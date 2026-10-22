@@ -8,6 +8,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class OkxClientProperties {
     private String baseUrl = OkxEndpoints.DEFAULT_BASE_URL;
     private String wsPublicUrl = OkxEndpoints.DEFAULT_WS_PUBLIC_URL;
+    private String wsBusinessUrl = OkxEndpoints.DEFAULT_WS_BUSINESS_URL;
     private String wsPrivateUrl = OkxEndpoints.DEFAULT_WS_PRIVATE_URL;
     private String accessKey;
     private String secretKey;

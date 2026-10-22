@@ -130,16 +130,19 @@ export function MarketplaceApp() {
         if (session?.token) {
           try {
             const user = await fetchMe(session.token);
-            if (active) {
+            // Startup verification belongs only to the session that requested it.
+            if (active && sessionTokenRef.current === session.token) {
               const verified = { ...session, user };
               setSession(verified);
               saveStoredSession(verified);
             }
           } catch (cause) {
+            if (!active || sessionTokenRef.current !== session.token) return;
             if (isUnauthorized(cause)) {
+              sessionTokenRef.current = undefined;
               clearStoredSession();
-              if (active) setSession(null);
-            } else if (active) {
+              setSession(null);
+            } else {
               setError(messageOf(cause));
             }
           }
@@ -273,6 +276,10 @@ export function MarketplaceApp() {
 
   async function handleAuthSubmit(event: FormEvent) {
     event.preventDefault();
+    if (new TextEncoder().encode(authForm.password).length > 72) {
+      setError('密码最多 72 字节，中文通常每字占 3 字节');
+      return;
+    }
     setBusy('auth');
     setError(null);
     try {
@@ -839,8 +846,8 @@ export function MarketplaceApp() {
                     autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
                     required
                     minLength={8}
-                    maxLength={128}
-                    placeholder="至少 8 位"
+                    maxLength={72}
+                    placeholder="至少 8 位，最多 72 字节"
                     onChange={(event) => setAuthForm({ ...authForm, password: event.target.value })}
                   />
                 </label>
@@ -1114,6 +1121,7 @@ function messageOf(cause: unknown) {
   if (cause instanceof Error) {
     const translations: Record<string, string> = {
       'username or password is invalid': '用户名或密码不正确',
+      'password must be at least 8 characters and at most 72 UTF-8 bytes': '密码至少 8 个字符、最多 72 字节，中文通常每字占 3 字节',
       'username is already registered': '这个用户名已经被注册',
       'marketplace session is invalid or expired': '登录状态已过期，请重新登录',
       'item is no longer listed': '该商品已下架',

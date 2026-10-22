@@ -20,8 +20,14 @@ public final class TradingMarketInputs {
     }
 
     public static BigDecimal availableBalance(BalanceDetail detail) {
-        return detail == null ? BigDecimal.ZERO : AccountValuation.available(
-                TradingMath.decimal(detail.getAvailBal()), TradingMath.decimal(detail.getCashBal()));
+        if (detail == null) {
+            return BigDecimal.ZERO;
+        }
+        // A reported zero can mean the cash is frozen by other orders. Only
+        // fall back when the provider omitted availability altogether.
+        String available = detail.getAvailBal();
+        return TradingMath.decimal(available == null || available.isBlank()
+                ? detail.getCashBal() : available).max(BigDecimal.ZERO);
     }
 
     public static BigDecimal estimatedEquity(TradingDecisionContext context) {

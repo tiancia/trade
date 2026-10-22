@@ -1,6 +1,20 @@
 const EPOCH_MILLISECONDS_THRESHOLD = 100_000_000_000;
 
 /**
+ * A connected stream is healthy only while current-period candles keep arriving.
+ * @param {{ts: string}[]} candles
+ * @param {string} bar
+ * @param {number} receivedAt Local time of the latest successful observation.
+ * @param {number} now
+ */
+export function marketDataIsFresh(candles, bar, receivedAt, now) {
+  const interval = { "1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000, "4h": 14_400_000 }[bar.toLowerCase()];
+  if (!interval || !Number.isFinite(now) || receivedAt <= 0 || receivedAt > now + 1_000 || now - receivedAt > 30_000) return false;
+  const latest = Math.max(0, ...candles.map((candle) => Number(candle.ts)).filter(Number.isFinite));
+  return latest > 0 && latest <= now && Math.floor(latest / interval) === Math.floor(now / interval);
+}
+
+/**
  * Spring's Instant values arrive as epoch seconds; demo snapshots use ISO text.
  * @param {string | number | Date | null | undefined} value
  * @returns {number | null}

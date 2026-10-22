@@ -4,6 +4,7 @@ import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.OrderBookResp;
 import com.trade.client.okx.dto.TickerResp;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -19,6 +20,11 @@ public interface HotMarketDataCache {
     );
 
     CacheWriteResult putCandles(String instId, String bar, List<CandleResp> candles);
+
+    /** Preserves the producer's observation time; null denotes retained history only. */
+    default CacheWriteResult putCandles(String instId, String bar, List<CandleResp> candles, Instant observedAt) {
+        return putCandles(instId, bar, candles);
+    }
 
     Optional<TickerResp> latestTicker(String instId);
 

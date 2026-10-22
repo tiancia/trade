@@ -28,6 +28,26 @@ class MarketplaceRulesTest {
     }
 
     @Test
+    void uploadedImageCannotEscapeTheSellersObjectPrefix() {
+        String prefix = "https://images.example/items/users/1/";
+        for (String suffix : new String[] {"../2/a.jpg", "%2e%2e/2/a.jpg", ".%2e/2/a.jpg",
+                "%2e./2/a.jpg", "a/../../2/a.jpg", "a.jpg?x-oss-process=image/resize,w_1", "a.jpg#ignored"}) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> MarketplaceItemRules.validateImageUrl(prefix + suffix, prefix), suffix);
+        }
+    }
+
+    @Test
+    void passwordLimitUsesUtf8BytesToMatchBcrypt() {
+        assertEquals("a".repeat(72), MarketplaceAccountRules.requiredPassword("a".repeat(72)));
+        assertEquals("密".repeat(24), MarketplaceAccountRules.requiredPassword("密".repeat(24)));
+        assertThrows(IllegalArgumentException.class,
+                () -> MarketplaceAccountRules.requiredPassword("a".repeat(73)));
+        assertThrows(IllegalArgumentException.class,
+                () -> MarketplaceAccountRules.requiredPassword("密".repeat(25)));
+    }
+
+    @Test
     void conversationRequiresListedItemAndParticipantAccess() {
         assertThrows(MarketplaceConflictException.class,
                 () -> MarketplaceConversationRules.requireCanStart("DELISTED", 1L, 2L));

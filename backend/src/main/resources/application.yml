@@ -318,6 +318,8 @@ trade:
     base-url: "https://www.okx.com"
     # OKX 公共 WebSocket 地址，用于行情等公开频道。
     ws-public-url: ${TRADE_OKX_WS_PUBLIC_URL:wss://ws.okx.com/ws/v5/public}
+    # OKX 业务 WebSocket 地址，K 线等公开业务频道使用这个独立入口。
+    ws-business-url: ${TRADE_OKX_WS_BUSINESS_URL:wss://ws.okx.com/ws/v5/business}
     # OKX 私有 WebSocket 地址，用于账户、订单等需要登录的频道。
     ws-private-url: ${TRADE_OKX_WS_PRIVATE_URL:wss://ws.okx.com/ws/v5/private}
     proxy:
@@ -637,10 +639,10 @@ trade:
     # 市场事件触发策略评估后的冷却时间，单位毫秒。
     event-cooldown-ms: 600000
     websocket:
-      # 是否启用 OKX 行情 WebSocket 订阅；启用后事件扫描优先使用 WebSocket 缓存。
-      enabled: ${TRADE_TRADING_WEBSOCKET_ENABLED:false}
-      # WebSocket 行情缓存超过该时间未更新时视为过期，事件扫描会回退到 REST 查询，单位毫秒。
-      stale-timeout-ms: 120000
+      # 交易任务启动后订阅 ticker 及 1m/5m/15m/1H/4H K 线；真实下单仍由独立门禁控制。
+      enabled: ${TRADE_TRADING_WEBSOCKET_ENABLED:true}
+      # 超过该时间无有效更新即回退 REST；同时检查最新 K 线是否属于当前周期。
+      stale-timeout-ms: ${TRADE_TRADING_WEBSOCKET_STALE_TIMEOUT_MS:30000}
       # 本地保留的 1 分钟 K 线缓存数量，用于事件检测。
       candle-cache-limit: 100
     # REST/WebSocket 行情生产者与事件消费者共享的有界队列。
@@ -677,6 +679,8 @@ trade:
       snapshot-ttl-ms: ${TRADE_TRADING_HOT_MARKET_CACHE_SNAPSHOT_TTL_MS:120000}
       # 每个标的 / 周期的 K 线集合缓存有效期，单位毫秒；10800000 = 3 小时。
       candle-ttl-ms: ${TRADE_TRADING_HOT_MARKET_CACHE_CANDLE_TTL_MS:10800000}
+      # 实时 K 线的观测有效期；与历史集合保留期限分开，过期主动拉取 REST。
+      candle-freshness-ms: ${TRADE_TRADING_HOT_MARKET_CACHE_CANDLE_FRESHNESS_MS:15000}
       # 每个标的 / 周期在 Redis 中保留的最近 K 线根数上限。
       candle-limit: ${TRADE_TRADING_HOT_MARKET_CACHE_CANDLE_LIMIT:200}
       # Redis 连接 / 命令失败后再次尝试的冷却时间，单位毫秒。

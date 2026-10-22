@@ -24,7 +24,7 @@ class TradingMarketInputsTest {
         base.setCashBal("0");
         base.setEq("2");
         var context = new TradingDecisionContext().setTicker(ticker).setQuoteBalance(quote).setBaseBalance(base);
-        assertEquals(new BigDecimal("100"), TradingMarketInputs.availableBalance(context.getQuoteBalance()));
+        assertEquals(BigDecimal.ZERO, TradingMarketInputs.availableBalance(context.getQuoteBalance()));
         assertEquals(BigDecimal.ZERO, TradingMarketInputs.availableBalance(context.getBaseBalance()));
         assertEquals(new BigDecimal("140"), TradingMarketInputs.estimatedEquity(context));
         var account = new AccountBalanceResp();
@@ -32,6 +32,23 @@ class TradingMarketInputsTest {
         context.setAccountBalance(account);
         assertEquals(new BigDecimal("456"), TradingMarketInputs.estimatedEquity(context));
         assertEquals(BigDecimal.ZERO, TradingMarketInputs.estimatedEquity(null));
+    }
+
+    @Test
+    void availableBalanceOnlyFallsBackWhenAvailabilityIsOmitted() {
+        var balance = new BalanceDetail();
+        balance.setCashBal("100");
+        assertEquals(new BigDecimal("100"), TradingMarketInputs.availableBalance(balance));
+        balance.setAvailBal("");
+        assertEquals(new BigDecimal("100"), TradingMarketInputs.availableBalance(balance));
+        balance.setAvailBal("0");
+        assertEquals(BigDecimal.ZERO, TradingMarketInputs.availableBalance(balance));
+        balance.setAvailBal("-1");
+        assertEquals(BigDecimal.ZERO, TradingMarketInputs.availableBalance(balance));
+        balance.setAvailBal("invalid");
+        assertEquals(BigDecimal.ZERO, TradingMarketInputs.availableBalance(balance));
+        balance.setAvailBal("12.5");
+        assertEquals(new BigDecimal("12.5"), TradingMarketInputs.availableBalance(balance));
     }
 
     @Test

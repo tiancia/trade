@@ -82,7 +82,13 @@ public class MarketplaceAuthService {
     @Transactional
     public MarketplaceApi.AuthResponse login(MarketplaceApi.LoginRequest request) {
         String username = MarketplaceAccountRules.cleanUsername(request == null ? null : request.username());
-        String password = request == null || request.password() == null ? "" : request.password();
+        String password;
+        try {
+            // BCrypt verification accepts truncated overlong input; enforce the same boundary as registration.
+            password = MarketplaceAccountRules.requiredPassword(request == null ? null : request.password());
+        } catch (IllegalArgumentException invalidPassword) {
+            throw new MarketplaceUnauthorizedException("username or password is invalid");
+        }
         MarketplaceUserRow row = mapper.findUserByUsername(username);
         if (row == null || !passwordEncoder.matches(password, row.getPasswordHash())) {
             throw new MarketplaceUnauthorizedException("username or password is invalid");

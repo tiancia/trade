@@ -149,10 +149,10 @@ public class TradingProperties {
 
     @Data
     public static class WebSocketProperties {
-        /** Enables public OKX ticker and candle subscriptions. */
+        /** Enables public OKX ticker and all cockpit candle interval subscriptions. */
         private boolean enabled = true;
         /** Age after which cached WebSocket data is considered stale. */
-        private long staleTimeoutMs = 120_000L;
+        private long staleTimeoutMs = 30_000L;
         /** Maximum number of one-minute candles retained in memory. */
         private int candleCacheLimit = 100;
     }
@@ -204,6 +204,8 @@ public class TradingProperties {
         private long snapshotTtlMs = 120_000L;
         /** TTL for each instrument/bar candle sorted set, in milliseconds. */
         private long candleTtlMs = 10_800_000L;
+        /** Maximum age of a current candle observation, independent of history retention. */
+        private long candleFreshnessMs = 15_000L;
         /** Maximum number of recent candles retained per instrument and bar. */
         private int candleLimit = 200;
         /** Cooldown before retrying Redis after a connection or command failure. */

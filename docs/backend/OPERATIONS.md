@@ -27,9 +27,13 @@
 | 代理 | 宿主机直接运行 Java 时可使用 `127.0.0.1:13128` 的隧道入口；生产 Compose 将 OKX、Telegram、X 地址覆盖为 `egress:13128`，其容器负责连接德国 Squid |
 | AI | DeepSeek 直连 `https://api.deepseek.com`，使用 `deepseek-flash`；供应商、型号、基础地址和密钥环境变量名可用 `TRADE_AI_PROVIDER`、`TRADE_AI_MODEL`、`TRADE_AI_BASE_URL`、`TRADE_AI_API_KEY_ENV_NAME` 覆盖 |
 
-模型名在这里记录仓库配置，不代表供应商最新型号或账户实际可用权限。OKX 公共 / 私有 WebSocket 地址使用默认 443 端口，可分别用 `TRADE_OKX_WS_PUBLIC_URL` / `TRADE_OKX_WS_PRIVATE_URL` 覆盖；WebSocket 订阅开关仍由 `TRADE_TRADING_WEBSOCKET_ENABLED` 单独控制。
+模型名在这里记录仓库配置，不代表供应商最新型号或账户实际可用权限。OKX 公共 / 业务 / 私有 WebSocket 地址使用默认 443 端口，可分别用 `TRADE_OKX_WS_PUBLIC_URL` / `TRADE_OKX_WS_BUSINESS_URL` / `TRADE_OKX_WS_PRIVATE_URL` 覆盖；Ticker 使用 `/public`，K 线使用 `/business`。`TRADE_TRADING_WEBSOCKET_ENABLED` 默认 `true`，trading 任务启动后分别建立一个 Ticker 连接和一个批量订阅 1m/5m/15m/1H/4H 的 K 线连接；真实下单仍受执行模式、实盘开关和风控门禁约束。
 
-当前 PAPER 模拟成交，但决策采集仍读取真实 OKX 账户，需要三个只读凭据；它不是独立虚拟现金钱包。完整配置与代理验收按生产部署说明执行。
+行情连接断开、异步发送失败或心跳超时后自动退避重连并恢复订阅，主动停止任务后不再重连。`TRADE_TRADING_WEBSOCKET_STALE_TIMEOUT_MS=30000` 控制进程内行情最长无更新时间。Redis 的 `TRADE_TRADING_HOT_MARKET_CACHE_CANDLE_TTL_MS=10800000` 只控制历史集合保留时间；另以 `TRADE_TRADING_HOT_MARKET_CACHE_CANDLE_FRESHNESS_MS=15000` 限制当前行情观测有效期，并检查最新 K 线所属周期。旧缓存没有观测标记、已经过期、跨周期或历史条数不足时，查询会回退 OKX REST。市场事件扫描也不会再仅凭旧 K 线数量足够而跳过刷新。
+
+部署此修复时，若实际运行环境仍有 `TRADE_TRADING_WEBSOCKET_ENABLED=false`，需显式改为 `true` 并重新创建后端容器；仅替换镜像或修改 YAML 不会覆盖已有环境变量。无需数据库迁移，也无需删除 Redis 历史集合。驾驶舱需同步更新：SSE 连通与行情新鲜度分别判断，页面可见时每 15 秒校验快照；快照新增 `checkedAt` 表示后端校验时间，`asOf` 仍是最新 K 线开盘时间，增量沿用事件原始 `receivedAt`，不会把积压事件的发送时间当作新行情时间。历史数量不足或时间断档都会补拉，连续推送期间的 HTTP 回包只重放请求后的增量，不覆盖 REST 修正的已收盘 K 线。验收时检查各周期最新 K 线时间持续推进、Ticker/K 线订阅成功，以及断线恢复后恢复更新；`source=HOT_CACHE` 本身不表示故障。
+
+当前 PAPER 使用独立的持久化模拟现金和持仓账本，行情及产品规则来自 OKX 公共接口，不读取真实账户数据，也不要求三个 OKX 私有凭据。LIVE 私有接口需另行配置和验收；模拟账本口径见 [策略参数版本与模拟资金](TRADING_SIMULATION.md)，完整部署与代理验收按生产部署说明执行。
 
 开启 X 前，运行环境必须提供 `TRADE_X_TARGET_USER_ID`、`TRADE_X_TELEGRAM_CHAT_ID`、`TRADE_X_TELEGRAM_REVIEWER_USER_IDS`、Telegram Bot Token、DeepSeek API Key 和 X OAuth 1.0a 凭据。缺少必需的目标 / 审核配置会在启动校验时拒绝；发布权限、额度和实际网络连接需另行联调。启动后的发布扫描可能处理数据库中已有、未过期且审核仍有效的 `APPROVED` 草稿；`PENDING_REVIEW` 不发布，`UNKNOWN` 不自动重发。详细说明见 [X 工作流](X_WORKFLOW.md)。
 

@@ -32,6 +32,8 @@ import com.trade.client.okx.ws.TickerChannelReq;
 import com.trade.client.okx.ws.OkxWsListener;
 import com.trade.client.okx.ws.OkxWsSubscription;
 
+import java.util.List;
+
 public class OkxApi {
 
     private final OkxRestClient okxClient;
@@ -265,7 +267,16 @@ public class OkxApi {
             CandleChannelReq req,
             OkxWsListener<CandleResp> listener
     ) {
-        return okxWebSocketClient.subscribePublic(req.toArg(), CandleResp.class, listener);
+        return okxWebSocketClient.subscribeBusiness(req.toArg(), CandleResp.class, listener);
+    }
+
+    /** Subscribes all chart periods on one business connection. */
+    public OkxWsSubscription subscribeCandles(
+            List<CandleChannelReq> requests,
+            OkxWsListener<CandleResp> listener
+    ) {
+        return okxWebSocketClient.subscribeBusiness(
+                requests.stream().map(CandleChannelReq::toArg).toList(), CandleResp.class, listener);
     }
 
     /**

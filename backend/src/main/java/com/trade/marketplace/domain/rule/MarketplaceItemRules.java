@@ -43,6 +43,16 @@ public final class MarketplaceItemRules {
         if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null) {
             throw new IllegalArgumentException("imageUrl must use HTTPS");
         }
+        if (uri.getUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null) {
+            throw new IllegalArgumentException("imageUrl must reference an unmodified uploaded image URL");
+        }
+        // Browsers and OSS decode dot segments before resolving the object; check decoded segments
+        // so a textual users/{id}/ prefix cannot be used to reference another user's object.
+        for (String segment : uri.getPath().split("/")) {
+            if (".".equals(segment) || "..".equals(segment) || segment.indexOf('\\') >= 0) {
+                throw new IllegalArgumentException("imageUrl must not contain path traversal segments");
+            }
+        }
         if (expectedPrefix != null && !imageUrl.startsWith(expectedPrefix)) {
             throw new IllegalArgumentException("imageUrl must reference an uploaded marketplace image");
         }

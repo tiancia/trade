@@ -27,11 +27,16 @@ public final class OrderSizingRules {
     public OrderSizing buySize(StrategyDecision decision, SizingFacts context) {
         BigDecimal requestedAmount = decision.getBuyQuoteAmount();
         BigDecimal availableQuote = context.availableQuote();
+        if (availableQuote == null || availableQuote.signum() <= 0) {
+            return OrderSizing.skipped("BUY skipped: no available quote balance");
+        }
         BigDecimal maxAmount = limits.maxBuyQuoteAmount();
         // Optional equity-ratio cap limits a single new open even if the AI
         // asks for less than the absolute maxBuyQuoteAmount.
         maxAmount = TradingMath.clamp(maxAmount, limits.maxSingleOpenQuoteAmount());
-        BigDecimal amount = TradingMath.clamp(TradingMath.clamp(requestedAmount, maxAmount), availableQuote);
+        // Account funds are a hard bound; unlike optional configuration caps,
+        // zero available funds must never mean unlimited buying power.
+        BigDecimal amount = TradingMath.clamp(requestedAmount, maxAmount).min(availableQuote);
         amount = amount.setScale(limits.quoteAmountScale(), RoundingMode.DOWN);
 
         InstrumentLimits instrument = context.instrument();

@@ -1,6 +1,7 @@
 package com.trade.trading.infrastructure.market;
 
 import com.trade.trading.application.port.TradingMarketFeed;
+import com.trade.trading.application.market.CandleFreshness;
 import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
@@ -16,16 +17,16 @@ import com.trade.trading.infrastructure.config.TradingProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
+import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -38,25 +39,38 @@ import java.util.concurrent.atomic.AtomicReference;
 @Component
 public class OkxMarketDataWebSocketFeed implements TradingMarketFeed, DisposableBean {
     private static final Logger log = LoggerFactory.getLogger(OkxMarketDataWebSocketFeed.class);
+    private static final List<String> CANDLE_BARS = List.of("1m", "5m", "15m", "1H", "4H");
 
     private final OkxApi okxApi;
     private final TradingProperties properties;
     private final TradingEventPublisher eventPublisher;
+    private final Clock clock;
     private final AtomicBoolean started = new AtomicBoolean(false);
     private final AtomicReference<TickerResp> latestTicker = new AtomicReference<>();
     private final AtomicReference<Instant> latestTickerAt = new AtomicReference<>();
-    private final AtomicReference<Instant> latestCandleAt = new AtomicReference<>();
     private final List<OkxWsSubscription> subscriptions = new CopyOnWriteArrayList<>();
-    private final Map<String, CandleResp> oneMinuteCandles = new LinkedHashMap<>();
+    private final Map<String, Map<String, CandleResp>> candlesByBar = new LinkedHashMap<>();
+    private final Map<String, Instant> latestCandleAtByBar = new LinkedHashMap<>();
 
+    @Autowired
     public OkxMarketDataWebSocketFeed(
             OkxApi okxApi,
             TradingProperties properties,
             TradingEventPublisher eventPublisher
     ) {
+        this(okxApi, properties, eventPublisher, Clock.systemUTC());
+    }
+
+    OkxMarketDataWebSocketFeed(
+            OkxApi okxApi,
+            TradingProperties properties,
+            TradingEventPublisher eventPublisher,
+            Clock clock
+    ) {
         this.okxApi = okxApi;
         this.properties = properties;
         this.eventPublisher = eventPublisher;
+        this.clock = clock;
     }
 
     public synchronized void start() {
@@ -68,10 +82,11 @@ public class OkxMarketDataWebSocketFeed implements TradingMarketFeed, Disposable
             return;
         }
         subscribeTicker();
-        subscribeOneMinuteCandles();
+        subscribeCandles();
     }
 
     public synchronized void stop() {
+        started.set(false);
         for (OkxWsSubscription subscription : subscriptions) {
             try {
                 subscription.close();
@@ -82,31 +97,33 @@ public class OkxMarketDataWebSocketFeed implements TradingMarketFeed, Disposable
         subscriptions.clear();
         latestTicker.set(null);
         latestTickerAt.set(null);
-        latestCandleAt.set(null);
-        synchronized (oneMinuteCandles) {
-            oneMinuteCandles.clear();
-        }
-        started.set(false);
+        latestCandleAtByBar.clear();
+        candlesByBar.clear();
     }
 
     public Optional<TickerResp> latestTicker() {
         TickerResp ticker = latestTicker.get();
-        if (ticker == null || isStale(latestTickerAt.get())) {
+        if (ticker == null || isStale(latestTickerAt.get()) || !validTicker(ticker)) {
             return Optional.empty();
         }
         return Optional.of(ticker);
     }
 
     public List<CandleResp> recentOneMinuteCandles(int limit) {
-        if (isStale(latestCandleAt.get())) {
+        return recentCandles("1m", limit);
+    }
+
+    @Override
+    public synchronized List<CandleResp> recentCandles(String requestedBar, int limit) {
+        String bar = candleBar(requestedBar);
+        if (bar == null || limit <= 0 || isStale(latestCandleAtByBar.get(bar))) {
             return List.of();
         }
-        synchronized (oneMinuteCandles) {
-            return oneMinuteCandles.values().stream()
-                    .sorted(Comparator.comparing(OkxMarketDataWebSocketFeed::candleTimestamp).reversed())
-                    .limit(Math.max(limit, 0))
-                    .toList();
-        }
+        List<CandleResp> candles = candlesByBar.getOrDefault(bar, Map.of()).values().stream()
+                .sorted(Comparator.comparing(OkxMarketDataWebSocketFeed::candleTimestamp).reversed())
+                .limit(limit)
+                .toList();
+        return CandleFreshness.isCurrent(candles, bar, clock.instant()) ? candles : List.of();
     }
 
     @Override
@@ -114,14 +131,21 @@ public class OkxMarketDataWebSocketFeed implements TradingMarketFeed, Disposable
         stop();
     }
 
-    void handleTickerData(OkxWsEvent<TickerResp> event) {
-        if (event == null || event.getData() == null || event.getData().isEmpty()) {
+    synchronized void handleTickerData(OkxWsEvent<TickerResp> event) {
+        if (!started.get() || event == null || event.getData() == null || event.getData().isEmpty()) {
             return;
         }
 
-        TickerResp ticker = event.getData().getFirst();
+        TickerResp ticker = event.getData().stream()
+                .filter(this::validTicker)
+                .max(Comparator.comparingLong(value -> timestamp(value.getTs())))
+                .orElse(null);
+        TickerResp previous = latestTicker.get();
+        if (ticker == null || previous != null && timestamp(ticker.getTs()) < timestamp(previous.getTs())) {
+            return;
+        }
         latestTicker.set(ticker);
-        latestTickerAt.set(Instant.now());
+        latestTickerAt.set(clock.instant());
         eventPublisher.publish(TradingEvent.marketSnapshot(
                 properties.getInstId(),
                 TradingEventSource.OKX_WEBSOCKET,
@@ -132,33 +156,37 @@ public class OkxMarketDataWebSocketFeed implements TradingMarketFeed, Disposable
     }
 
     void handleCandleData(OkxWsEvent<CandleResp> event) {
-        if (event == null || event.getData() == null || event.getData().isEmpty()) {
+        handleCandleData("1m", event);
+    }
+
+    private synchronized void handleCandleData(String bar, OkxWsEvent<CandleResp> event) {
+        if (!started.get() || event == null || event.getData() == null || event.getData().isEmpty()) {
             return;
         }
 
-        List<CandleResp> updates = new ArrayList<>(event.getData());
-        synchronized (oneMinuteCandles) {
-            for (CandleResp candle : updates) {
-                if (candle == null || candle.getTs() == null || candle.getTs().isBlank()) {
-                    continue;
-                }
-                oneMinuteCandles.put(candle.getTs(), candle);
-            }
-            trimCandleCache();
-        }
-        latestCandleAt.set(Instant.now());
-        List<CandleResp> persistableUpdates = updates.stream()
-                .filter(Objects::nonNull)
+        List<CandleResp> updates = event.getData().stream()
+                .filter(candle -> candleTimestamp(candle) > 0L
+                        && candleTimestamp(candle) <= clock.millis()
+                        && positivePrice(candle.getClose()))
                 .toList();
-        if (!persistableUpdates.isEmpty()) {
-            eventPublisher.publish(TradingEvent.candleBatch(
-                    properties.getInstId(),
-                    TradingEventSource.OKX_WEBSOCKET,
-                    null,
-                    "1m",
-                    persistableUpdates
-            ));
+        if (updates.isEmpty()) {
+            return;
         }
+        Map<String, CandleResp> candles = candlesByBar.computeIfAbsent(bar, ignored -> new LinkedHashMap<>());
+        for (CandleResp candle : updates) {
+            candles.put(candle.getTs(), candle);
+        }
+        trimCandleCache(candles);
+        if (CandleFreshness.isCurrent(updates, bar, clock.instant())) {
+            latestCandleAtByBar.put(bar, clock.instant());
+        }
+        eventPublisher.publish(TradingEvent.candleBatch(
+                properties.getInstId(),
+                TradingEventSource.OKX_WEBSOCKET,
+                null,
+                bar,
+                updates
+        ));
     }
 
     private void subscribeTicker() {
@@ -194,10 +222,14 @@ public class OkxMarketDataWebSocketFeed implements TradingMarketFeed, Disposable
         }
     }
 
-    private void subscribeOneMinuteCandles() {
+    private void subscribeCandles() {
         try {
             OkxWsSubscription subscription = okxApi.subscribeCandles(
-                    new CandleChannelReq().setInstId(properties.getInstId()),
+                    CANDLE_BARS.stream()
+                            .map(bar -> new CandleChannelReq()
+                                    .setChannel("candle" + bar)
+                                    .setInstId(properties.getInstId()))
+                            .toList(),
                     new OkxWsListener<>() {
                         @Override
                         public void onEvent(OkxWsEvent<CandleResp> event) {
@@ -206,7 +238,16 @@ public class OkxMarketDataWebSocketFeed implements TradingMarketFeed, Disposable
 
                         @Override
                         public void onData(OkxWsEvent<CandleResp> event) {
-                            handleCandleData(event);
+                            if (event == null || event.getArg() == null
+                                    || !properties.getInstId().equalsIgnoreCase(event.getArg().getInstId())) {
+                                return;
+                            }
+                            String channel = event.getArg().getChannel();
+                            String bar = channel != null && channel.startsWith("candle")
+                                    ? candleBar(channel.substring("candle".length())) : null;
+                            if (bar != null) {
+                                handleCandleData(bar, event);
+                            }
                         }
 
                         @Override
@@ -221,9 +262,9 @@ public class OkxMarketDataWebSocketFeed implements TradingMarketFeed, Disposable
                     }
             );
             subscriptions.add(subscription);
-            log.info("Subscribed OKX 1m candle WebSocket: instId={}", properties.getInstId());
+            log.info("Subscribed OKX candle WebSocket: instId={}, bars={}", properties.getInstId(), CANDLE_BARS);
         } catch (Exception e) {
-            log.warn("Subscribe OKX 1m candle WebSocket failed", e);
+            log.warn("Subscribe OKX candle WebSocket failed", e);
         }
     }
 
@@ -231,31 +272,58 @@ public class OkxMarketDataWebSocketFeed implements TradingMarketFeed, Disposable
         if (updateTime == null) {
             return true;
         }
-        return Duration.between(updateTime, Instant.now()).toMillis()
-                > properties.getWebsocket().getStaleTimeoutMs();
+        long age = clock.millis() - updateTime.toEpochMilli();
+        return age < 0L || age > properties.getWebsocket().getStaleTimeoutMs();
     }
 
-    private void trimCandleCache() {
+    private void trimCandleCache(Map<String, CandleResp> candles) {
         int maxSize = Math.max(properties.getWebsocket().getCandleCacheLimit(), 0);
-        if (oneMinuteCandles.size() <= maxSize) {
+        if (candles.size() <= maxSize) {
             return;
         }
-        List<String> keysToKeep = oneMinuteCandles.values().stream()
+        List<String> keysToKeep = candles.values().stream()
                 .sorted(Comparator.comparing(OkxMarketDataWebSocketFeed::candleTimestamp).reversed())
                 .limit(maxSize)
                 .map(CandleResp::getTs)
                 .toList();
-        oneMinuteCandles.keySet().retainAll(keysToKeep);
+        candles.keySet().retainAll(keysToKeep);
     }
 
     private static long candleTimestamp(CandleResp candle) {
-        if (candle == null || candle.getTs() == null || candle.getTs().isBlank()) {
+        return candle == null ? 0L : timestamp(candle.getTs());
+    }
+
+    private static long timestamp(String value) {
+        if (value == null || value.isBlank()) {
             return 0L;
         }
         try {
-            return Long.parseLong(candle.getTs());
+            return Long.parseLong(value);
         } catch (NumberFormatException e) {
             return 0L;
         }
+    }
+
+    private boolean validTicker(TickerResp ticker) {
+        if (ticker == null || !properties.getInstId().equalsIgnoreCase(ticker.getInstId())
+                || !positivePrice(ticker.getLast()) || timestamp(ticker.getTs()) <= 0L) {
+            return false;
+        }
+        return !isStale(Instant.ofEpochMilli(timestamp(ticker.getTs())));
+    }
+
+    private static boolean positivePrice(String value) {
+        try {
+            return value != null && new BigDecimal(value).signum() > 0;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    private static String candleBar(String requested) {
+        return CANDLE_BARS.stream()
+                .filter(bar -> bar.equalsIgnoreCase(requested))
+                .findFirst()
+                .orElse(null);
     }
 }

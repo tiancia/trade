@@ -11,4 +11,8 @@ public interface TradingMarketFeed {
     void stop();
     Optional<TickerResp> latestTicker();
     List<CandleResp> recentOneMinuteCandles(int limit);
+
+    default List<CandleResp> recentCandles(String bar, int limit) {
+        return "1m".equalsIgnoreCase(bar) ? recentOneMinuteCandles(limit) : List.of();
+    }
 }

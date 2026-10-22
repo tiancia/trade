@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
+import { spawn } from "node:child_process";
+import { createServer } from "node:net";
+import { fileURLToPath } from "node:url";
 
 const root = new URL("../", import.meta.url);
 
@@ -40,6 +43,44 @@ test("server-renders the Orbit trading cockpit", async () => {
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });
 
+test("production HTTP serves every page script and stylesheet", { timeout: 20_000 }, async () => {
+  const reservation = createServer();
+  await new Promise((resolve) => reservation.listen(0, "127.0.0.1", resolve));
+  const port = reservation.address().port;
+  await new Promise((resolve) => reservation.close(resolve));
+  const base = `http://127.0.0.1:${port}`;
+  const child = spawn(process.execPath, ["node_modules/vinext/dist/cli.js", "start", "--hostname", "127.0.0.1", "--port", String(port)], {
+    cwd: fileURLToPath(root), stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
+  });
+  let diagnostics = "";
+  child.stdout.on("data", (chunk) => { diagnostics = (diagnostics + chunk).slice(-20_000); });
+  child.stderr.on("data", (chunk) => { diagnostics = (diagnostics + chunk).slice(-20_000); });
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  try {
+    let response;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (child.exitCode !== null) throw new Error(`SSR process exited: ${diagnostics}`);
+      try { response = await fetch(base, { signal: AbortSignal.timeout(1000) }); break; }
+      catch { await new Promise((resolve) => setTimeout(resolve, 100)); }
+    }
+    assert.equal(response?.status, 200, diagnostics);
+    const html = await response.text();
+    const assets = new Set([...html.matchAll(/(?:src|href)="(\/[^" ]+\.(?:js|css))"/g)].map((match) => match[1]));
+    assert.ok([...assets].some((asset) => asset.endsWith(".js")), "Page must load its client scripts");
+    assert.ok([...assets].some((asset) => asset.endsWith(".css")), "Page must load its styles");
+    for (const asset of assets) {
+      const result = await fetch(new URL(asset, base), { signal: AbortSignal.timeout(1000) });
+      assert.equal(result.status, 200, `${asset} must be served over HTTP`);
+      await result.arrayBuffer();
+    }
+    const manifest = await fetch(`${base}/.vite/manifest.json`);
+    assert.equal(manifest.status, 404, "Private build metadata must remain inaccessible");
+  } finally {
+    child.kill();
+    await exited;
+  }
+});
+
 test("removes starter-only assets and metadata", async () => {
   const [page, layout, packageJson] = await Promise.all([
     readFile(new URL("app/page.tsx", root), "utf8"),
@@ -65,7 +106,8 @@ test("wires strategy activation and live candle streaming to the trading backend
   assert.match(page, /method:\s*"PUT"/);
   assert.match(page, /new EventSource\(streamUrl\)/);
   assert.match(page, /\/api\/trading\/market\/candles\/stream/);
-  assert.match(page, /实时推送已连接/);
+  assert.match(page, /行情正常 · 推送已连接/);
+  assert.match(page, /行情已过期 · 15 秒重试/);
   assert.match(worker, /env\.TRADE_API_URL/);
   assert.match(worker, /url\.pathname\.startsWith\("\/api\/"\)/);
 });

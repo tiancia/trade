@@ -12,9 +12,12 @@ import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.application.port.TradingMarketFeed;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -39,7 +42,9 @@ public class TradingMarketDataQueryService {
     private final TradingMarketFeed webSocketFeed;
     private final HotMarketDataCache hotMarketDataCache;
     private final TradingEventPublisher eventPublisher;
+    private final Clock clock;
 
+    @Autowired
     public TradingMarketDataQueryService(
             OkxApi okxApi,
             TradingProperties properties,
@@ -47,11 +52,18 @@ public class TradingMarketDataQueryService {
             HotMarketDataCache hotMarketDataCache,
             TradingEventPublisher eventPublisher
     ) {
+        this(okxApi, properties, webSocketFeed, hotMarketDataCache, eventPublisher, Clock.systemUTC());
+    }
+
+    TradingMarketDataQueryService(OkxApi okxApi, TradingProperties properties,
+                                 TradingMarketFeed webSocketFeed, HotMarketDataCache hotMarketDataCache,
+                                 TradingEventPublisher eventPublisher, Clock clock) {
         this.okxApi = okxApi;
         this.properties = properties;
         this.webSocketFeed = webSocketFeed;
         this.hotMarketDataCache = hotMarketDataCache;
         this.eventPublisher = eventPublisher;
+        this.clock = clock;
     }
 
     public CandleSeries recentCandles(String requestedInstId, String requestedBar, int requestedLimit) {
@@ -59,24 +71,28 @@ public class TradingMarketDataQueryService {
         String bar = bar(requestedBar);
         int limit = limit(requestedLimit);
 
-        List<CandleResp> candles = "1m".equals(bar)
-                ? webSocketFeed.recentOneMinuteCandles(limit)
-                : List.of();
-        String source = candles.isEmpty() ? null : "WEBSOCKET";
+        List<CandleResp> webSocketCandles = current(webSocketFeed.recentCandles(bar, limit), bar, limit);
+        List<CandleResp> candles = webSocketCandles;
+        String source = candles.isEmpty() ? "UNAVAILABLE" : "WEBSOCKET";
 
-        if (candles.isEmpty()) {
-            candles = hotMarketDataCache.recentCandles(instId, bar, limit);
-            source = candles.isEmpty() ? null : "HOT_CACHE";
+        if (!hasContinuousHistory(candles, bar, limit)) {
+            List<CandleResp> cached = current(hotMarketDataCache.recentCandles(instId, bar, limit), bar, limit);
+            candles = merge(limit, cached, webSocketCandles);
+            source = webSocketCandles.isEmpty() ? (cached.isEmpty() ? "UNAVAILABLE" : "HOT_CACHE") : "WEBSOCKET";
         }
-        if (candles.isEmpty()) {
-            candles = OkxResponses.data(
+        if (!hasContinuousHistory(candles, bar, limit)) {
+            List<CandleResp> fetched = OkxResponses.data(
                     okxApi.getCandles(new CandlesReq()
                             .setInstId(instId)
                             .setBar(bar)
                             .setLimit(String.valueOf(limit))),
                     "recent candles"
             );
-            source = "OKX_REST";
+            // A candle may have changed on WS while the HTTP request was in flight.
+            List<CandleResp> latestWebSocket = current(webSocketFeed.recentCandles(bar, limit), bar, limit);
+            webSocketCandles = current(webSocketCandles, bar, limit);
+            candles = merge(limit, candles, fetched, webSocketCandles, latestWebSocket);
+            source = latestWebSocket.isEmpty() && webSocketCandles.isEmpty() ? "OKX_REST" : "WEBSOCKET";
             publish(instId, bar, candles);
         }
 
@@ -84,9 +100,10 @@ public class TradingMarketDataQueryService {
         return new CandleSeries(
                 instId,
                 bar,
-                source == null ? "UNAVAILABLE" : source,
+                source,
                 latestTimestamp(chronological),
-                chronological
+                chronological,
+                clock.instant()
         );
     }
 
@@ -134,11 +151,40 @@ public class TradingMarketDataQueryService {
         return requested;
     }
 
-    private static List<CandleResp> chronological(List<CandleResp> source, int limit) {
+    private List<CandleResp> current(List<CandleResp> candles, String bar, int limit) {
+        List<CandleResp> valid = chronological(candles, limit);
+        return CandleFreshness.isCurrent(valid, bar, clock.instant()) ? valid : List.of();
+    }
+
+    private static boolean hasContinuousHistory(List<CandleResp> candles, String bar, int limit) {
+        if (candles.size() < limit) {
+            return false;
+        }
+        long interval = CandleFreshness.intervalMillis(bar);
+        for (int index = 1; index < candles.size(); index++) {
+            if (timestamp(candles.get(index)) - timestamp(candles.get(index - 1)) != interval) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @SafeVarargs
+    private final List<CandleResp> merge(int limit, List<CandleResp>... sources) {
+        List<CandleResp> combined = new ArrayList<>();
+        for (List<CandleResp> source : sources) {
+            if (source != null) {
+                combined.addAll(source);
+            }
+        }
+        return chronological(combined, limit);
+    }
+
+    private List<CandleResp> chronological(List<CandleResp> source, int limit) {
         Map<Long, CandleResp> deduplicated = new LinkedHashMap<>();
         if (source != null) {
             source.stream()
-                    .filter(candle -> timestamp(candle) > 0L)
+                    .filter(candle -> timestamp(candle) > 0L && timestamp(candle) <= clock.millis())
                     .sorted(Comparator.comparingLong(TradingMarketDataQueryService::timestamp))
                     .forEach(candle -> deduplicated.put(timestamp(candle), candle));
         }
@@ -154,11 +200,11 @@ public class TradingMarketDataQueryService {
         }
     }
 
-    private static Instant latestTimestamp(List<CandleResp> candles) {
+    private Instant latestTimestamp(List<CandleResp> candles) {
         if (candles == null || candles.isEmpty()) {
-            return Instant.now();
+            return clock.instant();
         }
         long timestamp = timestamp(candles.getLast());
-        return timestamp > 0L ? Instant.ofEpochMilli(timestamp) : Instant.now();
+        return timestamp > 0L ? Instant.ofEpochMilli(timestamp) : clock.instant();
     }
 }

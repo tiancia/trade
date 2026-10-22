@@ -3,6 +3,7 @@ package com.trade.trading.application.runtime;
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.application.market.TradingEventDetector;
+import com.trade.trading.application.market.CandleFreshness;
 import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.application.paper.PaperAccountService;
 import com.trade.trading.application.order.OrderReconciliationService;
@@ -18,13 +19,16 @@ import com.trade.trading.application.port.TradingMarketFeed;
 import com.trade.trading.application.port.TradingStateStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Coordinates scheduled decisions, reconciliation, and market-event scans.
@@ -47,8 +51,10 @@ public class TradingTriggerService {
     private final TradingStateStore stateRepository;
     private final TradingProperties properties;
     private final PaperAccountService paperAccountService;
+    private final Clock clock;
     private Instant lastEventDecisionAt = Instant.EPOCH;
 
+    @Autowired
     public TradingTriggerService(
             TradingStrategyEngine tradingEngine,
             OrderReconciliationService orderReconciliationService,
@@ -61,6 +67,16 @@ public class TradingTriggerService {
             TradingProperties properties,
             PaperAccountService paperAccountService
     ) {
+        this(tradingEngine, orderReconciliationService, leadershipService, marketContextCollector,
+                marketDataWebSocketFeed, hotMarketDataCache, eventDetector, stateRepository,
+                properties, paperAccountService, Clock.systemUTC());
+    }
+
+    TradingTriggerService(TradingStrategyEngine tradingEngine, OrderReconciliationService orderReconciliationService,
+                          TradingLeadershipService leadershipService, TradingMarketSource marketContextCollector,
+                          TradingMarketFeed marketDataWebSocketFeed, HotMarketDataCache hotMarketDataCache,
+                          TradingEventDetector eventDetector, TradingStateStore stateRepository,
+                          TradingProperties properties, PaperAccountService paperAccountService, Clock clock) {
         this.tradingEngine = tradingEngine;
         this.orderReconciliationService = orderReconciliationService;
         this.leadershipService = leadershipService;
@@ -71,6 +87,7 @@ public class TradingTriggerService {
         this.stateRepository = stateRepository;
         this.properties = properties;
         this.paperAccountService = paperAccountService;
+        this.clock = clock;
     }
 
     public void runScheduledDecision() {
@@ -110,7 +127,7 @@ public class TradingTriggerService {
                 return;
             }
 
-            if (Duration.between(lastEventDecisionAt, Instant.now()).toMillis() < properties.getEventCooldownMs()) {
+            if (Duration.between(lastEventDecisionAt, clock.instant()).toMillis() < properties.getEventCooldownMs()) {
                 log.info("Strategy event trigger detected but still in cooldown: events={}", events);
                 return;
             }
@@ -121,7 +138,7 @@ public class TradingTriggerService {
             details.put("cooldownMs", properties.getEventCooldownMs());
             boolean ran = tradingEngine.runDecision(TradingTrigger.event("Market event trigger", details));
             if (ran) {
-                lastEventDecisionAt = Instant.now();
+                lastEventDecisionAt = clock.instant();
             }
         } catch (Exception e) {
             log.error("Strategy trading event scan failed", e);
@@ -150,8 +167,9 @@ public class TradingTriggerService {
                 .orElseGet(marketContextCollector::getTicker);
     }
 
-    private static boolean hasEnoughCandlesForEventDetection(List<CandleResp> candles) {
-        return candles != null && candles.stream()
+    private boolean hasEnoughCandlesForEventDetection(List<CandleResp> candles) {
+        return CandleFreshness.isCurrent(candles, "1m", clock.instant()) && candles.stream()
+                .filter(Objects::nonNull)
                 .filter(candle -> "1".equals(candle.getConfirm()))
                 .count() >= 21;
     }

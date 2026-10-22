@@ -60,6 +60,7 @@ trade/
 | [本地基础设施](../backend/infrastructure/README.md) | 开发用 MySQL、Redis、Prometheus、Grafana 的启动方式 |
 | [后端运维](backend/OPERATIONS.md) | 应用安全启动、任务控制、资金停止、恢复和业务排障 |
 | [可观测性](backend/OBSERVABILITY.md) | 指标流、抓取配置、看板、告警及本地/生产差异 |
+| [2026-10-22 全项目检查](PROJECT_REVIEW_2026-10-22.md) | 本次安全与稳定性问题、修复文件、验证结果及未验证边界 |
 
 ### 后端设计与开发
 

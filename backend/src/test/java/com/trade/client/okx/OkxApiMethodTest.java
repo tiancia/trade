@@ -12,13 +12,54 @@ import com.trade.client.okx.dto.OrderQueryReq;
 import com.trade.client.okx.dto.PendingOrdersReq;
 import com.trade.client.okx.dto.PlaceOrderReq;
 import com.trade.client.okx.dto.TickerReq;
+import com.trade.client.okx.dto.CandleResp;
+import com.trade.client.okx.dto.TickerResp;
+import com.trade.client.okx.ws.CandleChannelReq;
+import com.trade.client.okx.ws.TickerChannelReq;
+import com.trade.client.okx.ws.OkxWsListener;
+import com.trade.client.okx.ws.OkxWsArg;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 class OkxApiMethodTest {
+
+    @Test
+    void routesCandlesToBusinessWhileTickersRemainPublic() {
+        OkxWebSocketClient websocket = mock(OkxWebSocketClient.class);
+        OkxApi api = new OkxApi(new FakeOkxClient(), websocket);
+        OkxWsListener<CandleResp> candleListener = new OkxWsListener<>() {};
+        OkxWsListener<TickerResp> tickerListener = new OkxWsListener<>() {};
+
+        api.subscribeCandles(new CandleChannelReq().setInstId("BTC-USDT"), candleListener);
+        api.subscribeTicker(new TickerChannelReq().setInstId("BTC-USDT"), tickerListener);
+
+        verify(websocket).subscribeBusiness(any(OkxWsArg.class), eq(CandleResp.class), same(candleListener));
+        verify(websocket).subscribePublic(any(), eq(TickerResp.class), same(tickerListener));
+    }
+
+    @Test
+    void routesAllCandlePeriodsThroughOneBusinessSubscription() {
+        OkxWebSocketClient websocket = mock(OkxWebSocketClient.class);
+        OkxApi api = new OkxApi(new FakeOkxClient(), websocket);
+        OkxWsListener<CandleResp> listener = new OkxWsListener<>() {};
+        List<CandleChannelReq> requests = List.of(
+                new CandleChannelReq().setInstId("BTC-USDT").setChannel("candle1m"),
+                new CandleChannelReq().setInstId("BTC-USDT").setChannel("candle5m"));
+
+        api.subscribeCandles(requests, listener);
+
+        verify(websocket).subscribeBusiness(org.mockito.ArgumentMatchers.<List<OkxWsArg>>argThat(args ->
+                args.size() == 2 && "candle1m".equals(args.getFirst().getChannel())
+                        && "candle5m".equals(args.getLast().getChannel())), eq(CandleResp.class), same(listener));
+    }
 
     @Test
     void routesReadOnlyMarketMethodsWithoutAuth() {

@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import jakarta.servlet.http.HttpServletResponse;
 
 /** Browser-facing recent and streaming K-line API. */
 @RestController
@@ -30,8 +31,10 @@ public class TradingMarketDataController {
     public CandleSeries candles(
             @RequestParam(defaultValue = "BTC-USDT") String instId,
             @RequestParam(defaultValue = "1m") String bar,
-            @RequestParam(defaultValue = "80") int limit
+            @RequestParam(defaultValue = "80") int limit,
+            HttpServletResponse response
     ) {
+        response.setHeader("Cache-Control", "no-store");
         try {
             return marketDataQueryService.recentCandles(instId, bar, limit);
         } catch (IllegalArgumentException e) {
@@ -43,8 +46,10 @@ public class TradingMarketDataController {
     public SseEmitter stream(
             @RequestParam(defaultValue = "BTC-USDT") String instId,
             @RequestParam(defaultValue = "1m") String bar,
-            @RequestParam(defaultValue = "80") int limit
+            @RequestParam(defaultValue = "80") int limit,
+            HttpServletResponse response
     ) {
+        response.setHeader("Cache-Control", "no-store");
         try {
             return candleStream.subscribe(marketDataQueryService.recentCandles(instId, bar, limit));
         } catch (IllegalArgumentException e) {

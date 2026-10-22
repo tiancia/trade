@@ -37,6 +37,20 @@ class OrderSizingServiceTest {
     }
 
     @Test
+    void buySkipsWhenCashExistsButAvailableQuoteIsZero() {
+        TradingProperties properties = new TradingProperties();
+        properties.getRisk().setEnabled(false);
+        TradingDecisionContext context = context("50000", "0", "0", "0.00001", "0.00000001");
+        context.getQuoteBalance().setCashBal("100");
+
+        OrderSizing sizing = new OrderSizingService(properties).buySize(
+                StrategyDecision.buy("test", new BigDecimal("10"), "entry"), context);
+
+        assertFalse(sizing.isExecutable());
+        assertEquals("BUY skipped: no available quote balance", sizing.getSkipReason());
+    }
+
+    @Test
     void buySizeSkipsWhenEstimatedBaseIsBelowMinSize() {
         TradingProperties properties = new TradingProperties();
         properties.getRisk().setEnabled(false);

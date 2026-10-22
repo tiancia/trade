@@ -20,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -71,31 +72,20 @@ public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
         );
 
         try {
-            Process process = builder.start();
             String payload = buildPayload(request);
             log.debug("Polymarket order script payload: {}", payload);
-            // Stdin avoids leaking order payload details into process arguments.
-            process.getOutputStream().write(payload.getBytes(StandardCharsets.UTF_8));
-            process.getOutputStream().close();
-
-            boolean finished = process.waitFor(execution.getTimeoutMs(), TimeUnit.MILLISECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                throw new RuntimeException("Polymarket order script timed out after "
-                        + Duration.ofMillis(execution.getTimeoutMs()));
-            }
-
-            String stdout = readAll(process.getInputStream());
-            String stderr = readAll(process.getErrorStream());
-            if (process.exitValue() != 0) {
+            ProcessOutput output = runProcess(builder.start(), payload, execution.getTimeoutMs());
+            String stdout = output.stdout();
+            String stderr = output.stderr();
+            if (output.exitCode() != 0) {
                 log.warn(
                         "Polymarket order script failed: exitCode={}, stdoutChars={}, stderrChars={}",
-                        process.exitValue(),
+                        output.exitCode(),
                         stdout.length(),
                         stderr.length()
                 );
                 throw new RuntimeException("Polymarket order script failed, exitCode="
-                        + process.exitValue()
+                        + output.exitCode()
                         + ", stderr="
                         + stderr
                         + ", stdout="
@@ -113,6 +103,37 @@ public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
         } catch (Exception e) {
             throw new RuntimeException("Run Polymarket order script error", e);
         }
+    }
+
+    static ProcessOutput runProcess(Process process, String payload, long timeoutMs) throws Exception {
+        try (var input = process.getOutputStream();
+             var output = process.getInputStream();
+             var error = process.getErrorStream()) {
+            FutureTask<String> stdout = new FutureTask<>(() -> readAll(output));
+            FutureTask<String> stderr = new FutureTask<>(() -> readAll(error));
+            // Drain both pipes while the script runs: a full pipe otherwise prevents exit.
+            Thread.ofVirtual().start(stdout);
+            Thread.ofVirtual().start(stderr);
+            try {
+                // Stdin avoids leaking order payload details into process arguments.
+                input.write(payload.getBytes(StandardCharsets.UTF_8));
+                input.close();
+                if (!process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
+                    throw new RuntimeException("Polymarket order script timed out after " + Duration.ofMillis(timeoutMs));
+                }
+                return new ProcessOutput(process.exitValue(), stdout.get(), stderr.get());
+            } finally {
+                // An interrupted/failed caller must not leave an order script running.
+                if (process.isAlive()) {
+                    process.destroyForcibly();
+                }
+                stdout.cancel(true);
+                stderr.cancel(true);
+            }
+        }
+    }
+
+    record ProcessOutput(int exitCode, String stdout, String stderr) {
     }
 
     private String buildPayload(PolymarketOrderRequest request) throws Exception {

@@ -10,9 +10,11 @@ import com.trade.trading.application.port.HotMarketDataCache;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.time.Instant;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class HotMarketDataCacheEventHandlerTest {
 
@@ -28,9 +30,10 @@ class HotMarketDataCacheEventHandlerTest {
         TradingEventHandlingResult snapshotResult = handler.handle(TradingEvent.marketSnapshot(
                 "BTC-USDT", TradingEventSource.OKX_WEBSOCKET, null, ticker, null
         ));
-        TradingEventHandlingResult candleResult = handler.handle(TradingEvent.candleBatch(
+        TradingEvent candleEvent = TradingEvent.candleBatch(
                 "BTC-USDT", TradingEventSource.OKX_WEBSOCKET, null, "1m", List.of(candle)
-        ));
+        );
+        TradingEventHandlingResult candleResult = handler.handle(candleEvent);
 
         assertEquals(TradingEventHandlingResult.PROCESSED, snapshotResult);
         assertEquals(TradingEventHandlingResult.PROCESSED, candleResult);
@@ -38,6 +41,22 @@ class HotMarketDataCacheEventHandlerTest {
         assertEquals("50000", cache.ticker.getLast());
         assertEquals("1m", cache.bar);
         assertEquals("1710000000000", cache.candles.getFirst().getTs());
+        assertEquals(candleEvent.receivedAt(), cache.observedAt);
+    }
+
+    @Test
+    void historicalPagesDoNotBecomeLiveObservationsEvenForTheCurrentPeriod() {
+        CapturingCache cache = new CapturingCache();
+        HotMarketDataCacheEventHandler handler = new HotMarketDataCacheEventHandler(cache);
+        CandleResp candle = new CandleResp();
+        candle.setTs(String.valueOf(Instant.now().toEpochMilli()));
+
+        TradingEventHandlingResult result = handler.handle(TradingEvent.candleBatch(
+                "BTC-USDT", TradingEventSource.OKX_REST_HISTORY, null, "1H", List.of(candle)));
+
+        assertEquals(TradingEventHandlingResult.PROCESSED, result);
+        assertNull(cache.observedAt);
+        assertEquals(1, cache.candles.size());
     }
 
     private static class CapturingCache implements HotMarketDataCache {
@@ -45,6 +64,7 @@ class HotMarketDataCacheEventHandlerTest {
         private TickerResp ticker;
         private String bar;
         private List<CandleResp> candles;
+        private Instant observedAt;
 
         @Override
         public CacheWriteResult putSnapshot(String instId, TickerResp ticker, OrderBookResp orderBook) {
@@ -59,6 +79,12 @@ class HotMarketDataCacheEventHandlerTest {
             this.bar = bar;
             this.candles = candles;
             return CacheWriteResult.CACHED;
+        }
+
+        @Override
+        public CacheWriteResult putCandles(String instId, String bar, List<CandleResp> candles, Instant observedAt) {
+            this.observedAt = observedAt;
+            return putCandles(instId, bar, candles);
         }
 
         @Override

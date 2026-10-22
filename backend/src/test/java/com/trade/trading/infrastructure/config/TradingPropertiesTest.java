@@ -11,8 +11,19 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TradingPropertiesTest {
+    @Test
+    void marketDataDefaultsEnableStreamingWhileLiveExecutionRemainsGated() {
+        TradingProperties properties = new TradingProperties();
+        assertTrue(properties.getWebsocket().isEnabled());
+        assertEquals(30_000L, properties.getWebsocket().getStaleTimeoutMs());
+        assertEquals(15_000L, properties.getHotMarketDataCache().getCandleFreshnessMs());
+        assertEquals(10_800_000L, properties.getHotMarketDataCache().getCandleTtlMs());
+        assertFalse(properties.isLiveExecutionAllowed());
+    }
+
     @Test
     void executionModeKeepsConfigurationAndRuntimeJsonContract() throws Exception {
         ObjectMapper mapper = new ObjectMapper();

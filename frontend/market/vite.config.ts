@@ -16,11 +16,6 @@ export default defineConfig({
     setupFiles: './src/test/setup.ts',
     clearMocks: true,
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        minForks: 1,
-        maxForks: 1,
-      },
-    },
+    maxWorkers: 1,
   },
 });

@@ -30,7 +30,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiTimestampMillis, buildBacktestPayload, buildPaperSessionPayload, buildStrategyParametersPayload, createJsonRequestHeaders, filterConfigurationEvents, formatDateTimeLocal, formatReturnFraction, mergeContiguousHistory, strategyParameterFields } from "./lib/trading-api.mjs";
+import { apiTimestampMillis, buildBacktestPayload, buildPaperSessionPayload, buildStrategyParametersPayload, createJsonRequestHeaders, filterConfigurationEvents, formatDateTimeLocal, formatReturnFraction, marketDataIsFresh, mergeContiguousHistory, strategyParameterFields } from "./lib/trading-api.mjs";
 
 type View = "overview" | "strategies" | "events" | "backtests";
 type ApiTimestamp = string | number;
@@ -147,6 +147,7 @@ type CandleSeries = {
   bar: string;
   source: string;
   asOf: ApiTimestamp;
+  checkedAt?: ApiTimestamp;
   candles: Candle[];
 };
 
@@ -450,6 +451,11 @@ export default function Home() {
   const [strategyPending, setStrategyPending] = useState<string | null>(null);
   const [chartBar, setChartBar] = useState("1m");
   const [market, setMarket] = useState<CandleSeries>(demoMarket);
+  const [marketReceivedAt, setMarketReceivedAt] = useState(0);
+  const marketRequest = useRef(0);
+  const marketStreamVersion = useRef(0);
+  const marketStreamUpdates = useRef(new Map<string, { version: number; candle: Candle }>());
+  const marketPending = useRef<{ bar: string; signal: AbortSignal; requestId: number } | null>(null);
   const [streamState, setStreamState] = useState<StreamState>("connecting");
   const [query, setQuery] = useState("");
   const [paperCurrent, setPaperCurrent] = useState<PaperAccount | null>(null);
@@ -486,15 +492,31 @@ export default function Home() {
     setPaperRefreshToken((current) => current + 1);
   }, []);
 
-  const loadMarket = useCallback(async (bar: string) => {
+  const loadMarket = useCallback(async (bar: string, signal: AbortSignal) => {
+    if (marketPending.current?.bar === bar && !marketPending.current.signal.aborted) return null;
+    const requestId = ++marketRequest.current;
+    const streamVersion = marketStreamVersion.current;
+    const requestedAt = Date.now();
+    marketPending.current = { bar, signal, requestId };
     try {
-      const series = await request<CandleSeries>(`/api/trading/market/candles?instId=BTC-USDT&bar=${encodeURIComponent(bar)}&limit=80`);
-      setMarket(series);
+      const series = await request<CandleSeries>(`/api/trading/market/candles?instId=BTC-USDT&bar=${encodeURIComponent(bar)}&limit=80`, { signal, cache: "no-store" });
+      // A newer interval or poll owns the visible chart. Stream updates are
+      // merged over the response so frequent pushes cannot starve history loading.
+      if (signal.aborted || requestId !== marketRequest.current) return null;
+      const updates = Array.from(marketStreamUpdates.current.values()).filter((update) => update.version > streamVersion).map((update) => update.candle);
+      setMarket(updates.length > 0
+        ? mergeCandles(series, { eventId: "history", instrumentId: series.instrumentId, bar, receivedAt: series.asOf, candles: updates })
+        : series);
+      setMarketReceivedAt(apiTimestampMillis(series.checkedAt) ?? requestedAt);
       setStreamState((current) => current === "live" ? current : "polling");
       return true;
     } catch {
-      setStreamState("demo");
+      if (signal.aborted || requestId !== marketRequest.current) return null;
+      if (streamVersion !== marketStreamVersion.current) return null;
+      setStreamState((current) => current === "demo" ? "demo" : "polling");
       return false;
+    } finally {
+      if (marketPending.current?.requestId === requestId) marketPending.current = null;
     }
   }, []);
 
@@ -511,10 +533,17 @@ export default function Home() {
 
   useEffect(() => {
     let active = true;
+    const abort = new AbortController();
+    marketStreamUpdates.current.clear();
+    const rememberUpdates = (candles: Candle[]) => {
+      const version = ++marketStreamVersion.current;
+      candles.forEach((candle) => marketStreamUpdates.current.set(candle.ts, { version, candle }));
+      while (marketStreamUpdates.current.size > 300) marketStreamUpdates.current.delete(marketStreamUpdates.current.keys().next().value!);
+    };
     const initialMarket = window.setTimeout(() => {
-      void loadMarket(chartBar).then((connected) => {
+      void loadMarket(chartBar, abort.signal).then((connected) => {
         if (!active) return;
-        if (!connected) {
+        if (connected === false) {
           setMarket({ ...demoMarket, bar: chartBar, asOf: new Date().toISOString() });
         }
       });
@@ -524,28 +553,45 @@ export default function Home() {
     const source = new EventSource(streamUrl);
     source.addEventListener("snapshot", (event) => {
       if (!active) return;
-      setMarket(eventData<CandleSeries>(event));
+      const series = eventData<CandleSeries>(event);
+      const latest = series.candles.reduce<Candle | null>((current, candle) => !current || Number(candle.ts) > Number(current.ts) ? candle : current, null);
+      rememberUpdates(latest ? [latest] : []);
+      setMarket(series);
+      setMarketReceivedAt(apiTimestampMillis(series.checkedAt) ?? 0);
       setStreamState("live");
     });
     source.addEventListener("candle", (event) => {
       if (!active) return;
       const update = eventData<CandleStreamUpdate>(event);
+      const receivedAt = apiTimestampMillis(update.receivedAt) ?? 0;
+      const now = Date.now();
+      // A delayed queue event must not overwrite newer prices or revive freshness.
+      if (receivedAt <= 0 || now - receivedAt > 30_000 || receivedAt > now + 1_000) return;
+      rememberUpdates(update.candles);
       setMarket((current) => mergeCandles(current.bar === update.bar ? current : { ...current, candles: [] }, update));
+      if (marketDataIsFresh(update.candles, update.bar, receivedAt, now)) setMarketReceivedAt(receivedAt);
       setStreamState("live");
     });
     source.onopen = () => active && setStreamState("live");
     source.onerror = () => active && setStreamState((current) => current === "demo" ? "demo" : "polling");
 
     const pollTimer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void loadMarket(chartBar);
+      if (document.visibilityState === "visible") void loadMarket(chartBar, abort.signal);
     }, 15_000);
     return () => {
       active = false;
+      abort.abort();
       window.clearTimeout(initialMarket);
       source.close();
       window.clearInterval(pollTimer);
     };
   }, [chartBar, loadMarket]);
+
+  const marketFresh = market.bar === chartBar && marketDataIsFresh(market.candles, market.bar, marketReceivedAt, clock?.getTime() ?? 0);
+  const marketStatus = market.source === "DEMO"
+    ? "安全演示 K 线"
+    : !marketFresh ? "行情已过期 · 15 秒重试"
+      : streamState === "live" ? "行情正常 · 推送已连接" : "行情正常 · 15 秒轮询";
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -838,9 +884,9 @@ export default function Home() {
                   <div className="chart-time">{chart.times.map((time, index) => <span key={`${time}-${index}`}>{time}</span>)}</div>
                 </div>
                 <div className="market-footer">
-                  <span><i className={streamState === "live" ? "healthy" : streamState === "demo" ? "neutral" : "warning"} /> {streamState === "live" ? "实时推送已连接" : streamState === "polling" ? "实时流重连中 · 15 秒轮询" : streamState === "connecting" ? "正在连接实时行情" : "安全演示 K 线"}</span>
+                  <span><i className={market.source === "DEMO" ? "neutral" : marketFresh ? "healthy" : "warning"} /> {marketStatus}</span>
                   <span>窗口成交额 <b>{compact(chart.quoteVolume)} USDT</b></span>
-                  <span>数据源 <b className={streamState === "live" ? "positive-text" : ""}>{market.source}</b></span>
+                  <span>数据源 <b className={marketFresh ? "positive-text" : ""}>{market.source}</b></span>
                 </div>
               </section>
 

@@ -218,6 +218,45 @@ class LiveOrderExecutionServiceTest {
     }
 
     @Test
+    void newBuyDecisionCannotSubmitWhileEarlierBuyOutcomeIsUnknown() {
+        TradingProperties properties = liveProperties();
+        FakeOkxApi api = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        api.failNextPlace = true;
+        InMemoryTradingOrderRepository orders = new InMemoryTradingOrderRepository();
+        LiveOrderExecutionService execution = broker(properties, api, orders);
+        TradingDecisionRecord first = new TradingDecisionRecord().setDecisionId("first-signal");
+        assertThrows(IllegalStateException.class,
+                () -> execution.execute(buyDecision(), context("0", "1000"), first));
+
+        TradingDecisionRecord next = new TradingDecisionRecord().setDecisionId("next-signal");
+        execution.execute(buyDecision(), context("0", "1000"), next);
+
+        assertEquals(1, api.placeOrderCount);
+        assertEquals("SKIPPED", next.getExecutionStatus());
+        assertEquals(OrderStatus.REJECTED.name(), next.getOrderStatus());
+        assertTrue(next.getSkipReason().contains("reconcile outstanding orders"));
+        assertEquals(OrderStatus.SUBMIT_UNKNOWN,
+                orders.findByIdempotencyKey(first.getIdempotencyKey()).orElseThrow().getStatus());
+    }
+
+    @Test
+    void outstandingOrderReadFailureBlocksBuyWithoutAmbiguousSubmit() {
+        TradingProperties properties = liveProperties();
+        FakeOkxApi api = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        InMemoryTradingOrderRepository orders = spy(new InMemoryTradingOrderRepository());
+        doThrow(new IllegalStateException("database unavailable"))
+                .when(orders).findReconciliationCandidates("BTC-USDT", 2);
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(properties, api, orders).execute(buyDecision(), context("0", "1000"), record);
+
+        assertEquals(0, api.placeOrderCount);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertEquals(OrderStatus.REJECTED.name(), record.getOrderStatus());
+        assertTrue(record.getSkipReason().contains("cannot verify outstanding orders"));
+    }
+
+    @Test
     void explicitLiveSellCannotUseManualBalanceOrStaleDecisionOwnership() {
         TradingProperties properties = liveProperties();
         FakeOkxApi api = new FakeOkxApi(filledOrder("sell", "1", "50000"));

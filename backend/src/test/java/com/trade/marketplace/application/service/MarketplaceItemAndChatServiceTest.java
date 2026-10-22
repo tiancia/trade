@@ -4,6 +4,7 @@ import com.trade.marketplace.application.support.InMemoryMarketplaceMapper;
 import com.trade.marketplace.domain.exception.MarketplaceForbiddenException;
 import com.trade.marketplace.domain.model.MarketplaceApi;
 import com.trade.marketplace.domain.model.MarketplacePrincipal;
+import com.trade.marketplace.infrastructure.config.MarketplaceProperties;
 import com.trade.marketplace.infrastructure.persistence.MarketplaceCategoryRow;
 import com.trade.marketplace.infrastructure.persistence.MarketplaceUserRow;
 import org.junit.jupiter.api.BeforeEach;
@@ -54,6 +55,24 @@ class MarketplaceItemAndChatServiceTest {
         assertEquals("DELISTED", delisted.status());
         assertEquals(1, itemService.listItems(null, null, false, null).items().size());
         assertEquals(2, itemService.listItems(null, null, true, seller).items().size());
+    }
+
+    @Test
+    void derivedOssPublicUrlStillRequiresTheSellersUploadPrefix() {
+        MarketplaceProperties properties = new MarketplaceProperties();
+        properties.getOss().setBucket("images");
+        properties.getOss().setRegion("cn-beijing");
+        MarketplaceItemService configured = new MarketplaceItemService(mapper, properties);
+        String base = "https://images.oss-cn-beijing.aliyuncs.com/marketplace/users/";
+
+        MarketplaceApi.Item item = configured.createItem(seller, new MarketplaceApi.CreateItemRequest(
+                "书", "", books.getId(), base + seller.id() + "/2026/10/image.jpg", null));
+        assertEquals(seller.id(), item.seller().id());
+        for (String imageUrl : new String[] {base + buyer.id() + "/image.jpg",
+                base + seller.id() + "/../" + buyer.id() + "/image.jpg", "https://outside.example/image.jpg"}) {
+            assertThrows(IllegalArgumentException.class, () -> configured.createItem(seller,
+                    new MarketplaceApi.CreateItemRequest("书", "", books.getId(), imageUrl, null)));
+        }
     }
 
     @Test

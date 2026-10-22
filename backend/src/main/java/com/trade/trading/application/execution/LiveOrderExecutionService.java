@@ -269,10 +269,17 @@ public class LiveOrderExecutionService {
             // an ambiguous external submit because placeOrder was not called.
             fundSafetyService.requireActive();
             leadershipService.requireLiveLeadership();
+            requireNoOutstandingOrder(idempotencyKey);
             if (decision.getAction() == TradingAction.SELL) {
-                requireManagedSell(request, idempotencyKey);
+                requireManagedSell(request);
             }
             actionResp = orderGateway.placeOrder(request);
+        } catch (OutstandingOrderUnavailableException e) {
+            TradingOrder rejected = orderLifecycleService.markSubmissionBlocked(
+                    idempotencyKey, "OUTSTANDING_ORDER_UNAVAILABLE", e.getMessage()).order();
+            applyOrder(record, rejected, false);
+            record.setExecutionStatus("SKIPPED").setSkipReason(e.getMessage());
+            return;
         } catch (ManagedPositionUnavailableException e) {
             TradingOrder rejected = orderLifecycleService.markSubmissionBlocked(
                     idempotencyKey, "MANAGED_POSITION_UNAVAILABLE", e.getMessage()).order();
@@ -333,12 +340,8 @@ public class LiveOrderExecutionService {
         return quantity == null ? BigDecimal.ZERO : quantity.max(BigDecimal.ZERO);
     }
 
-    private void requireManagedSell(PlaceOrderReq request, String idempotencyKey) {
+    private void requireManagedSell(PlaceOrderReq request) {
         try {
-            if (orderLifecycleService.hasOtherUnresolvedOrder(properties.getInstId(), idempotencyKey)) {
-                throw new ManagedPositionUnavailableException(
-                        "SELL blocked: reconcile outstanding orders before selling the managed position");
-            }
             if (new BigDecimal(request.getSz()).compareTo(managedQuantity()) > 0) {
                 throw new ManagedPositionUnavailableException(
                         "SELL blocked: managed position changed before submission; refresh the decision");
@@ -349,6 +352,27 @@ public class LiveOrderExecutionService {
             // No exchange submission occurred; a failed ownership read must not
             // be recorded as an ambiguous external submit.
             throw new ManagedPositionUnavailableException("SELL blocked: cannot verify the managed position");
+        }
+    }
+
+    private void requireNoOutstandingOrder(String idempotencyKey) {
+        try {
+            // A new candle produces a new idempotency key. It must not create
+            // another exposure while an earlier submit or fill is unresolved.
+            if (orderLifecycleService.hasOtherUnresolvedOrder(properties.getInstId(), idempotencyKey)) {
+                throw new OutstandingOrderUnavailableException(
+                        "Live order blocked: reconcile outstanding orders before a new submission");
+            }
+        } catch (OutstandingOrderUnavailableException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new OutstandingOrderUnavailableException("Live order blocked: cannot verify outstanding orders");
+        }
+    }
+
+    private static final class OutstandingOrderUnavailableException extends IllegalStateException {
+        private OutstandingOrderUnavailableException(String message) {
+            super(message);
         }
     }
 

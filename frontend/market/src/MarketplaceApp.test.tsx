@@ -142,6 +142,20 @@ describe('marketplace app', () => {
     expect(api.createUploadIntent).not.toHaveBeenCalled();
   });
 
+  it('rejects passwords over the UTF-8 byte limit before sending authentication', async () => {
+    setup();
+    const nav = await screen.findByRole('navigation', { name: '主导航' });
+    fireEvent.click(within(nav).getByRole('button', { name: /^登录$/ }));
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'buyer' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: '密'.repeat(25) } });
+    fireEvent.submit(screen.getByLabelText('密码').closest('form')!);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('密码最多 72 字节');
+    expect(api.login).not.toHaveBeenCalled();
+    expect(api.register).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('密码')).toHaveAttribute('maxlength', '72');
+  });
+
   it('publishes an item after uploading through an OSS intent', async () => {
     setup({ session: sellerSession, items: [] });
 
@@ -303,6 +317,47 @@ describe('marketplace app', () => {
     await waitFor(() => expect(within(nav).getByRole('button', { name: /登录/ })).toBeVisible());
     await act(async () => { slow.resolve([chatMessage(104, first.id, '已退出账号的私信')]); });
     expect(screen.queryByText('已退出账号的私信')).not.toBeInTheDocument();
+  });
+
+  it('does not restore a logged-out account from a late startup verification', async () => {
+    const verification = deferred<typeof buyer>();
+    setup({ session: buyerSession });
+    api.fetchMe.mockReturnValue(verification.promise);
+    await waitFor(() => expect(api.fetchMe).toHaveBeenCalledWith('buyer-token'));
+    const nav = screen.getByRole('navigation', { name: '主导航' });
+    fireEvent.click(within(nav).getByRole('button', { name: /买家/ }));
+    fireEvent.click(screen.getByRole('button', { name: /退出登录/ }));
+    await waitFor(() => expect(within(nav).getByRole('button', { name: /^登录$/ })).toBeVisible());
+
+    await act(async () => { verification.resolve(buyer); });
+
+    expect(within(nav).getByRole('button', { name: /^登录$/ })).toBeVisible();
+    expect(api.saveStoredSession).not.toHaveBeenCalled();
+  });
+
+  it('does not clear a new login when an old startup verification returns unauthorized', async () => {
+    let rejectVerification!: (reason: unknown) => void;
+    const verification = new Promise<never>((_resolve, reject) => { rejectVerification = reject; });
+    setup({ session: buyerSession });
+    api.fetchMe.mockReturnValue(verification);
+    api.login.mockResolvedValue(sellerSession);
+    await waitFor(() => expect(api.fetchMe).toHaveBeenCalledWith('buyer-token'));
+    const nav = screen.getByRole('navigation', { name: '主导航' });
+    fireEvent.click(within(nav).getByRole('button', { name: /买家/ }));
+    fireEvent.click(screen.getByRole('button', { name: /退出登录/ }));
+    await waitFor(() => expect(within(nav).getByRole('button', { name: /^登录$/ })).toBeVisible());
+    fireEvent.click(within(nav).getByRole('button', { name: /^登录$/ }));
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'seller' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password123' } });
+    fireEvent.submit(screen.getByLabelText('密码').closest('form')!);
+    await waitFor(() => expect(within(nav).getByRole('button', { name: /卖家/ })).toBeVisible());
+    api.clearStoredSession.mockClear();
+
+    await act(async () => { rejectVerification({ status: 401 }); });
+
+    expect(within(nav).getByRole('button', { name: /卖家/ })).toBeVisible();
+    expect(api.clearStoredSession).not.toHaveBeenCalled();
+    expect(api.saveStoredSession).toHaveBeenLastCalledWith(sellerSession);
   });
 
   it('does not skip unread incoming messages when a send response has a later ID', async () => {

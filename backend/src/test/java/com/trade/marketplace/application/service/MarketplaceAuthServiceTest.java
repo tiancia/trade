@@ -54,6 +54,18 @@ class MarketplaceAuthServiceTest {
     }
 
     @Test
+    void loginRejectsPasswordBeyondBcryptByteLimitInsteadOfTruncatingIt() {
+        for (String password : new String[] {"a".repeat(72), "密".repeat(24)}) {
+            String username = password.startsWith("a") ? "ascii_user" : "unicode_user";
+            service.register(new MarketplaceApi.RegisterRequest(username, password, username));
+
+            assertNotNull(service.login(new MarketplaceApi.LoginRequest(username, password)).token());
+            assertThrows(MarketplaceUnauthorizedException.class,
+                    () -> service.login(new MarketplaceApi.LoginRequest(username, password + "extra")));
+        }
+    }
+
+    @Test
     void logoutAndExpiryInvalidateSession() {
         MarketplaceApi.AuthResponse registered = service.register(
                 new MarketplaceApi.RegisterRequest("carol", "password-123", "Carol")

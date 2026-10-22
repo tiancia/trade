@@ -86,7 +86,7 @@ chmod 600 deploy/.env deploy/backend.env
 - `DEEPSEEK_API_KEY`；
 - `TRADE_TELEGRAM_BOT_TOKEN`、`TRADE_X_TELEGRAM_CHAT_ID`、`TRADE_X_TELEGRAM_REVIEWER_USER_IDS`（多个审核人用逗号分隔）；
 - `TRADE_X_TARGET_USER_ID`，以及 `X_API_KEY`、`X_API_SECRET`、`X_ACCESS_TOKEN`、`X_ACCESS_TOKEN_SECRET`；
-- `OKX_ACCESS_KEY`、`OKX_SECRET_KEY`、`OKX_ACCESS_PASSPHRASE`：当前 PAPER 决策仍读取 OKX 账户余额、订单和产品规则，需要只读 API 凭据；
+- `OKX_ACCESS_KEY`、`OKX_SECRET_KEY`、`OKX_ACCESS_PASSPHRASE`：仅 LIVE 的私有账户和订单接口需要；PAPER 使用独立模拟资金账本及公共行情，可留空；
 
 两个前端无需应用令牌，页面和管理 API 统一由网关账号密码及网络隔离限制访问；保持后端端口仅在容器网络内可达。
 
@@ -112,7 +112,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File A:\trade\deploy\scripts\sync
 
 模板已按本次要求配置：OKX 自动策略 **PAPER**、真实下单关闭；X 自动生成、Telegram 人工审核和真实发布开启，每轮完成后等三小时；首次生成约 30 秒后开始。Polymarket、微博、小说任务关闭。DeepSeek 使用 `deepseek-flash` 直连；OKX、Telegram、X 使用隧道代理。容器地址由 Compose 强制覆盖为 `egress:13128`，不要填写 `127.0.0.1`。
 
-当前 PAPER 只模拟成交，尚无独立模拟现金账本，账户余额仍从 OKX 读取；三个 `OKX_*` 不能留空。API Key 仅开启 `Read`，关闭 `Trade` / `Withdraw`；绑定 IP 时填写实际出口德国 VPS 的公网 IP。权限说明参见 [OKX 官方文档](https://www.okx.com/docs-v5/en/#overview-api-key)。公开行情成功不能证明私有账户接口可用，自动化循环未抛异常也不能证明策略决策成功，应同时检查运行状态 `lastError` 和最新决策。
+当前 PAPER 使用独立、持久化的模拟现金和持仓账本，决策只采集公共行情与产品规则，不读取真实账户余额、挂单和成交；三个 `OKX_*` 可以留空。LIVE 私有接口需要独立配置和验收凭据；只读检查仅开启 `Read`，关闭 `Trade` / `Withdraw`，绑定 IP 时使用实际出口德国 VPS 的公网 IP。权限说明参见 [OKX 官方文档](https://www.okx.com/docs-v5/en/#overview-api-key)。公共行情、PAPER 成功不代表 LIVE 私有接口可用；同时检查运行状态 `lastError` 和最新决策。模拟账本口径见 [策略参数版本与模拟资金](../docs/backend/TRADING_SIMULATION.md)。
 
 缺少 X 目标账号或必需的审核配置会拒绝启动；AI / X 凭据、账号权限和外部连接仍需运行验收，进程健康不代表这些已验证。现有数据库中已批准、未过期且审核有效的草稿可能在启动后的扫描中发布。不要让旧电脑进程和服务器同时消费同一个 Telegram Bot；迁移前停止旧的审核 / 生成 / 发布任务。X 控制台本身是只读页面，审核在 Telegram 完成，浏览器查询另需输入 X 管理令牌。
 

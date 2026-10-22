@@ -47,7 +47,7 @@ public class OrderLifecycleService {
         return repository.findByIdempotencyKey(idempotencyKey);
     }
 
-    /** Do not sell the same managed units again while an earlier order is unresolved. */
+    /** Block new live exposure while an earlier order's outcome is unresolved. */
     public boolean hasOtherUnresolvedOrder(String instId, String idempotencyKey) {
         // At most one result can be the caller's own reservation.
         return repository.findReconciliationCandidates(instId, 2).stream()

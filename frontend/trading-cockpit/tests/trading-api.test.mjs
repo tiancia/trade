@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
+import vm from "node:vm";
+import ts from "typescript";
+import * as tradingApi from "../app/lib/trading-api.mjs";
 import {
   apiTimestampMillis,
   buildBacktestPayload,
@@ -10,6 +14,7 @@ import {
   filterConfigurationEvents,
   formatReturnFraction,
   mergeContiguousHistory,
+  marketDataIsFresh,
 } from "../app/lib/trading-api.mjs";
 
 const request = {
@@ -20,6 +25,175 @@ const request = {
   from: "2026-10-16T08:00",
   to: "2026-10-17T08:00",
 };
+
+test("market freshness requires a recent observation and the current candle period", () => {
+  const now = Date.parse("2026-10-22T08:04:30Z");
+  const candles = [{ ts: String(Date.parse("2026-10-22T08:04:00Z")) }];
+  assert.equal(marketDataIsFresh(candles, "1m", now - 15_000, now), true);
+  assert.equal(marketDataIsFresh(candles, "1m", now - 30_001, now), false);
+  assert.equal(marketDataIsFresh([{ ts: String(now - 180_000) }], "1m", now, now), false);
+  assert.equal(marketDataIsFresh([{ ts: String(now + 60_000) }], "1m", now, now), false);
+  assert.equal(marketDataIsFresh([], "1m", now, now), false);
+  assert.equal(marketDataIsFresh(candles, "unknown", now, now), false);
+  const fiveMinute = [{ ts: String(Date.parse("2026-10-22T08:00:00Z")) }];
+  assert.equal(marketDataIsFresh(fiveMinute, "5m", now, now), true);
+  const nextPeriod = Date.parse("2026-10-22T08:05:00Z");
+  assert.equal(marketDataIsFresh(fiveMinute, "5m", nextPeriod, nextPeriod), false);
+});
+
+// Mount the real page with inert JSX and hooks so transport completion order is
+// exercised without adding a DOM test framework to the production dependency tree.
+async function mountMarketRequests() {
+  const callbacks = [];
+  const effects = [];
+  const states = [];
+  const pending = [];
+  const timers = [];
+  const sources = [];
+  const hooks = {
+    useState(initial) {
+      const state = { value: typeof initial === "function" ? initial() : initial };
+      states.push(state);
+      return [state.value, (next) => { state.value = typeof next === "function" ? next(state.value) : next; }];
+    },
+    useRef: (current) => ({ current }),
+    useCallback: (callback) => { callbacks.push(callback); return callback; },
+    useMemo: (callback) => callback(),
+    useEffect: (callback, dependencies) => { effects.push({ callback, dependencies }); },
+  };
+  const exports = {};
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const compiled = ts.transpileModule(source, {
+    fileName: "page.tsx",
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText;
+  vm.runInNewContext(compiled, {
+    exports, process: { env: {} }, URL, Headers, AbortController,
+    window: { setTimeout: (callback) => timers.push(callback), clearTimeout() {}, setInterval() {}, clearInterval() {} },
+    EventSource: class {
+      listeners = {};
+      constructor() { sources.push(this); }
+      addEventListener(name, callback) { this.listeners[name] = callback; }
+      close() {}
+    },
+    fetch(url, init) { return new Promise((resolve, reject) => pending.push({ url, init, resolve, reject })); },
+    require(name) {
+      if (name === "react") return hooks;
+      if (name === "react/jsx-runtime") return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
+      if (name === "lucide-react") return {};
+      if (name === "./lib/trading-api.mjs") return tradingApi;
+      throw new Error(`Unexpected import: ${name}`);
+    },
+  });
+  exports.default();
+  return {
+    load: callbacks.find((callback) => callback.toString().includes("/api/trading/market/candles?")),
+    effect: effects.find((effect) => effect.dependencies[0] === "1m").callback,
+    market: states.find((state) => state.value?.candles),
+    stream: states.find((state) => state.value === "connecting"),
+    pending, timers, sources,
+  };
+}
+
+test("late candle requests cannot replace a newer interval", async () => {
+  const harness = await mountMarketRequests();
+  const old = harness.load("1m", new AbortController().signal);
+  const latest = harness.load("5m", new AbortController().signal);
+  harness.pending[1].resolve(Response.json({ bar: "5m", candles: [] }));
+  assert.equal(await latest, true);
+  harness.pending[0].resolve(Response.json({ bar: "1m", candles: [] }));
+  await old;
+  assert.equal(harness.market.value.bar, "5m");
+});
+
+test("changing intervals cancels transport and ignores its eventual failure", async () => {
+  const harness = await mountMarketRequests();
+  const previous = harness.market.value;
+  const cleanup = harness.effect();
+  harness.timers[0]();
+  cleanup();
+  assert.equal(harness.pending[0].init.signal.aborted, true);
+  harness.pending[0].reject(new Error("late failure"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.market.value, previous);
+  assert.equal(harness.stream.value, "connecting");
+});
+
+test("a REST response cannot roll back a newer candle stream snapshot", async () => {
+  const harness = await mountMarketRequests();
+  const cleanup = harness.effect();
+  harness.timers[0]();
+  harness.sources[0].listeners.snapshot({ data: JSON.stringify({ bar: "1m", source: "SSE", candles: [{ ts: "2000" }] }) });
+  harness.pending[0].resolve(Response.json({ bar: "1m", source: "REST", candles: [{ ts: "1000" }] }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.market.value.source, "SSE");
+  assert.deepEqual(Array.from(harness.market.value.candles, (candle) => candle.ts), ["1000", "2000"]);
+  assert.equal(harness.stream.value, "live");
+  cleanup();
+});
+
+test("a late HTTP failure cannot replace a working candle stream with demo data", async () => {
+  const harness = await mountMarketRequests();
+  const cleanup = harness.effect();
+  harness.timers[0]();
+  harness.sources[0].listeners.snapshot({ data: JSON.stringify({ bar: "1m", source: "SSE", candles: [{ ts: "2000" }] }) });
+  harness.pending[0].reject(new Error("late HTTP failure"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.market.value.source, "SSE");
+  assert.equal(harness.stream.value, "live");
+  cleanup();
+});
+
+test("a connected SSE transport cannot make stale candle data fresh", async () => {
+  const harness = await mountMarketRequests();
+  const cleanup = harness.effect();
+  harness.sources[0].onopen();
+  harness.sources[0].listeners.snapshot({ data: JSON.stringify({ bar: "1m", source: "HOT_CACHE", candles: [{ ts: "1000" }] }) });
+  assert.equal(harness.stream.value, "live");
+  const now = Date.now();
+  assert.equal(marketDataIsFresh(harness.market.value.candles, "1m", now, now), false);
+  cleanup();
+});
+
+test("frequent SSE updates preserve REST corrections to earlier candles", async () => {
+  const harness = await mountMarketRequests();
+  const cleanup = harness.effect();
+  harness.sources[0].listeners.snapshot({ data: JSON.stringify({ bar: "1m", candles: [{ ts: "1000", confirm: "0" }, { ts: "2000", close: "100" }] }) });
+  const pending = harness.load("1m", new AbortController().signal);
+  harness.sources[0].listeners.candle({ data: JSON.stringify({ bar: "1m", receivedAt: new Date().toISOString(), candles: [{ ts: "2000", close: "102" }] }) });
+  harness.pending[0].resolve(Response.json({ bar: "1m", candles: [{ ts: "1000", confirm: "1" }, { ts: "2000", close: "101" }] }));
+  await pending;
+  assert.equal(harness.market.value.candles[0].confirm, "1");
+  assert.equal(harness.market.value.candles[1].close, "102");
+  cleanup();
+});
+
+test("a slow candle request is allowed to finish before another poll starts", async () => {
+  const harness = await mountMarketRequests();
+  const signal = new AbortController().signal;
+  const pending = harness.load("1m", signal);
+  assert.equal(await harness.load("1m", signal), null);
+  assert.equal(harness.pending.length, 1);
+  assert.equal(harness.pending[0].init.cache, "no-store");
+  harness.pending[0].resolve(Response.json({ bar: "1m", candles: [{ ts: "1000" }] }));
+  assert.equal(await pending, true);
+  const next = harness.load("1m", signal);
+  assert.equal(harness.pending.length, 2);
+  harness.pending[1].resolve(Response.json({ bar: "1m", candles: [{ ts: "2000" }] }));
+  await next;
+  assert.equal(harness.market.value.candles[0].ts, "2000");
+});
+
+test("delayed SSE events cannot overwrite a newer displayed price", async () => {
+  const harness = await mountMarketRequests();
+  const cleanup = harness.effect();
+  const now = Date.now();
+  const ts = String(Math.floor(now / 60_000) * 60_000);
+  harness.sources[0].listeners.snapshot({ data: JSON.stringify({ bar: "1m", candles: [{ ts, close: "102" }] }) });
+  harness.sources[0].listeners.candle({ data: JSON.stringify({ bar: "1m", receivedAt: new Date(now - 40_000).toISOString(), candles: [{ ts, close: "99" }] }) });
+  assert.equal(harness.market.value.candles[0].close, "102");
+  cleanup();
+});
 
 test("builds the required backend backtest range from local input times", () => {
   const payload = buildBacktestPayload(request);
