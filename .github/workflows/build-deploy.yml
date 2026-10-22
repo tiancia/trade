@@ -45,7 +45,6 @@ on:
 permissions:
   actions: read
   contents: read
-  packages: write
 
 # Serialize releases across services and branches; never interrupt a running release.
 concurrency:
@@ -66,6 +65,8 @@ jobs:
       SOURCE_RUN_ID: ${{ inputs.source_run_id }}
       DEPLOY_ROOT: ${{ inputs.server_path }}
       ACCESS_MODE: ${{ inputs.access }}
+      REGISTRY_HOST: ccr.ccs.tencentyun.com
+      IMAGE_REGISTRY: ccr.ccs.tencentyun.com/tiancia-trade
     steps:
       - name: Check out the selected revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -102,7 +103,6 @@ jobs:
           {
             printf 'DEPLOY_ROOT=%s\n' "$DEPLOY_ROOT"
             printf 'TARGET_SERVICES=%s\n' "${targets[*]}"
-            printf 'IMAGE_REGISTRY=ghcr.io/%s\n' "${GITHUB_REPOSITORY,,}"
             printf 'IMAGE_TAG=sha-%s-%s-%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
             printf 'RELEASE_DIR=%s\n' "$release_dir"
           } >> "$GITHUB_ENV"
@@ -169,13 +169,16 @@ jobs:
               "$RELEASE_DIR/base-release.env"
           fi
 
-      - name: Log in to GHCR
-        if: inputs.build
+      - name: Log in to Tencent Container Registry
+        if: inputs.build || inputs.deploy
         env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
+          TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
         run: |
           set -euo pipefail
-          printf '%s\n' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          : "${TCR_USERNAME:?Missing TCR_USERNAME}"
+          : "${TCR_PASSWORD:?Missing TCR_PASSWORD}"
+          printf '%s\n' "$TCR_PASSWORD" | docker login "$REGISTRY_HOST" --username "$TCR_USERNAME" --password-stdin
 
       - name: Build and push only the selected images
         if: inputs.build
@@ -289,9 +292,12 @@ jobs:
       - name: Deploy only the selected services
         if: inputs.deploy
         env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
+          TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
         run: |
           set -euo pipefail
+          : "${TCR_USERNAME:?Missing TCR_USERNAME}"
+          : "${TCR_PASSWORD:?Missing TCR_PASSWORD}"
           remote_dir="$DEPLOY_ROOT/deploy/incoming/$IMAGE_TAG-deploy-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -F "$SSH_CONFIG" trade-deploy "mkdir -p '$DEPLOY_ROOT/deploy/incoming' && mkdir '$remote_dir'"
           scp -F "$SSH_CONFIG" "$RELEASE_DIR/release.env" \
@@ -302,7 +308,7 @@ jobs:
           manifest=$2
           access=$3
           service=$4
-          registry_user=$5
+          registry_host=$5
           registry=$6
           case "$service" in
             backend|cockpit|x-console|egress) targets=("$service") ;;
@@ -315,8 +321,10 @@ jobs:
           docker_config=$(mktemp -d)
           trap 'rm -f -- "$docker_config/config.json"; rmdir -- "$docker_config" 2>/dev/null || true' EXIT
           export DOCKER_CONFIG="$docker_config"
-          # The job token arrives on stdin, never in remote command arguments.
-          docker login ghcr.io --username "$registry_user" --password-stdin
+          # Both credentials arrive over SSH stdin, never in remote command arguments.
+          IFS= read -r registry_user
+          [[ -n $registry_user ]] || { echo 'Missing TCR username on stdin.' >&2; exit 1; }
+          docker login "$registry_host" --username "$registry_user" --password-stdin
           bash deploy/scripts/release.sh validate --release "$manifest" --access "$access"
           DEPLOY_WAIT_TIMEOUT=300 bash deploy/scripts/release.sh deploy "${targets[@]}" --release "$manifest" --access "$access"
           echo DEPLOYMENT_OK
@@ -329,12 +337,12 @@ jobs:
           )
           # The Ubuntu deployment account uses Bash, including for SSH command quoting.
           printf -v remote_command 'bash -c %q -- %q %q %q %q %q %q' \
-            "$remote_script" "$DEPLOY_ROOT" "$remote_dir/release.env" "$ACCESS_MODE" "$SERVICE" "$GITHUB_ACTOR" "$IMAGE_REGISTRY"
-          printf '%s\n' "$GHCR_TOKEN" | ssh -F "$SSH_CONFIG" trade-deploy "$remote_command"
+            "$remote_script" "$DEPLOY_ROOT" "$remote_dir/release.env" "$ACCESS_MODE" "$SERVICE" "$REGISTRY_HOST" "$IMAGE_REGISTRY"
+          printf '%s\n%s\n' "$TCR_USERNAME" "$TCR_PASSWORD" | ssh -F "$SSH_CONFIG" trade-deploy "$remote_command"
           printf '\nDeployment succeeded for `%s` (%s access).\n' "$TARGET_SERVICES" "$ACCESS_MODE" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove runner credentials
         if: always()
         run: |
           rm -f -- "$RUNNER_TEMP/trade-ssh/key" "$RUNNER_TEMP/trade-ssh/known_hosts" "$RUNNER_TEMP/trade-ssh/config"
-          docker logout ghcr.io >/dev/null 2>&1 || true
+          docker logout "$REGISTRY_HOST" >/dev/null 2>&1 || true

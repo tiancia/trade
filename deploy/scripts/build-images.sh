@@ -40,6 +40,55 @@ EOF
 fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 require_value() { [[ $# -ge 2 && -n $2 && $2 != --* ]] || fail "$1 requires a value"; }
 
+filter_push_progress() {
+  # Actions has no terminal. Keep readable byte progress without terminal escapes
+  # or a new log line for every redraw of the same layer.
+  stdbuf -o0 tr '\r' '\n' | awk '
+    {
+      gsub(/\033\[[0-9;?]*[A-Za-z]/, "")
+      if ($0 ~ /^[[:space:]]*$/) next
+      if ($2 == "Pushing") {
+        pending[$1] = $0
+        now = systime()
+        if (($1 in last) && now - last[$1] < 10) next
+        last[$1] = now
+        delete pending[$1]
+      } else {
+        delete pending[$1]
+      }
+      print
+      fflush()
+    }
+    END {
+      for (layer in pending) print "Last observed progress: " pending[layer]
+      fflush()
+    }
+  '
+}
+
+push_image() {
+  local image=$1 push_command status
+  if [[ ${GITHUB_ACTIONS:-} != true ]]; then
+    docker push "$image"
+    return
+  fi
+  command -v script >/dev/null || fail 'Actions image uploads require util-linux script'
+  command -v stdbuf >/dev/null || fail 'Actions image uploads require stdbuf'
+  # A pseudo-terminal makes Docker emit byte progress. The workflow's job timeout
+  # bounds the run; a slow first upload must not fail at an arbitrary shorter limit.
+  printf -v push_command 'docker push %q' "$image"
+  printf 'Uploading %s (layer progress at most every 10 seconds)\n' "$image"
+  if script --quiet --return --flush --command "$push_command" /dev/null | filter_push_progress; then
+    return 0
+  else
+    status=$?
+    if [[ $status == 137 ]]; then
+      printf 'Error: Image upload was killed (exit 137): %s\n' "$image" >&2
+    fi
+    return "$status"
+  fi
+}
+
 while (($#)); do
   case "$1" in
     --registry) require_value "$@"; REGISTRY=$2; shift 2 ;;
@@ -111,7 +160,7 @@ done
 
 if [[ $PUSH == true ]]; then
   for image in "${images[@]}"; do
-    docker push "$image"
+    push_image "$image"
   done
 fi
 

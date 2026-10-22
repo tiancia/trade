@@ -5,12 +5,15 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const cp = require('node:child_process');
+const { createHash } = require('node:crypto');
+const vm = require('node:vm');
 const { test, after } = require('node:test');
 
 const isWindows = process.platform === 'win32';
 const bash = process.env.TEST_BASH || (isWindows ? 'C:/git/Git/bin/bash.exe' : '/bin/bash');
 const script = path.resolve(__dirname, '../scripts/cleanup-images.sh');
-const registry = 'ghcr.io/tiancia/trade';
+const registryHost = 'ccr.ccs.tencentyun.com';
+const registry = registryHost + '/tiancia-trade';
 
 function bashPath(file) {
   if (!isWindows) return file;
@@ -283,79 +286,144 @@ test('no containers is a valid empty protection set', () => {
   ].sort());
 });
 
-const workflowText = fs.readFileSync(path.resolve(__dirname, '../../.github/workflows/build-deploy.yml'), 'utf8');
+const workflowText = fs.readFileSync(path.resolve(__dirname, '../../.github/workflows/build-deploy.yml'), 'utf8').replace(/\r\n/g, '\n');
+function runnerScript(name) {
+  const start = workflowText.indexOf('      - name: ' + name + '\n');
+  assert.ok(start >= 0, 'Missing workflow step: ' + name);
+  const end = workflowText.indexOf('\n      - name:', start + 1);
+  const block = workflowText.slice(start, end < 0 ? undefined : end);
+  const run = block.match(/        run: \|\r?\n([\s\S]*)/);
+  assert.ok(run, 'Missing run script: ' + name);
+  return run[1].replace(/^ {10}/gm, '');
+}
+const loginScript = runnerScript('Log in to Tencent Container Registry');
+const existingScript = runnerScript('Fetch an existing build without rebuilding images');
+const sourceScript = existingScript.match(/node <<'NODE'\r?\n([\s\S]*?)\r?\nNODE/)[1];
 const remoteBlock = workflowText.match(/remote_script=\$\(cat <<'REMOTE'\r?\n([\s\S]*?)\r?\n[ \t]*REMOTE/);
 assert.ok(remoteBlock, 'The workflow must contain its remote deployment script');
 const remoteScript = remoteBlock[1].replace(/^ {10}/gm, '');
+const fixtureUsername = 'fixture-tcr-user';
+const fixturePassword = 'fixture-password-with spaces$';
+
+function loginMock() {
+  return [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    '[[ $# == 5 && $1 == login && $2 == "$TEST_REGISTRY_HOST" && $3 == --username && $4 == "$TEST_TCR_USER" && $5 == --password-stdin ]] || exit 44',
+    'password=$(cat)',
+    '[[ $password == "$TEST_TCR_PASSWORD" ]] || exit 45',
+    'printf "login\\n" >> "$WORKFLOW_AUDIT"',
+    'if [[ -n ${WORKFLOW_CONFIG_RECORD:-} ]]; then',
+    '  printf "%s\\n" "$DOCKER_CONFIG" > "$WORKFLOW_CONFIG_RECORD"',
+    '  printf "{\\"auths\\":{\\"fixture\\":{\\"auth\\":\\"dummy\\"}}}\\n" > "$DOCKER_CONFIG/config.json"',
+    'fi',
+    'if [[ $WORKFLOW_FAIL == login ]]; then exit 46; fi',
+    '',
+  ].join('\n');
+}
+
+function runLogin(options = {}) {
+  const name = 'login-' + (++sequence);
+  write(local(name + '/audit'), '');
+  write(local(name + '/bin/docker'), loginMock());
+  const result = cp.spawnSync(bash, ['-c',
+    'export PATH="$WORKFLOW_BIN:/usr/bin:/bin"\n' + loginScript
+      + '\nprintf "build-allowed\\n" >> "$WORKFLOW_AUDIT"\n',
+  ], {
+    env: {
+      ...process.env,
+      WORKFLOW_BIN: posix(name + '/bin'), WORKFLOW_AUDIT: posix(name + '/audit'),
+      WORKFLOW_FAIL: options.fail || '', TEST_REGISTRY_HOST: registryHost,
+      TEST_TCR_USER: fixtureUsername, TEST_TCR_PASSWORD: fixturePassword,
+      REGISTRY_HOST: registryHost,
+      TCR_USERNAME: options.noUsername ? '' : fixtureUsername,
+      TCR_PASSWORD: options.noPassword ? '' : fixturePassword,
+    },
+    encoding: 'utf8', timeout: 15_000,
+  });
+  if (result.error) throw result.error;
+  const calls = fs.readFileSync(local(name + '/audit'), 'utf8').trim().split('\n').filter(Boolean);
+  assert.ok(!(result.stdout + result.stderr).includes(fixturePassword), 'Never print the password');
+  return { ...result, calls, diagnostic: result.stdout + result.stderr };
+}
+
+test('runner logs in to the fixed TCR host with the password on stdin', () => {
+  const result = runLogin();
+  assert.equal(result.status, 0, result.diagnostic);
+  assert.deepEqual(result.calls, ['login', 'build-allowed']);
+});
+
+test('missing TCR username or password stops the runner before Docker login', () => {
+  for (const options of [{ noUsername: true }, { noPassword: true }]) {
+    const result = runLogin(options);
+    assert.notEqual(result.status, 0, result.diagnostic);
+    assert.deepEqual(result.calls, []);
+    assert.match(result.diagnostic, /Missing TCR_(USERNAME|PASSWORD)/);
+  }
+});
+
+test('runner registry login failure prevents later build or deployment work', () => {
+  const result = runLogin({ fail: 'login' });
+  assert.notEqual(result.status, 0, result.diagnostic);
+  assert.deepEqual(result.calls, ['login']);
+});
 
 function runWorkflow(options = {}) {
   const name = 'workflow-' + (++sequence);
   const root = posix(name + '/server');
   const manifestPath = root + '/deploy/incoming/version/release.env';
-  const audit = posix(name + '/audit');
   const configRecord = posix(name + '/docker-config-path');
   write(local(name + '/audit'), '');
   write(local(name + '/docker-config-path'), '');
   write(local(name + '/scratch/.keep'), '');
   write(local(name + '/server/deploy/incoming/version/release.env'), manifest());
   write(local(name + '/server/deploy/scripts/release.sh'), [
-    '#!/usr/bin/env bash',
-    'set -euo pipefail',
+    '#!/usr/bin/env bash', 'set -euo pipefail',
+    'test -f "$DOCKER_CONFIG/config.json"',
     'printf "release" >> "$WORKFLOW_AUDIT"',
     'printf "\\t%s" "$@" >> "$WORKFLOW_AUDIT"',
     'printf "\\n" >> "$WORKFLOW_AUDIT"',
-    'if [[ $WORKFLOW_FAIL == "$1" ]]; then exit 42; fi',
-    '',
+    'if [[ $WORKFLOW_FAIL == "$1" ]]; then exit 42; fi', '',
   ].join('\n'));
   write(local(name + '/server/deploy/incoming/version/cleanup-images.sh'), [
-    '#!/usr/bin/env bash',
-    'set -euo pipefail',
+    '#!/usr/bin/env bash', 'set -euo pipefail',
     'printf "cleanup" >> "$WORKFLOW_AUDIT"',
     'printf "\\t%s" "$@" >> "$WORKFLOW_AUDIT"',
     'printf "\\n" >> "$WORKFLOW_AUDIT"',
-    'if [[ $WORKFLOW_FAIL == cleanup ]]; then exit 43; fi',
-    '',
+    'if [[ $WORKFLOW_FAIL == cleanup ]]; then exit 43; fi', '',
   ].join('\n'));
-  write(local(name + '/bin/docker'), [
-    '#!/usr/bin/env bash',
-    'set -euo pipefail',
-    '[[ "$*" == "login ghcr.io --username tiancia --password-stdin" ]] || exit 44',
-    'token=$(cat)',
-    '[[ $token == dummy-workflow-token ]] || exit 45',
-    'printf "{\\"auths\\":{\\"ghcr.io\\":{\\"auth\\":\\"dummy\\"}}}\\n" > "$DOCKER_CONFIG/config.json"',
-    'test -f "$DOCKER_CONFIG/config.json"',
-    'printf "%s\\n" "$DOCKER_CONFIG" > "$WORKFLOW_CONFIG_RECORD"',
-    'printf "login\\n" >> "$WORKFLOW_AUDIT"',
-    '',
-  ].join('\n'));
+  write(local(name + '/bin/docker'), loginMock());
   const result = cp.spawnSync(bash, [
     '-c', 'export PATH="$WORKFLOW_BIN:/usr/bin:/bin"\n' + remoteScript,
-    '--', root, manifestPath, options.access || 'private', options.service || 'backend', 'tiancia', registry,
+    '--', root, manifestPath, options.access || 'private', options.service || 'backend', registryHost, registry,
   ], {
     env: {
-      ...process.env,
-      WORKFLOW_BIN: posix(name + '/bin'),
-      WORKFLOW_AUDIT: audit,
-      WORKFLOW_CONFIG_RECORD: configRecord,
-      WORKFLOW_FAIL: options.fail || '',
+      ...process.env, WORKFLOW_BIN: posix(name + '/bin'), WORKFLOW_AUDIT: posix(name + '/audit'),
+      WORKFLOW_CONFIG_RECORD: configRecord, WORKFLOW_FAIL: options.fail || '',
+      TEST_REGISTRY_HOST: registryHost, TEST_TCR_USER: fixtureUsername, TEST_TCR_PASSWORD: fixturePassword,
       TMPDIR: posix(name + '/scratch'),
     },
-    input: 'dummy-workflow-token\n',
-    encoding: 'utf8',
-    timeout: 15_000,
+    input: (options.noUsername ? '' : fixtureUsername) + '\n' + fixturePassword + '\n',
+    encoding: 'utf8', timeout: 15_000,
   });
   if (result.error) throw result.error;
   const calls = fs.readFileSync(local(name + '/audit'), 'utf8').trim().split('\n').filter(Boolean)
     .map((line) => line.split('\t'));
   const configPath = fs.readFileSync(local(name + '/docker-config-path'), 'utf8').trim();
-  assert.ok(configPath, 'The Docker login mock must create temporary credentials');
-  assert.ok(configPath.startsWith(posix(name + '/scratch') + '/'), 'Docker config must use owned temporary fixtures');
-  const localConfig = path.join(local(name + '/scratch'), path.posix.basename(configPath));
-  assert.equal(fs.existsSync(localConfig), false, 'Temporary Docker credentials and directory must be removed');
+  if (!options.noUsername && options.service !== 'unsupported') {
+    assert.ok(configPath, 'Docker login must use temporary credentials');
+    assert.ok(configPath.startsWith(posix(name + '/scratch') + '/'), 'Config must stay inside owned fixtures');
+    const localConfig = path.join(local(name + '/scratch'), path.posix.basename(configPath));
+    assert.equal(fs.existsSync(localConfig), false, 'Temporary Docker config must be removed on every exit');
+  } else {
+    assert.equal(configPath, '');
+  }
+  assert.deepEqual(fs.readdirSync(local(name + '/scratch')), ['.keep'], 'No temporary credential directory may remain');
+  assert.ok(!(result.stdout + result.stderr).includes(fixturePassword), 'Never print the password');
   return { ...result, calls, root, manifestPath, diagnostic: result.stdout + result.stderr };
 }
 
-test('workflow performs cleanup only after validation and deployment succeed', () => {
+test('workflow logs in with temporary TCR credentials before validating and deploying', () => {
   const result = runWorkflow();
   assert.equal(result.status, 0, result.diagnostic);
   assert.deepEqual(result.calls.map((call) => call[0] === 'release' ? call[1] : call[0]), [
@@ -365,35 +433,331 @@ test('workflow performs cleanup only after validation and deployment succeed', (
   assert.ok(!result.stdout.includes('::warning::'), result.diagnostic);
 });
 
-test('workflow skips cleanup when validation or deployment fails', () => {
-  for (const fail of ['validate', 'deploy']) {
-    const result = runWorkflow({ fail });
+test('remote missing username or unsupported service stops before registry login', () => {
+  for (const options of [{ noUsername: true }, { service: 'unsupported' }]) {
+    const result = runWorkflow(options);
     assert.notEqual(result.status, 0, result.diagnostic);
-    assert.ok(!result.calls.some((call) => call[0] === 'cleanup'), result.diagnostic);
-    assert.ok(!result.stdout.includes('DEPLOYMENT_OK'), result.diagnostic);
+    assert.deepEqual(result.calls, []);
   }
 });
 
-test('workflow warns about cleanup failure while keeping a successful deployment successful', () => {
-  const result = runWorkflow({ fail: 'cleanup' });
-  assert.equal(result.status, 0, result.diagnostic);
-  assert.ok(result.calls.some((call) => call[0] === 'cleanup'), result.diagnostic);
-  assert.ok(result.stdout.includes('DEPLOYMENT_OK'), result.diagnostic);
-  assert.ok(result.stdout.includes('::warning::'), result.diagnostic);
+test('remote registry login or validation failure prevents deployment and cleans credentials', () => {
+  for (const fail of ['login', 'validate']) {
+    const result = runWorkflow({ fail });
+    assert.notEqual(result.status, 0, result.diagnostic);
+    assert.ok(!result.calls.some((call) => call[0] === 'release' && call[1] === 'deploy'));
+    assert.ok(!result.calls.some((call) => call[0] === 'cleanup'));
+    assert.ok(!result.stdout.includes('DEPLOYMENT_OK'));
+  }
 });
 
-test('workflow passes exact cleanup arguments and preserves deployment scope', () => {
+test('failed deployment retains failure and skips cleanup while removing registry credentials', () => {
+  const result = runWorkflow({ fail: 'deploy' });
+  assert.notEqual(result.status, 0, result.diagnostic);
+  assert.ok(!result.calls.some((call) => call[0] === 'cleanup'));
+  assert.ok(!result.stdout.includes('DEPLOYMENT_OK'));
+});
+
+test('cleanup failure only warns after healthy deployment and still removes registry credentials', () => {
+  const result = runWorkflow({ fail: 'cleanup' });
+  assert.equal(result.status, 0, result.diagnostic);
+  assert.ok(result.stdout.includes('DEPLOYMENT_OK'));
+  assert.ok(result.stdout.includes('::warning::'));
+});
+
+test('workflow preserves exact service scope, access mode, normal pulls, and TCR cleanup namespace', () => {
   for (const [service, targets] of [
-    ['backend', ['backend']], ['frontends', ['cockpit', 'x-console']], ['all', []],
+    ['backend', ['backend']], ['cockpit', ['cockpit']], ['x-console', ['x-console']],
+    ['egress', ['egress']], ['frontends', ['cockpit', 'x-console']], ['all', []],
   ]) {
-    const result = runWorkflow({ service, access: 'public' });
-    assert.equal(result.status, 0, result.diagnostic);
-    assert.deepEqual(result.calls.find((call) => call[0] === 'cleanup'), [
-      'cleanup', '--root', result.root, '--registry', registry, '--apply',
-    ]);
-    assert.deepEqual(result.calls.find((call) => call[0] === 'release' && call[1] === 'deploy'), [
-      'release', 'deploy', ...targets, '--release', result.manifestPath, '--access', 'public',
-    ]);
+    for (const access of ['private', 'public']) {
+      const result = runWorkflow({ service, access });
+      assert.equal(result.status, 0, result.diagnostic);
+      assert.deepEqual(result.calls.find((call) => call[0] === 'cleanup'), [
+        'cleanup', '--root', result.root, '--registry', registry, '--apply',
+      ]);
+      assert.deepEqual(result.calls.find((call) => call[0] === 'release' && call[1] === 'deploy'), [
+        'release', 'deploy', ...targets, '--release', result.manifestPath, '--access', access,
+      ]);
+    }
+  }
+});
+
+function runSelection(options = {}) {
+  const name = 'selection-' + (++sequence);
+  write(local(name + '/release/.keep'), '');
+  write(local(name + '/env'), '');
+  write(local(name + '/summary'), '');
+  const sha = 'a'.repeat(40);
+  const candidates = options.candidates || [{ id: 51, registry }];
+  const entries = candidates.map((candidate) => {
+    const tag = `sha-${sha}-${candidate.id}-1`;
+    const refs = Object.fromEntries(['backend', 'cockpit', 'x-console', 'egress']
+      .map((service) => [service, `${candidate.registry}/${service}:${tag}`]));
+    if (candidate.inherited) refs[candidate.inherited] = 'trade/' + candidate.inherited + ':older';
+    const content = [
+      'RELEASE_VERSION=' + tag, 'BACKEND_IMAGE=' + refs.backend, 'COCKPIT_IMAGE=' + refs.cockpit,
+      'X_CONSOLE_IMAGE=' + refs['x-console'], 'EGRESS_IMAGE=' + refs.egress, '',
+    ].join('\n');
+    const zip = Buffer.from('fixture zip ' + candidate.id);
+    return { ...candidate, content, zip, artifact: {
+      id: candidate.id + 100, name: 'image-manifest-' + tag, expired: false,
+      created_at: `2026-10-22T00:00:${String(candidate.id).padStart(2, '0')}Z`,
+      size_in_bytes: zip.length, digest: 'sha256:' + createHash('sha256').update(zip).digest('hex'),
+      workflow_run: { id: candidate.id, head_branch: 'main', repository_id: 1, head_repository_id: 1 },
+    } };
+  });
+  let selectedArchive;
+  const commands = [];
+  const execFileSync = (command, args) => {
+    commands.push([command, ...args]);
+    if (command === 'unzip') {
+      if (args[0] === '-Z1') return 'release.env\n';
+      if (args[0] === '-p') return selectedArchive.content;
+    }
+    assert.equal(command, 'gh');
+    assert.equal(args[0], 'api');
+    const endpoint = args[1];
+    if (/\/artifacts\?/.test(endpoint)) return JSON.stringify([{ artifacts: entries.map((entry) => entry.artifact) }]);
+    const zip = endpoint.match(/\/artifacts\/(\d+)\/zip$/);
+    if (zip) {
+      selectedArchive = entries.find((entry) => entry.artifact.id === Number(zip[1]));
+      return selectedArchive.zip;
+    }
+    const run = endpoint.match(/\/actions\/runs\/(\d+)$/);
+    if (run) return JSON.stringify({
+      path: '.github/workflows/build-deploy.yml', event: 'workflow_dispatch', status: 'completed',
+      head_branch: 'main', head_sha: sha, head_repository: { full_name: 'tiancia/trade' },
+    });
+    throw new Error('Unexpected mock gh endpoint: ' + endpoint);
+  };
+  const env = {
+    GITHUB_REPOSITORY: 'tiancia/trade', GITHUB_REF_NAME: 'main', GITHUB_RUN_ID: '99',
+    GITHUB_SERVER_URL: 'https://github.com', SOURCE_RUN_ID: options.sourceRunId || '',
+    IMAGE_REGISTRY: registry, TARGET_SERVICES: options.targets || 'cockpit',
+    RELEASE_DIR: local(name + '/release'), GITHUB_ENV: local(name + '/env'),
+    GITHUB_STEP_SUMMARY: local(name + '/summary'),
+  };
+  let error;
+  try {
+    vm.runInNewContext(sourceScript, {
+      require: (id) => id === 'node:child_process' ? { execFileSync } : require(id),
+      process: { env }, Buffer,
+    }, { filename: 'workflow-existing-build.js', timeout: 2000 });
+  } catch (caught) { error = caught; }
+  const file = local(name + '/release/release.env');
+  return { error, commands, manifest: fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : undefined,
+    env: fs.readFileSync(local(name + '/env'), 'utf8') };
+}
+
+test('existing-build selection accepts the exact TCR namespace without pulling images on the runner', () => {
+  const result = runSelection();
+  assert.equal(result.error, undefined);
+  assert.ok(result.manifest.includes(registry + '/cockpit:sha-'));
+  assert.ok(result.env.includes('IMAGE_TAG=sha-'));
+  assert.ok(result.commands.every((command) => ['gh', 'unzip'].includes(command[0])));
+});
+
+test('existing-build selection rejects old GHCR manifests and can select an older matching TCR build', () => {
+  const old = { id: 52, registry: 'ghcr.io/tiancia/trade' };
+  const rejected = runSelection({ candidates: [old] });
+  assert.match(rejected.error?.message || '', /No retained build matches/);
+  assert.equal(rejected.manifest, undefined);
+  const selected = runSelection({ candidates: [old, { id: 51, registry }] });
+  assert.equal(selected.error, undefined);
+  assert.ok(selected.manifest.includes(registry + '/cockpit:sha-'));
+});
+
+test('existing-build selection requires every selected service to match the TCR build', () => {
+  const result = runSelection({ targets: 'cockpit x-console', candidates: [{ id: 51, registry, inherited: 'x-console' }] });
+  assert.match(result.error?.message || '', /No retained build matches/);
+  assert.equal(result.manifest, undefined);
+});
+
+test('explicit source run does not silently fall back to a different TCR build', () => {
+  const result = runSelection({ sourceRunId: '52', candidates: [
+    { id: 52, registry: 'ghcr.io/tiancia/trade' }, { id: 51, registry },
+  ] });
+  assert.match(result.error?.message || '', /No retained build matches/);
+  assert.equal(result.manifest, undefined);
+});
+
+const buildImagesPath = path.resolve(__dirname, '../scripts/build-images.sh');
+const buildImagesSource = fs.readFileSync(buildImagesPath, 'utf8').replace(/\r\n/g, '\n');
+const filterStart = buildImagesSource.indexOf('filter_push_progress() {');
+const filterEnd = buildImagesSource.indexOf('\npush_image() {', filterStart);
+assert.ok(filterStart >= 0 && filterEnd > filterStart, 'The upload progress filter must be testable independently');
+const filterDefinition = buildImagesSource.slice(filterStart, filterEnd);
+
+// Strict mocks execute the real generated shell command, never a registry call.
+function mockPushTool() {
+  const fs = require('node:fs');
+  const cp = require('node:child_process');
+  const [tool, ...args] = process.argv.slice(2);
+  const state = JSON.parse(fs.readFileSync(process.env.TEST_PUSH_STATE, 'utf8'));
+  fs.appendFileSync(process.env.TEST_PUSH_AUDIT, JSON.stringify({ tool, args }) + '\n');
+  const reject = (reason) => { process.stderr.write(reason + '\n'); process.exitCode = 91; };
+  const runShell = (shellArgs) => {
+    // Bind the mock explicitly across Windows Node -> Git Bash environment conversion.
+    shellArgs = [...shellArgs];
+    shellArgs[1] = 'docker() { MSYS2_ARG_CONV_EXCL="*" "$TEST_NODE" "$TEST_PUSH_MOCK" docker "$@"; }\n' + shellArgs[1];
+    const result = cp.spawnSync(process.env.TEST_PUSH_BASH, shellArgs, { stdio: 'inherit', env: process.env });
+    if (result.error) throw result.error;
+    process.exitCode = result.status ?? 92;
+  };
+  if (tool === 'script') {
+    if (args.length !== 6 || args[0] !== '--quiet' || args[1] !== '--return' || args[2] !== '--flush'
+      || args[3] !== '--command' || args[5] !== '/dev/null') return reject('Unexpected pseudo-terminal arguments');
+    return runShell(['-c', args[4]]);
+  }
+  if (tool !== 'docker') return reject('Unexpected upload test tool');
+  if (args[0] === 'build') {
+    if (args.length !== 6 || args[1] !== '--platform' || args[2] !== 'linux/amd64'
+      || args[3] !== '--tag' || args[4] !== state.image || !args[5].replaceAll('\\', '/').endsWith('/frontend/trading-cockpit')) {
+      return reject('Unexpected selected-image build arguments');
+    }
+    return;
+  }
+  if (args.length !== 2 || args[0] !== 'push' || args[1] !== state.image) return reject('Unexpected docker push arguments');
+  process.stdout.write(state.output);
+  process.exitCode = state.pushExit;
+}
+
+function runPushBuild(options = {}) {
+  const name = 'push-build-' + (++sequence);
+  const image = registry + '/cockpit:diag-20261023.1_1';
+  const payload = [
+    '\u001b[2K\r111111aaaaaa: Waiting\r\n',
+    '\u001b[1A\u001b[2K\r111111aaaaaa: Pushing [>   ] 1MB/4MB\r',
+    '\u001b[1A\u001b[2K\r111111aaaaaa: Pushing [=>  ] 2MB/4MB\r',
+    '\u001b[1A\u001b[2K\r222222bbbbbb: Pushing [>   ] 1MB/8MB\r',
+    '\u001b[1A\u001b[2K\r222222bbbbbb: Pushing [=>  ] 2MB/8MB\r',
+    '\u001b[1A\u001b[2K\r111111aaaaaa: Pushed\r\n',
+    '222222bbbbbb: Layer already exists\r\n',
+    '333333cccccc: Pushing [>   ] 1MB/5MB\r',
+    '333333cccccc: Pushing [=>  ] 2MB/5MB\r',
+    'diag-20261023.1_1: digest: sha256:' + 'a'.repeat(64) + ' size: 1572\r\n',
+    ...(options.pushExit ? ['error: fixture connection reset by peer\r\n'] : []),
+  ].join('');
+  write(local(name + '/base.env'), manifest());
+  write(local(name + '/audit.jsonl'), '');
+  write(local(name + '/state.json'), JSON.stringify({ image, output: payload, pushExit: options.pushExit || 0 }));
+  write(local(name + '/mock-tool.cjs'), '(' + mockPushTool.toString() + ')();\n');
+  for (const tool of ['docker', 'script']) {
+    write(local(name + '/bin/' + tool), '#!/usr/bin/env bash\nMSYS2_ARG_CONV_EXCL="*" exec "$TEST_NODE" "$TEST_PUSH_MOCK" ' + tool + ' "$@"\n');
+  }
+  const outputPath = local(name + '/output dir/release.env');
+  const result = cp.spawnSync(bash, ['-c',
+    'export PATH="$TEST_PUSH_BIN:/usr/bin:/bin"\nexec bash "$TEST_BUILD_SCRIPT" --registry "$TEST_REGISTRY" --tag diag-20261023.1_1 --base "$TEST_BASE" --output "$TEST_OUTPUT" --push cockpit',
+  ], {
+    env: {
+      ...process.env, TEST_NODE: nodePath, TEST_PUSH_BASH: bash,
+      TEST_PUSH_MOCK: local(name + '/mock-tool.cjs'), TEST_PUSH_STATE: local(name + '/state.json'),
+      TEST_PUSH_AUDIT: local(name + '/audit.jsonl'), TEST_PUSH_BIN: posix(name + '/bin'),
+      TEST_BUILD_SCRIPT: bashPath(buildImagesPath), TEST_REGISTRY: registry,
+      TEST_BASE: posix(name + '/base.env'), TEST_OUTPUT: posix(name + '/output dir/release.env'),
+      GITHUB_ACTIONS: options.actions === false ? 'false' : 'true',
+    },
+    encoding: 'utf8', timeout: 15_000,
+  });
+  if (result.error) throw result.error;
+  const calls = fs.readFileSync(local(name + '/audit.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+  return { ...result, calls, image, outputPath, diagnostic: result.stdout + result.stderr };
+}
+
+test('Actions push uses the pseudo-terminal without imposing a shorter upload timeout', () => {
+  const result = runPushBuild();
+  assert.equal(result.status, 0, result.diagnostic);
+  assert.deepEqual(result.calls.map((call) => call.tool), ['docker', 'script', 'docker']);
+  assert.deepEqual(result.calls.at(-1).args, ['push', result.image]);
+  assert.equal(result.calls.find((call) => call.tool === 'script').args[4], 'docker push ' + result.image);
+  assert.ok(fs.readFileSync(result.outputPath, 'utf8').includes('COCKPIT_IMAGE=' + result.image));
+});
+
+test('Actions push strips terminal redraws and throttles progress while retaining final states and digest', () => {
+  const result = runPushBuild();
+  assert.equal(result.status, 0, result.diagnostic);
+  assert.ok(!result.stdout.includes('\u001b'), result.diagnostic);
+  assert.ok(!result.stdout.includes('\r'), result.diagnostic);
+  assert.equal(result.stdout.match(/111111aaaaaa: Pushing/g)?.length, 1, result.diagnostic);
+  assert.equal(result.stdout.match(/222222bbbbbb: Pushing/g)?.length, 1, result.diagnostic);
+  for (const state of ['111111aaaaaa: Waiting', '111111aaaaaa: Pushed', '222222bbbbbb: Layer already exists', 'digest: sha256:']) {
+    assert.ok(result.stdout.includes(state), result.diagnostic);
+  }
+  assert.ok(result.stdout.includes('Last observed progress: 333333cccccc: Pushing [=>  ] 2MB/5MB'), result.diagnostic);
+  assert.ok(!result.stdout.includes('Last observed progress: 111111aaaaaa'), result.diagnostic);
+});
+
+test('failed Actions push preserves its exit code and error without writing a release manifest', () => {
+  const result = runPushBuild({ pushExit: 7 });
+  assert.equal(result.status, 7, result.diagnostic);
+  assert.ok(result.stdout.includes('error: fixture connection reset by peer'), result.diagnostic);
+  assert.ok(!fs.existsSync(result.outputPath));
+});
+
+test('Actions push preserves exit 124 without claiming a local upload timeout', () => {
+  const result = runPushBuild({ pushExit: 124 });
+  assert.equal(result.status, 124, result.diagnostic);
+  assert.ok(!result.stderr.includes('15 minute limit'), result.diagnostic);
+  assert.ok(!fs.existsSync(result.outputPath));
+  assert.deepEqual(result.calls.filter((call) => call.tool === 'docker').map((call) => call.args[0]), ['build', 'push']);
+});
+
+test('a killed push preserves exit 137 without asserting that a timeout caused it', () => {
+  const result = runPushBuild({ pushExit: 137 });
+  assert.equal(result.status, 137, result.diagnostic);
+  assert.ok(result.stderr.includes('was killed (exit 137'), result.diagnostic);
+  assert.ok(!result.stderr.includes('exceeded the 15 minute limit'), result.diagnostic);
+  assert.ok(!fs.existsSync(result.outputPath));
+});
+
+test('non-Actions builds keep the original direct Docker push path and raw output', () => {
+  const result = runPushBuild({ actions: false });
+  assert.equal(result.status, 0, result.diagnostic);
+  assert.deepEqual(result.calls.map((call) => call.tool), ['docker', 'docker']);
+  assert.deepEqual(result.calls.at(-1).args, ['push', result.image]);
+  assert.equal(result.stdout.match(/111111aaaaaa: Pushing/g)?.length, 2);
+  assert.ok(result.stdout.includes('\u001b'));
+  assert.ok(fs.existsSync(result.outputPath));
+});
+
+test('the real progress filter streams its first update immediately and permits another after ten seconds', async () => {
+  const child = cp.spawn(bash, ['-c', filterDefinition + '\nfilter_push_progress'], {
+    env: { ...process.env, PATH: isWindows ? process.env.PATH : '/usr/bin:/bin' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  let firstOutput;
+  const streamed = new Promise((resolve) => { firstOutput = resolve; });
+  child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; firstOutput(); });
+  child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+  const completed = new Promise((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', (status) => status === 0 ? resolve() : reject(new Error(stderr + ' exit=' + status)));
+  });
+  const abort = setTimeout(() => { child.kill(); }, 17_000);
+  let firstOutputDeadline;
+  try {
+    child.stdin.write('\u001b[2K\r333333cccccc: Pushing 1MB/4MB\r');
+    await Promise.race([streamed, new Promise((_, reject) => {
+      firstOutputDeadline = setTimeout(() => reject(new Error('First progress update remained buffered')), 2000);
+    })]);
+    clearTimeout(firstOutputDeadline);
+    assert.ok(stdout.includes('333333cccccc: Pushing 1MB/4MB'), stdout + stderr);
+    child.stdin.write('333333cccccc: Pushing 2MB/4MB\r');
+    await new Promise((resolve) => setTimeout(resolve, 10_200));
+    child.stdin.end('333333cccccc: Pushing 3MB/4MB\r333333cccccc: Pushing 4MB/4MB\r333333cccccc: Pushed\n');
+    await completed;
+    assert.equal(stdout.match(/333333cccccc: Pushing/g)?.length, 2, stdout + stderr);
+    assert.ok(stdout.includes('333333cccccc: Pushed'), stdout + stderr);
+  } finally {
+    clearTimeout(firstOutputDeadline);
+    clearTimeout(abort);
+    if (child.exitCode === null) {
+      child.kill();
+      await completed.catch(() => {});
+    }
   }
 });
 
