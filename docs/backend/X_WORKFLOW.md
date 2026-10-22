@@ -35,7 +35,7 @@ TRADE_X_CONTENT_MAX_CHARS=120
 
 这是当前代码、YAML 和 `.env.example` 的默认内容方向。部署环境中已有的 `TRADE_X_CONTENT_*` 值会覆盖默认值：切换聊天样式时需同步更新方向、语气、额外规则、`FORMAT=CHAT_DIALOGUE` 和字数范围后重启；若从英文切换，还需同步语言。旧散文或前缀标识要求会与聊天格式冲突，不能只改语言或格式。仅修改仓库不会覆盖环境变量；已有草稿不会被自动改写。
 
-按本次部署要求，`application.yml` 和 `.env.example` 已开启 X auto-start、workflow、generation、review、client、live 和 publishing，以及共享 Telegram 客户端和相应代理；Java 属性类的布尔安全默认值仍为 false。生成间隔统一为完成上一轮后等待 3 小时，每个 UTC 日最多预约 8 次生成和 8 次发布尝试。部署环境仍应显式配置，不能仅凭属性类默认值判断实际运行状态。启用生成或审核而缺少目标账号、聊天或审核人配置时，启动校验会拒绝；缺少 X 凭据时发布等待。共享 Telegram 客户端使用独立配置；X 审核关闭时不会通过它轮询或送审。本次不读取或改写实际 `.env`、凭据或生产数据，配置开启也不代表外部联调已经完成。
+当前 `application.yml` 和 `.env.example` 开启 X auto-start、workflow、generation、review、client、live 和 publishing，以及共享 Telegram 客户端和相应代理；Java 属性类的布尔安全默认值仍为 false。生成间隔统一为完成上一轮后等待 3 小时，每个 UTC 日最多预约 8 次生成和 8 次发布尝试。部署环境应显式配置，不能仅凭属性类默认值判断实际运行状态。启用生成或审核而缺少目标账号、聊天或审核人配置时，启动校验会拒绝；缺少 X 凭据时发布等待。共享 Telegram 客户端使用独立配置；X 审核关闭时不会通过它轮询或送审。实际 `.env`、凭据和生产数据不进入仓库，配置开启不能代替外部联调。
 
 ## 创作与筛选流程
 
@@ -107,9 +107,9 @@ TRADE_WEIBO_LIVE_PUBLISHING_ENABLED=false
 
 同一应用同时启用微博和 X 的 Telegram review 会启动失败，防止两个 poller 消费彼此的更新。X 只处理 `x:a:` / `x:r:` 按钮，旧微博按钮不能审批 X 草稿。Bot 不可同时由其他程序轮询或使用 webhook；切换后待处理的微博按钮不会在 X 流程中恢复审批。
 
-## 本次启用配置
+## 当前运行配置
 
-本次启用自动生成、Telegram 人工审核及审核后真实发布。仓库 YAML 回退值和 `.env.example` 与以下开关一致；数字账号、聊天和审核人标识仍需通过部署环境提供：
+仓库默认运行自动生成、Telegram 人工审核及审核后真实发布流程。YAML 回退值和 `.env.example` 与以下开关一致；数字账号、聊天和审核人标识需通过部署环境提供：
 
 ```ini
 TRADE_AUTOMATION_X_AUTO_START=true
@@ -143,7 +143,7 @@ Spring Boot 不自动加载 `.env`。将部署值注入 Shell、IDE、systemd `E
 
 ### 可选：分阶段联调覆盖值
 
-如需先验收生成和审核而暂不发帖，下面是临时覆盖值，与本次启用配置不同：
+如需先验收生成和审核而暂不发帖，使用以下临时覆盖值：
 
 ```ini
 TRADE_X_PUBLISHING_ENABLED=false

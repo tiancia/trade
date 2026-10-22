@@ -1,6 +1,6 @@
 # 后端架构说明
 
-后端采用业务域优先的模块化单体。模块职责见 [模块目录](MODULES.md)，整体选择见 [ADR-0001](adr/0001-domain-first-modular-monolith.md)，域内四层结构见 [ADR-0002](adr/0002-four-layer-module-layout.md)。
+后端采用业务域优先的模块化单体，共享应用进程、构建和数据库，同时用包边界隔离业务所有权。当前规模保留进程内调用和本地事务，不拆分微服务或 Maven 子模块；域内统一四层后再按能力细分，使入口、用例、业务规则和外部适配职责清晰。模块职责见 [模块目录](MODULES.md)。
 
 ## 1. 先定位业务域，再定位层和能力
 
@@ -80,7 +80,7 @@ automation -> 各业务域的 scheduler / lifecycle 入口
 
 仍保留的技术耦合有明确边界：textgame 的管理用例与 marketplace 的应用服务仍使用 Mapper/Row，部分用例使用配置类和 provider client；`ExchangeOrderGateway` 是 OKX 专用契约，继续使用现有协议 DTO；原始采集上下文 `TradingDecisionContext` 位于 `application/market`，Prompt 与审计信封 `AiDecisionAuditRecord` 位于 `application/decision`。领域规则只接收 `TradingMarketInputs` 转换后的既有 Facts；Polymarket 盘口通过不可变 `MarketDepthLevel` 复制供应商档位，保留 JSON 的 price/size 字符串精度。这些不进入新增纯领域规则，也不代表全仓已达到严格六边形架构。没有为简单 CRUD 新增机械转发仓储，不能把 Row 改名搬进 domain。
 
-本次进一步收紧的边界：
+关键类型与用例按以下边界组织：
 
 - `TradingOrder` 不提供公开构造器或 setter，业务推进仅通过不可任意构造的 `OrderChange`，保留状态机、同状态成交刷新、CAS 版本和完成时间语义。持久化使用 `TradingOrderRow`；`restore(Snapshot)` 只用于数据库恢复，禁止应用层把恢复入口当成状态修改入口。
 - `TradingPositionState` 是不可变快照，买入、卖出与对账通过领域方法返回下一版本；实时成交卖出仍严格禁止超出受管理持仓，普通卖出保留原来的归零行为。累计成交 checkpoint、行锁和持仓写入仍由持久化适配在同一事务中完成。
@@ -173,7 +173,6 @@ REST / WebSocket producers
 热点审核工作流沿用相同四层：不可变 `WeiboPost` 聚合管理规则，应用服务通过 port 编排
 RSS/Atom、AI、MyBatis 和发布。审核请求与决策归 `weibo/domain/model`，投递契约归
 `weibo/application/port`，Telegram 审核及关闭时的占位实现在 `weibo/infrastructure/review`。
-[ADR-0003](adr/0003-shared-human-review-capability.md) 记录历史上的共享审核布局，与当前目录不同；
 当前工作流见 [微博工作流](WEIBO_WORKFLOW.md)。
 
 ```text

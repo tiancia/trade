@@ -1,6 +1,6 @@
 # 项目文档总导航
 
-项目的架构、通信和后端专题文档统一放在本目录。组件根目录保留自己的 README，部署脚本和配置仍在 `deploy/`，数据库与内置资源的使用说明紧邻对应文件。
+项目现行架构、通信、接口、配置与运维文档统一放在本目录。组件根目录保留自己的 README，部署脚本和配置仍在 `deploy/`，数据库与内置资源的使用说明紧邻对应文件。
 
 ## 按目标开始阅读
 
@@ -30,7 +30,7 @@ trade/
 │     ├─ OBSERVABILITY.md            指标、看板和告警
 │     ├─ *_API.md / *_WORKFLOW.md    外部协议与业务流程
 │     ├─ TRADING_BACKTEST.md         回测接口及统计口径
-│     └─ adr/                       架构决策历史
+│     └─ TRADING_SIMULATION.md       策略配置版本与模拟资金契约
 ├─ deploy/
 │  ├─ README.md                      生产部署步骤与目录说明
 │  ├─ scripts/                       构建、配置同步、发布和回滚脚本
@@ -60,7 +60,6 @@ trade/
 | [本地基础设施](../backend/infrastructure/README.md) | 开发用 MySQL、Redis、Prometheus、Grafana 的启动方式 |
 | [后端运维](backend/OPERATIONS.md) | 应用安全启动、任务控制、资金停止、恢复和业务排障 |
 | [可观测性](backend/OBSERVABILITY.md) | 指标流、抓取配置、看板、告警及本地/生产差异 |
-| [2026-10-22 全项目检查](PROJECT_REVIEW_2026-10-22.md) | 本次安全与稳定性问题、修复文件、验证结果及未验证边界 |
 
 ### 后端设计与开发
 
@@ -78,6 +77,7 @@ trade/
 | 文档 | 回答什么 |
 | --- | --- |
 | [Trading 回测](backend/TRADING_BACKTEST.md) | 回测参数、成交、手续费、滑点和指标 |
+| [Trading 模拟资金与策略配置](backend/TRADING_SIMULATION.md) | 策略参数版本、独立模拟资金、成交与估值账本及 API |
 | [X 工作流](backend/X_WORKFLOW.md) | AI 草稿、内容配置、Telegram 审核、发布与 UNKNOWN |
 | [X API](backend/X_API.md) | X 客户端方法、OAuth 凭据和协议边界 |
 | [Telegram API](backend/TELEGRAM_API.md) | Bot 客户端、消息、更新轮询和审核接入 |
@@ -96,18 +96,11 @@ trade/
 | 文字游戏 | 尚无独立 README；开发脚本见 [package.json](../frontend/text-game/package.json)，后端归属见模块目录 |
 | 集市 | 尚无独立 README；开发脚本见 [package.json](../frontend/market/package.json)，后端归属见模块目录 |
 
-### 架构决策历史
-
-| 记录 | 状态 |
-| --- | --- |
-| [ADR-0001：模块化单体](backend/adr/0001-domain-first-modular-monolith.md) | 已接受：为什么按业务域组织，暂不拆微服务 |
-| [ADR-0002：域内四层](backend/adr/0002-four-layer-module-layout.md) | 已接受：四层后再按能力细分 |
-| [ADR-0003：共享人工审核](backend/adr/0003-shared-human-review-capability.md) | 已撤销的历史决策；当前布局以架构说明与工作流为准 |
-
 ## 维护规则
 
 - 全局机器、通信和接手路径更新 `PROJECT_GUIDE.md`；代码分层与业务专题更新 `docs/backend/` 对应文档。
 - 部署命令、目录权限、配置模板和脚本行为更新 `deploy/README.md`，避免在多份文档复制整套安装步骤。
 - README 保留组件定位、启动和导航；SQL、资源格式说明与文件就近维护。
 - 修改默认值、代理、端口或安全门禁时核对源码、配置模板及文档；区分属性类默认值、配置回退值与服务器实际环境。
-- ADR 保留历史状态，不把已撤销决策当作现行结构。移动文档同步更新入站和出站链接；示例只写字段名或虚构值。
+- 仓库只保留现行架构、API、配置、使用说明和运维手册。计划、排查、修复、审查、验收与架构决策历史记录统一放在桌面 `0/trade-archive/`，按原仓库相对路径组织，不在仓库新增过程文档。
+- 当前行为发生变化时直接更新对应现行说明，不累加任务经过或历史验收结果。移动文档同步更新入站和出站链接；示例只写字段名或虚构值。

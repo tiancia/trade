@@ -110,7 +110,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File A:\trade\deploy\scripts\sync
 
 缺项时只显示字段名并终止上传。内容经 SSH 标准输入传输，不回显、不放入命令参数或本地中间文件。服务器保留基础设施 `.env` 和其他业务配置，不再生成管理令牌。更新前保留权限 600 的 `backend.env.before-sync-*` 备份，再原子替换 `backend.env`。同步不会启动或重启服务。运行中的容器需要通过发布脚本重新创建 `backend` 才能加载新环境；单纯 `docker compose restart` 不会加载 env 文件更新。
 
-模板已按本次要求配置：OKX 自动策略 **PAPER**、真实下单关闭；X 自动生成、Telegram 人工审核和真实发布开启，每轮完成后等三小时；首次生成约 30 秒后开始。Polymarket、微博、小说任务关闭。DeepSeek 使用 `deepseek-flash` 直连；OKX、Telegram、X 使用隧道代理。容器地址由 Compose 强制覆盖为 `egress:13128`，不要填写 `127.0.0.1`。
+模板默认配置为：OKX 自动策略 **PAPER**、真实下单关闭；X 自动生成、Telegram 人工审核和真实发布开启，每轮完成后等三小时；首次生成约 30 秒后开始。Polymarket、微博、小说任务关闭。DeepSeek 使用 `deepseek-flash` 直连；OKX、Telegram、X 使用隧道代理。容器地址由 Compose 强制覆盖为 `egress:13128`，不要填写 `127.0.0.1`。
 
 当前 PAPER 使用独立、持久化的模拟现金和持仓账本，决策只采集公共行情与产品规则，不读取真实账户余额、挂单和成交；三个 `OKX_*` 可以留空。LIVE 私有接口需要独立配置和验收凭据；只读检查仅开启 `Read`，关闭 `Trade` / `Withdraw`，绑定 IP 时使用实际出口德国 VPS 的公网 IP。权限说明参见 [OKX 官方文档](https://www.okx.com/docs-v5/en/#overview-api-key)。公共行情、PAPER 成功不代表 LIVE 私有接口可用；同时检查运行状态 `lastError` 和最新决策。模拟账本口径见 [策略参数版本与模拟资金](../docs/backend/TRADING_SIMULATION.md)。
 
@@ -445,8 +445,8 @@ dc() {
 
 ## 验证边界
 
-部署准备阶段曾通过私有 / 公共 Compose 配置解析（虚构凭据）、Linux Nginx `-t`、发布脚本隔离检查及后端完整离线测试。后续已收到七个容器健康、OKX 公共时间接口经业务代理访问成功、驾驶舱行情与 X 列表可读取、Telegram 审核消息可收到的服务器验收输出；这些是已发生的验收记录，不是实时状态报告。
+每次发布前，应在隔离环境检查所选访问模式的 Compose 配置、Linux Nginx `-t`、发布脚本和受影响的应用测试；配置校验使用虚构凭据，不读取或输出生产密钥。发布完成后，重新核对当前运行镜像、容器健康、业务代理、行情和审核状态。
 
-离线构建、配置解析和进程健康均不能代替业务验收。2026-10-18 文档核对时，最近的驾驶舱修复、OKX 凭据生效后的 PAPER 决策以及真实 X 发布仍需分别确认；最新核对入口见 [上手指南的验收步骤](../docs/PROJECT_GUIDE.md)。公共模式还需另外验收域名、证书和续期，不能沿用私有模式的成功结论。
+离线构建、配置解析和进程健康均不能代替业务验收。PAPER 决策、Telegram 审核和 X 发布状态按 [上手指南的验收步骤](../docs/PROJECT_GUIDE.md) 分别核对。公共模式还需另外验收域名、证书和续期，不能沿用私有模式的成功结论。
 
-驾驶舱 HTML 测试现已兼容 Node SSR 请求处理函数和 Cloudflare Worker 的 `fetch` 导出。离线内存渲染与接口契约测试、Linux 镜像构建，仍不能证明生产环境已加载对应镜像或外部账户权限已配置正确。
+驾驶舱 HTML 测试覆盖 Node SSR 请求处理函数和 Cloudflare Worker 的 `fetch` 导出。离线内存渲染与接口契约测试、Linux 镜像构建，仍不能证明生产环境已加载对应镜像或外部账户权限已配置正确。

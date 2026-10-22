@@ -85,13 +85,15 @@
 
 ## 文档更新矩阵
 
+仓库只保留现行架构、API、配置、使用说明和运维手册。计划、排查、修复、审查、验收与架构决策历史记录统一放在桌面 `0/trade-archive/`，按原仓库相对路径组织，不在仓库新增过程文档。变更完成后直接更新对应现行说明，不把任务经过或历史验收结果累加到维护文档。
+
 | 变更 | 同步更新 |
 | --- | --- |
 | 全局机器、网络、端口和接手路径 | `docs/PROJECT_GUIDE.md`，新增阅读入口时更新 `docs/README.md` |
 | 生产基础设施、配置同步或发布脚本 | `deploy/README.md`；涉及系统通信时同步全局上手指南 |
 | 新模块、入口或依赖方向 | `docs/backend/MODULES.md`、`docs/backend/ARCHITECTURE.md`、对应 `package-info.java` |
 | 应用启动、停机、监控或业务故障处理 | `docs/backend/OPERATIONS.md`、必要时 `docs/backend/OBSERVABILITY.md` |
-| 架构级取舍 | `docs/backend/adr/` 新增 ADR，不覆盖历史决策 |
+| 架构规则和依赖方向 | 更新 `docs/backend/ARCHITECTURE.md`、`docs/backend/MODULES.md`；决策过程与历史论证放外部归档 |
 | 新环境变量 | `backend/.env.example` 和相关运维说明；生产部署变量另核对 `deploy/` 模板 |
 | 数据库升级 | `backend/src/main/resources/db/` 下模块 schema、upgrade 脚本和升级 README；新增模块同步启动列表 |
 | 开发/测试命令变化 | `backend/CONTRIBUTING.md`、`backend/README.md`、`backend/AGENTS.md`；全局入口变化同步根 README |

@@ -31,13 +31,13 @@
 
 行情连接断开、异步发送失败或心跳超时后自动退避重连并恢复订阅，主动停止任务后不再重连。`TRADE_TRADING_WEBSOCKET_STALE_TIMEOUT_MS=30000` 控制进程内行情最长无更新时间。Redis 的 `TRADE_TRADING_HOT_MARKET_CACHE_CANDLE_TTL_MS=10800000` 只控制历史集合保留时间；另以 `TRADE_TRADING_HOT_MARKET_CACHE_CANDLE_FRESHNESS_MS=15000` 限制当前行情观测有效期，并检查最新 K 线所属周期。旧缓存没有观测标记、已经过期、跨周期或历史条数不足时，查询会回退 OKX REST。市场事件扫描也不会再仅凭旧 K 线数量足够而跳过刷新。
 
-部署此修复时，若实际运行环境仍有 `TRADE_TRADING_WEBSOCKET_ENABLED=false`，需显式改为 `true` 并重新创建后端容器；仅替换镜像或修改 YAML 不会覆盖已有环境变量。无需数据库迁移，也无需删除 Redis 历史集合。驾驶舱需同步更新：SSE 连通与行情新鲜度分别判断，页面可见时每 15 秒校验快照；快照新增 `checkedAt` 表示后端校验时间，`asOf` 仍是最新 K 线开盘时间，增量沿用事件原始 `receivedAt`，不会把积压事件的发送时间当作新行情时间。历史数量不足或时间断档都会补拉，连续推送期间的 HTTP 回包只重放请求后的增量，不覆盖 REST 修正的已收盘 K 线。验收时检查各周期最新 K 线时间持续推进、Ticker/K 线订阅成功，以及断线恢复后恢复更新；`source=HOT_CACHE` 本身不表示故障。
+启用行情订阅时，若实际运行环境仍有 `TRADE_TRADING_WEBSOCKET_ENABLED=false`，需显式改为 `true` 并重新创建后端容器；仅替换镜像或修改 YAML 不会覆盖已有环境变量。这项配置变更无需数据库迁移，也无需删除 Redis 历史集合。驾驶舱与后端应部署兼容版本：SSE 连通与行情新鲜度分别判断，页面可见时每 15 秒校验快照；快照中的 `checkedAt` 表示后端校验时间，`asOf` 是最新 K 线开盘时间，增量沿用事件原始 `receivedAt`，不会把积压事件的发送时间当作新行情时间。历史数量不足或时间断档都会补拉，连续推送期间的 HTTP 回包只重放请求后的增量，不覆盖 REST 修正的已收盘 K 线。验收时检查各周期最新 K 线时间持续推进、Ticker/K 线订阅成功，以及断线恢复后恢复更新；`source=HOT_CACHE` 本身不表示故障。
 
 当前 PAPER 使用独立的持久化模拟现金和持仓账本，行情及产品规则来自 OKX 公共接口，不读取真实账户数据，也不要求三个 OKX 私有凭据。LIVE 私有接口需另行配置和验收；模拟账本口径见 [策略参数版本与模拟资金](TRADING_SIMULATION.md)，完整部署与代理验收按生产部署说明执行。
 
 开启 X 前，运行环境必须提供 `TRADE_X_TARGET_USER_ID`、`TRADE_X_TELEGRAM_CHAT_ID`、`TRADE_X_TELEGRAM_REVIEWER_USER_IDS`、Telegram Bot Token、DeepSeek API Key 和 X OAuth 1.0a 凭据。缺少必需的目标 / 审核配置会在启动校验时拒绝；发布权限、额度和实际网络连接需另行联调。启动后的发布扫描可能处理数据库中已有、未过期且审核仍有效的 `APPROVED` 草稿；`PENDING_REVIEW` 不发布，`UNKNOWN` 不自动重发。详细说明见 [X 工作流](X_WORKFLOW.md)。
 
-本地代理验收曾使用 `TRADE_AUTOMATION_TRADING_AUTO_START=false`、`TRADE_AUTOMATION_X_AUTO_START=false` 等临时覆盖值；如继续沿用同一 Shell / IDE / systemd 环境，应显式更新这些值并重启 Java 进程。仅修改 YAML 不会覆盖已有环境变量。systemd 部署可通过服务的 `EnvironmentFile=/etc/trade/trade.env` 注入运行配置；实际文件不进入仓库。SSH 隧道和 Java 服务需分别常驻，普通进程与容器中的 `127.0.0.1` 指向各自网络环境。
+Shell、IDE 或 systemd 已有环境变量会覆盖 YAML 回退值。启停自动任务前，应核对 `TRADE_AUTOMATION_TRADING_AUTO_START`、`TRADE_AUTOMATION_X_AUTO_START` 等实际值；修改后重启 Java 进程，仅修改 YAML 不会覆盖已有环境变量。systemd 部署可通过服务的 `EnvironmentFile=/etc/trade/trade.env` 注入运行配置；实际文件不进入仓库。SSH 隧道和 Java 服务需分别常驻，普通进程与容器中的 `127.0.0.1` 指向各自网络环境。
 
 ## 安全启动
 
@@ -246,7 +246,7 @@ X 内容方向、语言、格式、字数与生成协议统一以 [X 工作流](
 
 项目当前没有 Flyway/Liquibase 版本表，不能假设按文件名字典序全部执行是安全的。
 
-本次真实资金闭环升级至少需要先有
+从旧版 JSON 资金状态迁移至 MySQL 账本时，至少需要先有
 `db/upgrade/trading/migration_add_okx_order_idempotency_state_machine.sql`，再执行
 `db/upgrade/trading/migration_add_okx_financial_safety_state.sql`，多实例部署随后执行
 `db/upgrade/trading/migration_add_okx_trading_leader_lease.sql`。首次启动时，若目标

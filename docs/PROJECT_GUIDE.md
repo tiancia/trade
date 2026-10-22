@@ -4,9 +4,9 @@
 
 面向第一次接手项目的开发者和运维人员。先读第 1～4 节理解系统与通信，再按第 7 节连接现有环境；修改代码、发布与排障分别见第 5、8、9 节。
 
-核对日期：2026-10-18。代码事实以当前仓库为准，运行配置以服务器上的配置和发布记录为准。本文不保存真实主机地址、密码或令牌；示例中的 `CN_HOST`、`DE_HOST` 需要替换为交接提供的地址。
+代码事实以当前仓库为准，运行配置以服务器上的配置和发布记录为准。本文不保存真实主机地址、密码或令牌；示例中的 `CN_HOST`、`DE_HOST` 需要替换为交接提供的地址。
 
-本文依据源码、部署模板及此前提供的部署输出整理，没有重新登录服务器巡检。此前已确认七个生产容器健康、OKX 公共接口代理访问成功、驾驶舱行情及 X 列表可读取、Telegram 可收到审核消息。最近的驾驶舱修复和 OKX 凭据更新是否已完整上线、PAPER 决策是否恢复、是否完成真实 X 发布，仍需按第 7 节逐项验收。
+每次接手环境或完成部署后，按第 7 节重新核验容器、代理、行情和业务状态。源码、配置模板与文档不能证明服务器已运行相应版本，也不能代替 PAPER 决策、Telegram 审核和 X 发布状态的独立验收。
 
 ## 1. 先看整体：三台机器各做什么
 
@@ -120,7 +120,7 @@ Telegram 审核使用后端主动 `getUpdates` 轮询，用户在 Telegram 点�
 
 ### 2.3 Docker 拉镜像为什么还有另一条隧道
 
-此前交接的国内主机还配置了独立的宿主机服务 `trade-docker-egress.service`：
+需要通过代理拉取镜像的国内宿主机，可使用独立的 `trade-docker-egress.service` 为 Docker daemon 提供出口：
 
 ```mermaid
 flowchart LR
@@ -139,7 +139,7 @@ flowchart LR
 | 业务出站隧道 | egress 容器，Docker 管理 | 后端的 OKX、Telegram、X 客户端 |
 | Docker 拉镜像隧道 | 国内宿主机 systemd 服务 | Docker daemon 拉镜像 |
 
-宿主机和 egress 容器可以同时使用 13128，因为它们属于不同的网络空间。宿主机 Docker 代理配置位于 `/etc/systemd/system/docker.service.d/trade-proxy.conf`；这个文件和 `trade-docker-egress.service` 本身**不在仓库中**，新机器需要另行交接或配置。此前启用成功不代表它此刻仍运行，应按第 7 节检查。
+宿主机和 egress 容器可以同时使用 13128，因为它们属于不同的网络空间。宿主机 Docker 代理配置位于 `/etc/systemd/system/docker.service.d/trade-proxy.conf`；这个文件和 `trade-docker-egress.service` 本身**不在仓库中**，新机器需要另行交接或配置。服务是否启用及当前健康状态，应按第 7 节检查。
 
 Docker daemon 的代理不会自动成为 Java 客户端代理，也不能保证镜像构建中的 npm/Maven 下载已使用代理。当前在电脑或 CI 构建镜像；服务器拉取不稳定时使用镜像归档上传和 `docker load`。
 
@@ -161,7 +161,7 @@ Docker daemon 的代理不会自动成为 Java 客户端代理，也不能保证
 
 Docker 网络分三组：`app` 连接网关、两个前端和后端；`data` 连接后端、MySQL、Redis，并设置 `internal: true`；`outbound` 连接后端与 egress。backend 同时加入三组。服务名只在相应 Docker 网络内解析，电脑浏览器不能直接访问 `backend:8080`。
 
-Prometheus、Grafana 归可选 `monitoring` profile，默认不启动。启用后宿主机入口仍绑定回环：9090、3001。公共域名/TLS 模式由 [compose.public.yaml](../compose.public.yaml) 提供，是另一种访问方式；本次采用私有模式，未叠加该文件。公共模式会替换网关端口，具体操作见部署说明。
+Prometheus、Grafana 归可选 `monitoring` profile，默认不启动。启用后宿主机入口仍绑定回环：9090、3001。公共域名/TLS 模式由 [compose.public.yaml](../compose.public.yaml) 提供，是另一种访问方式；默认私有模式不叠加该文件。公共模式会替换网关端口，具体操作见部署说明。
 
 ## 4. 配置和认证：每份东西给谁用
 
@@ -199,8 +199,8 @@ Prometheus、Grafana 归可选 `monitoring` profile，默认不启动。启用�
 | X | AI 生成、Telegram 人工审核和审核后发布开启；真实 X 发布能力开启，但仍必须满足审核与其他门禁 |
 | X 生成节奏 | 每轮完成后等待 10800000 ms，即三小时；不是每天固定整点 |
 | AI | DeepSeek，模板模型名 `deepseek-flash`，应用配置直连；此处记录模板值，不代表厂商最新型号结论 |
-| Polymarket / 微博 / 小说后台任务 | 本次生产模板关闭；代码仍在后端仓库中 |
-| 文字游戏 / 集市前端 | 仓库中存在，未包含在本次七服务生产部署中 |
+| Polymarket / 微博 / 小说后台任务 | 生产模板默认关闭；代码仍在后端仓库中 |
+| 文字游戏 / 集市前端 | 仓库中存在，默认生产 Compose 不部署这两个前端 |
 
 ## 5. 代码如何组织，业务如何执行
 
