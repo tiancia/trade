@@ -255,19 +255,43 @@ curl -fsS -u operator http://127.0.0.1:18080/api/automation/tasks
 
 仓库 **Settings → Secrets and variables → Actions** 需要五项 Repository Secrets：`DEPLOY_HOST`（公网 IP / 域名）、`DEPLOY_PORT`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`（独立部署私钥完整内容）、`DEPLOY_KNOWN_HOSTS`（经可信渠道核验的 SSH 主机记录，非默认端口使用 `[主机]:端口` 格式）。部署账号需使用 Bash，能读当前成功清单、写入 `deploy/` 并使用 Docker / Compose。沿用前述密钥登录验证方式，保持主机指纹校验开启。
 
-镜像地址为 `ghcr.io/<仓库所有者>/<仓库名>/<服务>:sha-<提交SHA>-<运行ID>-<尝试次数>`，默认构建 `linux/amd64`。使用 Actions 自动提供的 `GITHUB_TOKEN`（`actions: read` 下载已有清单、`contents: read`、`packages: write` 推送镜像），不需要新增 GHCR 写入令牌。部署时，该短期令牌通过 SSH 标准输入供服务器登录 GHCR，Docker 凭据放在临时目录，发布结束后清理；不会改写服务器已有 Docker 登录配置。已存在的 GHCR 包须授予本仓库 Actions 访问权限。以后手工拉取私有镜像仍需自行 `docker login ghcr.io`。
+镜像发布到腾讯云 TCR 个人版，固定地址为 `ccr.ccs.tencentyun.com/tiancia-trade/<服务>:sha-<提交SHA>-<运行ID>-<尝试次数>`，默认构建 `linux/amd64`。在已创建的 `tiancia-trade` 命名空间下准备四个私有仓库：`backend`、`cockpit`、`x-console`、`egress`。个人版不支持多级仓库路径，地址中只有一层命名空间，不再使用 GHCR 的仓库所有者/仓库名路径。命名与登录方式见 [TCR 个人版快速入门](https://cloud.tencent.com/document/product/1141/63910)。
 
-部分构建会先从服务器下载真实的 `deploy/releases/current.env`，仅替换选中服务的镜像，下载失败即中止；即使只构建不部署，部分构建也需要这五项 SSH Secrets 和成功基线。已有部署可以逐个服务迁移到 GHCR，未选中的 `trade-local/*` 镜像仍保留。没有成功基线的新服务器，先选 `all` 构建，并完成前述服务器初始化，再执行全量部署。
+除上述五项 SSH Secrets 外，再配置两项 Repository Secrets：`TCR_USERNAME`（复制个人版控制台登录指令中 `--username` 的值）和 `TCR_PASSWORD`（个人版初始化或重置的镜像仓库登录密码）。工作流在 runner 上明确检查两项都存在，再通过 `docker login --password-stdin` 登录。`GITHUB_TOKEN` 仅用于读取本仓库 Actions artifact 和代码，不需要 `packages: write` 权限。
 
-每次构建成功后，运行摘要列出完整镜像清单，并提供 `image-manifest-<版本>` artifact 下载 `release.env`。首次建议不勾选 `deploy`，确认 GHCR 镜像与清单生成成功；部署成功日志包含 `DEPLOYMENT_OK`。工作流按同一并发组串行运行，不取消正在执行的发布；服务端仍由 `release.sh` 加锁，并在部分部署时重新读取当前版本，保留未选服务的新版本。
+勾选部署后，工作流仅经 SSH 上传完整镜像清单和本次清理脚本，由服务器登录 TCR、拉取选中服务镜像、重建并等待健康检查。TCR 用户名和密码通过 SSH 标准输入传入；服务器的 Docker 凭据写入独立临时目录，成功或失败退出都会清理，不覆盖服务器已有的 Docker 登录配置。`all` 仍使用 `release.sh` 的完整部署流程，拉取基础设施镜像并完成全部镜像检查后才切换容器。
 
-仅部署已有镜像时，在同一个 **Run workflow** 中选择分支和 `service`，**取消勾选 `build`、勾选 `deploy`**，`source_run_id` 留空即可。工作流下载已有 `release.env`、上传清单，再由服务器拉取镜像、重建选中服务并等待健康检查，跳过 Maven/npm/Docker 构建及镜像推送。新代码尚未构建时，需要先构建一次，才能用这个入口部署。
+服务器 Docker daemon 的代理例外需覆盖 `ccr.ccs.tencentyun.com` 及实际镜像层重定向域名，并验证这些请求经腾讯云内网访问。仅在 shell 中设置代理、或仅看到仓库入口返回 `401`，不能证明 daemon 的镜像层路径和下载速度正常；实际域名、解析与链路应在服务器核验。
 
-这里的“最新”按清单 artifact 的生成时间选择，限定为所选分支、同仓库和本工作流已结束的运行，并要求所有选中服务确实在该次运行中构建；不会使用清单里从旧基线继承的镜像。因此，`backend` 可以复用后端单独构建或全量构建，`frontends` 要求两个前端曾一起构建，`all` 要求一次全量构建。构建并上传清单后，即使随后部署失败，也可复用该清单重试部署。摘要会列出实际版本和源运行链接；`source_run_id` 可固定某次构建，仍须满足分支和服务匹配要求。
+当前上海服务器已只读验证：TCR registry 解析到 `169.254.0.42`，官方公开镜像层重定向到 `ccr-sh-system-maz-1253687700.cos.ap-shanghai.myqcloud.com`、解析到 `169.254.0.47`，1 MiB Range 下载完整返回 `206`，约 0.12 秒。可在原有代理例外上追加 `ccr.ccs.tencentyun.com,cos.ap-shanghai.myqcloud.com`；首次推送自己的私有镜像后，仍须核验它实际使用的 blob 域名和完整拉取，不假设所有仓库桶都位于上海。
 
-清单 artifact 保留 30 天；自动选择只考虑尚未过期的清单，没有匹配项即报错。镜像使用明确版本号，不使用可变的 `latest` tag；若对应 GHCR 镜像已被删除，拉取失败会在停止容器之前中止。每次部署使用独立的 incoming 目录，可以重复部署同一版本。
+当前服务器未开启 `live-restore`，重启 Docker 会中断运行中的容器。以下配置生效操作需在维护窗口执行；先重新核对 `docker info` 的现有 `No Proxy`，若已有值变化，应保留实际值再追加 TCR 域名。独立 override 只覆盖 `NO_PROXY`，不改原 `trade-proxy.conf`：
 
-勾选 `deploy` 后，只有发布成功才会自动清理更早的本地 Trade 应用镜像：保留 `current.env`、`previous.env` 引用的全部镜像，以及任何运行中或已停止容器引用的镜像及同一镜像 ID 的别名。候选仅限 `ghcr.io/<仓库所有者>/<仓库名>/`、`trade/`、`trade-local/` 下的 `backend`、`cockpit`、`x-console`、`egress`，不会删除基础设施、第三方镜像、容器、数据卷或 GHCR 中的历史版本，也不使用强制删除或全局 prune。这里的“上一代”指整套发布的上一成功清单，不保证每个服务各有两个不同版本。
+```bash
+sudo install -d -m 0755 /etc/systemd/system/docker.service.d
+sudo tee /etc/systemd/system/docker.service.d/zz-tcr-no-proxy.conf >/dev/null <<'EOF'
+[Service]
+Environment="NO_PROXY=localhost,127.0.0.1,::1,ghcr.io,pkg-containers.githubusercontent.com,ccr.ccs.tencentyun.com,cos.ap-shanghai.myqcloud.com"
+EOF
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+docker info | grep -i proxy
+docker ps --format 'table {{.Names}}\t{{.Status}}'
+```
+
+配置生效后以首次私有 TCR 镜像的真实 `docker pull` 和健康检查作为验收；公开层测速不等于私有仓库鉴权、推送和完整发布已经通过。
+
+部分构建会先从服务器下载真实的 `deploy/releases/current.env`，仅替换选中服务的镜像，下载失败即中止；即使只构建不部署，部分构建也需要这五项 SSH Secrets 和成功基线。已有部署可以逐个服务迁移到 TCR，未选中的现有镜像仍保留。没有成功基线的新服务器，先选 `all` 构建，并完成前述服务器初始化，再执行全量部署。
+
+每次构建成功后，运行摘要列出完整镜像清单，并提供 `image-manifest-<版本>` artifact 下载 `release.env`。迁移到 TCR 的首轮必须勾选 `build`，先生成 TCR 镜像和新清单；可先不勾选 `deploy`，确认推送成功及实际镜像层下载正常后再部署。部署成功日志包含 `DEPLOYMENT_OK`。工作流按同一并发组串行运行，不取消正在执行的发布；服务端仍由 `release.sh` 加锁，并在部分部署时重新读取当前版本，保留未选服务的新版本。
+
+仅部署已有镜像时，在同一个 **Run workflow** 中选择分支和 `service`，**取消勾选 `build`、勾选 `deploy`**，`source_run_id` 留空即可。工作流下载已有 `release.env`、上传清单，再由服务器从 TCR 拉取镜像、重建选中服务并等待健康检查，跳过 Maven/npm/Docker 构建及镜像推送。新代码尚未构建时，需要先构建一次，才能用这个入口部署。
+
+这里的“最新”按清单 artifact 的生成时间选择，限定为所选分支、同仓库和本工作流已结束的运行，并要求所有选中服务确实在该次运行中构建、地址严格匹配 `ccr.ccs.tencentyun.com/tiancia-trade/<服务>:<版本>`；不会使用旧 GHCR 清单或从旧基线继承的选中镜像。因此，`backend` 可以复用后端单独构建或全量构建，`frontends` 要求两个前端曾一起构建，`all` 要求一次全量构建。构建并上传清单后，即使随后部署失败，也可复用该清单重试部署。摘要会列出实际版本和源运行链接；`source_run_id` 可固定某次构建，仍须满足分支和服务匹配要求。
+
+清单 artifact 保留 30 天；自动选择只考虑尚未过期的清单，没有匹配项即报错。镜像使用明确版本号，不使用可变的 `latest` tag；若对应 TCR 镜像已被删除，拉取失败会在停止容器之前中止。每次部署使用独立的 incoming 目录，可以重复部署同一版本。
+
+勾选 `deploy` 后，只有发布成功才会自动清理更早的本地 Trade 应用镜像：保留 `current.env`、`previous.env` 引用的全部镜像，以及任何运行中或已停止容器引用的镜像及同一镜像 ID 的别名。候选仅限 `ccr.ccs.tencentyun.com/tiancia-trade/`、`trade/`、`trade-local/` 下的 `backend`、`cockpit`、`x-console`、`egress`，不会删除基础设施、第三方镜像、容器、数据卷或远端仓库中的历史版本，也不使用强制删除或全局 prune。这里的“上一代”指整套发布的上一成功清单，不保证每个服务各有两个不同版本。
 
 工作流会将本次 [cleanup-images.sh](scripts/cleanup-images.sh) 一同上传到独立的 incoming 版本目录，无需另行更新服务器的清理脚本。清理重新获取发布锁、读取最新清单，并在完成所有校验和 Docker 查询后才删除；缺少上一成功清单（如首次发布）、清单损坏、Docker 查询失败或发布锁被占用时均不执行删除。清理失败只产生 warning，不把已经成功的部署改判为失败；成功日志包含 `IMAGE_CLEANUP_OK`。
 
@@ -275,10 +299,10 @@ curl -fsS -u operator http://127.0.0.1:18080/api/automation/tasks
 
 ```bash
 bash /opt/trade/deploy/incoming/<版本>/cleanup-images.sh \
-  --root /opt/trade --registry ghcr.io/tiancia/trade
+  --root /opt/trade --registry ccr.ccs.tencentyun.com/tiancia-trade
 ```
 
-服务器须事先具备匹配的 Compose、`release.sh`、Nginx、运行配置和密钥文件；工作流只传镜像清单及本次清理脚本，不同步这些部署配置文件。前后端接口存在联动变更时，应安排兼容的发布顺序或全量更新。发布会短暂停止并重建选中服务；失败返回非零，不自动回滚，沿用下文的显式回滚方式。数据库补丁、运行配置变更和访问模式切换仍按各自流程处理。
+服务器须事先具备匹配的 Compose、`release.sh`、Nginx、运行配置和密钥文件；工作流只传完整镜像清单及本次清理脚本，不同步这些部署配置文件。前后端接口存在联动变更时，应安排兼容的发布顺序或全量更新。发布会短暂停止并重建选中服务；失败返回非零，不自动回滚，沿用下文的显式回滚方式。数据库补丁、运行配置变更和访问模式切换仍按各自流程处理。
 
 ### 一个命令构建并上传
 
