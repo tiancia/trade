@@ -247,17 +247,25 @@ curl -fsS -u operator http://127.0.0.1:18080/api/automation/tasks
 | `service=frontends` | 一起构建、按需部署两个前端 |
 | `service=egress` | 只构建、按需部署业务出站隧道 |
 | `service=all` | 构建四个镜像；勾选部署时执行全量发布，包含网关与 MySQL/Redis 前置检查 |
-| `deploy` | 默认不勾选，仅构建并推送 GHCR；勾选后通过 SSH 发布并等待健康检查 |
+| `build` | 默认勾选，构建并推送新镜像；取消勾选可直接复用已有构建 |
+| `deploy` | 默认不勾选；勾选后通过 SSH 发布并等待健康检查。仅部署时必须勾选 |
+| `source_run_id` | 仅部署时可填原构建的 Actions 运行 ID；留空自动选择所选分支上匹配服务的最新可用构建 |
 | `server_path` | 已准备好的服务器仓库绝对路径，默认 `/opt/trade` |
 | `access` | 沿用服务器现有的 `private` 或 `public` 模式；此参数不用于切换模式 |
 
 仓库 **Settings → Secrets and variables → Actions** 需要五项 Repository Secrets：`DEPLOY_HOST`（公网 IP / 域名）、`DEPLOY_PORT`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`（独立部署私钥完整内容）、`DEPLOY_KNOWN_HOSTS`（经可信渠道核验的 SSH 主机记录，非默认端口使用 `[主机]:端口` 格式）。部署账号需使用 Bash，能读当前成功清单、写入 `deploy/` 并使用 Docker / Compose。沿用前述密钥登录验证方式，保持主机指纹校验开启。
 
-镜像地址为 `ghcr.io/<仓库所有者>/<仓库名>/<服务>:sha-<提交SHA>-<运行ID>-<尝试次数>`，默认构建 `linux/amd64`。推送使用 Actions 自动提供的 `GITHUB_TOKEN`（`contents: read`、`packages: write`），不需要新增 GHCR 写入令牌。部署时，该短期令牌通过 SSH 标准输入供服务器登录 GHCR，Docker 凭据放在临时目录，发布结束后清理；不会改写服务器已有 Docker 登录配置。已存在的 GHCR 包须授予本仓库 Actions 访问权限。以后手工拉取私有镜像仍需自行 `docker login ghcr.io`。
+镜像地址为 `ghcr.io/<仓库所有者>/<仓库名>/<服务>:sha-<提交SHA>-<运行ID>-<尝试次数>`，默认构建 `linux/amd64`。使用 Actions 自动提供的 `GITHUB_TOKEN`（`actions: read` 下载已有清单、`contents: read`、`packages: write` 推送镜像），不需要新增 GHCR 写入令牌。部署时，该短期令牌通过 SSH 标准输入供服务器登录 GHCR，Docker 凭据放在临时目录，发布结束后清理；不会改写服务器已有 Docker 登录配置。已存在的 GHCR 包须授予本仓库 Actions 访问权限。以后手工拉取私有镜像仍需自行 `docker login ghcr.io`。
 
 部分构建会先从服务器下载真实的 `deploy/releases/current.env`，仅替换选中服务的镜像，下载失败即中止；即使只构建不部署，部分构建也需要这五项 SSH Secrets 和成功基线。已有部署可以逐个服务迁移到 GHCR，未选中的 `trade-local/*` 镜像仍保留。没有成功基线的新服务器，先选 `all` 构建，并完成前述服务器初始化，再执行全量部署。
 
 每次构建成功后，运行摘要列出完整镜像清单，并提供 `image-manifest-<版本>` artifact 下载 `release.env`。首次建议不勾选 `deploy`，确认 GHCR 镜像与清单生成成功；部署成功日志包含 `DEPLOYMENT_OK`。工作流按同一并发组串行运行，不取消正在执行的发布；服务端仍由 `release.sh` 加锁，并在部分部署时重新读取当前版本，保留未选服务的新版本。
+
+仅部署已有镜像时，在同一个 **Run workflow** 中选择分支和 `service`，**取消勾选 `build`、勾选 `deploy`**，`source_run_id` 留空即可。工作流下载已有 `release.env`、上传清单，再由服务器拉取镜像、重建选中服务并等待健康检查，跳过 Maven/npm/Docker 构建及镜像推送。新代码尚未构建时，需要先构建一次，才能用这个入口部署。
+
+这里的“最新”按清单 artifact 的生成时间选择，限定为所选分支、同仓库和本工作流已结束的运行，并要求所有选中服务确实在该次运行中构建；不会使用清单里从旧基线继承的镜像。因此，`backend` 可以复用后端单独构建或全量构建，`frontends` 要求两个前端曾一起构建，`all` 要求一次全量构建。构建并上传清单后，即使随后部署失败，也可复用该清单重试部署。摘要会列出实际版本和源运行链接；`source_run_id` 可固定某次构建，仍须满足分支和服务匹配要求。
+
+清单 artifact 保留 30 天；自动选择只考虑尚未过期的清单，没有匹配项即报错。镜像使用明确版本号，不使用可变的 `latest` tag；若对应 GHCR 镜像已被删除，拉取失败会在停止容器之前中止。每次部署使用独立的 incoming 目录，可以重复部署同一版本。
 
 勾选 `deploy` 后，只有发布成功才会自动清理更早的本地 Trade 应用镜像：保留 `current.env`、`previous.env` 引用的全部镜像，以及任何运行中或已停止容器引用的镜像及同一镜像 ID 的别名。候选仅限 `ghcr.io/<仓库所有者>/<仓库名>/`、`trade/`、`trade-local/` 下的 `backend`、`cockpit`、`x-console`、`egress`，不会删除基础设施、第三方镜像、容器、数据卷或 GHCR 中的历史版本，也不使用强制删除或全局 prune。这里的“上一代”指整套发布的上一成功清单，不保证每个服务各有两个不同版本。
 

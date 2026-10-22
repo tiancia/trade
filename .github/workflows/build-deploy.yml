@@ -1,11 +1,11 @@
 name: Build and deploy selected services
-run-name: ${{ inputs.deploy && 'Build and deploy' || 'Build only' }} / ${{ inputs.service }} / ${{ github.ref_name }}
+run-name: ${{ !inputs.build && 'Deploy existing' || (inputs.deploy && 'Build and deploy' || 'Build only') }} / ${{ inputs.service }} / ${{ github.ref_name }}
 
 on:
   workflow_dispatch:
     inputs:
       service:
-        description: Service to build and optionally deploy
+        description: Service to build or deploy
         type: choice
         required: true
         default: backend
@@ -16,10 +16,18 @@ on:
           - frontends
           - egress
           - all
+      build:
+        description: Build new images (uncheck to deploy an existing build)
+        type: boolean
+        default: true
       deploy:
-        description: Deploy the selected services after pushing images
+        description: Deploy the selected services
         type: boolean
         default: false
+      source_run_id:
+        description: Existing build run ID (blank selects latest matching build; build must be unchecked)
+        type: string
+        required: false
       server_path:
         description: Existing repository directory on the server
         type: string
@@ -35,6 +43,7 @@ on:
           - public
 
 permissions:
+  actions: read
   contents: read
   packages: write
 
@@ -52,7 +61,9 @@ jobs:
         shell: bash
     env:
       SERVICE: ${{ inputs.service }}
+      BUILD_REQUESTED: ${{ inputs.build }}
       DEPLOY_REQUESTED: ${{ inputs.deploy }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
       DEPLOY_ROOT: ${{ inputs.server_path }}
       ACCESS_MODE: ${{ inputs.access }}
     steps:
@@ -64,6 +75,16 @@ jobs:
       - name: Prepare service selection and image version
         run: |
           set -euo pipefail
+          if [[ $BUILD_REQUESTED != true && $DEPLOY_REQUESTED != true ]]; then
+            echo 'Select build, deploy, or both.' >&2
+            exit 1
+          fi
+          if [[ -n $SOURCE_RUN_ID ]]; then
+            [[ $BUILD_REQUESTED != true && $SOURCE_RUN_ID =~ ^[1-9][0-9]*$ ]] || {
+              echo 'source_run_id requires build=false and a positive run ID.' >&2
+              exit 1
+            }
+          fi
           case "$SERVICE" in
             backend|cockpit|x-console|egress) targets=("$SERVICE") ;;
             frontends) targets=(cockpit x-console) ;;
@@ -87,7 +108,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Configure SSH from repository secrets
-        if: inputs.service != 'all' || inputs.deploy
+        if: inputs.deploy || (inputs.build && inputs.service != 'all')
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
@@ -127,7 +148,7 @@ jobs:
           printf 'SSH_CONFIG=%s\n' "$ssh_dir/config" >> "$GITHUB_ENV"
 
       - name: Check server prerequisites and fetch the current image manifest
-        if: inputs.service != 'all' || inputs.deploy
+        if: inputs.deploy || (inputs.build && inputs.service != 'all')
         run: |
           set -euo pipefail
           if [[ $DEPLOY_REQUESTED == true ]]; then
@@ -141,7 +162,7 @@ jobs:
               docker compose version >/dev/null
             "
           fi
-          if [[ $SERVICE != all ]]; then
+          if [[ $BUILD_REQUESTED == true && $SERVICE != all ]]; then
             # A failed download must stop the build, never fall back to a local baseline.
             scp -F "$SSH_CONFIG" \
               "trade-deploy:$DEPLOY_ROOT/deploy/releases/current.env" \
@@ -149,6 +170,7 @@ jobs:
           fi
 
       - name: Log in to GHCR
+        if: inputs.build
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -156,6 +178,7 @@ jobs:
           printf '%s\n' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
       - name: Build and push only the selected images
+        if: inputs.build
         run: |
           set -euo pipefail
           read -r -a targets <<< "$TARGET_SERVICES"
@@ -173,6 +196,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save the complete image manifest
+        if: inputs.build
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: image-manifest-${{ env.IMAGE_TAG }}
@@ -180,13 +204,95 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Fetch an existing build without rebuilding images
+        if: ${{ !inputs.build }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { execFileSync } = require('node:child_process');
+          const { createHash } = require('node:crypto');
+          const env = process.env;
+          const repo = env.GITHUB_REPOSITORY;
+          const api = (endpoint, paginate = false) => JSON.parse(execFileSync('gh',
+            ['api', endpoint, ...(paginate ? ['--paginate', '--slurp'] : [])],
+            { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }));
+          const endpoint = env.SOURCE_RUN_ID
+            ? `repos/${repo}/actions/runs/${env.SOURCE_RUN_ID}/artifacts?per_page=100`
+            : `repos/${repo}/actions/artifacts?per_page=100`;
+          const candidates = api(endpoint, true).flatMap(page => page.artifacts)
+            .filter(artifact => !artifact.expired
+              && artifact.workflow_run?.head_branch === env.GITHUB_REF_NAME
+              && String(artifact.workflow_run.id) !== env.GITHUB_RUN_ID
+              && artifact.workflow_run.repository_id === artifact.workflow_run.head_repository_id
+              && /^image-manifest-sha-[a-f0-9]{40}-[1-9][0-9]*-[1-9][0-9]*$/.test(artifact.name))
+            .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id);
+          const keys = { backend: 'BACKEND_IMAGE', cockpit: 'COCKPIT_IMAGE',
+            'x-console': 'X_CONSOLE_IMAGE', egress: 'EGRESS_IMAGE' };
+          const targets = env.TARGET_SERVICES.split(' ');
+          const runs = new Map();
+          let found = false;
+          for (const artifact of candidates) {
+            const runId = artifact.workflow_run.id;
+            if (env.SOURCE_RUN_ID && String(runId) !== env.SOURCE_RUN_ID) continue;
+            if (!runs.has(runId)) runs.set(runId, api(`repos/${repo}/actions/runs/${runId}`));
+            const run = runs.get(runId);
+            if (run.path?.split('@')[0] !== '.github/workflows/build-deploy.yml'
+              || run.event !== 'workflow_dispatch' || run.status !== 'completed'
+              || run.head_branch !== env.GITHUB_REF_NAME
+              || run.head_repository?.full_name?.toLowerCase() !== repo.toLowerCase()) continue;
+            const tag = artifact.name.slice('image-manifest-'.length);
+            if (!tag.startsWith(`sha-${run.head_sha}-${runId}-`)) continue;
+            // An uploaded manifest proves the build/push finished, even if deployment failed.
+            if (artifact.size_in_bytes > 65536) throw new Error('Unexpected manifest archive size.');
+            const archive = execFileSync('gh',
+              ['api', `repos/${repo}/actions/artifacts/${artifact.id}/zip`], { maxBuffer: 65536 });
+            if (artifact.digest && artifact.digest !== `sha256:${createHash('sha256').update(archive).digest('hex')}`) {
+              throw new Error('Manifest archive digest mismatch.');
+            }
+            const zipPath = `${env.RELEASE_DIR}/source-manifest.zip`;
+            fs.writeFileSync(zipPath, archive);
+            const entries = execFileSync('unzip', ['-Z1', zipPath], { encoding: 'utf8' }).trim();
+            if (entries !== 'release.env') throw new Error('Expected only release.env in the artifact.');
+            const manifest = execFileSync('unzip', ['-p', zipPath, 'release.env'],
+              { encoding: 'utf8', maxBuffer: 65536 });
+            const values = new Map();
+            for (const line of manifest.split(/\r?\n/)) {
+              if (/^\s*(#.*)?$/.test(line)) continue;
+              const match = /^([A-Z_]+)=([A-Za-z0-9][A-Za-z0-9._:/@+-]*)$/.exec(line);
+              if (!match || ![...Object.values(keys), 'RELEASE_VERSION'].includes(match[1])
+                || values.has(match[1]) || match[2].includes('://')) {
+                throw new Error('Invalid image manifest.');
+              }
+              values.set(match[1], match[2]);
+            }
+            if (values.get('RELEASE_VERSION') !== tag || Object.values(keys).some(key => !values.has(key))) {
+              throw new Error('Incomplete or mismatched image manifest.');
+            }
+            // Never deploy a service merely inherited from an old baseline. For all/frontends,
+            // every selected image must have been built together in this source run.
+            if (!targets.every(service => values.get(keys[service]) === `${env.IMAGE_REGISTRY}/${service}:${tag}`)) continue;
+            fs.writeFileSync(`${env.RELEASE_DIR}/release.env`, manifest);
+            fs.appendFileSync(env.GITHUB_ENV, `IMAGE_TAG=${tag}\n`);
+            fs.appendFileSync(env.GITHUB_STEP_SUMMARY,
+              `### Existing build selected\n\nServices: \`${env.TARGET_SERVICES}\`\n\nVersion: \`${tag}\`\n\n`
+              + `Source: [run ${runId}](${env.GITHUB_SERVER_URL}/${repo}/actions/runs/${runId})\n\n`
+              + `\`\`\`dotenv\n${manifest}\n\`\`\`\n`);
+            found = true;
+            break;
+          }
+          if (!found) throw new Error('No retained build matches this branch and all selected services. Build them first or specify a matching source_run_id.');
+          NODE
+
       - name: Deploy only the selected services
         if: inputs.deploy
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          remote_dir="$DEPLOY_ROOT/deploy/incoming/$IMAGE_TAG"
+          remote_dir="$DEPLOY_ROOT/deploy/incoming/$IMAGE_TAG-deploy-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -F "$SSH_CONFIG" trade-deploy "mkdir -p '$DEPLOY_ROOT/deploy/incoming' && mkdir '$remote_dir'"
           scp -F "$SSH_CONFIG" "$RELEASE_DIR/release.env" \
             deploy/scripts/cleanup-images.sh "trade-deploy:$remote_dir/"
