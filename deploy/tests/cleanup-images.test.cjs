@@ -582,6 +582,199 @@ test('explicit source run does not silently fall back to a different TCR build',
   assert.equal(result.manifest, undefined);
 });
 
+const buildImagesPath = path.resolve(__dirname, '../scripts/build-images.sh');
+const buildImagesSource = fs.readFileSync(buildImagesPath, 'utf8').replace(/\r\n/g, '\n');
+const filterStart = buildImagesSource.indexOf('filter_push_progress() {');
+const filterEnd = buildImagesSource.indexOf('\npush_image() {', filterStart);
+assert.ok(filterStart >= 0 && filterEnd > filterStart, 'The upload progress filter must be testable independently');
+const filterDefinition = buildImagesSource.slice(filterStart, filterEnd);
+
+// Strict mocks execute the real generated shell command, never a registry call.
+function mockPushTool() {
+  const fs = require('node:fs');
+  const cp = require('node:child_process');
+  const [tool, ...args] = process.argv.slice(2);
+  const state = JSON.parse(fs.readFileSync(process.env.TEST_PUSH_STATE, 'utf8'));
+  fs.appendFileSync(process.env.TEST_PUSH_AUDIT, JSON.stringify({ tool, args }) + '\n');
+  const reject = (reason) => { process.stderr.write(reason + '\n'); process.exitCode = 91; };
+  const runShell = (shellArgs) => {
+    // Bind the mock explicitly across Windows Node -> Git Bash environment conversion.
+    shellArgs = [...shellArgs];
+    shellArgs[1] = 'timeout() { MSYS2_ARG_CONV_EXCL="*" "$TEST_NODE" "$TEST_PUSH_MOCK" timeout "$@"; }\n' + shellArgs[1];
+    const result = cp.spawnSync(process.env.TEST_PUSH_BASH, shellArgs, { stdio: 'inherit', env: process.env });
+    if (result.error) throw result.error;
+    process.exitCode = result.status ?? 92;
+  };
+  if (tool === 'script') {
+    if (args.length !== 6 || args[0] !== '--quiet' || args[1] !== '--return' || args[2] !== '--flush'
+      || args[3] !== '--command' || args[5] !== '/dev/null') return reject('Unexpected pseudo-terminal arguments');
+    return runShell(['-c', args[4]]);
+  }
+  if (tool === 'timeout') {
+    if (args.length !== 6 || args[0] !== '--signal=TERM' || args[1] !== '--kill-after=30s'
+      || args[2] !== '15m' || args[3] !== 'docker' || args[4] !== 'push' || args[5] !== state.image) {
+      return reject('Timeout must supervise exactly one docker push and its image argument');
+    }
+    if (state.timeout) { process.exitCode = 124; return; }
+    const result = cp.spawnSync(process.execPath, [process.argv[1], 'docker', ...args.slice(4)], {
+      stdio: 'inherit', env: process.env,
+    });
+    if (result.error) throw result.error;
+    process.exitCode = result.status ?? 92;
+    return;
+  }
+  if (tool !== 'docker') return reject('Unexpected upload test tool');
+  if (args[0] === 'build') {
+    if (args.length !== 6 || args[1] !== '--platform' || args[2] !== 'linux/amd64'
+      || args[3] !== '--tag' || args[4] !== state.image || !args[5].replaceAll('\\', '/').endsWith('/frontend/trading-cockpit')) {
+      return reject('Unexpected selected-image build arguments');
+    }
+    return;
+  }
+  if (args.length !== 2 || args[0] !== 'push' || args[1] !== state.image) return reject('Unexpected docker push arguments');
+  process.stdout.write(state.output);
+  process.exitCode = state.pushExit;
+}
+
+function runPushBuild(options = {}) {
+  const name = 'push-build-' + (++sequence);
+  const image = registry + '/cockpit:diag-20261023.1_1';
+  const payload = [
+    '\u001b[2K\r111111aaaaaa: Waiting\r\n',
+    '\u001b[1A\u001b[2K\r111111aaaaaa: Pushing [>   ] 1MB/4MB\r',
+    '\u001b[1A\u001b[2K\r111111aaaaaa: Pushing [=>  ] 2MB/4MB\r',
+    '\u001b[1A\u001b[2K\r222222bbbbbb: Pushing [>   ] 1MB/8MB\r',
+    '\u001b[1A\u001b[2K\r222222bbbbbb: Pushing [=>  ] 2MB/8MB\r',
+    '\u001b[1A\u001b[2K\r111111aaaaaa: Pushed\r\n',
+    '222222bbbbbb: Layer already exists\r\n',
+    '333333cccccc: Pushing [>   ] 1MB/5MB\r',
+    '333333cccccc: Pushing [=>  ] 2MB/5MB\r',
+    'diag-20261023.1_1: digest: sha256:' + 'a'.repeat(64) + ' size: 1572\r\n',
+    ...(options.pushExit ? ['error: fixture connection reset by peer\r\n'] : []),
+  ].join('');
+  write(local(name + '/base.env'), manifest());
+  write(local(name + '/audit.jsonl'), '');
+  write(local(name + '/state.json'), JSON.stringify({ image, output: payload, pushExit: options.pushExit || 0, timeout: !!options.timeout }));
+  write(local(name + '/mock-tool.cjs'), '(' + mockPushTool.toString() + ')();\n');
+  for (const tool of ['docker', 'script', 'timeout']) {
+    write(local(name + '/bin/' + tool), '#!/usr/bin/env bash\nMSYS2_ARG_CONV_EXCL="*" exec "$TEST_NODE" "$TEST_PUSH_MOCK" ' + tool + ' "$@"\n');
+  }
+  const outputPath = local(name + '/output dir/release.env');
+  const result = cp.spawnSync(bash, ['-c',
+    'export PATH="$TEST_PUSH_BIN:/usr/bin:/bin"\nexec bash "$TEST_BUILD_SCRIPT" --registry "$TEST_REGISTRY" --tag diag-20261023.1_1 --base "$TEST_BASE" --output "$TEST_OUTPUT" --push cockpit',
+  ], {
+    env: {
+      ...process.env, TEST_NODE: nodePath, TEST_PUSH_BASH: bash,
+      TEST_PUSH_MOCK: local(name + '/mock-tool.cjs'), TEST_PUSH_STATE: local(name + '/state.json'),
+      TEST_PUSH_AUDIT: local(name + '/audit.jsonl'), TEST_PUSH_BIN: posix(name + '/bin'),
+      TEST_BUILD_SCRIPT: bashPath(buildImagesPath), TEST_REGISTRY: registry,
+      TEST_BASE: posix(name + '/base.env'), TEST_OUTPUT: posix(name + '/output dir/release.env'),
+      GITHUB_ACTIONS: options.actions === false ? 'false' : 'true',
+    },
+    encoding: 'utf8', timeout: 15_000,
+  });
+  if (result.error) throw result.error;
+  const calls = fs.readFileSync(local(name + '/audit.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+  return { ...result, calls, image, outputPath, diagnostic: result.stdout + result.stderr };
+}
+
+test('Actions push uses the pseudo-terminal and supervises only docker push with a 15 minute timeout', () => {
+  const result = runPushBuild();
+  assert.equal(result.status, 0, result.diagnostic);
+  assert.deepEqual(result.calls.map((call) => call.tool), ['docker', 'script', 'timeout', 'docker']);
+  assert.deepEqual(result.calls.at(-1).args, ['push', result.image]);
+  assert.deepEqual(result.calls.find((call) => call.tool === 'timeout').args,
+    ['--signal=TERM', '--kill-after=30s', '15m', 'docker', 'push', result.image]);
+  assert.ok(fs.readFileSync(result.outputPath, 'utf8').includes('COCKPIT_IMAGE=' + result.image));
+});
+
+test('Actions push strips terminal redraws and throttles progress while retaining final states and digest', () => {
+  const result = runPushBuild();
+  assert.equal(result.status, 0, result.diagnostic);
+  assert.ok(!result.stdout.includes('\u001b'), result.diagnostic);
+  assert.ok(!result.stdout.includes('\r'), result.diagnostic);
+  assert.equal(result.stdout.match(/111111aaaaaa: Pushing/g)?.length, 1, result.diagnostic);
+  assert.equal(result.stdout.match(/222222bbbbbb: Pushing/g)?.length, 1, result.diagnostic);
+  for (const state of ['111111aaaaaa: Waiting', '111111aaaaaa: Pushed', '222222bbbbbb: Layer already exists', 'digest: sha256:']) {
+    assert.ok(result.stdout.includes(state), result.diagnostic);
+  }
+  assert.ok(result.stdout.includes('Last observed progress: 333333cccccc: Pushing [=>  ] 2MB/5MB'), result.diagnostic);
+  assert.ok(!result.stdout.includes('Last observed progress: 111111aaaaaa'), result.diagnostic);
+});
+
+test('failed Actions push preserves its exit code and error without writing a release manifest', () => {
+  const result = runPushBuild({ pushExit: 7 });
+  assert.equal(result.status, 7, result.diagnostic);
+  assert.ok(result.stdout.includes('error: fixture connection reset by peer'), result.diagnostic);
+  assert.ok(!fs.existsSync(result.outputPath));
+});
+
+test('upload timeout preserves exit 124 and does not publish a successful release manifest', () => {
+  const result = runPushBuild({ timeout: true });
+  assert.equal(result.status, 124, result.diagnostic);
+  assert.ok(result.stderr.includes('15 minute limit'), result.diagnostic);
+  assert.ok(!fs.existsSync(result.outputPath));
+  assert.deepEqual(result.calls.filter((call) => call.tool === 'docker').map((call) => call.args[0]), ['build']);
+});
+
+test('a killed push preserves exit 137 without asserting that a timeout caused it', () => {
+  const result = runPushBuild({ pushExit: 137 });
+  assert.equal(result.status, 137, result.diagnostic);
+  assert.ok(result.stderr.includes('was killed (exit 137'), result.diagnostic);
+  assert.ok(!result.stderr.includes('exceeded the 15 minute limit'), result.diagnostic);
+  assert.ok(!fs.existsSync(result.outputPath));
+});
+
+test('non-Actions builds keep the original direct Docker push path and raw output', () => {
+  const result = runPushBuild({ actions: false });
+  assert.equal(result.status, 0, result.diagnostic);
+  assert.deepEqual(result.calls.map((call) => call.tool), ['docker', 'docker']);
+  assert.deepEqual(result.calls.at(-1).args, ['push', result.image]);
+  assert.equal(result.stdout.match(/111111aaaaaa: Pushing/g)?.length, 2);
+  assert.ok(result.stdout.includes('\u001b'));
+  assert.ok(fs.existsSync(result.outputPath));
+});
+
+test('the real progress filter streams its first update immediately and permits another after ten seconds', async () => {
+  const child = cp.spawn(bash, ['-c', filterDefinition + '\nfilter_push_progress'], {
+    env: { ...process.env, PATH: isWindows ? process.env.PATH : '/usr/bin:/bin' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  let firstOutput;
+  const streamed = new Promise((resolve) => { firstOutput = resolve; });
+  child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; firstOutput(); });
+  child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+  const completed = new Promise((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', (status) => status === 0 ? resolve() : reject(new Error(stderr + ' exit=' + status)));
+  });
+  const abort = setTimeout(() => { child.kill(); }, 17_000);
+  let firstOutputDeadline;
+  try {
+    child.stdin.write('\u001b[2K\r333333cccccc: Pushing 1MB/4MB\r');
+    await Promise.race([streamed, new Promise((_, reject) => {
+      firstOutputDeadline = setTimeout(() => reject(new Error('First progress update remained buffered')), 2000);
+    })]);
+    clearTimeout(firstOutputDeadline);
+    assert.ok(stdout.includes('333333cccccc: Pushing 1MB/4MB'), stdout + stderr);
+    child.stdin.write('333333cccccc: Pushing 2MB/4MB\r');
+    await new Promise((resolve) => setTimeout(resolve, 10_200));
+    child.stdin.end('333333cccccc: Pushing 3MB/4MB\r333333cccccc: Pushing 4MB/4MB\r333333cccccc: Pushed\n');
+    await completed;
+    assert.equal(stdout.match(/333333cccccc: Pushing/g)?.length, 2, stdout + stderr);
+    assert.ok(stdout.includes('333333cccccc: Pushed'), stdout + stderr);
+  } finally {
+    clearTimeout(firstOutputDeadline);
+    clearTimeout(abort);
+    if (child.exitCode === null) {
+      child.kill();
+      await completed.catch(() => {});
+    }
+  }
+});
+
 after(() => {
   // Verify the absolute target before recursively removing these owned fixtures.
   const resolved = fs.realpathSync(fixtureRoot);

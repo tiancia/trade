@@ -259,6 +259,8 @@ curl -fsS -u operator http://127.0.0.1:18080/api/automation/tasks
 
 除上述五项 SSH Secrets 外，再配置两项 Repository Secrets：`TCR_USERNAME`（复制个人版控制台登录指令中 `--username` 的值）和 `TCR_PASSWORD`（个人版初始化或重置的镜像仓库登录密码）。工作流在 runner 上明确检查两项都存在，再通过 `docker login --password-stdin` 登录。`GITHUB_TOKEN` 仅用于读取本仓库 Actions artifact 和代码，不需要 `packages: write` 权限。
 
+Actions 上传镜像时通过伪终端保留 Docker 的逐层字节进度，同一层最多每 10 秒打印一次上传进度，完成和错误即时输出。该进度是 Docker 报告的未压缩字节量，不能直接当作公网传输速率。每个镜像上传限时 15 分钟，超时终止上传并让本次构建失败，不生成成功镜像清单或进入部署；这只是上传时间预算，不能据此判定具体网络故障。本地运行仍沿用普通 `docker push`。
+
 勾选部署后，工作流仅经 SSH 上传完整镜像清单和本次清理脚本，由服务器登录 TCR、拉取选中服务镜像、重建并等待健康检查。TCR 用户名和密码通过 SSH 标准输入传入；服务器的 Docker 凭据写入独立临时目录，成功或失败退出都会清理，不覆盖服务器已有的 Docker 登录配置。`all` 仍使用 `release.sh` 的完整部署流程，拉取基础设施镜像并完成全部镜像检查后才切换容器。
 
 服务器 Docker daemon 的代理例外需覆盖 `ccr.ccs.tencentyun.com` 及实际镜像层重定向域名，并验证这些请求经腾讯云内网访问。仅在 shell 中设置代理、或仅看到仓库入口返回 `401`，不能证明 daemon 的镜像层路径和下载速度正常；实际域名、解析与链路应在服务器核验。
