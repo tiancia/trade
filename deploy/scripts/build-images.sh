@@ -73,20 +73,17 @@ push_image() {
     return
   fi
   command -v script >/dev/null || fail 'Actions image uploads require util-linux script'
-  command -v timeout >/dev/null || fail 'Actions image uploads require timeout'
   command -v stdbuf >/dev/null || fail 'Actions image uploads require stdbuf'
-  # A pseudo-terminal makes Docker emit byte progress. Run timeout inside it so
-  # it supervises docker directly, and preserve failure through both pipelines.
-  printf -v push_command 'timeout --signal=TERM --kill-after=30s 15m docker push %q' "$image"
-  printf 'Uploading %s (15 minute limit; layer progress at most every 10 seconds)\n' "$image"
+  # A pseudo-terminal makes Docker emit byte progress. The workflow's job timeout
+  # bounds the run; a slow first upload must not fail at an arbitrary shorter limit.
+  printf -v push_command 'docker push %q' "$image"
+  printf 'Uploading %s (layer progress at most every 10 seconds)\n' "$image"
   if script --quiet --return --flush --command "$push_command" /dev/null | filter_push_progress; then
     return 0
   else
     status=$?
-    if [[ $status == 124 ]]; then
-      printf 'Error: Image upload exceeded the 15 minute limit: %s\n' "$image" >&2
-    elif [[ $status == 137 ]]; then
-      printf 'Error: Image upload was killed (exit 137; upload limit is 15 minutes): %s\n' "$image" >&2
+    if [[ $status == 137 ]]; then
+      printf 'Error: Image upload was killed (exit 137): %s\n' "$image" >&2
     fi
     return "$status"
   fi
