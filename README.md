@@ -21,7 +21,7 @@ tools/polymarket/    Polymarket Python 工具：CLOB 下单桥接、凭证调试
 story/               AI 小说生成输出和素材，属于运行产物
 ```
 
-后端 Java 包也按“业务域 + 层职责”拆分。具体规则见 [backend/README.md](backend/README.md)。
+后端 Java 包也按“业务域 + 层职责”拆分。具体规则见 [后端架构说明](docs/backend/ARCHITECTURE.md)。
 
 Ubuntu 首次部署和后续迭代按 [生产部署说明](deploy/README.md) 操作。默认将后端和两个前端一起部署到国内服务器，通过电脑 SSH 隧道访问 `http://127.0.0.1:18080`（交易驾驶舱）和 `http://127.0.0.1:18081`（X 控制台），无需域名或 TLS 证书。原有 `compose.yaml` 继续用于本地基础服务；生产使用独立的 `compose.prod.yaml` 和 Linux 命名卷。后续需要公共 HTTPS 访问时再叠加 `compose.public.yaml`。
 

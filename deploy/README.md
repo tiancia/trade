@@ -116,7 +116,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File A:\trade\deploy\scripts\sync
 
 当前 PAPER 使用独立、持久化的模拟现金和持仓账本，决策只采集公共行情与产品规则，不读取真实账户余额、挂单和成交；三个 `OKX_*` 可以留空。LIVE 私有接口需要独立配置和验收凭据；只读检查仅开启 `Read`，关闭 `Trade` / `Withdraw`，绑定 IP 时使用实际出口德国 VPS 的公网 IP。权限说明参见 [OKX 官方文档](https://www.okx.com/docs-v5/en/#overview-api-key)。公共行情、PAPER 成功不代表 LIVE 私有接口可用；同时检查运行状态 `lastError` 和最新决策。模拟账本口径见 [策略参数版本与模拟资金](../docs/backend/TRADING_SIMULATION.md)。
 
-缺少 X 目标账号或必需的审核配置会拒绝启动；AI / X 凭据、账号权限和外部连接仍需运行验收，进程健康不代表这些已验证。现有数据库中已批准、未过期且审核有效的草稿可能在启动后的扫描中发布。不要让旧电脑进程和服务器同时消费同一个 Telegram Bot；迁移前停止旧的审核 / 生成 / 发布任务。X 控制台本身是只读页面，审核在 Telegram 完成，浏览器查询另需输入 X 管理令牌。
+缺少 X 目标账号或必需的审核配置会拒绝启动；AI / X 凭据、账号权限和外部连接仍需运行验收，进程健康不代表这些已验证。现有数据库中已批准、未过期且审核有效的草稿可能在启动后的扫描中发布。不要让旧电脑进程和服务器同时消费同一个 Telegram Bot；迁移前停止旧的审核 / 生成 / 发布任务。X 控制台本身是只读页面，审核在 Telegram 完成；浏览器访问使用前述网关账号密码。
 
 ## 2. 配置德国隧道和网关密码
 
@@ -267,23 +267,7 @@ Actions 上传镜像时通过伪终端保留 Docker 的逐层字节进度，同�
 
 服务器 Docker daemon 的代理例外需覆盖 `ccr.ccs.tencentyun.com` 及实际镜像层重定向域名，并验证这些请求经腾讯云内网访问。仅在 shell 中设置代理、或仅看到仓库入口返回 `401`，不能证明 daemon 的镜像层路径和下载速度正常；实际域名、解析与链路应在服务器核验。
 
-当前上海服务器已只读验证：TCR registry 解析到 `169.254.0.42`，官方公开镜像层重定向到 `ccr-sh-system-maz-1253687700.cos.ap-shanghai.myqcloud.com`、解析到 `169.254.0.47`，1 MiB Range 下载完整返回 `206`，约 0.12 秒。
-
-私有 cockpit 镜像的实际层地址另用 `ccr-avatar-sh-1258344699.cos-internal.ap-shanghai.tencentcos.cn`。它同样解析到 `169.254.0.47`；服务器直连其未签名入口约 0.028 秒返回 `403`，强制经现有代理则 8 秒无响应超时。`403` 只证明入口可达，不代表完整镜像拉取已经通过。此域名与公开层的 `cos.ap-shanghai.myqcloud.com` 不匹配，必须保留已有代理例外并追加实际私有层主机名；仅排除 registry 和公开层域名仍会导致私有层走代理。其他镜像若使用不同主机名，应以真实拉取日志为准核验并补充。
-
-当前服务器未开启 `live-restore`，重启 Docker 会中断运行中的容器。以下配置生效操作需在维护窗口执行；先重新核对 `docker info` 的现有 `No Proxy`，若已有值变化，应保留实际值再追加 TCR 域名。独立 override 只覆盖 `NO_PROXY`，不改原 `trade-proxy.conf`：
-
-```bash
-sudo install -d -m 0755 /etc/systemd/system/docker.service.d
-sudo tee /etc/systemd/system/docker.service.d/zz-tcr-no-proxy.conf >/dev/null <<'EOF'
-[Service]
-Environment="NO_PROXY=localhost,127.0.0.1,::1,ghcr.io,pkg-containers.githubusercontent.com,ccr.ccs.tencentyun.com,cos.ap-shanghai.myqcloud.com,ccr-avatar-sh-1258344699.cos-internal.ap-shanghai.tencentcos.cn"
-EOF
-sudo systemctl daemon-reload
-sudo systemctl restart docker
-docker info | grep -i proxy
-docker ps --format 'table {{.Names}}\t{{.Status}}'
-```
+调整 Docker daemon 的代理例外前，先核对 `docker info` 中现有 `No Proxy` 与 `live-restore` 状态，保留已有例外，再追加实际 registry 与镜像层重定向域名；不要照抄其他主机的 COS 域名或覆盖已有配置。未启用 `live-restore` 时，重启 Docker 会中断运行中的容器，应在维护窗口生效并核对容器状态。
 
 配置生效后以首次私有 TCR 镜像的真实 `docker pull` 和健康检查作为验收；公开层测速不等于私有仓库鉴权、推送和完整发布已经通过。
 

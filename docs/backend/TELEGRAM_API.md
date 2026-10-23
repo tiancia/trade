@@ -70,7 +70,6 @@ HTTP 非成功状态、Telegram `ok=false`、缺失或无法解析的结果均�
 
 Bot Token 位于 Telegram 请求 URL 路径中；客户端异常不暴露原始请求 URL、响应正文或底层异常链，描述中的 Token 会替换为 `***`。业务日志也不要输出 Token 或完整请求对象。回调应答仅确认已收到回调，不构成人工批准，详见 [官方 answerCallbackQuery 说明](https://core.telegram.org/bots/api#answercallbackquery)。
 
-## 验证边界
+## 实际接入检查
 
-离线测试使用 fake sender 验证请求、DTO、超时、异常和属性校验，不使用真实 Bot Token，不发送 Telegram 消息。
-实际调用前需在运行环境确认 Bot Token、网络/代理和目标聊天权限。协议客户端不拥有业务表，微博审核的迁移见[微博工作流](WEIBO_WORKFLOW.md)。
+调用前需在运行环境确认 Bot Token、网络/代理和目标聊天权限。协议客户端不拥有业务表，微博审核的迁移见 [微博工作流](WEIBO_WORKFLOW.md)。

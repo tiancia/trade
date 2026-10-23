@@ -1,6 +1,6 @@
 # 贡献指南
 
-本项目按“业务域优先、域内分层”的方式维护。全项目资料见 [文档总导航](../docs/README.md)；提交后端代码前请先阅读 [后端文档导航](../docs/backend/README.md) 和 [架构说明](../docs/backend/ARCHITECTURE.md)。以下文件路径在更新矩阵中按仓库根目录表示，Maven 命令仍从 `backend/` 执行。
+本项目按“业务域优先、域内分层”的方式维护。全项目资料见 [文档总导航](../docs/README.md)；提交后端代码前请先阅读 [模块目录](../docs/backend/MODULES.md) 和 [架构说明](../docs/backend/ARCHITECTURE.md)。以下文件路径在更新矩阵中按仓库根目录表示，Maven 命令仍从 `backend/` 执行。
 
 ## 开发流程
 

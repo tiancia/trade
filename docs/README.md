@@ -7,46 +7,14 @@
 | 现在要做什么 | 推荐顺序 |
 | --- | --- |
 | 第一次接手整个项目 | [项目 README](../README.md) → [架构与部署上手指南](PROJECT_GUIDE.md) |
-| 连接已运行的驾驶舱 / X 控制台 | [上手指南](PROJECT_GUIDE.md)第 7 节：SSH、网关、应用令牌与只读验收 |
+| 连接已运行的驾驶舱 / X 控制台 | [上手指南](PROJECT_GUIDE.md)第 7 节：SSH、网关认证与只读验收 |
 | 开发后端 | [后端 README](../backend/README.md) → [模块目录](backend/MODULES.md) → [架构说明](backend/ARCHITECTURE.md) → [贡献指南](../backend/CONTRIBUTING.md) |
 | 开发前端 | [交易驾驶舱 README](../frontend/trading-cockpit/README.md) 或 [X 控制台 README](../frontend/x-console/README.md) |
 | 部署、更新或回滚服务器 | [生产部署说明](../deploy/README.md)，配合 [上手指南](PROJECT_GUIDE.md)中的网络和配置说明 |
 | 日常运行与故障排查 | [后端运维手册](backend/OPERATIONS.md)；基础设施问题看 [部署说明](../deploy/README.md) |
 | 修改数据库 | [SQL 目录说明](../backend/src/main/resources/db/README.md) → [旧库升级说明](../backend/src/main/resources/db/upgrade/README.md) |
 
-## 目录怎么划分
-
-```text
-trade/
-├─ README.md                         项目介绍与入口
-├─ docs/
-│  ├─ README.md                      本页：全项目文档总导航
-│  ├─ PROJECT_GUIDE.md               三台机器、通信、总体架构和接手步骤
-│  └─ backend/
-│     ├─ README.md                   后端专题导航
-│     ├─ ARCHITECTURE.md             代码分层与依赖
-│     ├─ MODULES.md                  模块职责和调用入口
-│     ├─ OPERATIONS.md               应用启停、门禁和业务排障
-│     ├─ OBSERVABILITY.md            指标、看板和告警
-│     ├─ *_API.md / *_WORKFLOW.md    外部协议与业务流程
-│     ├─ TRADING_BACKTEST.md         回测接口及统计口径
-│     └─ TRADING_SIMULATION.md       策略配置版本与模拟资金契约
-├─ deploy/
-│  ├─ README.md                      生产部署步骤与目录说明
-│  ├─ scripts/                       构建、配置同步、发布和回滚脚本
-│  ├─ egress/                        德国 VPS 出站隧道容器
-│  ├─ nginx/                         网关与 API 转发配置
-│  ├─ prometheus/                    生产监控抓取配置
-│  └─ *.example                      运行配置模板
-├─ backend/
-│  ├─ README.md / CONTRIBUTING.md     后端启动和开发约定
-│  ├─ AGENTS.md                      AI 修改 backend 的约束
-│  ├─ infrastructure/README.md       本地中间件使用说明
-│  └─ src/main/resources/db/         SQL 文件及就近维护说明
-└─ frontend/<应用>/README.md          各前端组件的使用说明
-```
-
-`deploy` 是 deployment 的缩写：它提供“怎么把项目运行到服务器上”的配置和工具，不是另一套业务后端。文档路径调整不改变源码、容器服务名或命令工作目录；Maven 命令仍从 `backend/` 执行，生产 Compose 命令从仓库根目录（服务器通常为 `/opt/trade`）执行。
+仓库目录见 [项目 README](../README.md)。Maven 命令从 `backend/` 执行，生产 Compose 命令从仓库根目录（服务器通常为 `/opt/trade`）执行；具体字段、方法和默认值以当前代码、Properties 类及测试为准。
 
 ## 文档清单
 
@@ -65,8 +33,7 @@ trade/
 
 | 文档 | 回答什么 |
 | --- | --- |
-| [后端 README](../backend/README.md) | 后端能力、启动、测试与源码布局 |
-| [后端文档导航](backend/README.md) | 后端专题的阅读路线与职责边界 |
+| [后端 README](../backend/README.md) | 后端定位、启动、测试与专题入口 |
 | [模块目录](backend/MODULES.md) | 一个功能属于哪个业务域，从哪个类进入 |
 | [架构说明](backend/ARCHITECTURE.md) | 四层职责、依赖方向和典型调用链 |
 | [贡献指南](../backend/CONTRIBUTING.md) | 开发、数据库变更、测试与评审约定 |
@@ -92,7 +59,7 @@ trade/
 | 组件 | 入口与范围 |
 | --- | --- |
 | 交易驾驶舱 | [README](../frontend/trading-cockpit/README.md)：本地开发、SSE、策略操作、回测及 Node SSR |
-| X 控制台 | [README](../frontend/x-console/README.md)：只读列表、详情、状态与管理令牌 |
+| X 控制台 | [README](../frontend/x-console/README.md)：只读列表、详情、状态与网关访问 |
 | 文字游戏 | 尚无独立 README；开发脚本见 [package.json](../frontend/text-game/package.json)，后端归属见模块目录 |
 | 集市 | 尚无独立 README；开发脚本见 [package.json](../frontend/market/package.json)，后端归属见模块目录 |
 

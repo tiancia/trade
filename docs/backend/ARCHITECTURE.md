@@ -208,10 +208,9 @@ X 的 `application/service/XPostService` 编排配置驱动的 AI 草稿、Teleg
 ## 6. 验证与资源约定
 
 - 生产代码和测试包路径镜像，移动类型必须同步移动测试并运行 `clean test`。
-- MyBatis XML 保留 `src/main/resources/mapper/<module>/`，同步更新 namespace/resultType/parameterType。数据库表和手工迁移脚本不因搬包而改变。
-- 数据库完整结构按模块保存于 `db/schema/<module>/schema.sql`，`application.yml` 的 `spring.sql.init.schema-locations` 显式列出启动顺序；存量升级使用手工 `db/upgrade/<module>/`。SQL 目录调整不改变表结构、业务配置键或默认开关，详见 [数据库目录](../../backend/src/main/resources/db/README.md)。
+- MyBatis XML 保留 `src/main/resources/mapper/<module>/`，同步更新 namespace/resultType/parameterType。
+- 数据库完整结构按模块保存于 `db/schema/<module>/schema.sql`，`application.yml` 的 `spring.sql.init.schema-locations` 显式列出启动顺序；存量升级使用手工 `db/upgrade/<module>/`。详见 [数据库目录](../../backend/src/main/resources/db/README.md)。
 - `PackageArchitectureTest` 检查包与路径、四层入口、业务域隔离、共享模块依赖方向、Web 不引用持久化、内层不依赖接口入口、port 不依赖实现、领域类型不依赖外层，以及 Mapper XML 中类名可解析。
 - domain 不允许引用 provider DTO；应用层采集与执行契约可以保留供应商协议，在调用纯规则前转换。结构规则不得通过放宽限制来掩盖错误归层。
 - 新增边界检查禁止 domain 引入 Spring/MyBatis/SQL 框架，禁止 Trading 的 application/interfaces 直接依赖已抽象的四类状态/行情/事件实现。
 - 历史行情也通过 `application/port/HistoricalCandleSource` 注入回测用例，由 `HistoricalCandleService` 实现；架构测试禁止用例与 HTTP 层直接依赖该实现。实时 Broker 仅路由 PAPER/LIVE，BACKTEST 必须走独立回测 API。
-- Java 全限定名改变，仓库外 Java 调用方需更新 import；HTTP 调用方和数据库无需因此迁移。订单/持仓不再提供 setter，直接使用这些 Java 类型的调用方需改用领域方法；MyBatis 订单映射已同步改为持久化 Row，无需数据库迁移。
