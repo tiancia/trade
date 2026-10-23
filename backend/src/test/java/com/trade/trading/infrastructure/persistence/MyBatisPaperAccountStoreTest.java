@@ -238,6 +238,57 @@ class MyBatisPaperAccountStoreTest {
         verifyNoInteractions(legacy);
     }
 
+    @Test void confirmedSignalsReplayAcrossConcurrentServiceInstancesAndSizeChangesButNotNewTrials() throws Exception {
+        TradingProperties props = new TradingProperties();
+        PaperAccount original = start("100");
+        PaperAccountService firstService = new PaperAccountService(store, props, Clock.fixed(NOW, ZoneOffset.UTC));
+        PaperAccountService secondService = new PaperAccountService(store, props, Clock.fixed(NOW, ZoneOffset.UTC));
+        TradingDecisionContext firstContext = firstService.enrichContext(context());
+        TradingDecisionContext secondContext = secondService.enrichContext(context());
+        TradingDecisionRecord firstRecord = signalRecord("random-one", 1L);
+        TradingDecisionRecord secondRecord = signalRecord("random-two", 2L);
+        CountDownLatch gate = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var first = pool.submit(() -> { gate.await(); return firstService.fill(firstContext, firstRecord, "BUY", BigDecimal.TEN); });
+            var second = pool.submit(() -> { gate.await(); return secondService.fill(secondContext, secondRecord, "BUY", BigDecimal.TEN); });
+            gate.countDown();
+            var firstFill = first.get(); var secondFill = second.get();
+            assertNotEquals(firstFill.replay(), secondFill.replay());
+            assertEquals(firstFill.fill().decisionId(), secondFill.fill().decisionId());
+        }
+        assertEquals(firstRecord.getDecisionId(), secondRecord.getDecisionId());
+        assertEquals(64, firstRecord.getDecisionId().length());
+        assertEquals(1, store.fills("BTC-USDT", original.sessionId(), null, 100).size());
+        assertEquals(1, store.active("BTC-USDT").version());
+        decimal("90", store.active("BTC-USDT").cash());
+
+        // A fresh service and changed parameters cannot spend the same signal again.
+        PaperAccountService restarted = new PaperAccountService(store, props, Clock.fixed(NOW, ZoneOffset.UTC));
+        TradingDecisionRecord resized = signalRecord("random-three", 3L);
+        var replay = restarted.fill(restarted.enrichContext(context()), resized, "BUY", new BigDecimal("20"));
+        assertTrue(replay.replay());
+        assertEquals(firstRecord.getDecisionId(), resized.getDecisionId());
+        decimal("10", replay.fill().requestedSize());
+        decimal("90", store.active("BTC-USDT").cash());
+
+        // A replacement PAPER trial is an independent experiment with its own ledger identity.
+        PaperAccount current = store.active("BTC-USDT");
+        PaperAccount replacement = store.start("BTC-USDT", "USDT", new BigDecimal("100"),
+                current.sessionId(), current.version(), NOW);
+        TradingDecisionRecord newTrial = signalRecord("random-four", 3L);
+        var independent = restarted.fill(restarted.enrichContext(context()), newTrial, "BUY", BigDecimal.TEN);
+        assertFalse(independent.replay());
+        assertNotEquals(firstRecord.getDecisionId(), newTrial.getDecisionId());
+        assertEquals(1, store.fills("BTC-USDT", replacement.sessionId(), null, 100).size());
+        assertEquals(1, store.fills("BTC-USDT", original.sessionId(), null, 100).size());
+    }
+
+    private static TradingDecisionRecord signalRecord(String decisionId, long configVersion) {
+        return new TradingDecisionRecord().setDecisionId(decisionId).setStrategyId("intraday-15m")
+                .setStrategyConfigVersion(configVersion).setStrategyConfigSnapshot(Map.of("buy-quote-amount", configVersion * 10))
+                .setMetadata(Map.of("signalBar", "15m", "signalCandleTs", NOW.minusSeconds(900).toEpochMilli()));
+    }
+
     private PaperAccount start(String cash) { return store.start("BTC-USDT", "USDT", new BigDecimal(cash), null, null, NOW); }
     private PaperAccountStore.FillCommand command(PaperAccount a, String decisionId, String side, String size, String price, String fee) {
         return new PaperAccountStore.FillCommand("BTC-USDT", a.sessionId(), a.version(), decisionId, "threshold", 1,

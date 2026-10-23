@@ -628,7 +628,48 @@ trade:
           volume-lookback-candles: 12
           # 是否只使用已确认收盘的 K 线。
           require-confirmed-candle: true
-    # 本轮常规策略评估结束后等待的毫秒数；1800000 = 30 分钟。
+      # 15m 日内候选：与旧实例并存，不自动切换当前活动策略。
+      # 未列出的指标周期默认 EMA9/21、RSI/ATR/ADX14、布林/突破/均量20。
+      - id: intraday-trend-15m
+        type: intraday-technical
+        enabled: true
+        bar: 15m
+        params:
+          mode: TREND_PULLBACK
+          trend-min-adx: "18"
+          entry-rsi-min: "45"
+          entry-rsi-max: "68"
+          min-volume-ratio: "1"
+          stop-loss-percent: "0.006"
+          take-profit-percent: "0.018"
+          buy-quote-amount: "10"
+      - id: intraday-breakout-15m
+        type: intraday-technical
+        enabled: true
+        bar: 15m
+        params:
+          mode: VOLUME_BREAKOUT
+          trend-min-adx: "20"
+          entry-rsi-min: "50"
+          entry-rsi-max: "72"
+          min-volume-ratio: "1.3"
+          stop-loss-percent: "0.006"
+          take-profit-percent: "0.018"
+          buy-quote-amount: "10"
+      - id: intraday-range-15m
+        type: intraday-technical
+        enabled: true
+        bar: 15m
+        params:
+          mode: RANGE_REVERSION
+          range-max-adx: "20"
+          entry-rsi-min: "20"
+          entry-rsi-max: "45"
+          min-volume-ratio: "0.8"
+          stop-loss-percent: "0.004"
+          take-profit-percent: "0.012"
+          buy-quote-amount: "10"
+    # 旧策略常规评估间隔；新15m策略额外使用每分钟event-scan，不依赖旧价量事件。
     decision-fixed-delay-ms: 1800000
     # 本轮市场事件扫描结束后等待的毫秒数；60000 = 1 分钟。
     event-scan-fixed-delay-ms: 60000
@@ -643,7 +684,7 @@ trade:
       enabled: ${TRADE_TRADING_WEBSOCKET_ENABLED:true}
       # 超过该时间无有效更新即回退 REST；同时检查最新 K 线是否属于当前周期。
       stale-timeout-ms: ${TRADE_TRADING_WEBSOCKET_STALE_TIMEOUT_MS:30000}
-      # 本地保留的 1 分钟 K 线缓存数量，用于事件检测。
+      # 每种订阅周期在本地保留的 K 线缓存数量。
       candle-cache-limit: 100
     # REST/WebSocket 行情生产者与事件消费者共享的有界队列。
     event-queue:
@@ -705,6 +746,8 @@ trade:
     # one-minute-candle-limit: 25
     # 下单前采集的 5 分钟 K 线数量。
     # five-minute-candle-limit: 24
+    # 下单前采集的 15 分钟 K 线数量，包含指标预热窗口。
+    fifteen-minute-candle-limit: ${TRADE_TRADING_FIFTEEN_MINUTE_CANDLE_LIMIT:200}
     # 下单前采集的近期订单数量。
     # recent-order-limit: 10
     # 下单前采集的近期成交数量。

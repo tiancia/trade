@@ -6,6 +6,9 @@ import com.trade.trading.domain.order.OrderFill;
 import com.trade.trading.domain.order.OrderReservation;
 import com.trade.trading.domain.order.OrderStatus;
 import com.trade.trading.domain.order.OrderSubmission;
+import com.trade.trading.domain.order.OrderIdentity;
+import com.trade.trading.domain.model.StrategyDecision;
+import com.trade.trading.domain.model.TradingAction;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.ibatis.session.SqlSessionFactory;
@@ -25,11 +28,13 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 import java.math.BigDecimal;
+import java.util.Map;
 import javax.sql.DataSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @SpringJUnitConfig(MyBatisTradingOrderRepositoryTest.PersistenceTestConfiguration.class)
 @Sql(statements = {
@@ -93,6 +98,32 @@ class MyBatisTradingOrderRepositoryTest {
         assertEquals(1, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_orders", Integer.class));
         assertEquals(3, jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM okx_order_status_history", Integer.class));
+    }
+
+    @Test
+    void confirmedSignalLedgerRetainsOriginalParametersAndRejectsChangedReservationSize() {
+        var identity = new OrderIdentity();
+        var decision = new StrategyDecision().setStrategyId("intraday-15m").setAction(TradingAction.BUY)
+                .setBuyQuoteAmount(BigDecimal.TEN)
+                .setMetadata(Map.of("signalBar", "15m", "signalCandleTs", 1700000000000L));
+        String key = identity.create("BTC-USDT", decision, null, "10");
+        String clientOrderId = identity.clientOrderId(key, "BUY");
+        var first = lifecycleService.reserve(new OrderSubmission(key, clientOrderId, "random-one", "intraday-15m",
+                "BTC-USDT", "BUY", "buy", "cash", "market", "quote_ccy", BigDecimal.TEN));
+        lifecycleService.markFilled(key, "exchange-one", new OrderFill(new BigDecimal("0.001"),
+                new BigDecimal("10000"), BigDecimal.ZERO, "USDT"));
+
+        decision.setBuyQuoteAmount(new BigDecimal("20"));
+        String resizedKey = new OrderIdentity().create("BTC-USDT", decision, null, "20");
+        assertThrows(IllegalStateException.class, () -> lifecycleService.reserve(new OrderSubmission(resizedKey,
+                clientOrderId, "random-two", "intraday-15m", "BTC-USDT", "BUY", "buy", "cash", "market",
+                "quote_ccy", new BigDecimal("20"))));
+
+        assertTrue(first.acquired());
+        assertEquals(key, resizedKey);
+        assertEquals(OrderStatus.FILLED, lifecycleService.find(key).orElseThrow().getStatus());
+        assertEquals(1, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_orders", Integer.class));
+        assertEquals(0, BigDecimal.TEN.compareTo(jdbcTemplate.queryForObject("SELECT requested_size FROM okx_orders", BigDecimal.class)));
     }
 
     /** Focused MyBatis slice for the order ledger and its transaction boundary. */

@@ -68,6 +68,38 @@ class StrategyConfigurationPersistenceTest {
     @TempDir Path temporary;
 
     @Test
+    void intradayConfigurationPersistsFullParametersAndRejectsInvalidCandidates() {
+        TradingProperties properties = new TradingProperties();
+        var instance = new TradingProperties.StrategyInstanceProperties();
+        instance.setId("intraday");
+        instance.setType("intraday-technical");
+        instance.setBar("15m");
+        instance.setEnabled(true);
+        properties.setStrategies(List.of(instance));
+        var strategy = new com.trade.trading.application.strategy.IntradayTechnicalStrategy();
+        TradingStrategyRegistry registry = new TradingStrategyRegistry(List.of(strategy), properties, store);
+        var initial = registry.configuration("intraday");
+        assertEquals(23, initial.params().size());
+        Map<String, Object> params = new LinkedHashMap<>(initial.params());
+        params.put("mode", "VOLUME_BREAKOUT");
+        params.put("entry-rsi-max", "72.123456789012345678");
+        var updated = registry.updateConfiguration("intraday", initial.version(), "candidate for independent validation", params);
+        assertEquals(2, updated.version());
+        var restarted = new TradingStrategyRegistry(List.of(strategy), properties, store);
+        assertEquals("VOLUME_BREAKOUT", restarted.configuration("intraday").params().get("mode"));
+        assertEquals("VOLUME_BREAKOUT", restarted.strategySummaries().getFirst().getParams().get("mode"));
+        assertEquals(23, restarted.strategySummaries().getFirst().getParams().size());
+        assertDecimal("72.123456789012345678", restarted.configuration("intraday").params().get("entry-rsi-max"));
+        assertThrows(ConcurrentModificationException.class, () -> restarted.updateConfiguration("intraday", 1L, "stale", params));
+        params.put("rsi-period", 2.5);
+        assertThrows(IllegalArgumentException.class, () -> registry.updateConfiguration("intraday", 2L, "invalid period", params));
+        params.put("rsi-period", 14);
+        params.remove("mode");
+        assertThrows(IllegalArgumentException.class, () -> registry.updateConfiguration("intraday", 2L, "missing key", params));
+        assertEquals(2, registry.configurationHistory("intraday").size());
+    }
+
+    @Test
     void materializesEffectiveDefaultsAndRetainsVersionsAcrossRegistryRestart() {
         TradingProperties properties = new TradingProperties();
         properties.setPriceMoveTriggerPercent(new BigDecimal("0.037"));

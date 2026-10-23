@@ -8,6 +8,7 @@ import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.common.support.TradingMath;
 import com.trade.trading.application.strategy.ConfiguredTradingStrategy;
+import com.trade.trading.application.strategy.IntradayTechnicalStrategy;
 import com.trade.trading.application.strategy.StrategyEvaluationContext;
 import com.trade.trading.application.strategy.TradingStrategyRegistry;
 import com.trade.trading.domain.backtest.BacktestEquityPoint;
@@ -25,6 +26,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -117,6 +120,13 @@ public class BacktestService {
                     ),
                     request
             );
+            if (IntradayTechnicalStrategy.TYPE.equals(configured.type())) {
+                for (int i = 1; i < candles.size(); i++) {
+                    if (candleTime(candles.get(i)).toEpochMilli() - candleTime(candles.get(i - 1)).toEpochMilli() != 900_000L) {
+                        throw new IllegalArgumentException("15m historical data contains gaps; next-open fills cannot be simulated");
+                    }
+                }
+            }
             run.setCandleCount(candles.size())
                     .setProcessedCandleCount(1)
                     .setFirstCandleAt(candleTime(candles.getFirst()))
@@ -137,11 +147,14 @@ public class BacktestService {
                 CandleResp fillCandle = candles.get(i + 1);
                 List<CandleResp> windowNewestFirst = new ArrayList<>(candles.subList(0, i + 1));
                 Collections.reverse(windowNewestFirst);
-                Instant evaluatedAt = candleTime(signalCandle);
+                Instant evaluatedAt = IntradayTechnicalStrategy.TYPE.equals(configured.type())
+                        ? candleTime(signalCandle).plusSeconds(15 * 60L)
+                        : candleTime(signalCandle);
                 TradingDecisionContext decisionContext = context(
                         broker,
                         signalCandle,
                         windowNewestFirst,
+                        request.getBar(),
                         evaluatedAt
                 );
                 StrategyDecision decision = evaluate(configured, request, decisionContext, evaluatedAt);
@@ -171,6 +184,7 @@ public class BacktestService {
                     .setEquityCurve(completedCurve)
                     .setTradeCount(trades.size())
                     .setClosedTradeCount(statistics.closedTrades())
+                    .setClosedTradesPerDay(closedTradesPerDay(statistics.closedTrades(), request))
                     .setWinningTradeCount(statistics.wins())
                     .setLosingTradeCount(statistics.losses())
                     .setFinalEquity(finalEquity)
@@ -206,6 +220,8 @@ public class BacktestService {
                 .setBar(request.getBar())
                 .setMarketContext(decisionContext)
                 .setProperties(properties)
+                .setEvaluationFeeRate(request.getFeeRate())
+                .setEvaluationSlippageRate(request.getSlippageRate())
                 .setEvaluatedAt(evaluatedAt), configured.config());
     }
 
@@ -213,6 +229,7 @@ public class BacktestService {
             SimulatedPortfolio broker,
             CandleResp signalCandle,
             List<CandleResp> windowNewestFirst,
+            String bar,
             Instant evaluatedAt
     ) {
         BigDecimal close = price(signalCandle.getClose(), "close", signalCandle);
@@ -240,8 +257,9 @@ public class BacktestService {
                 .setAccountBalance(account)
                 .setBaseBalance(base)
                 .setQuoteBalance(quote)
-                .setOneMinuteCandles(windowNewestFirst)
-                .setFiveMinuteCandles(windowNewestFirst)
+                .setOneMinuteCandles("1m".equalsIgnoreCase(bar) ? windowNewestFirst : List.of())
+                .setFiveMinuteCandles("5m".equalsIgnoreCase(bar) ? windowNewestFirst : List.of())
+                .setFifteenMinuteCandles("15m".equalsIgnoreCase(bar) ? windowNewestFirst : List.of())
                 .setTradingState(state);
     }
 
@@ -251,7 +269,23 @@ public class BacktestService {
                 : Collections.unmodifiableMap(new LinkedHashMap<>(source.getParameterOverrides()));
         ConfiguredTradingStrategy<?> configured = strategyRegistry.configuredStrategy(strategyId, overrides);
         BacktestRequest normalized = BacktestPolicy.normalize(source, strategyId, properties.getInstId(), configured.bar(), overrides);
+        if (IntradayTechnicalStrategy.TYPE.equals(configured.type())) {
+            if (!"15m".equals(normalized.getBar())) {
+                throw new IllegalArgumentException("Intraday technical backtests require bar=15m");
+            }
+            if (normalized.isIncludeUnconfirmed()) {
+                throw new IllegalArgumentException("Intraday technical backtests require includeUnconfirmed=false");
+            }
+        }
         return new PreparedBacktest(normalized, configured);
+    }
+
+    private static BigDecimal closedTradesPerDay(int closedTrades, BacktestRequest request) {
+        Duration duration = Duration.between(request.getFrom(), request.getTo());
+        BigDecimal seconds = BigDecimal.valueOf(duration.getSeconds())
+                .add(BigDecimal.valueOf(duration.getNano(), 9));
+        return BigDecimal.valueOf(closedTrades).multiply(BigDecimal.valueOf(86_400))
+                .divide(seconds, 10, RoundingMode.HALF_UP);
     }
 
     private static List<CandleResp> usableCandles(List<CandleResp> source, BacktestRequest request) {

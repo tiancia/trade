@@ -241,6 +241,17 @@ public class LiveOrderExecutionService {
                 decision.getAction().name()
         );
         request.setClOrdId(clientOrderId);
+        if (decision.getMetadata() != null && decision.getMetadata().containsKey("signalBar")) {
+            Optional<TradingOrder> existing = orderLifecycleService.find(idempotencyKey);
+            if (existing.isPresent() && existing.get().getStatus() != OrderStatus.PENDING_SUBMIT) {
+                // A signal owns its first reserved order, including its original
+                // size. Replays must not propose new parameters to that ledger row.
+                record.setOrderSize(existing.get().getRequestedSize().stripTrailingZeros().toPlainString());
+                applyOrder(record, existing.get(), true);
+                reconcileReplay(record, existing.get());
+                return;
+            }
+        }
         OrderSubmission submission = new OrderSubmission(
                 idempotencyKey,
                 clientOrderId,

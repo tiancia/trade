@@ -82,7 +82,14 @@ public class TradingStrategyRegistry {
 
     public List<TradingProperties.StrategyInstanceProperties> strategySummaries() {
         List<TradingProperties.StrategyInstanceProperties> configured = properties.getStrategies();
-        return configured == null ? List.of() : configured;
+        if (configured == null || configured.isEmpty()) return List.of();
+        Map<String, TradingProperties.StrategyInstanceProperties> effective = configuredStrategies().stream()
+                .collect(Collectors.toMap(ConfiguredTradingStrategy::id, ConfiguredTradingStrategy::source));
+        return configured.stream().map(item -> {
+            if (item == null || !item.isEnabled()) return item;
+            String id = item.getId() == null || item.getId().isBlank() ? item.getType() : item.getId();
+            return effective.getOrDefault(id, item);
+        }).toList();
     }
 
     public ConfiguredTradingStrategy<?> configuredStrategy(String strategyId) {
@@ -148,10 +155,12 @@ public class TradingStrategyRegistry {
             throw new IllegalArgumentException("reason is required and must not exceed 1000 characters");
         }
         ConfiguredTradingStrategy<?> configured = configuredStrategy(strategyId);
-        if (!ThresholdEventStrategy.TYPE.equals(normalize(configured.type()))) {
+        boolean intraday = IntradayTechnicalStrategy.TYPE.equals(normalize(configured.type()));
+        if (!intraday && !ThresholdEventStrategy.TYPE.equals(normalize(configured.type()))) {
             throw new IllegalArgumentException("Runtime parameter editing is unavailable for this strategy type");
         }
-        Map<String, Object> validated = validateParameters(params, configured.bar());
+        Map<String, Object> validated = intraday ? validateIntradayParameters(params, configured.bar(), true)
+                : validateParameters(params, configured.bar());
         StrategyConfigurationVersion next = new StrategyConfigurationVersion(
                 configured.id(), configured.type(), configured.bar(), expectedVersion + 1,
                 Instant.now().toString(), reason.trim(), validated);
@@ -188,6 +197,12 @@ public class TradingStrategyRegistry {
 
     @SuppressWarnings({"unchecked", "rawtypes"})
     private StrategyConfigurationVersion baseline(TradingProperties.StrategyInstanceProperties item, TradingStrategy strategy) {
+        if (IntradayTechnicalStrategy.TYPE.equals(normalize(strategy.type()))) {
+            Map<String, Object> params = validateIntradayParameters(item.getParams(), item.getBar(), false);
+            String id = item.getId() == null || item.getId().isBlank() ? item.getType() : item.getId();
+            return new StrategyConfigurationVersion(id, item.getType(), "15m", 1,
+                    Instant.now().toString(), "Deployment candidate configuration; validate out of sample before adoption", params);
+        }
         StrategyConfig raw = (StrategyConfig) objectMapper.convertValue(
                 item.getParams() == null ? Map.of() : item.getParams(), strategy.configType());
         Map<String, Object> params;
@@ -236,10 +251,62 @@ public class TradingStrategyRegistry {
             throw new IllegalArgumentException("require-confirmed-candle must be a boolean");
         }
         result.put("require-confirmed-candle", confirmed);
-        int collected = "5m".equalsIgnoreCase(bar) ? properties.getFiveMinuteCandleLimit() : properties.getOneMinuteCandleLimit();
+        int collected = switch (bar.toLowerCase(Locale.ROOT)) {
+            case "1m" -> properties.getOneMinuteCandleLimit();
+            case "5m" -> properties.getFiveMinuteCandleLimit();
+            case "15m" -> properties.getFifteenMinuteCandleLimit();
+            default -> throw new IllegalArgumentException("Unsupported decision candle bar: " + bar);
+        };
         int usable = Math.min(1000, collected) - (Boolean.TRUE.equals(confirmed) ? 1 : 0);
         result.put("price-move-window-candles", integer(params, "price-move-window-candles", 2, usable));
         result.put("volume-lookback-candles", integer(params, "volume-lookback-candles", 1, usable - 1));
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> validateIntradayParameters(Map<String, Object> input, String bar, boolean complete) {
+        if (!"15m".equals(bar)) throw new IllegalArgumentException("intraday-technical requires bar=15m");
+        Map<String, Object> defaults = objectMapper.convertValue(new IntradayTechnicalStrategyConfig(), Map.class);
+        Map<String, Object> supplied = input == null ? Map.of() : input;
+        if (!defaults.keySet().containsAll(supplied.keySet()) || (complete && !supplied.keySet().equals(defaults.keySet()))) {
+            throw new IllegalArgumentException("params must use the supported intraday parameter keys: " + defaults.keySet());
+        }
+        Map<String, Object> result = new LinkedHashMap<>(defaults);
+        result.putAll(supplied);
+        for (String key : List.of("ema-fast-period", "ema-slow-period", "rsi-period", "atr-period", "adx-period",
+                "bollinger-period", "breakout-period", "volume-period")) {
+            result.put(key, integer(result, key, 2, 100));
+        }
+        for (String key : List.of("bollinger-deviations", "trend-min-adx", "range-max-adx", "entry-rsi-min", "entry-rsi-max",
+                "min-volume-ratio", "max-entry-extension-atr", "buy-quote-amount")) {
+            result.put(key, decimal(result, key, key.equals("buy-quote-amount") ? new BigDecimal("1000000000000000")
+                    : key.equals("bollinger-deviations") ? new BigDecimal("5") : new BigDecimal("100"), false));
+        }
+        for (String key : List.of("min-atr-percent", "max-atr-percent", "stop-loss-percent", "take-profit-percent", "min-net-reward-percent")) {
+            result.put(key, decimal(result, key, new BigDecimal("0.5"), false));
+        }
+        // Zero slippage is a valid explicit assumption, with strict numeric parsing.
+        Object slippage = result.get("estimated-slippage-rate");
+        if ((slippage instanceof Number || slippage instanceof String) && slippage.toString().length() <= 100) {
+            try {
+                BigDecimal value = new BigDecimal(slippage.toString());
+                if (value.signum() < 0 || value.compareTo(new BigDecimal("0.1")) > 0 || value.scale() > 18) throw new NumberFormatException();
+                result.put("estimated-slippage-rate", value);
+            } catch (NumberFormatException e) { throw new IllegalArgumentException("estimated-slippage-rate must be between 0 and 0.1"); }
+        } else throw new IllegalArgumentException("estimated-slippage-rate must be numeric");
+        if (!(result.get("mode") instanceof String mode)) throw new IllegalArgumentException("mode must be a supported setup name");
+        try { com.trade.trading.domain.strategy.IntradayTechnicalPolicy.Mode.valueOf(mode); }
+        catch (IllegalArgumentException e) { throw new IllegalArgumentException("Unsupported intraday mode: " + mode); }
+        IntradayTechnicalStrategyConfig config = objectMapper.convertValue(result, IntradayTechnicalStrategyConfig.class);
+        if (config.getEmaFastPeriod() >= config.getEmaSlowPeriod()
+                || config.getEntryRsiMin().compareTo(config.getEntryRsiMax()) >= 0
+                || config.getMinAtrPercent().compareTo(config.getMaxAtrPercent()) >= 0
+                || config.getTakeProfitPercent().compareTo(config.getStopLossPercent()) <= 0) {
+            throw new IllegalArgumentException("Require fast EMA < slow EMA, RSI min < max, ATR min < max, target > stop");
+        }
+        if (config.warmupCandles() > properties.getFifteenMinuteCandleLimit() - 1) {
+            throw new IllegalArgumentException("Indicator warmup exceeds confirmed 15m candle collection capacity");
+        }
         return result;
     }
 

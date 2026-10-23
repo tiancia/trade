@@ -61,6 +61,12 @@ public class TradingStrategyEngine {
     private volatile Instant lastRunStartedAt;
     private volatile Instant lastRunCompletedAt;
 
+    /** Intraday signals must be inspected even when legacy one-minute event thresholds are quiet. */
+    public boolean isIntradayStrategyActive() {
+        return strategySelectionService.activeStrategies().stream()
+                .anyMatch(s -> IntradayTechnicalStrategy.TYPE.equals(s.type()));
+    }
+
     public TradingStrategyEngine(
             TradingMarketSource contextCollector,
             TradingStrategySelectionService strategySelectionService,

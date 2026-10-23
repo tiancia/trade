@@ -14,6 +14,7 @@ import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.domain.paper.PaperAccount;
 import com.trade.trading.domain.paper.PaperEquityPoint;
 import com.trade.trading.domain.paper.PaperFill;
+import com.trade.trading.domain.order.OrderIdentity;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -97,6 +98,10 @@ public class PaperAccountService {
         String snapshot;
         try { snapshot = json.writeValueAsString(record.getStrategyConfigSnapshot()); }
         catch (JsonProcessingException e) { throw new IllegalStateException("Cannot serialize strategy snapshot", e); }
+        // The fill table already has a UNIQUE decision_id. Stable signal IDs
+        // survive retries/restarts and do not depend on mutable order sizing.
+        record.setDecisionId(new OrderIdentity().paperDecisionId(properties.getInstId(), context.getPaperSessionId(),
+                record.getStrategyId(), side, record.getMetadata(), record.getDecisionId()));
         var result = store.fill(new PaperAccountStore.FillCommand(properties.getInstId(), context.getPaperSessionId(),
                 context.getPaperSessionVersion(), record.getDecisionId(), record.getStrategyId(),
                 record.getStrategyConfigVersion(), snapshot, side, size, TradingMarketInputs.lastPrice(context),

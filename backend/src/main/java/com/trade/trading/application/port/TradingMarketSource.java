@@ -10,5 +10,6 @@ import java.util.List;
 public interface TradingMarketSource {
     TradingDecisionContext collect(TradingTrigger trigger);
     List<CandleResp> getOneMinuteCandles();
+    List<CandleResp> getFifteenMinuteCandles();
     TickerResp getTicker();
 }

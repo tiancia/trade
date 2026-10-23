@@ -32,6 +32,25 @@ class TradingTriggerServiceTest {
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-22T08:04:20Z"), ZoneOffset.UTC);
 
     @Test
+    void intradayScanEvaluatesWithoutLegacyOneMinuteMarketEventOrCooldown() {
+        TradingStrategyEngine engine = mock(TradingStrategyEngine.class);
+        when(engine.isIntradayStrategyActive()).thenReturn(true);
+        TradingLeadershipService leadership = mock(TradingLeadershipService.class);
+        when(leadership.runIfLeader(anyString(), any(Runnable.class))).thenAnswer(call -> {
+            call.<Runnable>getArgument(1).run(); return true;
+        });
+        TradingEventDetector detector = mock(TradingEventDetector.class);
+        TradingMarketSource source = mock(TradingMarketSource.class);
+        TradingTriggerService service = new TradingTriggerService(engine, mock(OrderReconciliationService.class),
+                leadership, source, mock(TradingMarketFeed.class), mock(HotMarketDataCache.class), detector,
+                mock(TradingStateStore.class), new TradingProperties(), mock(PaperAccountService.class), CLOCK);
+        service.scanEventTriggers();
+        service.scanEventTriggers();
+        verify(engine, org.mockito.Mockito.times(2)).runDecision(any());
+        org.mockito.Mockito.verifyNoInteractions(detector, source);
+    }
+
+    @Test
     void eventScanUsesRedisWhenProcessLocalWebSocketCacheIsEmpty() {
         TradingStrategyEngine tradingEngine = mock(TradingStrategyEngine.class);
         TradingMarketSource collector = mock(TradingMarketSource.class);

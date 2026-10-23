@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.List;
+import java.util.Map;
 
 /** Builds a stable business fingerprint and the deterministic OKX clOrdId. */
 public class OrderIdentity {
@@ -20,6 +21,15 @@ public class OrderIdentity {
             Snapshot snapshot,
             String requestedSize
     ) {
+        String signal = signalSource(instrumentId,
+                decision == null ? null : decision.getStrategyId(),
+                decision == null || decision.getAction() == null ? null : decision.getAction().name(),
+                decision == null ? null : decision.getMetadata());
+        if (signal != null) {
+            // One confirmed strategy signal owns one action even if its size or
+            // configuration changes before the next signal candle closes.
+            return sha256(signal);
+        }
         String source = String.join("|",
                 "v1",
                 text(instrumentId),
@@ -32,6 +42,19 @@ public class OrderIdentity {
                 text(requestedSize)
         );
         return sha256(source);
+    }
+
+    /** Uses the existing durable PAPER decision ledger, isolated by trial. */
+    public String paperDecisionId(String instrumentId, String sessionId, String strategyId, String action,
+                                  Map<String, Object> metadata, String legacyDecisionId) {
+        String signal = signalSource(instrumentId, strategyId, action, metadata);
+        if (signal == null) {
+            return legacyDecisionId;
+        }
+        if (!hasText(sessionId)) {
+            throw new IllegalArgumentException("A PAPER session is required for signal idempotency");
+        }
+        return sha256("paper-signal-v1|" + sessionId.trim() + "|" + signal);
     }
 
     public String clientOrderId(String idempotencyKey, String action) {
@@ -56,6 +79,35 @@ public class OrderIdentity {
             return "ticker:" + snapshot.tickerTimestamp();
         }
         return "decision:" + text(snapshot.decisionId());
+    }
+
+    private static String signalSource(String instrumentId, String strategyId, String action,
+                                       Map<String, Object> metadata) {
+        if (metadata == null || (!metadata.containsKey("signalBar") && !metadata.containsKey("signalCandleTs"))) {
+            return null;
+        }
+        if (!"15m".equals(metadata.get("signalBar")) || !hasText(instrumentId)
+                || !hasText(strategyId) || !hasText(action)) {
+            throw new IllegalArgumentException("Signal idempotency requires instrument, strategy, action and signalBar=15m");
+        }
+        Object input = metadata.get("signalCandleTs");
+        if (!(input instanceof Number) && !(input instanceof String)) {
+            throw new IllegalArgumentException("signalCandleTs must be a positive epoch millisecond integer");
+        }
+        try {
+            String value = input.toString();
+            if (value.length() > 100) {
+                throw new NumberFormatException();
+            }
+            long timestamp = new BigDecimal(value).longValueExact();
+            if (timestamp <= 0) {
+                throw new NumberFormatException();
+            }
+            return String.join("|", "signal-v1", instrumentId.trim(), strategyId.trim(), action.trim(),
+                    "15m", Long.toString(timestamp));
+        } catch (ArithmeticException | NumberFormatException exception) {
+            throw new IllegalArgumentException("signalCandleTs must be a positive epoch millisecond integer");
+        }
     }
 
     private static String firstConfirmedCandleTs(List<CandleIdentity> candles) {

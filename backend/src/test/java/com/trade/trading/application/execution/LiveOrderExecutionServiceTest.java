@@ -38,6 +38,7 @@ import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -122,6 +123,33 @@ class LiveOrderExecutionServiceTest {
         assertEquals(first.getClientOrderId(), replay.getClientOrderId());
         assertTrue(replay.isIdempotentReplay());
         assertEquals(OrderStatus.FILLED.name(), replay.getOrderStatus());
+        assertEquals(first.getOrderSize(), replay.getOrderSize());
+    }
+
+    @Test
+    void sameConfirmedSignalCannotSubmitAgainAfterSizeConfigOrFastMarketSnapshotChanges() {
+        TradingProperties properties = liveProperties();
+        FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        InMemoryTradingOrderRepository orders = new InMemoryTradingOrderRepository();
+        Map<String, Object> signal = Map.of("signalBar", "15m", "signalCandleTs", 1700000000000L);
+        TradingDecisionRecord first = new TradingDecisionRecord().setDecisionId("first-random").setStrategyConfigVersion(1);
+        TradingDecisionRecord replay = new TradingDecisionRecord().setDecisionId("second-random").setStrategyConfigVersion(2);
+        TradingDecisionContext firstContext = context("0", "1000");
+        firstContext.getTicker().setTs("1700000060000");
+        TradingDecisionContext secondContext = context("0", "1000");
+        secondContext.getTicker().setTs("1700000120000");
+
+        broker(properties, okxApi, orders).execute(buyDecision().setMetadata(signal), firstContext, first);
+        // A fresh execution service uses the same order ledger; sizing also differs.
+        broker(properties, okxApi, orders).execute(buyDecision().setBuyQuoteAmount(new BigDecimal("20"))
+                .setMetadata(signal), secondContext, replay);
+
+        assertEquals(1, okxApi.placeOrderCount);
+        assertEquals(first.getIdempotencyKey(), replay.getIdempotencyKey());
+        assertEquals(first.getClientOrderId(), replay.getClientOrderId());
+        assertTrue(replay.isIdempotentReplay());
+        assertEquals(OrderStatus.FILLED.name(), replay.getOrderStatus());
+        assertEquals(first.getOrderSize(), replay.getOrderSize());
     }
 
     @Test

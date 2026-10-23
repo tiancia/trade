@@ -56,7 +56,7 @@ trading/
 │  ├─ model/              # 决策、策略记忆、运行快照、业务枚举
 │  ├─ order/              # 幂等身份、状态演进、结算、数量与成本规则
 │  ├─ risk/               # 风控规则、状态演进、评估与资金状态
-│  ├─ strategy/           # 纯价量阈值与仓位退出规则
+│  ├─ strategy/           # 纯价量阈值、技术指标、15m日内策略与仓位退出规则
 │  └─ backtest/           # 回测参数、模拟持仓、盈亏统计与结果
 └─ infrastructure/
    ├─ broker/             # Broker 接入、OKX 协议与查询重试
@@ -98,6 +98,8 @@ REST / WebSocket market data
 真实订单可靠性依赖持久化幂等键、确定性 `clOrdId`、状态机、乐观锁、状态历史和累计成交账本。仓位、成本、风险状态与资金级停止状态以 MySQL 为权威；`data/trading-state.json` 只保存策略选择、策略画像和有界决策记忆。事件管道依赖固定容量、显式队满策略、handler 异常隔离、指标与优雅排空。修改这些路径前应先读对应测试。
 
 页面参数编辑经 `StrategyConfigurationController → TradingStrategyRegistry` 保存 MySQL 当前配置及不可变版本历史；新决策冻结所用配置版本。`application/paper` 编排独立的 PAPER 初始资金、批次、成交与估值账本，`domain/paper` 负责现金、成本和盈亏演进。具体口径与接口见 [策略参数版本与模拟资金](TRADING_SIMULATION.md)。
+
+策略输入显式区分1m、5m、15m。`intraday-technical` 提供趋势回踩、放量突破和震荡回归三种15m现货多头候选，复用纯领域指标；每分钟事件扫描独立评估确认收盘信号，订单及PAPER账本保存每个方向的稳定信号身份。新增实例不自动切换当前策略，不改变LIVE门禁；收益与频率需要独立回测、样本外及PAPER验证。
 
 ### polymarket 与 story
 

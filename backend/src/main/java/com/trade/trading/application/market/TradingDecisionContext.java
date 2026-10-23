@@ -37,6 +37,8 @@ public class TradingDecisionContext {
     private List<CandleResp> oneMinuteCandles;
     /** Five-minute candles ordered newest first. */
     private List<CandleResp> fiveMinuteCandles;
+    /** Fifteen-minute candles ordered newest first. */
+    private List<CandleResp> fifteenMinuteCandles;
     /** Full account balance response used by sizing and audit. */
     private AccountBalanceResp accountBalance;
     /** Balance detail for the configured base currency. */

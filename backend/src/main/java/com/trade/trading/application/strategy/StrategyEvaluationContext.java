@@ -10,6 +10,7 @@ import lombok.Data;
 import lombok.experimental.Accessors;
 
 import java.time.Instant;
+import java.math.BigDecimal;
 import java.util.List;
 
 @Data
@@ -21,6 +22,9 @@ public class StrategyEvaluationContext {
     private TradingDecisionContext marketContext;
     private TradingProperties properties;
     private Instant evaluatedAt = Instant.now();
+    /** Historical execution assumptions; null uses deployment estimates. */
+    private BigDecimal evaluationFeeRate;
+    private BigDecimal evaluationSlippageRate;
 
     public TickerResp ticker() {
         return marketContext == null ? null : marketContext.getTicker();
@@ -35,9 +39,12 @@ public class StrategyEvaluationContext {
             return List.of();
         }
         String normalizedBar = bar == null ? "" : bar.trim().toLowerCase();
-        if ("5m".equals(normalizedBar)) {
-            return marketContext.getFiveMinuteCandles() == null ? List.of() : marketContext.getFiveMinuteCandles();
-        }
-        return marketContext.getOneMinuteCandles() == null ? List.of() : marketContext.getOneMinuteCandles();
+        List<CandleResp> candles = switch (normalizedBar) {
+            case "1m" -> marketContext.getOneMinuteCandles();
+            case "5m" -> marketContext.getFiveMinuteCandles();
+            case "15m" -> marketContext.getFifteenMinuteCandles();
+            default -> List.of();
+        };
+        return candles == null ? List.of() : candles;
     }
 }

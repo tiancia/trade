@@ -114,6 +114,12 @@ public class TradingTriggerService {
         }
 
         try {
+            if (tradingEngine.isIntradayStrategyActive()) {
+                // Closed 15m strategies provide their own setup and volatility gates.
+                // Persistent signal/order identities handle repeated observations.
+                tradingEngine.runDecision(TradingTrigger.event("Closed 15m strategy scan", Map.of("signalBar", "15m")));
+                return;
+            }
             List<CandleResp> candles = eventCandles();
             TickerResp ticker = eventTicker();
             TradingState state = stateRepository.getState();

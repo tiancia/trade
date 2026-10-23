@@ -15,6 +15,10 @@ import {
   formatReturnFraction,
   mergeContiguousHistory,
   marketDataIsFresh,
+  backtestSelectionForStrategy,
+  decisionIndicatorEntries,
+  intradayModes,
+  parameterFieldsForStrategy,
 } from "../app/lib/trading-api.mjs";
 
 const request = {
@@ -240,6 +244,64 @@ test("rejects invalid revisions, missing fields and out-of-range strategy values
   for (const value of ["1", "2.5", "1001"]) assert.throws(() => buildStrategyParametersPayload({ ...base, params: { ...params, "price-move-window-candles": value } }), /价格观察/);
   assert.throws(() => buildStrategyParametersPayload({ ...base, reason: " " }), /修改原因/);
   assert.throws(() => buildStrategyParametersPayload({ ...base, params: { ...params, "volume-spike-multiplier": undefined } }), /成交量放大/);
+});
+
+const intradayParams = {
+  mode: "TREND_PULLBACK", "ema-fast-period": "9", "ema-slow-period": "21", "rsi-period": "14",
+  "atr-period": "14", "adx-period": "14", "bollinger-period": "20", "bollinger-deviations": "2",
+  "breakout-period": "20", "volume-period": "20", "trend-min-adx": "18", "range-max-adx": "20",
+  "entry-rsi-min": "45", "entry-rsi-max": "68", "min-volume-ratio": "1", "min-atr-percent": "0.0015",
+  "max-atr-percent": "0.03", "max-entry-extension-atr": "2.5", "stop-loss-percent": "0.006",
+  "take-profit-percent": "0.018", "estimated-slippage-rate": "0.0002", "min-net-reward-percent": "0.003",
+  "buy-quote-amount": "10",
+};
+
+test("intraday saves every backend parameter for each supported mode without threshold-only keys", () => {
+  for (const mode of intradayModes) {
+    const payload = buildStrategyParametersPayload({ expectedVersion: 3, type: "intraday-technical", reason: "日内候选参数", params: { ...intradayParams, mode: mode.value, "require-confirmed-candle": false } });
+    assert.deepEqual(Object.keys(payload.params).sort(), Object.keys(intradayParams).sort());
+    assert.equal(payload.params.mode, mode.value);
+    assert.equal(payload.params["ema-fast-period"], 9);
+    assert.equal(payload.params["stop-loss-percent"], "0.006");
+    assert.equal(Object.hasOwn(payload.params, "require-confirmed-candle"), false);
+    assert.equal(Object.hasOwn(payload.params, "price-move-trigger-percent"), false);
+  }
+  assert.equal(parameterFieldsForStrategy("intraday-technical").length, 22);
+  assert.equal(parameterFieldsForStrategy("threshold-event").length, 8);
+});
+
+test("intraday preserves decimal text and permits only explicit zero slippage", () => {
+  const exact = "0.123456789012345678";
+  const base = { expectedVersion: 1, type: "intraday-technical", reason: "精确参数" };
+  const payload = buildStrategyParametersPayload({ ...base, params: { ...intradayParams, "stop-loss-percent": exact, "estimated-slippage-rate": "0" } });
+  assert.equal(payload.params["stop-loss-percent"], exact);
+  assert.equal(payload.params["estimated-slippage-rate"], "0");
+  for (const key of ["min-atr-percent", "entry-rsi-min", "trend-min-adx", "min-net-reward-percent"]) {
+    assert.throws(() => buildStrategyParametersPayload({ ...base, params: { ...intradayParams, [key]: "0" } }), /无效/);
+  }
+  for (const mode of ["", undefined, "UNKNOWN", "trend_pullback"]) {
+    assert.throws(() => buildStrategyParametersPayload({ ...base, params: { ...intradayParams, mode } }), /模式/);
+  }
+  assert.throws(() => buildStrategyParametersPayload({ ...base, params: { ...intradayParams, "ema-slow-period": "101" } }), /慢 EMA/);
+  assert.throws(() => buildStrategyParametersPayload({ ...base, params: { ...intradayParams, "bollinger-deviations": undefined } }), /布林带/);
+  assert.throws(() => buildStrategyParametersPayload({ ...base, type: "unknown", params: intradayParams }), /暂不支持编辑/);
+});
+
+test("backtest selections inherit the selected strategy bar", () => {
+  assert.deepEqual(backtestSelectionForStrategy({ id: "intraday-pullback-15m", bar: "15m" }), { strategyId: "intraday-pullback-15m", bar: "15m" });
+  assert.deepEqual(backtestSelectionForStrategy({ id: "threshold-event-defensive", bar: "5m" }), { strategyId: "threshold-event-defensive", bar: "5m" });
+  assert.deepEqual(backtestSelectionForStrategy(undefined), { strategyId: "", bar: "1m" });
+});
+
+test("recorded technical indicators distinguish score units and fractional percentages", () => {
+  const entries = decisionIndicatorEntries({ emaFast: 100, rsi: 62, adx: 18, atrPercent: 0.0015,
+    volumeRatio: 1.2, stopPrice: "98.5", plannedNetRewardPercent: 0.003, unknown: 25,
+    atr: Infinity, bollingerUpper: null, bollingerLower: "invalid" });
+  const values = Object.fromEntries(entries.map((entry) => [entry.key, entry.value]));
+  assert.deepEqual(values, { emaFast: "100", rsi: "62", atrPercent: "0.15%", adx: "18", volumeRatio: "1.2", stopPrice: "98.5", plannedNetRewardPercent: "0.30%" });
+  assert.equal(entries.find((entry) => entry.key === "rsi").label, "RSI 分数");
+  assert.deepEqual(decisionIndicatorEntries(null), []);
+  assert.deepEqual(decisionIndicatorEntries({}), []);
 });
 
 test("new simulation sessions require valid funds and a concurrency revision", () => {

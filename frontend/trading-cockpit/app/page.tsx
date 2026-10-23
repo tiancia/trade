@@ -30,7 +30,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiTimestampMillis, buildBacktestPayload, buildPaperSessionPayload, buildStrategyParametersPayload, createJsonRequestHeaders, filterConfigurationEvents, formatDateTimeLocal, formatReturnFraction, marketDataIsFresh, mergeContiguousHistory, strategyParameterFields } from "./lib/trading-api.mjs";
+import { apiTimestampMillis, backtestSelectionForStrategy, buildBacktestPayload, buildPaperSessionPayload, buildStrategyParametersPayload, createJsonRequestHeaders, decisionIndicatorEntries, filterConfigurationEvents, formatDateTimeLocal, formatReturnFraction, intradayModes, marketDataIsFresh, mergeContiguousHistory, parameterFieldsForStrategy } from "./lib/trading-api.mjs";
 
 type View = "overview" | "strategies" | "events" | "backtests";
 type ApiTimestamp = string | number;
@@ -62,6 +62,7 @@ type RuntimeStatus = {
     expectedNetEdgePercent?: number;
     lastPrice?: number;
     executionStatus?: string;
+    metadata?: Record<string, unknown>;
   } | null;
   lastError?: string | null;
   lastRunStartedAt?: ApiTimestamp | null;
@@ -118,6 +119,7 @@ type BacktestRun = {
   maxDrawdown?: number | null;
   winRate?: number | null;
   tradeCount?: number;
+  closedTradesPerDay?: number | null;
   processedCandleCount?: number;
   candleCount?: number;
 };
@@ -441,6 +443,7 @@ export default function Home() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [backtestOpen, setBacktestOpen] = useState(false);
   const [backtestRange, setBacktestRange] = useState({ from: "", to: "" });
+  const [backtestSelection, setBacktestSelection] = useState({ strategyId: "", bar: "1m" });
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   // SSR and the first browser render share placeholders until hydration finishes.
@@ -646,8 +649,9 @@ export default function Home() {
   const openBacktest = useCallback(() => {
     const now = Date.now();
     setBacktestRange({ from: formatDateTimeLocal(now - 86_400_000), to: formatDateTimeLocal(now) });
+    setBacktestSelection(backtestSelectionForStrategy(snapshot.strategies.find((strategy) => strategy.id === snapshot.runtime.activeStrategyId) ?? snapshot.strategies[0]));
     setBacktestOpen(true);
-  }, []);
+  }, [snapshot.strategies, snapshot.runtime.activeStrategyId]);
 
   const filteredCommands = useMemo(() => {
     const commands = [
@@ -905,6 +909,7 @@ export default function Home() {
                   <div><span>执行结果</span><strong className="muted-value">{decision?.executionStatus ?? "—"}</strong></div>
                 </div>
                 <div className="reasoning"><BrainCircuit size={17} /><p>{decision?.reason ?? "等待首次策略决策。"}</p></div>
+                {decisionIndicatorEntries(decision?.metadata).length > 0 && <details className="backtest-parameters"><summary>已收盘 K 线技术指标</summary><div className="decision-stats" aria-label="决策技术指标">{decisionIndicatorEntries(decision?.metadata).map((entry) => <div key={entry.key}><span>{entry.label}</span><strong>{entry.value}</strong></div>)}</div></details>}
                 <button className="text-button" onClick={() => navigate("strategies")}>查看决策上下文 <ChevronRight size={14} /></button>
               </section>
             </div>
@@ -996,8 +1001,8 @@ export default function Home() {
           <section className="form-modal" role="dialog" aria-modal="true" aria-labelledby="backtest-title" onMouseDown={(event) => event.stopPropagation()}>
             <div className="form-modal-heading"><div><span className="panel-kicker">REPRODUCIBLE LAB</span><h2 id="backtest-title">创建策略回测</h2><p>使用后端的历史 K 线与执行模型验证当前策略。</p></div><button className="icon-button" onClick={() => setBacktestOpen(false)} aria-label="关闭"><X size={18} /></button></div>
             <form onSubmit={submitBacktest}>
-              <label><span>策略</span><select name="strategyId" defaultValue={snapshot.strategies[0]?.id}>{snapshot.strategies.map((strategy) => <option key={strategy.id} value={strategy.id}>{strategy.id}</option>)}</select></label>
-              <div className="form-row"><label><span>交易标的</span><select name="instId" defaultValue="BTC-USDT"><option>BTC-USDT</option><option>ETH-USDT</option></select></label><label><span>K 线周期</span><select name="bar" defaultValue="1m"><option>1m</option><option>5m</option><option>15m</option><option>1H</option></select></label></div>
+              <label><span>策略</span><select name="strategyId" value={backtestSelection.strategyId} onChange={(event) => setBacktestSelection(backtestSelectionForStrategy(snapshot.strategies.find((strategy) => strategy.id === event.target.value)))}>{snapshot.strategies.map((strategy) => <option key={strategy.id} value={strategy.id}>{strategy.id}</option>)}</select></label>
+              <div className="form-row"><label><span>交易标的</span><select name="instId" defaultValue="BTC-USDT"><option>BTC-USDT</option><option>ETH-USDT</option></select></label><label><span>K 线周期</span><select name="bar" value={backtestSelection.bar} onChange={(event) => setBacktestSelection((current) => ({ ...current, bar: event.target.value }))}>{(snapshot.strategies.find((strategy) => strategy.id === backtestSelection.strategyId)?.type === "intraday-technical" ? ["15m"] : ["1m", "5m", "15m", "1H"]).map((bar) => <option key={bar}>{bar}</option>)}</select></label></div>
               <div className="form-row"><label><span>开始时间（本地时间）</span><input name="from" type="datetime-local" required defaultValue={backtestRange.from} /></label><label><span>结束时间（本地时间）</span><input name="to" type="datetime-local" required defaultValue={backtestRange.to} /></label></div>
               <label><span>初始资金（USDT）</span><input name="initialCash" type="number" min="100" step="100" required defaultValue="10000" /></label>
               <div className="safety-note"><ShieldCheck size={17} /><p><strong>安全执行</strong>回测仅使用模拟 Broker，不会触发真实下单。</p></div>
@@ -1033,7 +1038,8 @@ function StrategiesView({ snapshot, onActivate, pendingId, dataMode, onConfigura
       const pending = pendingId === strategy.id;
       return <article className={`panel strategy-detail-card ${running ? "active-strategy" : ""}`} key={strategy.id}>
         <div className="strategy-detail-top"><span className={`strategy-glyph glyph-${(index % 3) + 1}`}><Layers3 size={18} /></span><span className={`status-badge ${running ? "healthy" : "idle"}`}>{running ? "ACTIVE" : strategy.enabled ? "READY" : "DISABLED"}</span></div>
-        <h3>{strategy.id}</h3><p>{strategy.type} strategy</p>
+        <h3>{strategy.id}</h3><p>{strategy.type === "intraday-technical" ? `${intradayModes.find((mode) => mode.value === strategy.params?.mode)?.label ?? "日内技术策略"} · 15 分钟现货做多 · 仅已收盘 K 线` : `${strategy.type} strategy`}</p>
+        {strategy.type === "intraday-technical" && <p>{intradayModes.find((mode) => mode.value === strategy.params?.mode)?.description}</p>}
         <div className="strategy-metadata"><div><span>时间周期</span><strong>{strategy.bar}</strong></div><div><span>配置参数</span><strong>{Object.keys(strategy.params ?? {}).length}</strong></div><div><span>决策参与</span><strong>{running ? "当前" : "候选"}</strong></div></div>
         <button className="strategy-activate" disabled={!strategy.enabled || running || Boolean(pendingId)} onClick={() => onActivate(strategy.id)}>{pending ? <LoaderCircle size={14} className="spin" /> : running ? <Check size={14} /> : <Zap size={14} />}{running ? "当前策略" : dataMode === "live" ? "设为当前策略" : "演示切换"}</button>
         <button className="strategy-edit" aria-expanded={editingId === strategy.id} onClick={() => setEditingId(editingId === strategy.id ? null : strategy.id)}><Layers3 size={14} />{editingId === strategy.id ? "收起参数与版本" : "修改参数 / 查看版本"}<ChevronRight size={14} /></button>
@@ -1064,6 +1070,7 @@ function ConfigurationEditor({ strategyId, connected, onSaved }: { strategyId: s
   const historyOffset = useRef(0);
   const configurationLoadGeneration = useRef(0);
   const historyAbort = useRef<AbortController | null>(null);
+  const parameterFields = configuration ? parameterFieldsForStrategy(configuration.type) : [];
 
   useEffect(() => {
     const abort = new AbortController();
@@ -1117,7 +1124,7 @@ function ConfigurationEditor({ strategyId, connected, onSaved }: { strategyId: s
     setError(null);
     setNotice(null);
     let payload;
-    try { payload = buildStrategyParametersPayload({ expectedVersion: configuration.version, reason, params: values }); }
+    try { payload = buildStrategyParametersPayload({ expectedVersion: configuration.version, reason, params: values, type: configuration.type }); }
     catch (failure) { setError(errorMessage(failure)); return; }
     setPending(true);
     try {
@@ -1142,10 +1149,11 @@ function ConfigurationEditor({ strategyId, connected, onSaved }: { strategyId: s
     {connected && configuration && !loading && <>
       <form className="configuration-form" onSubmit={save}>
         <fieldset disabled={pending}><legend className="sr-only">参数值</legend><div className="parameter-grid">
-          {strategyParameterFields.map((field) => <label key={field.key}><span>{field.label}</span><input name={field.key} type="number" required={!field.nullable} min={field.integer ? field.min : undefined} max={field.max} step={field.step} value={String(values[field.key] ?? "")} onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))} /><small>{field.hint}</small></label>)}
-          <label className="checkbox-field"><input type="checkbox" checked={values["require-confirmed-candle"] === true || values["require-confirmed-candle"] === "true"} onChange={(event) => setValues((current) => ({ ...current, "require-confirmed-candle": event.target.checked }))} /><span>仅使用已收盘 K 线</span></label>
+          {configuration.type === "intraday-technical" && <label><span>日内入场模式</span><select name="mode" required value={String(values.mode ?? "")} onChange={(event) => setValues((current) => ({ ...current, mode: event.target.value }))}>{intradayModes.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}</select><small>{intradayModes.find((mode) => mode.value === values.mode)?.description}固定 15m，仅使用已收盘 K 线。</small></label>}
+          {parameterFields.map((field) => <label key={field.key}><span>{field.label}</span><input name={field.key} type="number" required={!field.nullable} min={field.integer || field.allowZero ? field.min : undefined} max={field.max} step={field.step} value={String(values[field.key] ?? "")} onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))} /><small>{field.hint}</small></label>)}
+          {configuration.type === "threshold-event" && <label className="checkbox-field"><input type="checkbox" checked={values["require-confirmed-candle"] === true || values["require-confirmed-candle"] === "true"} onChange={(event) => setValues((current) => ({ ...current, "require-confirmed-candle": event.target.checked }))} /><span>仅使用已收盘 K 线</span></label>}
         </div><label className="change-reason"><span>修改原因</span><input name="reason" required maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例如：提高价量门槛，观察交易频率变化" /></label></fieldset>
-        <div className="configuration-footer"><p>基于 v{configuration.version} 保存新版本。K 线窗口还受行情采集上限校验；下单数量仍受全局执行上限约束。</p><button className="primary-button" type="submit" disabled={pending || historyPending}>{pending ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />}保存新版本</button></div>
+        <div className="configuration-footer"><p>基于 v{configuration.version} 保存新版本。K 线窗口还受行情采集上限校验；下单数量仍受全局执行上限约束。{configuration.type === "intraday-technical" && "止损止盈按收盘价检查，可能发生跳空与滑点；交易频率取决于实际信号。"}</p><button className="primary-button" type="submit" disabled={pending || historyPending}>{pending ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />}保存新版本</button></div>
       </form>
       <div className="configuration-history"><h3>配置版本记录</h3><p className="section-description">展开版本可查看当时的完整参数，以及相对上一版本的变化。</p>
         {history.map((item, index) => {
@@ -1153,7 +1161,7 @@ function ConfigurationEditor({ strategyId, connected, onSaved }: { strategyId: s
           return <details key={item.version} className="version-record"><summary><span className="version-badge">v{item.version}</span><strong>{item.reason}</strong><time>{displayTimestamp(item.changedAt)}</time></summary><dl>{Object.entries(item.params).map(([key, value]) => {
             const before = previous?.params[key];
             const changed = previous && String(before) !== String(value);
-            return <div key={key} className={changed ? "parameter-changed" : ""}><dt>{strategyParameterFields.find((field) => field.key === key)?.label ?? (key === "require-confirmed-candle" ? "仅使用已收盘 K 线" : key)}</dt><dd>{changed && <><del>{String(before ?? "默认")}</del><span aria-hidden="true"> → </span></>}{String(value ?? "默认")}</dd></div>;
+            return <div key={key} className={changed ? "parameter-changed" : ""}><dt>{parameterFieldsForStrategy(item.type).find((field) => field.key === key)?.label ?? (key === "require-confirmed-candle" ? "仅使用已收盘 K 线" : key === "mode" ? "日内入场模式" : key)}</dt><dd>{changed && <><del>{String(before ?? "默认")}</del><span aria-hidden="true"> → </span></>}{key === "mode" ? intradayModes.find((mode) => mode.value === value)?.label ?? String(value) : String(value ?? "默认")}</dd></div>;
           })}</dl></details>;
         })}
         {historyError && <p className="inline-error" role="alert">{historyError}</p>}
@@ -1332,12 +1340,12 @@ function EventStat({ label, value, note }: { label: string; value: string; note:
 
 function BacktestsView({ runs, onCreate, clock }: { runs: BacktestRun[]; onCreate: () => void; clock: Date | null }) {
   return <div className="detail-layout">
-    <section className="panel backtest-summary"><div><span className="panel-kicker"><TestTube2 size={13} /> EXPERIMENT HISTORY</span><h2>最近回测</h2><p>每次运行保留入队时的配置版本、实际参数与绩效结果，便于复现和比较。</p></div><button className="primary-button" onClick={onCreate}><Plus size={15} />新建回测</button></section>
-    <section className="panel backtest-table-wrap"><table className="backtest-table"><thead><tr><th>运行 ID</th><th>策略 / 配置 / 标的</th><th>状态</th><th>收益率</th><th>最大回撤</th><th>胜率</th><th>交易数</th><th>参数</th></tr></thead><tbody>{runs.map((run) => <tr key={run.runId}>
+    <section className="panel backtest-summary"><div><span className="panel-kicker"><TestTube2 size={13} /> EXPERIMENT HISTORY</span><h2>最近回测</h2><p>每次运行保留入队时的配置版本、实际参数与绩效结果，便于复现和比较。日均完成交易按卖出 / 平仓次数除以请求自然日计算，包含结束强平。</p></div><button className="primary-button" onClick={onCreate}><Plus size={15} />新建回测</button></section>
+    <section className="panel backtest-table-wrap"><table className="backtest-table"><thead><tr><th>运行 ID</th><th>策略 / 配置 / 标的</th><th>状态</th><th>收益率</th><th>最大回撤</th><th>胜率</th><th>交易数</th><th>日均完成交易</th><th>参数</th></tr></thead><tbody>{runs.map((run) => <tr key={run.runId}>
       <td><strong>{run.runId}</strong><small>{timeAgo(run.createdAt, clock)}</small></td>
       <td><strong>{run.request.strategyId}</strong><small>{run.strategyConfigVersion ? `配置 v${run.strategyConfigVersion}${Object.keys(run.request.parameterOverrides ?? {}).length ? " · 含回测参数覆盖" : ""}` : "历史配置版本未记录"}</small><small>{run.request.instId} · {run.request.bar}</small></td>
       <td><span className={`status-badge ${run.status === "SUCCEEDED" ? "healthy" : run.status === "FAILED" ? "danger" : "idle"}`}>{run.status}</span>{run.error && <small className="danger-text">{run.error}</small>}</td>
-      <td className={(run.totalReturn ?? 0) >= 0 ? "positive-text" : "danger-text"}>{pct(run.totalReturn)}</td><td>{pct(run.maxDrawdown)}</td><td>{pct(run.winRate, 1)}</td><td>{run.tradeCount ?? "—"}</td>
+      <td className={(run.totalReturn ?? 0) >= 0 ? "positive-text" : "danger-text"}>{pct(run.totalReturn)}</td><td>{pct(run.maxDrawdown)}</td><td>{pct(run.winRate, 1)}</td><td>{run.tradeCount ?? "—"}</td><td>{number(run.closedTradesPerDay, 2)}</td>
       <td>{run.strategyConfigSnapshot ? <details className="backtest-parameters"><summary>实际参数</summary><dl>{Object.entries(run.strategyConfigSnapshot).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value ?? "默认")}</dd></div>)}</dl></details> : <span>—</span>}</td>
     </tr>)}</tbody></table></section>
   </div>;

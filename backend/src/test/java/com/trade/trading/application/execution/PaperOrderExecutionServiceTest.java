@@ -63,4 +63,29 @@ class PaperOrderExecutionServiceTest {
         assertEquals("Funded simulation currently supports spot BUY/SELL only", record.getSkipReason());
         verifyNoInteractions(accounts, risk, sizing);
     }
+
+    @Test void replayReportsOriginalLedgerSizeAndDoesNotRepeatExecutedRiskTransition() {
+        TradingProperties props = new TradingProperties();
+        var accounts = mock(PaperAccountService.class);
+        var risk = mock(RiskControlService.class);
+        var sizing = mock(OrderSizingService.class);
+        var executor = new PaperOrderExecutionService(sizing, props, risk, accounts);
+        var context = new TradingDecisionContext().setPaperSessionId("session").setPaperSessionVersion(1L);
+        var record = new TradingDecisionRecord().setDecisionId("signal");
+        var decision = new StrategyDecision().setAction(TradingAction.BUY);
+        when(risk.evaluate(decision, context)).thenReturn(new RiskAssessment().setAllowed(true));
+        when(sizing.buySize(decision, context)).thenReturn(OrderSizing.executable("20"));
+        var original = new PaperFill(1L, "session", "signal", "intraday", 1L, "{}", "BUY", BigDecimal.TEN,
+                BigDecimal.ONE, BigDecimal.ONE, BigDecimal.TEN, BigDecimal.TEN.negate(), BigDecimal.ZERO,
+                BigDecimal.ZERO, new BigDecimal("90"), BigDecimal.ONE, new BigDecimal("100"), 1, Instant.now());
+        when(accounts.fill(context, record, "BUY", new BigDecimal("20")))
+                .thenReturn(new PaperAccountStore.AppliedFill(original, null, true));
+
+        executor.execute(decision, context, record);
+
+        assertEquals("PAPER_FILLED", record.getExecutionStatus());
+        assertEquals("10", record.getOrderSize());
+        assertTrue(record.isIdempotentReplay());
+        verify(risk, never()).recordExecutedAction(any(), any());
+    }
 }

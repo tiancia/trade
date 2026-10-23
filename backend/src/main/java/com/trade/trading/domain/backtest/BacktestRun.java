@@ -36,6 +36,8 @@ public class BacktestRun {
     private volatile int processedCandleCount;
     private volatile int tradeCount;
     private volatile int closedTradeCount;
+    /** Realized sell fills divided by the requested time range expressed in 24-hour days. */
+    private volatile BigDecimal closedTradesPerDay;
     private volatile int winningTradeCount;
     private volatile int losingTradeCount;
     private volatile BigDecimal finalEquity;

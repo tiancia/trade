@@ -359,8 +359,8 @@ i.neutral { background: var(--dim); }
 .configuration-form fieldset { border: 0; margin: 0; min-width: 0; padding: 0; }
 .parameter-grid { display: grid; gap: 17px 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .configuration-form label > span, .simulation-panel label > span { color: var(--muted); display: block; font-size: 11px; line-height: 1.5; margin-bottom: 7px; }
-.configuration-form input:not([type="checkbox"]), .simulation-panel input, .simulation-panel select { background: #0a0f14; border: 1px solid #2b3540; border-radius: 6px; color: var(--text); font-size: 12px; height: 38px; max-width: 100%; padding: 0 10px; width: 100%; }
-.configuration-form input:disabled, .simulation-panel input:disabled, .simulation-panel select:disabled { opacity: .5; }
+.configuration-form input:not([type="checkbox"]), .configuration-form select, .simulation-panel input, .simulation-panel select { background: #0a0f14; border: 1px solid #2b3540; border-radius: 6px; color: var(--text); font-size: 12px; height: 38px; max-width: 100%; padding: 0 10px; width: 100%; }
+.configuration-form input:disabled, .configuration-form select:disabled, .simulation-panel input:disabled, .simulation-panel select:disabled { opacity: .5; }
 .parameter-grid label > small { color: var(--dim); display: block; font-size: 10px; line-height: 1.5; margin-top: 6px; }
 .parameter-grid .checkbox-field { align-items: center; display: flex; gap: 9px; }
 .parameter-grid .checkbox-field input { accent-color: var(--green); height: 17px; margin: 0; width: 17px; }

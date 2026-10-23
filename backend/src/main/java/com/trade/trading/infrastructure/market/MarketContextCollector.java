@@ -100,7 +100,14 @@ public class MarketContextCollector implements TradingMarketSource {
                         .setLimit(String.valueOf(properties.getFiveMinuteCandleLimit()))),
                 "5m candles"
         );
-        publishDecisionMarketData(ticker, orderBook, candles1m, candles5m);
+        List<CandleResp> candles15m = OkxResponses.data(
+                okxApi.getCandles(new CandlesReq()
+                        .setInstId(properties.getInstId())
+                        .setBar("15m")
+                        .setLimit(String.valueOf(properties.getFifteenMinuteCandleLimit()))),
+                "15m candles"
+        );
+        publishDecisionMarketData(ticker, orderBook, candles1m, candles5m, candles15m);
         // PAPER uses its own persisted cash and position. Private account data
         // must neither gate simulation nor leak into its sizing and risk inputs.
         boolean paper = properties.getExecutionMode() == ExecutionMode.PAPER;
@@ -142,6 +149,7 @@ public class MarketContextCollector implements TradingMarketSource {
                 .setOrderBook(orderBook)
                 .setOneMinuteCandles(candles1m)
                 .setFiveMinuteCandles(candles5m)
+                .setFifteenMinuteCandles(candles15m)
                 .setAccountBalance(balance)
                 .setBaseBalance(baseBalance)
                 .setQuoteBalance(quoteBalance)
@@ -155,7 +163,7 @@ public class MarketContextCollector implements TradingMarketSource {
             paperAccountService.enrichContext(context);
         }
         Map<String, Object> parameters = buildParameters(
-                trigger, ticker, orderBook, candles1m, candles5m,
+                trigger, ticker, orderBook, candles1m, candles5m, candles15m,
                 context.getAccountBalance(), context.getBaseBalance(), context.getQuoteBalance(),
                 pendingOrders, recentOrders, recentFills, positions, instrument, context.getTradingState());
         return context.setAiParameters(parameters).setAiParametersJson(toJson(parameters));
@@ -188,11 +196,24 @@ public class MarketContextCollector implements TradingMarketSource {
         return ticker;
     }
 
+    public List<CandleResp> getFifteenMinuteCandles() {
+        List<CandleResp> candles = OkxResponses.data(
+                okxApi.getCandles(new CandlesReq()
+                        .setInstId(properties.getInstId())
+                        .setBar("15m")
+                        .setLimit(String.valueOf(properties.getFifteenMinuteCandleLimit()))),
+                "15m candles"
+        );
+        publishCandles(TradingEventSource.OKX_REST_EVENT_FALLBACK, null, "15m", candles);
+        return candles;
+    }
+
     private void publishDecisionMarketData(
             TickerResp ticker,
             OrderBookResp orderBook,
             List<CandleResp> candles1m,
-            List<CandleResp> candles5m
+            List<CandleResp> candles5m,
+            List<CandleResp> candles15m
     ) {
         // Publish before private account calls so a later account API failure
         // does not discard an otherwise valid public market observation.
@@ -206,6 +227,7 @@ public class MarketContextCollector implements TradingMarketSource {
         ));
         publishCandles(TradingEventSource.OKX_REST_DECISION, correlationId, "1m", candles1m);
         publishCandles(TradingEventSource.OKX_REST_DECISION, correlationId, "5m", candles5m);
+        publishCandles(TradingEventSource.OKX_REST_DECISION, correlationId, "15m", candles15m);
     }
 
     private void publishCandles(
@@ -257,6 +279,7 @@ public class MarketContextCollector implements TradingMarketSource {
             OrderBookResp orderBook,
             List<CandleResp> candles1m,
             List<CandleResp> candles5m,
+            List<CandleResp> candles15m,
             AccountBalanceResp balance,
             BalanceDetail baseBalance,
             BalanceDetail quoteBalance,
@@ -285,6 +308,7 @@ public class MarketContextCollector implements TradingMarketSource {
         parameters.put("orderBookTop", orderBook);
         parameters.put("candles1mNewestFirst", candles1m == null ? List.of() : candles1m);
         parameters.put("candles5mNewestFirst", candles5m == null ? List.of() : candles5m);
+        parameters.put("candles15mNewestFirst", candles15m == null ? List.of() : candles15m);
         parameters.put("balances", Map.of(
                 properties.getBaseCcy(), baseBalance == null ? Map.of() : baseBalance,
                 properties.getQuoteCcy(), quoteBalance == null ? Map.of() : quoteBalance

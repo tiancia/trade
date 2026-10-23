@@ -76,6 +76,8 @@ public class TradingProperties {
     private int oneMinuteCandleLimit = 25;
     /** Number of five-minute candles requested for a decision. */
     private int fiveMinuteCandleLimit = 24;
+    /** Number of fifteen-minute candles requested for indicator warmup and decisions. */
+    private int fifteenMinuteCandleLimit = 200;
     /** Number of recent and pending orders requested from OKX. */
     private int recentOrderLimit = 10;
     /** Number of recent fills requested from OKX. */
@@ -98,6 +100,13 @@ public class TradingProperties {
     private LeadershipProperties leadership = new LeadershipProperties();
     /** Persistent capital-level stop controls. */
     private FundSafetyProperties fundSafety = new FundSafetyProperties();
+
+    public void setFifteenMinuteCandleLimit(int limit) {
+        if (limit < 2 || limit > 300) {
+            throw new IllegalArgumentException("fifteenMinuteCandleLimit must be between 2 and 300");
+        }
+        this.fifteenMinuteCandleLimit = limit;
+    }
 
     public boolean isSpotInstrument() {
         return "SPOT".equalsIgnoreCase(instType);
@@ -153,7 +162,7 @@ public class TradingProperties {
         private boolean enabled = true;
         /** Age after which cached WebSocket data is considered stale. */
         private long staleTimeoutMs = 30_000L;
-        /** Maximum number of one-minute candles retained in memory. */
+        /** Maximum number of candles retained in memory for each subscribed interval. */
         private int candleCacheLimit = 100;
     }
 

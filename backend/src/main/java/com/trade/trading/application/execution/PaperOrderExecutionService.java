@@ -53,7 +53,7 @@ public class PaperOrderExecutionService {
             skip(record, exception.getMessage()); return;
         }
         var fill = applied.fill();
-        record.setOrderSize(order.getSize()).setExecutionStatus("PAPER_FILLED")
+        record.setOrderSize(fill.requestedSize().stripTrailingZeros().toPlainString()).setExecutionStatus("PAPER_FILLED")
                 .setFilledBaseAmount(fill.filledBase()).setAverageFillPrice(fill.price())
                 .setFee(fill.feeQuote().negate()).setFeeCcy(properties.getQuoteCcy()).setIdempotentReplay(applied.replay());
         if (!applied.replay()) {
