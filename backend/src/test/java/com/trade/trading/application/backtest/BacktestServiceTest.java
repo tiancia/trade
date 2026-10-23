@@ -20,8 +20,13 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -47,7 +52,7 @@ class BacktestServiceTest {
         BacktestService service = new BacktestService(history,
                 new TradingStrategyRegistry(List.of(strategy), properties), properties, Runnable::run);
         BacktestRequest request = request().setBar("15m")
-                .setTo(Instant.parse("2026-05-18T00:00:00Z"))
+                .setTo(Instant.parse("2026-05-17T16:30:00Z"))
                 .setFeeRate(new BigDecimal("0.001"))
                 .setSlippageRate(new BigDecimal("0.0005"))
                 .setForceCloseAtEnd(false);
@@ -65,7 +70,9 @@ class BacktestServiceTest {
                 .get("estimatedRoundTripCostPercent")).doubleValue(), 1e-12);
         assertEquals(2, run.getTradeCount());
         assertEquals(1, run.getClosedTradeCount());
-        assertEquals(0, BigDecimal.ONE.compareTo(run.getClosedTradesPerDay()));
+        assertEquals(0, new BigDecimal("1.4545454545").compareTo(run.getClosedTradesPerDay()));
+        assertTrue(strategy.contexts.stream().allMatch(context ->
+                context.candlesNewestFirst().size() <= new IntradayTechnicalStrategyConfig().warmupCandles()));
         var buy = run.getTrades().getFirst();
         var sell = run.getTrades().getLast();
         assertEquals(FillPriceSource.OPEN, buy.fillPriceSource());
@@ -89,7 +96,7 @@ class BacktestServiceTest {
         var properties = intradayProperties();
         var service = new BacktestService(history,
                 new TradingStrategyRegistry(List.of(new IntradayTechnicalStrategy()), properties), properties, Runnable::run);
-        var run = service.start(request().setBar("15m").setTo(Instant.parse("2026-05-18T00:00:00Z")));
+        var run = service.start(request().setBar("15m").setTo(Instant.parse("2026-05-17T16:30:00Z")));
         assertEquals(BacktestStatus.FAILED, run.getStatus());
         assertTrue(run.getError().contains("contains gaps"));
         assertEquals(0, run.getTradeCount());
@@ -106,7 +113,8 @@ class BacktestServiceTest {
         assertEquals("Intraday technical backtests require bar=15m", assertThrows(IllegalArgumentException.class,
                 () -> service.start(request())).getMessage());
         assertEquals("Intraday technical backtests require includeUnconfirmed=false", assertThrows(IllegalArgumentException.class,
-                () -> service.start(request().setBar("15m").setIncludeUnconfirmed(true))).getMessage());
+                () -> service.start(request().setBar("15m").setTo(Instant.parse("2026-05-17T00:30:00Z"))
+                        .setIncludeUnconfirmed(true))).getMessage());
         verifyNoInteractions(history);
     }
 
@@ -141,8 +149,165 @@ class BacktestServiceTest {
                 assertEquals(i + 1, context.candlesNewestFirst().size());
                 assertTrue(context.candlesNewestFirst().stream().allMatch(candle ->
                         Long.parseLong(candle.getTs()) <= context.getEvaluatedAt().toEpochMilli()));
+                assertThrows(UnsupportedOperationException.class,
+                        () -> context.candlesNewestFirst().clear());
             }
         }
+    }
+
+    @Test
+    void rejectsTruncatedHistoricalCoverageAtEitherEndInsteadOfReportingAFullRange() {
+        for (int missing : List.of(0, 2)) {
+            HistoricalCandleSource history = mock(HistoricalCandleSource.class);
+            List<CandleResp> candles = new ArrayList<>(List.of(
+                    candle("2026-05-17T00:00:00Z", "100", "100", "1"),
+                    candle("2026-05-17T00:01:00Z", "100", "100", "1"),
+                    candle("2026-05-17T00:02:00Z", "100", "100", "1")));
+            candles.remove(missing);
+            when(history.historyCandles(anyString(), anyString(), any(), any(), anyInt())).thenReturn(candles);
+            CapturingStrategy strategy = new CapturingStrategy();
+            TradingProperties properties = properties(strategy.type());
+            BacktestService service = new BacktestService(history,
+                    new TradingStrategyRegistry(List.of(strategy), properties), properties, Runnable::run);
+
+            BacktestRun run = service.start(request());
+
+            assertEquals(BacktestStatus.FAILED, run.getStatus());
+            assertTrue(run.getError().contains("expected 3 usable candles but received 2"));
+            assertTrue(strategy.contexts.isEmpty());
+            assertEquals(0, run.getTradeCount());
+        }
+    }
+
+    @Test
+    void ignoresCandlesOutsideTheHalfOpenRequestRangeIncludingTheInclusiveSourceEnd() {
+        HistoricalCandleSource history = mock(HistoricalCandleSource.class);
+        when(history.historyCandles(anyString(), anyString(), any(), any(), anyInt())).thenReturn(List.of(
+                candle("2026-05-16T23:59:00Z", "100", "100", "1"),
+                candle("2026-05-17T00:00:00Z", "100", "100", "1"),
+                candle("2026-05-17T00:01:00Z", "100", "100", "1"),
+                candle("2026-05-17T00:02:00Z", "100", "100", "1"),
+                candle("2026-05-17T00:03:00Z", "100", "200", "1")));
+        CapturingStrategy strategy = new CapturingStrategy();
+        TradingProperties properties = properties(strategy.type());
+        BacktestService service = new BacktestService(history,
+                new TradingStrategyRegistry(List.of(strategy), properties), properties, Runnable::run);
+
+        BacktestRun run = service.start(request());
+
+        assertEquals(BacktestStatus.SUCCEEDED, run.getStatus(), run.getError());
+        assertEquals(3, run.getCandleCount());
+        assertEquals(Instant.parse("2026-05-17T00:02:00Z"), run.getLastCandleAt());
+        assertEquals(0, BigDecimal.ZERO.compareTo(run.getBenchmarkReturn()));
+    }
+
+    @Test
+    void onlyExplicitUnconfirmedRunsCanUseACandleClosingAfterTheRequestedEnd() {
+        for (boolean includeUnconfirmed : List.of(false, true)) {
+            HistoricalCandleSource history = mock(HistoricalCandleSource.class);
+            when(history.historyCandles(anyString(), anyString(), any(), any(), anyInt())).thenReturn(List.of(
+                    candle("2026-05-17T00:00:00Z", "100", "100", "1"),
+                    candle("2026-05-17T00:01:00Z", "100", "100", "1"),
+                    candle("2026-05-17T00:02:00Z", "100", "100", "0")));
+            CapturingStrategy strategy = new CapturingStrategy();
+            TradingProperties properties = properties(strategy.type());
+            BacktestService service = new BacktestService(history,
+                    new TradingStrategyRegistry(List.of(strategy), properties), properties, Runnable::run);
+
+            BacktestRun run = service.start(request().setTo(Instant.parse("2026-05-17T00:02:30Z"))
+                    .setIncludeUnconfirmed(includeUnconfirmed));
+
+            assertEquals(BacktestStatus.SUCCEEDED, run.getStatus(), run.getError());
+            assertEquals(includeUnconfirmed ? 3 : 2, run.getCandleCount());
+        }
+    }
+
+    @Test
+    void rejectsMisalignedCandlesEvenWhenTheReturnedCountMatches() {
+        HistoricalCandleSource history = mock(HistoricalCandleSource.class);
+        when(history.historyCandles(anyString(), anyString(), any(), any(), anyInt())).thenReturn(List.of(
+                candle("2026-05-17T00:00:00Z", "100", "100", "1"),
+                candle("2026-05-17T00:01:30Z", "100", "100", "1"),
+                candle("2026-05-17T00:02:00Z", "100", "100", "1")));
+        CapturingStrategy strategy = new CapturingStrategy();
+        TradingProperties properties = properties(strategy.type());
+        BacktestService service = new BacktestService(history,
+                new TradingStrategyRegistry(List.of(strategy), properties), properties, Runnable::run);
+
+        BacktestRun run = service.start(request());
+
+        assertEquals(BacktestStatus.FAILED, run.getStatus());
+        assertTrue(run.getError().contains("misaligned 1m candles"));
+        assertTrue(strategy.contexts.isEmpty());
+    }
+
+    @Test
+    void rejectsUnsupportedBarsAndInsufficientCandleLimitsBeforeLoadingHistory() {
+        HistoricalCandleSource history = mock(HistoricalCandleSource.class);
+        CapturingStrategy strategy = new CapturingStrategy();
+        TradingProperties properties = properties(strategy.type());
+        BacktestService service = new BacktestService(history,
+                new TradingStrategyRegistry(List.of(strategy), properties), properties, Runnable::run);
+
+        assertEquals("bar must be one of 1m, 5m or 15m", assertThrows(IllegalArgumentException.class,
+                () -> service.start(request().setBar("1H"))).getMessage());
+        assertEquals("Backtest range requires 3 candles, exceeding maxCandles=2",
+                assertThrows(IllegalArgumentException.class,
+                        () -> service.start(request().setMaxCandles(2))).getMessage());
+        verifyNoInteractions(history);
+    }
+
+    @Test
+    void boundsRetainedRunsAtomicallyAndEvictsOnlyCompletedRuns() throws Exception {
+        HistoricalCandleSource history = mock(HistoricalCandleSource.class);
+        CapturingStrategy strategy = new CapturingStrategy();
+        TradingProperties properties = properties(strategy.type());
+        List<Runnable> queued = Collections.synchronizedList(new ArrayList<>());
+        BacktestService service = new BacktestService(history,
+                new TradingStrategyRegistry(List.of(strategy), properties), properties, queued::add);
+        try (var callers = Executors.newFixedThreadPool(8)) {
+            List<Callable<Boolean>> submissions = IntStream.range(0, 1_100).mapToObj(index -> (Callable<Boolean>) () -> {
+                try {
+                    service.start(request());
+                    return true;
+                } catch (IllegalArgumentException error) {
+                    assertEquals("Backtest capacity is full with active runs; retry later", error.getMessage());
+                    return false;
+                }
+            }).toList();
+            int accepted = 0;
+            for (var result : callers.invokeAll(submissions)) {
+                if (result.get()) accepted++;
+            }
+            assertEquals(1_000, accepted);
+        }
+        assertEquals(1_000, service.list(0, 1_000).size());
+        assertEquals(1_000, queued.size());
+        BacktestRun completed = service.list(0, 1).getFirst().setStatus(BacktestStatus.FAILED);
+
+        BacktestRun replacement = service.start(request());
+
+        assertEquals(BacktestStatus.QUEUED, replacement.getStatus());
+        assertEquals(replacement, service.get(replacement.getRunId()));
+        assertEquals(1_000, service.list(0, 1_000).size());
+        assertThrows(IllegalArgumentException.class, () -> service.get(completed.getRunId()));
+        verifyNoInteractions(history);
+    }
+
+    @Test
+    void keepsRejectedExecutorRunsQueryableAsFailed() {
+        HistoricalCandleSource history = mock(HistoricalCandleSource.class);
+        CapturingStrategy strategy = new CapturingStrategy();
+        TradingProperties properties = properties(strategy.type());
+        BacktestService service = new BacktestService(history,
+                new TradingStrategyRegistry(List.of(strategy), properties), properties,
+                command -> { throw new RejectedExecutionException(); });
+
+        BacktestRun run = service.start(request());
+
+        assertEquals(BacktestStatus.FAILED, service.get(run.getRunId()).getStatus());
+        assertEquals("Backtest queue is full; retry later", run.getError());
+        verifyNoInteractions(history);
     }
 
     @Test

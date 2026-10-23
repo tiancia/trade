@@ -119,10 +119,10 @@ class RiskControlServiceTest {
         assertTrue(fastOpen.skipReason().startsWith("RISK_MIN_OPEN_INTERVAL:"));
 
         repository.recordRiskState(repository.getState().getRiskState()
-                .setLastTradeTime(NOW.minusMillis(properties.getRisk().getMinOpenIntervalMs() + 1).toString())
                 .setConsecutiveOpenActions(2));
 
-        RiskAssessment repeatedOpen = service(properties, repository, NOW)
+        // Committed trade time is monotonic; let the clock advance past cooldown.
+        RiskAssessment repeatedOpen = service(properties, repository, NOW.plusMillis(properties.getRisk().getMinOpenIntervalMs()))
                 .evaluate(openDecision(TradingAction.BUY), context("1000"));
 
         assertFalse(repeatedOpen.isAllowed());

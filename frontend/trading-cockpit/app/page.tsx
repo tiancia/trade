@@ -44,6 +44,9 @@ type Strategy = {
 };
 
 type RuntimeStatus = {
+  instId?: string;
+  baseCcy?: string;
+  quoteCcy?: string;
   executionMode: "PAPER" | "LIVE" | string;
   liveEnabled: boolean;
   runningStrategyIds: string[];
@@ -416,7 +419,8 @@ function number(value?: string | number | null, digits = 1) {
 }
 
 function mergeCandles(current: CandleSeries, update: CandleStreamUpdate): CandleSeries {
-  const byTimestamp = new Map(current.candles.map((candle) => [candle.ts, candle]));
+  const sameSeries = current.instrumentId === update.instrumentId && current.bar === update.bar;
+  const byTimestamp = new Map((sameSeries ? current.candles : []).map((candle) => [candle.ts, candle]));
   update.candles.forEach((candle) => byTimestamp.set(candle.ts, candle));
   const candles = Array.from(byTimestamp.values())
     .sort((left, right) => Number(left.ts) - Number(right.ts))
@@ -444,6 +448,7 @@ export default function Home() {
   const [backtestOpen, setBacktestOpen] = useState(false);
   const [backtestRange, setBacktestRange] = useState({ from: "", to: "" });
   const [backtestSelection, setBacktestSelection] = useState({ strategyId: "", bar: "1m" });
+  const [backtestInstrument, setBacktestInstrument] = useState("BTC-USDT");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   // SSR and the first browser render share placeholders until hydration finishes.
@@ -458,12 +463,13 @@ export default function Home() {
   const marketRequest = useRef(0);
   const marketStreamVersion = useRef(0);
   const marketStreamUpdates = useRef(new Map<string, { version: number; candle: Candle }>());
-  const marketPending = useRef<{ bar: string; signal: AbortSignal; requestId: number } | null>(null);
+  const marketPending = useRef<{ instId: string; bar: string; signal: AbortSignal; requestId: number } | null>(null);
   const [streamState, setStreamState] = useState<StreamState>("connecting");
   const [query, setQuery] = useState("");
   const [paperCurrent, setPaperCurrent] = useState<PaperAccount | null>(null);
   const [paperRefreshToken, setPaperRefreshToken] = useState(0);
   const paperMode = snapshot.runtime.executionMode === "PAPER";
+  const marketInstrument = snapshot.runtime.instId ?? paperCurrent?.instId ?? "BTC-USDT";
 
   const refresh = useCallback(async (quiet = false) => {
     if (!quiet) setRefreshing(true);
@@ -496,13 +502,13 @@ export default function Home() {
   }, []);
 
   const loadMarket = useCallback(async (bar: string, signal: AbortSignal) => {
-    if (marketPending.current?.bar === bar && !marketPending.current.signal.aborted) return null;
+    if (marketPending.current?.instId === marketInstrument && marketPending.current.bar === bar && !marketPending.current.signal.aborted) return null;
     const requestId = ++marketRequest.current;
     const streamVersion = marketStreamVersion.current;
     const requestedAt = Date.now();
-    marketPending.current = { bar, signal, requestId };
+    marketPending.current = { instId: marketInstrument, bar, signal, requestId };
     try {
-      const series = await request<CandleSeries>(`/api/trading/market/candles?instId=BTC-USDT&bar=${encodeURIComponent(bar)}&limit=80`, { signal, cache: "no-store" });
+      const series = await request<CandleSeries>(`/api/trading/market/candles?instId=${encodeURIComponent(marketInstrument)}&bar=${encodeURIComponent(bar)}&limit=80`, { signal, cache: "no-store" });
       // A newer interval or poll owns the visible chart. Stream updates are
       // merged over the response so frequent pushes cannot starve history loading.
       if (signal.aborted || requestId !== marketRequest.current) return null;
@@ -521,7 +527,7 @@ export default function Home() {
     } finally {
       if (marketPending.current?.requestId === requestId) marketPending.current = null;
     }
-  }, []);
+  }, [marketInstrument]);
 
   useEffect(() => {
     const initialRefresh = window.setTimeout(() => { setClock(new Date()); void refresh(true); }, 0);
@@ -547,12 +553,12 @@ export default function Home() {
       void loadMarket(chartBar, abort.signal).then((connected) => {
         if (!active) return;
         if (connected === false) {
-          setMarket({ ...demoMarket, bar: chartBar, asOf: new Date().toISOString() });
+          setMarket({ ...demoMarket, instrumentId: marketInstrument, candles: marketInstrument === demoMarket.instrumentId ? demoMarket.candles : [], bar: chartBar, asOf: new Date().toISOString() });
         }
       });
     }, 0);
 
-    const streamUrl = `${API_BASE}/api/trading/market/candles/stream?instId=BTC-USDT&bar=${encodeURIComponent(chartBar)}&limit=80`;
+    const streamUrl = `${API_BASE}/api/trading/market/candles/stream?instId=${encodeURIComponent(marketInstrument)}&bar=${encodeURIComponent(chartBar)}&limit=80`;
     const source = new EventSource(streamUrl);
     source.addEventListener("snapshot", (event) => {
       if (!active) return;
@@ -571,7 +577,7 @@ export default function Home() {
       // A delayed queue event must not overwrite newer prices or revive freshness.
       if (receivedAt <= 0 || now - receivedAt > 30_000 || receivedAt > now + 1_000) return;
       rememberUpdates(update.candles);
-      setMarket((current) => mergeCandles(current.bar === update.bar ? current : { ...current, candles: [] }, update));
+      setMarket((current) => mergeCandles(current, update));
       if (marketDataIsFresh(update.candles, update.bar, receivedAt, now)) setMarketReceivedAt(receivedAt);
       setStreamState("live");
     });
@@ -588,9 +594,9 @@ export default function Home() {
       source.close();
       window.clearInterval(pollTimer);
     };
-  }, [chartBar, loadMarket]);
+  }, [chartBar, loadMarket, marketInstrument]);
 
-  const marketFresh = market.bar === chartBar && marketDataIsFresh(market.candles, market.bar, marketReceivedAt, clock?.getTime() ?? 0);
+  const marketFresh = market.instrumentId === marketInstrument && market.bar === chartBar && marketDataIsFresh(market.candles, market.bar, marketReceivedAt, clock?.getTime() ?? 0);
   const marketStatus = market.source === "DEMO"
     ? "安全演示 K 线"
     : !marketFresh ? "行情已过期 · 15 秒重试"
@@ -650,8 +656,9 @@ export default function Home() {
     const now = Date.now();
     setBacktestRange({ from: formatDateTimeLocal(now - 86_400_000), to: formatDateTimeLocal(now) });
     setBacktestSelection(backtestSelectionForStrategy(snapshot.strategies.find((strategy) => strategy.id === snapshot.runtime.activeStrategyId) ?? snapshot.strategies[0]));
+    setBacktestInstrument(marketInstrument);
     setBacktestOpen(true);
-  }, [snapshot.strategies, snapshot.runtime.activeStrategyId]);
+  }, [snapshot.strategies, snapshot.runtime.activeStrategyId, marketInstrument]);
 
   const filteredCommands = useMemo(() => {
     const commands = [
@@ -736,6 +743,7 @@ export default function Home() {
 
   const submitBacktest = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (backtestPending) return;
     const data = new FormData(event.currentTarget);
     let payload: ReturnType<typeof buildBacktestPayload>;
     try {
@@ -862,8 +870,8 @@ export default function Home() {
               <section className="panel market-panel">
                 <div className="panel-heading market-heading">
                   <div className="instrument-title">
-                    <div className="coin-mark">₿</div>
-                    <div><h2>BTC / USDT</h2><p>OKX · 现货 · {market.bar}</p></div>
+                    <div className="coin-mark">{market.instrumentId.startsWith("BTC-") ? "₿" : market.instrumentId.split("-")[0].slice(0, 1)}</div>
+                    <div><h2>{market.instrumentId.replaceAll("-", " / ")}</h2><p>OKX · 现货 · {market.bar}</p></div>
                   </div>
                   <div className="market-price"><strong>${number(chart.latest?.close)}</strong><span className={chart.change < 0 ? "market-down" : ""}><ArrowUpRight size={13} /> {chart.change >= 0 ? "+" : ""}{chart.change.toFixed(2)}%</span></div>
                 </div>
@@ -871,7 +879,7 @@ export default function Home() {
                   <div>{["1m", "5m", "15m", "1H", "4H"].map((bar) => <button key={bar} className={chartBar === bar ? "active" : ""} onClick={() => { if (bar !== chartBar) { setStreamState("connecting"); setChartBar(bar); } }}>{bar}</button>)}</div>
                   <div className="ohlc"><span>O {number(chart.latest?.open)}</span><span>H {number(chart.latest?.high)}</span><span>L {number(chart.latest?.low)}</span><span className="up">C {number(chart.latest?.close)}</span></div>
                 </div>
-                <div className="chart" aria-label={`BTC USDT ${market.bar} 实时 K 线图`}>
+                <div className="chart" aria-label={`${market.instrumentId} ${market.bar} 实时 K 线图`}>
                   <div className="chart-grid-lines"><span /><span /><span /><span /><span /></div>
                   <div className="price-scale">{chart.priceScale.map((price, index) => <span key={index}>{number(price, 0)}</span>)}</div>
                   <div className="candles">
@@ -1002,9 +1010,9 @@ export default function Home() {
             <div className="form-modal-heading"><div><span className="panel-kicker">REPRODUCIBLE LAB</span><h2 id="backtest-title">创建策略回测</h2><p>使用后端的历史 K 线与执行模型验证当前策略。</p></div><button className="icon-button" onClick={() => setBacktestOpen(false)} aria-label="关闭"><X size={18} /></button></div>
             <form onSubmit={submitBacktest}>
               <label><span>策略</span><select name="strategyId" value={backtestSelection.strategyId} onChange={(event) => setBacktestSelection(backtestSelectionForStrategy(snapshot.strategies.find((strategy) => strategy.id === event.target.value)))}>{snapshot.strategies.map((strategy) => <option key={strategy.id} value={strategy.id}>{strategy.id}</option>)}</select></label>
-              <div className="form-row"><label><span>交易标的</span><select name="instId" defaultValue="BTC-USDT"><option>BTC-USDT</option><option>ETH-USDT</option></select></label><label><span>K 线周期</span><select name="bar" value={backtestSelection.bar} onChange={(event) => setBacktestSelection((current) => ({ ...current, bar: event.target.value }))}>{(snapshot.strategies.find((strategy) => strategy.id === backtestSelection.strategyId)?.type === "intraday-technical" ? ["15m"] : ["1m", "5m", "15m", "1H"]).map((bar) => <option key={bar}>{bar}</option>)}</select></label></div>
+              <div className="form-row"><label><span>交易标的</span><input name="instId" required value={backtestInstrument} onChange={(event) => setBacktestInstrument(event.target.value.toUpperCase())} placeholder="例如 BTC-USDT" /></label><label><span>K 线周期</span><select name="bar" value={backtestSelection.bar} onChange={(event) => setBacktestSelection((current) => ({ ...current, bar: event.target.value }))}>{(snapshot.strategies.find((strategy) => strategy.id === backtestSelection.strategyId)?.type === "intraday-technical" ? ["15m"] : ["1m", "5m", "15m"]).map((bar) => <option key={bar}>{bar}</option>)}</select></label></div>
               <div className="form-row"><label><span>开始时间（本地时间）</span><input name="from" type="datetime-local" required defaultValue={backtestRange.from} /></label><label><span>结束时间（本地时间）</span><input name="to" type="datetime-local" required defaultValue={backtestRange.to} /></label></div>
-              <label><span>初始资金（USDT）</span><input name="initialCash" type="number" min="100" step="100" required defaultValue="10000" /></label>
+              <label><span>初始资金（{backtestInstrument.split("-")[1] || snapshot.runtime.quoteCcy || "USDT"}）</span><input name="initialCash" type="number" min="0" step="any" required defaultValue={paperCurrent?.initialCash ?? 1000} /></label>
               <div className="safety-note"><ShieldCheck size={17} /><p><strong>安全执行</strong>回测仅使用模拟 Broker，不会触发真实下单。</p></div>
               <div className="form-actions"><button type="button" className="secondary-button" onClick={() => setBacktestOpen(false)}>取消</button><button type="submit" className="primary-button" disabled={backtestPending}>{backtestPending ? <LoaderCircle size={15} className="spin" /> : <Play size={15} />}开始回测</button></div>
             </form>
@@ -1147,14 +1155,14 @@ function ConfigurationEditor({ strategyId, connected, onSaved }: { strategyId: s
     {error && <p className="inline-error" role="alert">{error}</p>}
     {notice && <p className="inline-success" role="status">{notice}</p>}
     {connected && configuration && !loading && <>
-      <form className="configuration-form" onSubmit={save}>
+      {parameterFields.length === 0 ? <p className="empty-message">暂不支持编辑策略类型：{configuration.type}。可在下方查看完整历史参数。</p> : <form className="configuration-form" onSubmit={save}>
         <fieldset disabled={pending}><legend className="sr-only">参数值</legend><div className="parameter-grid">
           {configuration.type === "intraday-technical" && <label><span>日内入场模式</span><select name="mode" required value={String(values.mode ?? "")} onChange={(event) => setValues((current) => ({ ...current, mode: event.target.value }))}>{intradayModes.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}</select><small>{intradayModes.find((mode) => mode.value === values.mode)?.description}固定 15m，仅使用已收盘 K 线。</small></label>}
           {parameterFields.map((field) => <label key={field.key}><span>{field.label}</span><input name={field.key} type="number" required={!field.nullable} min={field.integer || field.allowZero ? field.min : undefined} max={field.max} step={field.step} value={String(values[field.key] ?? "")} onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))} /><small>{field.hint}</small></label>)}
           {configuration.type === "threshold-event" && <label className="checkbox-field"><input type="checkbox" checked={values["require-confirmed-candle"] === true || values["require-confirmed-candle"] === "true"} onChange={(event) => setValues((current) => ({ ...current, "require-confirmed-candle": event.target.checked }))} /><span>仅使用已收盘 K 线</span></label>}
         </div><label className="change-reason"><span>修改原因</span><input name="reason" required maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例如：提高价量门槛，观察交易频率变化" /></label></fieldset>
         <div className="configuration-footer"><p>基于 v{configuration.version} 保存新版本。K 线窗口还受行情采集上限校验；下单数量仍受全局执行上限约束。{configuration.type === "intraday-technical" && "止损止盈按收盘价检查，可能发生跳空与滑点；交易频率取决于实际信号。"}</p><button className="primary-button" type="submit" disabled={pending || historyPending}>{pending ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />}保存新版本</button></div>
-      </form>
+      </form>}
       <div className="configuration-history"><h3>配置版本记录</h3><p className="section-description">展开版本可查看当时的完整参数，以及相对上一版本的变化。</p>
         {history.map((item, index) => {
           const previous = history[index + 1];

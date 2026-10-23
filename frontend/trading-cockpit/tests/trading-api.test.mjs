@@ -47,16 +47,22 @@ test("market freshness requires a recent observation and the current candle peri
 
 // Mount the real page with inert JSX and hooks so transport completion order is
 // exercised without adding a DOM test framework to the production dependency tree.
-async function mountMarketRequests() {
+async function mountMarketRequests({ runtime = {}, configuration, history = [] } = {}) {
   const callbacks = [];
   const effects = [];
   const states = [];
   const pending = [];
   const timers = [];
   const sources = [];
+  let renderingEditor = false;
+  let editorIndex = 0;
+  const editorStates = [configuration, history, {}, "", false, false];
   const hooks = {
     useState(initial) {
-      const state = { value: typeof initial === "function" ? initial() : initial };
+      let value = typeof initial === "function" ? initial() : initial;
+      if (renderingEditor && editorIndex < editorStates.length) value = editorStates[editorIndex++];
+      else if (value?.runtime) value = { ...value, runtime: { ...value.runtime, ...runtime } };
+      const state = { value };
       states.push(state);
       return [state.value, (next) => { state.value = typeof next === "function" ? next(state.value) : next; }];
     },
@@ -67,7 +73,7 @@ async function mountMarketRequests() {
   };
   const exports = {};
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  const compiled = ts.transpileModule(source, {
+  const compiled = ts.transpileModule(`${source}\nexport { ConfigurationEditor as testConfigurationEditor, mergeCandles as testMergeCandles };`, {
     fileName: "page.tsx",
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
@@ -76,7 +82,7 @@ async function mountMarketRequests() {
     window: { setTimeout: (callback) => timers.push(callback), clearTimeout() {}, setInterval() {}, clearInterval() {} },
     EventSource: class {
       listeners = {};
-      constructor() { sources.push(this); }
+      constructor(url) { this.url = url; sources.push(this); }
       addEventListener(name, callback) { this.listeners[name] = callback; }
       close() {}
     },
@@ -95,6 +101,13 @@ async function mountMarketRequests() {
     effect: effects.find((effect) => effect.dependencies[0] === "1m").callback,
     market: states.find((state) => state.value?.candles),
     stream: states.find((state) => state.value === "connecting"),
+    backtestInstrument: states.find((state) => state.value === "BTC-USDT"),
+    openBacktest: callbacks.find((callback) => callback.toString().includes("setBacktestInstrument")),
+    mergeCandles: exports.testMergeCandles,
+    renderEditor() {
+      renderingEditor = true;
+      return exports.testConfigurationEditor({ strategyId: configuration.strategyId, connected: true, onSaved() {} });
+    },
     pending, timers, sources,
   };
 }
@@ -108,6 +121,59 @@ test("late candle requests cannot replace a newer interval", async () => {
   harness.pending[0].resolve(Response.json({ bar: "1m", candles: [] }));
   await old;
   assert.equal(harness.market.value.bar, "5m");
+});
+
+test("current runtime instrument drives REST, SSE and backtest defaults", async () => {
+  const harness = await mountMarketRequests({ runtime: { instId: "SOL-USDC", baseCcy: "SOL", quoteCcy: "USDC" } });
+  const pending = harness.load("15m", new AbortController().signal);
+  assert.match(harness.pending[0].url, /instId=SOL-USDC&bar=15m/);
+  harness.pending[0].resolve(Response.json({ instrumentId: "SOL-USDC", bar: "15m", candles: [] }));
+  await pending;
+  const cleanup = harness.effect();
+  assert.match(harness.sources[0].url, /instId=SOL-USDC&bar=1m/);
+  harness.openBacktest();
+  assert.equal(harness.backtestInstrument.value, "SOL-USDC");
+  cleanup();
+});
+
+test("unknown strategy types render recorded parameters without enabling edits", async () => {
+  const configuration = { strategyId: "future-strategy", type: "future-type", version: 1, params: { "future-threshold": "0.2" } };
+  const harness = await mountMarketRequests({ configuration, history: [configuration] });
+  assert.deepEqual(parameterFieldsForStrategy("future-type"), []);
+  const tree = JSON.stringify(harness.renderEditor());
+  assert.match(tree, /暂不支持编辑策略类型/);
+  assert.match(tree, /future-threshold/);
+  assert.doesNotMatch(tree, /configuration-form/);
+  assert.throws(() => buildStrategyParametersPayload({ expectedVersion: 1, reason: "unsupported", type: configuration.type, params: configuration.params }), /暂不支持编辑/);
+});
+
+test("a first stream candle cannot carry previous instrument or interval history into the new series", async () => {
+  const harness = await mountMarketRequests({ runtime: { instId: "ETH-USDT" } });
+  assert.equal(harness.market.value.instrumentId, "BTC-USDT");
+  assert.ok(harness.market.value.candles.length > 1);
+  const cleanup = harness.effect();
+  const ts = String(Math.floor(Date.now() / 60_000) * 60_000);
+  const update = { instrumentId: "ETH-USDT", bar: "1m", receivedAt: new Date().toISOString(), candles: [{ ts, close: "3200" }] };
+  // The first candle may arrive before either the stream snapshot or REST history.
+  harness.sources[0].listeners.candle({ data: JSON.stringify(update) });
+  assert.equal(harness.market.value.instrumentId, "ETH-USDT");
+  assert.deepEqual(Array.from(harness.market.value.candles, (candle) => candle.close), ["3200"]);
+  const changedBar = harness.mergeCandles(harness.market.value, { ...update, bar: "15m", candles: [{ ts: "1000", close: "3300" }] });
+  assert.deepEqual(Array.from(changedBar.candles, (candle) => candle.close), ["3300"]);
+  cleanup();
+});
+
+test("retired market transports cannot replace the current series with late snapshots or REST history", async () => {
+  const harness = await mountMarketRequests();
+  const previous = harness.market.value;
+  const cleanup = harness.effect();
+  harness.timers[0]();
+  cleanup();
+  harness.sources[0].listeners.snapshot({ data: JSON.stringify({ instrumentId: "BTC-USDT", bar: "1m", candles: [{ ts: "1000" }] }) });
+  harness.pending[0].resolve(Response.json({ instrumentId: "BTC-USDT", bar: "1m", candles: [{ ts: "2000" }] }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.pending[0].init.signal.aborted, true);
+  assert.equal(harness.market.value, previous);
 });
 
 test("changing intervals cancels transport and ignores its eventual failure", async () => {
@@ -273,7 +339,7 @@ test("intraday saves every backend parameter for each supported mode without thr
 test("intraday preserves decimal text and permits only explicit zero slippage", () => {
   const exact = "0.123456789012345678";
   const base = { expectedVersion: 1, type: "intraday-technical", reason: "精确参数" };
-  const payload = buildStrategyParametersPayload({ ...base, params: { ...intradayParams, "stop-loss-percent": exact, "estimated-slippage-rate": "0" } });
+  const payload = buildStrategyParametersPayload({ ...base, params: { ...intradayParams, "stop-loss-percent": exact, "take-profit-percent": "0.2", "estimated-slippage-rate": "0" } });
   assert.equal(payload.params["stop-loss-percent"], exact);
   assert.equal(payload.params["estimated-slippage-rate"], "0");
   for (const key of ["min-atr-percent", "entry-rsi-min", "trend-min-adx", "min-net-reward-percent"]) {
@@ -285,6 +351,36 @@ test("intraday preserves decimal text and permits only explicit zero slippage", 
   assert.throws(() => buildStrategyParametersPayload({ ...base, params: { ...intradayParams, "ema-slow-period": "101" } }), /慢 EMA/);
   assert.throws(() => buildStrategyParametersPayload({ ...base, params: { ...intradayParams, "bollinger-deviations": undefined } }), /布林带/);
   assert.throws(() => buildStrategyParametersPayload({ ...base, type: "unknown", params: intradayParams }), /暂不支持编辑/);
+});
+
+test("intraday rejects contradictory EMA, RSI, ATR and stop/target relationships", () => {
+  const base = { expectedVersion: 1, type: "intraday-technical", reason: "关系校验", params: intradayParams };
+  for (const [changes, message] of [
+    [{ "ema-fast-period": "21" }, /快 EMA/],
+    [{ "ema-fast-period": "22" }, /快 EMA/],
+    [{ "entry-rsi-min": "68" }, /RSI 下限/],
+    [{ "entry-rsi-max": "44" }, /RSI 下限/],
+    [{ "min-atr-percent": "0.03" }, /最低 ATR/],
+    [{ "max-atr-percent": "0.001" }, /最低 ATR/],
+    [{ "take-profit-percent": "0.006" }, /止盈/],
+    [{ "stop-loss-percent": "0.019" }, /止盈/],
+  ]) assert.throws(() => buildStrategyParametersPayload({ ...base, params: { ...intradayParams, ...changes } }), message);
+  const exact = buildStrategyParametersPayload({ ...base, params: { ...intradayParams, "entry-rsi-min": "45.000000000000000001", "entry-rsi-max": "45.000000000000000002" } });
+  assert.equal(exact.params["entry-rsi-min"], "45.000000000000000001");
+});
+
+test("decimal validation rejects JavaScript coercions and backend-incompatible precision", () => {
+  const base = { expectedVersion: 1, type: "intraday-technical", reason: "数值校验" };
+  for (const value of [true, false, null, {}, [1], "0x10", "0b10", "1e-19", "1.0000000000000000000"]) {
+    assert.throws(() => buildStrategyParametersPayload({ ...base, params: { ...intradayParams, "min-volume-ratio": value } }), /最低量比无效/);
+  }
+  assert.throws(() => buildStrategyParametersPayload({ ...base, params: { ...intradayParams, "estimated-slippage-rate": "0.100000000000000001" } }), /单边预估滑点无效/);
+  for (const value of ["14.000000000000000001", "13.999999999999999999", "14000000000000000001e-18"]) {
+    assert.throws(() => buildStrategyParametersPayload({ ...base, params: { ...intradayParams, "rsi-period": value } }), /RSI 周期无效/);
+  }
+  for (const value of ["14.000000000000000000", "1.4e1", "14e0"]) {
+    assert.equal(buildStrategyParametersPayload({ ...base, params: { ...intradayParams, "rsi-period": value } }).params["rsi-period"], 14);
+  }
 });
 
 test("backtest selections inherit the selected strategy bar", () => {

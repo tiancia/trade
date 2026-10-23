@@ -35,12 +35,9 @@ public final class IntradayTechnicalPolicy {
             if (!(averageCost > 0) || !Double.isFinite(averageCost)) {
                 return result(Action.HOLD, "Managed position cost is unavailable", m);
             }
-            double pnl = s.close() / averageCost - 1;
-            m.put("positionReturnPercent", pnl);
-            m.put("stopPrice", averageCost * (1 - c.stopLossPercent()));
-            m.put("takeProfitPrice", averageCost * (1 + c.takeProfitPercent()));
-            if (pnl <= -c.stopLossPercent()) return result(Action.EXIT, "Closed-candle stop loss reached", m);
-            if (pnl >= c.takeProfitPercent()) return result(Action.EXIT, "Closed-candle profit target reached", m);
+            Result protection = priceProtection(s.close(), c, averageCost);
+            m.putAll(protection.metadata());
+            if (protection.action() == Action.EXIT) return result(Action.EXIT, protection.reason(), m);
             if (c.mode() == Mode.RANGE_REVERSION && s.close() >= s.bollingerMiddle()) {
                 return result(Action.EXIT, "Price reverted to Bollinger middle", m);
             }
@@ -83,6 +80,25 @@ public final class IntradayTechnicalPolicy {
             return result(Action.HOLD, "Planned reward insufficient after estimated fees and slippage", m);
         }
         return result(Action.ENTER, "Confirmed " + c.mode() + " setup", m);
+    }
+
+    /** Fixed price exits need a fresh confirmed close, independently of indicator warmup. */
+    public Result priceProtection(double close, Settings c, double averageCost) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("mode", c.mode().name());
+        metadata.put("close", close);
+        if (!(close > 0) || !Double.isFinite(close) || !(averageCost > 0) || !Double.isFinite(averageCost)) {
+            return result(Action.HOLD, "Managed position cost or close is unavailable", metadata);
+        }
+        double stop = averageCost * (1 - c.stopLossPercent());
+        double target = averageCost * (1 + c.takeProfitPercent());
+        metadata.put("positionReturnPercent", close / averageCost - 1);
+        metadata.put("stopPrice", stop);
+        metadata.put("takeProfitPrice", target);
+        // Compare prices so an exact stop/target is not missed through ratio rounding.
+        if (close <= stop) return result(Action.EXIT, "Closed-candle stop loss reached", metadata);
+        if (close >= target) return result(Action.EXIT, "Closed-candle profit target reached", metadata);
+        return result(Action.HOLD, "Closed-candle price protection not reached", metadata);
     }
 
     private static Result result(Action action, String reason, Map<String, Object> metadata) {

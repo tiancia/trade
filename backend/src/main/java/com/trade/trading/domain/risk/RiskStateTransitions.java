@@ -30,13 +30,20 @@ public final class RiskStateTransitions {
                                      BigDecimal equity, Instant now) {
         TradingRiskState state = copyRiskState(source);
         updateEquity(state, equity);
-        state.setLastTradeTime(now.toString());
+        state.setLastTradeTime(latestTradeTime(state.getLastTradeTime(), now));
         if (action.isOpenAction()) {
             state.setConsecutiveOpenActions(state.getConsecutiveOpenActions() + 1);
         } else if (action.isCloseAction()) {
             state.setConsecutiveOpenActions(0);
         }
         return state;
+    }
+
+    /** A late fill or secondary risk update cannot move a committed trade time backwards. */
+    public static String latestTradeTime(String previous, Instant occurredAt) {
+        Instant previousTime = parseInstant(previous);
+        return occurredAt == null || (previousTime != null && previousTime.isAfter(occurredAt))
+                ? previous : occurredAt.toString();
     }
 
     private static void updateEquity(TradingRiskState state, BigDecimal equity) {

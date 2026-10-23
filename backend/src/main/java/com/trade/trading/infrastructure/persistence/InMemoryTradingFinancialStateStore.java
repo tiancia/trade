@@ -5,6 +5,7 @@ import com.trade.trading.application.port.TradingFinancialStateStore;
 import com.trade.trading.domain.model.TradingPositionState;
 import com.trade.trading.domain.model.TradingRiskState;
 import com.trade.trading.domain.order.SpotFillApplication;
+import com.trade.trading.domain.risk.RiskStateTransitions;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -85,6 +86,9 @@ public class InMemoryTradingFinancialStateStore implements TradingFinancialState
         TradingRiskState copy = copyRisk(riskState);
         TradingRiskState current = risks.get(accountScope);
         if (current != null) {
+            copy.setLastTradeTime(RiskStateTransitions.latestTradeTime(copy.getLastTradeTime(),
+                    current.getLastTradeTime() == null || current.getLastTradeTime().isBlank()
+                            ? null : Instant.parse(current.getLastTradeTime())));
             copy.setConsecutiveReconciliationFailures(current.getConsecutiveReconciliationFailures())
                     .setLastReconciliationAt(current.getLastReconciliationAt())
                     .setLastReconciliationError(current.getLastReconciliationError());
@@ -144,8 +148,12 @@ public class InMemoryTradingFinancialStateStore implements TradingFinancialState
         BigDecimal costDelta = change.quoteCost();
         TradingPositionState position = currentPosition(accountScope, instId);
         var next = "buy".equalsIgnoreCase(side) ? position.buy(delta, costDelta) : position.applySellFill(delta);
+        TradingRiskState risk = copyRisk(risks.get(accountScope));
+        risk.setLastTradeTime(RiskStateTransitions.latestTradeTime(risk.getLastTradeTime(),
+                exchangeUpdatedAt == null ? Instant.now() : exchangeUpdatedAt));
         positions.put(key(accountScope, instId), next);
         fills.put(orderId, new FillCheckpoint(side, observedFill, observedPosition, observedCost));
+        risks.put(accountScope, risk);
         return new SpotFillApplication(true, previous.position().signum() == 0, delta);
     }
 

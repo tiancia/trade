@@ -43,6 +43,22 @@ class TradingStrategyEngineTest {
     Path tempDir;
 
     @Test
+    void runtimePublishesTheConfiguredInstrumentForMarketAndBacktestDefaults() {
+        TradingProperties properties = new TradingProperties();
+        properties.setInstId("ETH-USDC");
+        properties.setBaseCcy("ETH");
+        properties.setQuoteCcy("USDC");
+        TradingStrategyEngine engine = new TradingStrategyEngine(mock(TradingMarketSource.class),
+                mock(TradingStrategySelectionService.class), mock(TradingBroker.class), mock(TradingStateStore.class),
+                properties, mock(TradingMarketFeed.class), mock(FundSafetyService.class), mock(OrderReconciliationService.class),
+                mock(TradingLeadershipService.class), new SimpleMeterRegistry(), mock(PaperAccountService.class));
+        var status = engine.status();
+        assertEquals("ETH-USDC", status.getInstId());
+        assertEquals("ETH", status.getBaseCcy());
+        assertEquals("USDC", status.getQuoteCcy());
+    }
+
+    @Test
     void backtestModeSkipsRealtimeCollectionSelectionAndExecution() {
         TradingProperties properties = new TradingProperties();
         properties.setExecutionMode(ExecutionMode.BACKTEST);

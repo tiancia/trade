@@ -10,6 +10,9 @@ import java.util.List;
 @Data
 @Accessors(chain = true)
 public class TradingRuntimeStatus {
+    private String instId;
+    private String baseCcy;
+    private String quoteCcy;
     private ExecutionMode executionMode;
     private boolean liveEnabled;
     private List<String> runningStrategyIds;

@@ -38,4 +38,5 @@ Dockerfile*
 README.md
 tests
 worker
-build
+build/*
+!build/font-urls.ts

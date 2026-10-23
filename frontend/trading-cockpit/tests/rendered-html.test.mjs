@@ -43,7 +43,7 @@ test("server-renders the Orbit trading cockpit", async () => {
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });
 
-test("production HTTP serves every page script and stylesheet", { timeout: 20_000 }, async () => {
+test("production HTTP serves every page script, stylesheet and self-hosted font", { timeout: 20_000 }, async () => {
   const reservation = createServer();
   await new Promise((resolve) => reservation.listen(0, "127.0.0.1", resolve));
   const port = reservation.address().port;
@@ -65,6 +65,7 @@ test("production HTTP serves every page script and stylesheet", { timeout: 20_00
     }
     assert.equal(response?.status, 200, diagnostics);
     const html = await response.text();
+    assert.doesNotMatch(html, /url\(["']?(?:file:|[A-Za-z]:[\\/])/i, "Font CSS must never expose filesystem URLs");
     const assets = new Set([...html.matchAll(/(?:src|href)="(\/[^" ]+\.(?:js|css))"/g)].map((match) => match[1]));
     assert.ok([...assets].some((asset) => asset.endsWith(".js")), "Page must load its client scripts");
     assert.ok([...assets].some((asset) => asset.endsWith(".css")), "Page must load its styles");
@@ -72,6 +73,14 @@ test("production HTTP serves every page script and stylesheet", { timeout: 20_00
       const result = await fetch(new URL(asset, base), { signal: AbortSignal.timeout(1000) });
       assert.equal(result.status, 200, `${asset} must be served over HTTP`);
       await result.arrayBuffer();
+    }
+    const fonts = new Set([...html.matchAll(/url\(["']?(\/[^)"']+\.woff2)["']?\)/g)].map((match) => match[1]));
+    assert.ok(fonts.size > 0, "The page must self-host Geist fonts");
+    for (const font of fonts) {
+      const result = await fetch(new URL(font, base), { signal: AbortSignal.timeout(1000) });
+      assert.equal(result.status, 200, `${font} must be served over HTTP`);
+      assert.match(result.headers.get("content-type") ?? "", /^font\/woff2\b/i);
+      assert.ok((await result.arrayBuffer()).byteLength > 0);
     }
     const manifest = await fetch(`${base}/.vite/manifest.json`);
     assert.equal(manifest.status, 404, "Private build metadata must remain inaccessible");

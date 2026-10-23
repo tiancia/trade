@@ -55,4 +55,18 @@ class RiskStateTransitionsTest {
         assertEquals(now.toString(), result.getLastTradeTime());
         assertEquals(2, source.getConsecutiveOpenActions());
     }
+
+    @Test
+    void lateExecutedActionCannotRegressTheCommittedTradeTime() {
+        Instant latest = Instant.parse("2026-09-27T00:15:00Z");
+        TradingRiskState source = new TradingRiskState().setLastTradeTime(latest.toString())
+                .setConsecutiveOpenActions(2);
+        TradingRiskState lateClose = transitions.executed(source, TradingAction.SELL, BigDecimal.ZERO,
+                latest.minusSeconds(60));
+        assertEquals(latest.toString(), lateClose.getLastTradeTime());
+        assertEquals(0, lateClose.getConsecutiveOpenActions());
+        assertEquals(2, source.getConsecutiveOpenActions());
+        assertEquals(latest.plusSeconds(60).toString(), transitions.executed(lateClose,
+                TradingAction.BUY, BigDecimal.ZERO, latest.plusSeconds(60)).getLastTradeTime());
+    }
 }

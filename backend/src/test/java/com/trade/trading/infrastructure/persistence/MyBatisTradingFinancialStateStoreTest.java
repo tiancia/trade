@@ -2,10 +2,15 @@ package com.trade.trading.infrastructure.persistence;
 
 import com.trade.trading.application.port.FundSafetyRepository;
 import com.trade.trading.application.port.TradingFinancialStateStore;
+import com.trade.trading.application.risk.RiskControlService;
+import com.trade.trading.domain.model.ExecutionMode;
+import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.domain.model.TradingPositionState;
 import com.trade.trading.domain.model.TradingRiskState;
 import com.trade.trading.domain.order.SpotFillApplication;
 import com.trade.trading.domain.risk.FundSafetyStatus;
+import com.trade.trading.infrastructure.config.TradingProperties;
+import com.trade.trading.infrastructure.config.TradingRiskConfiguration;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.Test;
@@ -25,7 +30,9 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.nio.file.Path;
 import java.util.ConcurrentModificationException;
 import java.util.concurrent.CountDownLatch;
@@ -200,7 +207,7 @@ class MyBatisTradingFinancialStateStoreTest {
                 Long.class) > paperPositionId);
         assertTrue(jdbcTemplate.queryForObject(
                 "SELECT id FROM okx_risk_state WHERE account_scope = 'paper'", Long.class) > 0);
-        assertEquals(1, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_risk_state", Integer.class));
+        assertEquals(2, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_risk_state", Integer.class));
         assertTrue(jdbcTemplate.queryForObject(
                 "SELECT id FROM okx_order_fill_ledger WHERE order_id = 1", Long.class) > 0);
     }
@@ -246,6 +253,107 @@ class MyBatisTradingFinancialStateStoreTest {
         assertDecimal("1", position.getQuantity());
         assertEquals(0, position.getVersion());
         assertEquals(0, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_order_fill_ledger", Integer.class));
+    }
+
+    @Test
+    void advancingFillsCommitTradeTimeWithoutRiskCallbacksAndStaleRiskWritesCannotRegressIt() {
+        Instant firstTime = Instant.parse("2026-10-23T00:00:00Z");
+        TradingRiskState staleRisk = store.getOrCreateRiskState("live", new TradingRiskState()
+                .setLastTradeTime(firstTime.minusSeconds(60).toString()).setConsecutiveOpenActions(2)
+                .setConsecutiveLosses(1).setLastRiskReason("preserved")
+                .setConsecutiveReconciliationFailures(3).setCurrentEquity(new BigDecimal("1000")));
+        assertTrue(applyBuyFill(store, "1", firstTime).firstApplication());
+        assertEquals(firstTime.toString(), store.getOrCreateRiskState("live", null).getLastTradeTime());
+        long firstVersion = riskVersion();
+
+        // A repeated observation is not a new fill, even with a newer exchange timestamp.
+        assertFalse(applyBuyFill(store, "1", firstTime.plusSeconds(120)).changed());
+        assertEquals(firstTime.toString(), store.getOrCreateRiskState("live", null).getLastTradeTime());
+        assertEquals(firstVersion, riskVersion());
+
+        Instant secondTime = firstTime.plusSeconds(30);
+        SpotFillApplication partial = applyBuyFill(store, "2", secondTime);
+        assertTrue(partial.changed());
+        assertFalse(partial.firstApplication());
+        assertEquals(secondTime.toString(), store.getOrCreateRiskState("live", null).getLastTradeTime());
+        assertEquals(firstVersion + 1, riskVersion());
+
+        assertTrue(applyBuyFill(store, "3", firstTime.plusSeconds(10)).changed());
+        TradingRiskState committed = store.getOrCreateRiskState("live", null);
+        assertEquals(secondTime.toString(), committed.getLastTradeTime());
+        assertEquals(firstVersion + 2, riskVersion());
+        assertEquals(2, committed.getConsecutiveOpenActions());
+        assertEquals(1, committed.getConsecutiveLosses());
+        assertEquals(3, committed.getConsecutiveReconciliationFailures());
+        assertEquals("preserved", committed.getLastRiskReason());
+        assertDecimal("1000", committed.getCurrentEquity());
+
+        assertEquals(secondTime.toString(), store.saveRiskState("live", staleRisk).getLastTradeTime());
+        assertEquals(secondTime.toString(), store.saveRiskState("live",
+                staleRisk.setLastTradeTime(null)).getLastTradeTime());
+        assertDecimal("3", store.getOrCreatePosition("live", "BTC-USDT", BigDecimal.ZERO,
+                BigDecimal.ZERO).getQuantity());
+    }
+
+    @Test
+    void failureAfterTradeTimeWriteRollsBackPositionTimeAndFillCheckpointTogether() {
+        Instant previousTime = Instant.parse("2026-10-22T23:00:00Z");
+        store.getOrCreatePosition("live", "BTC-USDT", BigDecimal.ONE, BigDecimal.TEN);
+        store.getOrCreateRiskState("live", new TradingRiskState().setLastTradeTime(previousTime.toString())
+                .setConsecutiveOpenActions(2));
+        jdbcTemplate.execute("ALTER TABLE okx_order_fill_ledger ADD CONSTRAINT reject_filled "
+                + "CHECK (exchange_state IS NULL OR exchange_state <> 'filled')");
+        assertThrows(RuntimeException.class, () -> applyBuyFill(store, "1", previousTime.plusSeconds(60)));
+        assertDecimal("1", store.getOrCreatePosition("live", "BTC-USDT", BigDecimal.ZERO,
+                BigDecimal.ZERO).getQuantity());
+        assertEquals(previousTime.toString(), store.getOrCreateRiskState("live", null).getLastTradeTime());
+        assertEquals(0, riskVersion());
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_order_fill_ledger", Integer.class));
+
+        jdbcTemplate.execute("ALTER TABLE okx_order_fill_ledger DROP CONSTRAINT reject_filled");
+        assertTrue(applyBuyFill(store, "1", previousTime.plusSeconds(60)).changed());
+        assertEquals(previousTime.plusSeconds(60).toString(), store.getOrCreateRiskState("live", null).getLastTradeTime());
+        assertDecimal("2", store.getOrCreatePosition("live", "BTC-USDT", BigDecimal.ZERO,
+                BigDecimal.ZERO).getQuantity());
+    }
+
+    @Test
+    void liveFillRetainsItsTradeTimeWhenOptionalExecutedActionRiskBookkeepingIsDisabled() {
+        Instant fillTime = Instant.parse("2026-10-23T00:00:00Z");
+        TradingProperties properties = new TradingProperties();
+        properties.setExecutionMode(ExecutionMode.LIVE);
+        properties.getRisk().setEnabled(false);
+        var repository = new TradingStateRepository(tempDir.resolve("risk-disabled-memory.json"), store, "live", "BTC-USDT");
+        var risk = new RiskControlService(properties, repository, Clock.fixed(fillTime, ZoneOffset.UTC),
+                new TradingRiskConfiguration().tradingRiskRules());
+        applyBuyFill(store, "1", fillTime);
+        risk.recordReconciledAction(TradingAction.BUY, fillTime);
+        assertEquals(fillTime.toString(), repository.getState().getRiskState().getLastTradeTime());
+        assertEquals(0, repository.getState().getRiskState().getConsecutiveOpenActions());
+    }
+
+    @Test
+    void inMemoryAdapterPreservesCommittedTradeTimeAcrossReplaysLateFillsAndStaleRiskSaves() {
+        TradingFinancialStateStore memory = new InMemoryTradingFinancialStateStore();
+        Instant firstTime = Instant.parse("2026-10-23T00:00:00Z");
+        TradingRiskState stale = memory.getOrCreateRiskState("live", new TradingRiskState().setConsecutiveOpenActions(2));
+        applyBuyFill(memory, "1", firstTime);
+        assertFalse(applyBuyFill(memory, "1", firstTime.plusSeconds(60)).changed());
+        assertEquals(firstTime.toString(), memory.getOrCreateRiskState("live", null).getLastTradeTime());
+        applyBuyFill(memory, "2", firstTime.plusSeconds(30));
+        applyBuyFill(memory, "3", firstTime.minusSeconds(30));
+        assertEquals(firstTime.plusSeconds(30).toString(), memory.saveRiskState("live", stale).getLastTradeTime());
+        assertEquals(2, memory.getOrCreateRiskState("live", null).getConsecutiveOpenActions());
+    }
+
+    private static SpotFillApplication applyBuyFill(TradingFinancialStateStore target, String cumulative, Instant time) {
+        BigDecimal quantity = new BigDecimal(cumulative);
+        return target.applyCumulativeSpotFill(1L, "live", "BTC-USDT", "buy", quantity, quantity,
+                quantity.multiply(BigDecimal.TEN), BigDecimal.TEN, BigDecimal.ZERO, "USDT", "filled", time);
+    }
+
+    private long riskVersion() {
+        return jdbcTemplate.queryForObject("SELECT version FROM okx_risk_state WHERE account_scope = 'live'", Long.class);
     }
 
     @Test

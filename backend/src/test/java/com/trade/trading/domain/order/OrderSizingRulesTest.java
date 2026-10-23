@@ -11,6 +11,19 @@ class OrderSizingRulesTest {
             new BigDecimal("100"), 2, BigDecimal.ONE, new BigDecimal("100"), new BigDecimal("50")));
 
     @Test
+    void distinguishesUnsellableRemaindersWithoutDiscardingManagedAssets() {
+        BigDecimal lot = new BigDecimal("0.00000001");
+        BigDecimal min = new BigDecimal("0.00001");
+        assertFalse(OrderSizingRules.hasTradablePosition(new BigDecimal("0.000000007225046249"), lot, min));
+        assertFalse(OrderSizingRules.hasTradablePosition(new BigDecimal("0.000009999999999999"), lot, min));
+        assertTrue(OrderSizingRules.hasTradablePosition(min, lot, min));
+        assertTrue(OrderSizingRules.hasTradablePosition(new BigDecimal("0.00002"), lot, min));
+        assertTrue(OrderSizingRules.hasTradablePosition(new BigDecimal("0.000000007225046249"), null, null));
+        assertFalse(OrderSizingRules.hasTradablePosition(BigDecimal.ZERO, lot, min));
+        assertThrows(IllegalArgumentException.class, () -> OrderSizingRules.hasTradablePosition(min, lot.negate(), min));
+    }
+
+    @Test
     void roundsAgainAfterExchangeCapAndRejectsBelowMinimum() {
         var facts = new OrderSizingRules.SizingFacts(BigDecimal.ZERO, new BigDecimal("10"), BigDecimal.ONE,
                 new OrderSizingRules.InstrumentLimits(BigDecimal.ZERO, new BigDecimal("0.4"),

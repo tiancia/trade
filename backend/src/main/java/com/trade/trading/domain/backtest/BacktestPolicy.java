@@ -50,6 +50,7 @@ public final class BacktestPolicy {
         if (trim(bar) == null) {
             throw new IllegalArgumentException("bar is required");
         }
+        barDurationMillis(bar);
 
         BacktestRequest normalized = new BacktestRequest()
                 .setStrategyId(strategyId)
@@ -64,7 +65,41 @@ public final class BacktestPolicy {
                 .setIncludeUnconfirmed(source.isIncludeUnconfirmed())
                 .setMaxCandles(source.getMaxCandles())
                 .setParameterOverrides(overrides);
+        long expectedCandles = expectedCandleCount(normalized);
+        if (expectedCandles < 2) {
+            throw new IllegalArgumentException("Backtest range must include at least two usable candle intervals");
+        }
+        if (expectedCandles > normalized.getMaxCandles()) {
+            throw new IllegalArgumentException("Backtest range requires " + expectedCandles
+                    + " candles, exceeding maxCandles=" + normalized.getMaxCandles());
+        }
         return normalized;
+    }
+
+    public static long barDurationMillis(String bar) {
+        return switch (bar) {
+            case "1m" -> 60_000L;
+            case "5m" -> 300_000L;
+            case "15m" -> 900_000L;
+            default -> throw new IllegalArgumentException("bar must be one of 1m, 5m or 15m");
+        };
+    }
+
+    public static long firstCandleTimestamp(BacktestRequest request) {
+        return ceilingBoundary(request.getFrom().toEpochMilli(), barDurationMillis(request.getBar()));
+    }
+
+    public static long expectedCandleCount(BacktestRequest request) {
+        long interval = barDurationMillis(request.getBar());
+        long end = request.isIncludeUnconfirmed()
+                ? ceilingBoundary(request.getTo().toEpochMilli(), interval)
+                : Math.floorDiv(request.getTo().toEpochMilli(), interval) * interval;
+        return Math.max(0L, (end - firstCandleTimestamp(request)) / interval);
+    }
+
+    private static long ceilingBoundary(long timestamp, long interval) {
+        long floor = Math.floorDiv(timestamp, interval) * interval;
+        return floor == timestamp ? floor : floor + interval;
     }
     private static void requirePositive(BigDecimal value, String field) {
         if (value.signum() <= 0) {

@@ -101,6 +101,8 @@ REST / WebSocket market data
 
 策略输入显式区分1m、5m、15m。`intraday-technical` 提供趋势回踩、放量突破和震荡回归三种15m现货多头候选，复用纯领域指标；每分钟事件扫描独立评估确认收盘信号，订单及PAPER账本保存每个方向的稳定信号身份。新增实例不自动切换当前策略，不改变LIVE门禁；收益与频率需要独立回测、样本外及PAPER验证。
 
+固定价格止损止盈只依赖最新有效确认收盘价，指标暖机故障不阻止该保护；产品精度以下的受管理零碎资产保留账本。`lastTradeTime` 随LIVE累计成交和PAPER成交事务持久化并保持单调，不依赖风险计数开关。历史回测校验完整、连续且对齐的半开请求区间，适配OKX排他分页边界；运行状态返回实际标的和币种供驾驶舱使用。
+
 ### polymarket 与 story
 
 两个域共享 `client.ai.AiTextClient`，但 Prompt、解析器、业务校验和审计仍归各自领域。Polymarket 的真实执行还必须经过 execution 开关、市场约束和 geoblock 检查；story 的输出由 `StoryFileRepository` 写入配置目录。

@@ -17,6 +17,8 @@ import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.domain.model.TradingDecisionRecord;
 import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.domain.paper.PaperAccount;
+import com.trade.trading.domain.risk.RiskAssessment;
+import com.trade.trading.domain.risk.RiskStateTransitions;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.infrastructure.config.TradingRiskConfiguration;
 import org.apache.ibatis.session.SqlSessionFactory;
@@ -108,6 +110,67 @@ class MyBatisPaperAccountStoreTest {
         assertEquals(0, store.active("BTC-USDT").version());
         assertTrue(store.fills("BTC-USDT", a.sessionId(), null, 10).isEmpty());
         assertEquals(1, store.equity("BTC-USDT", a.sessionId(), null, 10).size());
+        assertNull(store.risk("BTC-USDT", a.sessionId()).getLastTradeTime());
+    }
+
+    @Test void tradeTimeCommitsWithFillAndSurvivesReplaysLateFillsAndStaleRiskTransitions() {
+        PaperAccount original = start("100");
+        var buy = store.fill(commandAt(original, "first", NOW.plusSeconds(10)));
+        assertEquals(NOW.plusSeconds(10).toString(), store.risk("BTC-USDT", original.sessionId()).getLastTradeTime());
+        assertEquals(0, store.risk("BTC-USDT", original.sessionId()).getConsecutiveOpenActions());
+
+        assertTrue(store.fill(commandAt(original, "first", NOW.plusSeconds(60))).replay());
+        assertEquals(NOW.plusSeconds(10).toString(), store.risk("BTC-USDT", original.sessionId()).getLastTradeTime());
+        var late = store.fill(commandAt(buy.account(), "late", NOW.plusSeconds(5)));
+        assertEquals(NOW.plusSeconds(10).toString(), store.risk("BTC-USDT", original.sessionId()).getLastTradeTime());
+        var newer = store.fill(commandAt(late.account(), "newer", NOW.plusSeconds(20)));
+        assertEquals(NOW.plusSeconds(20).toString(), store.risk("BTC-USDT", original.sessionId()).getLastTradeTime());
+
+        // Both in-place and replacement secondary transitions must retain the committed fact.
+        store.updateRisk("BTC-USDT", original.sessionId(), newer.account().version(),
+                current -> current.setLastTradeTime(NOW.toString()).setConsecutiveOpenActions(2));
+        store.updateRisk("BTC-USDT", original.sessionId(), newer.account().version(),
+                current -> RiskStateTransitions.copyRiskState(current).setLastTradeTime(null));
+        assertEquals(NOW.plusSeconds(20).toString(), store.risk("BTC-USDT", original.sessionId()).getLastTradeTime());
+        assertEquals(2, store.risk("BTC-USDT", original.sessionId()).getConsecutiveOpenActions());
+    }
+
+    @Test void failureAfterTradeTimeWriteRollsBackCashPositionFillAndTimeTogether() {
+        PaperAccount original = start("100");
+        jdbc.execute("ALTER TABLE okx_paper_equity ADD CONSTRAINT reject_fill_equity CHECK (kind <> 'FILL')");
+        assertThrows(RuntimeException.class,
+                () -> store.fill(command(original, "retry-after-rollback", "BUY", "10", "10", "0")));
+        decimal("100", store.active("BTC-USDT").cash());
+        decimal("0", store.active("BTC-USDT").positionQuantity());
+        assertEquals(0, store.active("BTC-USDT").version());
+        assertNull(store.risk("BTC-USDT", original.sessionId()).getLastTradeTime());
+        assertTrue(store.fills("BTC-USDT", original.sessionId(), null, 10).isEmpty());
+        assertEquals(1, store.equity("BTC-USDT", original.sessionId(), null, 10).size());
+
+        jdbc.execute("ALTER TABLE okx_paper_equity DROP CONSTRAINT reject_fill_equity");
+        assertFalse(store.fill(command(original, "retry-after-rollback", "BUY", "10", "10", "0")).replay());
+        assertEquals(NOW.toString(), store.risk("BTC-USDT", original.sessionId()).getLastTradeTime());
+    }
+
+    @Test void secondaryRiskFailureCannotEraseTradeTimeRecoveredByAFreshService() {
+        TradingProperties props = new TradingProperties();
+        PaperAccount original = start("100");
+        PaperAccountService service = new PaperAccountService(store, props, Clock.fixed(NOW, ZoneOffset.UTC));
+        TradingDecisionContext context = service.enrichContext(context());
+        RiskControlService risk = mock(RiskControlService.class);
+        when(risk.evaluate(any(), eq(context))).thenReturn(new RiskAssessment().setAllowed(true));
+        doThrow(new IllegalStateException("secondary risk write unavailable")).when(risk).recordExecutedAction(any(), eq(context));
+        PaperOrderExecutionService executor = new PaperOrderExecutionService(new OrderSizingService(props), props, risk, service);
+        var record = new TradingDecisionRecord().setDecisionId("committed-before-risk-error").setStrategyId("threshold")
+                .setStrategyConfigVersion(1).setStrategyConfigSnapshot(Map.of());
+        executor.execute(StrategyDecision.buy("threshold", BigDecimal.TEN, "test"), context, record);
+        assertEquals("PAPER_FILLED", record.getExecutionStatus());
+        assertTrue(record.getMetadata().containsKey("paperRiskUpdateWarning"));
+
+        PaperAccountService restarted = new PaperAccountService(store, props, Clock.fixed(NOW.plusSeconds(1), ZoneOffset.UTC));
+        assertEquals(NOW.toString(), restarted.enrichContext(context()).getTradingState().getRiskState().getLastTradeTime());
+        assertEquals(0, store.risk("BTC-USDT", original.sessionId()).getConsecutiveOpenActions());
+        assertEquals(1, store.fills("BTC-USDT", original.sessionId(), null, 10).size());
     }
 
     @Test void newSessionArchivesHistoryAndFencesOldDecisionAndRiskState() {
@@ -235,6 +298,10 @@ class MyBatisPaperAccountStoreTest {
         assertEquals("PAPER_FILLED", record.getExecutionStatus());
         decimal("30", service.current().cash());
         assertEquals(4, service.fills(context.getPaperSessionId(), null, 10).getFirst().strategyConfigVersion());
+        assertEquals(NOW.toString(), store.risk("BTC-USDT", context.getPaperSessionId()).getLastTradeTime());
+        assertEquals(0, store.risk("BTC-USDT", context.getPaperSessionId()).getConsecutiveOpenActions());
+        assertEquals(NOW.toString(), new PaperAccountService(store, props, Clock.fixed(NOW, ZoneOffset.UTC))
+                .enrichContext(context()).getTradingState().getRiskState().getLastTradeTime());
         verifyNoInteractions(legacy);
     }
 
@@ -290,6 +357,10 @@ class MyBatisPaperAccountStoreTest {
     }
 
     private PaperAccount start(String cash) { return store.start("BTC-USDT", "USDT", new BigDecimal(cash), null, null, NOW); }
+    private PaperAccountStore.FillCommand commandAt(PaperAccount account, String decisionId, Instant fillTime) {
+        return new PaperAccountStore.FillCommand("BTC-USDT", account.sessionId(), account.version(), decisionId,
+                "threshold", 1, "{}", "BUY", BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO, NOW, fillTime);
+    }
     private PaperAccountStore.FillCommand command(PaperAccount a, String decisionId, String side, String size, String price, String fee) {
         return new PaperAccountStore.FillCommand("BTC-USDT", a.sessionId(), a.version(), decisionId, "threshold", 1,
                 "{\"params\":{\"lookback\":5}}", side, new BigDecimal(size), new BigDecimal(price), new BigDecimal(fee), NOW, NOW);

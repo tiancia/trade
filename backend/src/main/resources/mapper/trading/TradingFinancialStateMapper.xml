@@ -128,6 +128,17 @@
           AND version = #{version} - 1
     </update>
 
+    <update id="recordTradeTime">
+        UPDATE okx_risk_state
+        SET last_trade_time = CASE
+                WHEN last_trade_time IS NULL OR last_trade_time &lt; #{tradeTime} THEN #{tradeTime}
+                ELSE last_trade_time
+            END,
+            version = version + 1,
+            updated_at = #{updatedAt}
+        WHERE account_scope = #{accountScope}
+    </update>
+
     <update id="recordReconciliationSuccess">
         UPDATE okx_risk_state
         SET consecutive_reconciliation_failures = 0,

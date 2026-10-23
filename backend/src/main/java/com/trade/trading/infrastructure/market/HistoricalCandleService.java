@@ -99,7 +99,9 @@ public class HistoricalCandleService implements HistoricalCandleSource {
                         okxApi.getHistoryCandles(new CandlesReq()
                                 .setInstId(instId)
                                 .setBar(bar)
-                                .setBefore(String.valueOf(fromTs))
+                                // OKX pagination excludes both endpoints. Keep
+                                // the requested inclusive opening timestamp.
+                                .setBefore(String.valueOf(Math.subtractExact(fromTs, 1L)))
                                 .setAfter(String.valueOf(cursor))
                                 .setLimit(String.valueOf(PAGE_SIZE))),
                         "history candles"
@@ -157,7 +159,7 @@ public class HistoricalCandleService implements HistoricalCandleSource {
     }
 
     private static boolean inRange(long timestamp, long fromTs, long toTs) {
-        return timestamp >= fromTs && timestamp <= toTs;
+        return timestamp >= fromTs && timestamp < toTs;
     }
 
     private static CandleResp toCandle(OkxCandleCacheRow row) {

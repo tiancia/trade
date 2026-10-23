@@ -6,6 +6,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --include=dev --no-audit --no-fund
 COPY app ./app
 COPY public ./public
+COPY build/font-urls.ts ./build/font-urls.ts
 COPY next.config.ts postcss.config.mjs tsconfig.json ./
 COPY vite.config.docker.ts ./vite.config.ts
 RUN TRADE_DOCKER_STANDALONE=true node node_modules/vinext/dist/cli.js build

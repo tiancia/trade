@@ -110,7 +110,12 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
         if (row == null) {
             throw new IllegalStateException("Trading risk state cannot be locked: " + accountScope);
         }
+        Instant committedTradeTime = row.getLastTradeTime();
         copyRiskControlState(riskState, row);
+        if (committedTradeTime != null && (row.getLastTradeTime() == null
+                || committedTradeTime.isAfter(row.getLastTradeTime()))) {
+            row.setLastTradeTime(committedTradeTime);
+        }
         row.setVersion(row.getVersion() + 1)
                 .setUpdatedAt(Instant.now());
         if (mapper.updateRiskState(row) != 1) {
@@ -215,6 +220,14 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
             applySell(position, positionDelta, true);
         }
         updatePosition(position);
+
+        // Trade time is a capital fact, independent of optional risk counters.
+        // Commit every advancing partial fill with its position and checkpoint.
+        insertRiskIfAbsent(accountScope, null);
+        Instant now = Instant.now();
+        if (mapper.recordTradeTime(accountScope, exchangeUpdatedAt == null ? now : exchangeUpdatedAt, now) != 1) {
+            throw new IllegalStateException("Trading last-trade time update lost: " + accountScope);
+        }
 
         ledger.setCumulativeFilledSize(observedFill)
                 .setAppliedPositionQuantity(observedPosition)

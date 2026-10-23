@@ -143,7 +143,16 @@ export const intradayParameterFields = [
 export function parameterFieldsForStrategy(type = "threshold-event") {
   if (type === "threshold-event") return strategyParameterFields;
   if (type === "intraday-technical") return intradayParameterFields;
-  throw new Error(`暂不支持编辑策略类型：${type}`);
+  return [];
+}
+
+// Compare the same decimal text sent to BigDecimal, including differences below Number precision.
+function decimalUnits(text) {
+  const [coefficient, exponent = "0"] = String(text).toLowerCase().split("e");
+  const [whole, fraction = ""] = coefficient.replace(/^\+/, "").split(".");
+  const scale = fraction.length - Number(exponent);
+  const digits = BigInt(`${whole || "0"}${fraction}`);
+  return digits === 0n ? 0n : digits * 10n ** BigInt(18 - scale);
 }
 
 /** @param {{id: string, bar: string} | undefined} strategy */
@@ -181,11 +190,18 @@ export function buildStrategyParametersPayload({ expectedVersion, params, reason
     throw new Error("配置版本无效，请刷新后重试");
   }
   const result = {};
-  for (const field of parameterFieldsForStrategy(type)) {
+  const fields = parameterFieldsForStrategy(type);
+  if (!fields.length) throw new Error(`暂不支持编辑策略类型：${type}`);
+  for (const field of fields) {
     const raw = params[field.key];
     if (field.nullable && (raw == null || String(raw).trim() === "")) { result[field.key] = null; continue; }
-    const value = typeof raw === "string" && raw.trim() === "" ? NaN : Number(raw);
-    if (!Number.isFinite(value) || value < field.min || (!field.integer && !field.allowZero && value === 0) || (field.max != null && value > field.max) || (field.integer && !Number.isInteger(value))) {
+    const text = typeof raw === "number" || typeof raw === "string" ? String(raw).trim() : "";
+    const decimal = /^[+-]?(\d+(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))?$/.exec(text);
+    const scale = decimal ? (decimal[2] ?? decimal[3] ?? "").length - Number(decimal[4] ?? 0) : Infinity;
+    const digits = decimal?.[1].replace(".", "") ?? "";
+    const exactInteger = scale <= 0 || (scale <= digits.length && /^0*$/.test(digits.slice(-scale)));
+    const value = Number(text);
+    if (!decimal || text.length > 100 || !Number.isFinite(value) || !Number.isSafeInteger(scale) || scale < -2_147_483_647 || value < field.min || (!field.integer && ((!field.allowZero && value === 0) || scale > 18)) || (field.max != null && value > field.max) || (field.integer && (!Number.isInteger(value) || !exactInteger)) || (!field.integer && decimalUnits(text) > decimalUnits(field.max))) {
       throw new Error(`${field.label}无效${field.integer ? "，请输入允许范围内的正整数" : "，请输入允许范围内大于 0 的数字"}`);
     }
     // Keep the user's decimal text intact; the server validates it as BigDecimal.
@@ -193,6 +209,10 @@ export function buildStrategyParametersPayload({ expectedVersion, params, reason
   }
   if (type === "intraday-technical") {
     if (!intradayModes.some((mode) => mode.value === params.mode)) throw new Error("请选择有效的日内策略模式");
+    if (result["ema-fast-period"] >= result["ema-slow-period"]) throw new Error("快 EMA 周期必须小于慢 EMA 周期");
+    if (decimalUnits(result["entry-rsi-min"]) >= decimalUnits(result["entry-rsi-max"])) throw new Error("入场 RSI 下限必须小于上限");
+    if (decimalUnits(result["min-atr-percent"]) >= decimalUnits(result["max-atr-percent"])) throw new Error("最低 ATR 比例必须小于最高 ATR 比例");
+    if (decimalUnits(result["stop-loss-percent"]) >= decimalUnits(result["take-profit-percent"])) throw new Error("止盈比例必须大于止损比例");
     result.mode = params.mode;
   } else {
     const confirmed = params["require-confirmed-candle"];

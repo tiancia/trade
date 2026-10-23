@@ -24,6 +24,16 @@ public final class OrderSizingRules {
     public record SizingFacts(BigDecimal availableQuote, BigDecimal availableBase,
                               BigDecimal lastPrice, InstrumentLimits instrument) {}
 
+    /** Dust stays in the ledger, but cannot be sold as a standalone exchange order. */
+    public static boolean hasTradablePosition(BigDecimal quantity, BigDecimal lotSize, BigDecimal minSize) {
+        if (quantity == null || quantity.signum() <= 0) return false;
+        if ((lotSize != null && lotSize.signum() < 0) || (minSize != null && minSize.signum() < 0)) {
+            throw new IllegalArgumentException("Instrument lot/minimum size must be nonnegative");
+        }
+        BigDecimal rounded = TradingMath.roundDownToStep(quantity, lotSize);
+        return rounded.signum() > 0 && (minSize == null || rounded.compareTo(minSize) >= 0);
+    }
+
     public OrderSizing buySize(StrategyDecision decision, SizingFacts context) {
         BigDecimal requestedAmount = decision.getBuyQuoteAmount();
         BigDecimal availableQuote = context.availableQuote();

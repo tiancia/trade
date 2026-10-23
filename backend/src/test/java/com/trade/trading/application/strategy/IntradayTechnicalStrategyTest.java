@@ -1,9 +1,11 @@
 package com.trade.trading.application.strategy;
 
 import com.trade.client.okx.dto.CandleResp;
+import com.trade.client.okx.dto.InstrumentInfoResp;
 import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.domain.model.TradingState;
+import com.trade.trading.domain.strategy.IntradayTechnicalPolicy;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import org.junit.jupiter.api.Test;
 
@@ -46,6 +48,57 @@ class IntradayTechnicalStrategyTest {
         assertEquals(new BigDecimal("0.25"), decision.getSellBaseAmount());
         assertEquals("15m", decision.getMetadata().get("signalBar"));
         assertEquals(START + 79 * BAR, decision.getMetadata().get("signalCandleTs"));
+    }
+
+    @Test void priceExitsSurviveMissingWarmupAndOldCorruptIndicatorData() {
+        var config = new IntradayTechnicalStrategyConfig();
+        for (boolean stop : List.of(true, false)) {
+            var shortHistory = context();
+            shortHistory.getMarketContext().setTradingState(new TradingState().setAverageCost(new BigDecimal("100"))
+                    .setTrackedBaseAmount(new BigDecimal("0.25")));
+            shortHistory.getMarketContext().setFifteenMinuteCandles(new ArrayList<>(List.of(candle(79, stop ? "98" : "102", "1"))));
+            var decision = strategy.evaluate(shortHistory, config);
+            assertEquals(TradingAction.SELL, decision.getAction(), decision.getReason());
+            assertEquals(true, decision.getMetadata().get("priceProtectionOnly"));
+            assertEquals(new BigDecimal("0.25"), decision.getSellBaseAmount());
+        }
+        var gap = context();
+        gap.getMarketContext().setTradingState(new TradingState().setAverageCost(new BigDecimal("100"))
+                .setTrackedBaseAmount(new BigDecimal("0.25")));
+        gap.getMarketContext().getFifteenMinuteCandles().set(0, candle(79, "98", "1"));
+        gap.getMarketContext().getFifteenMinuteCandles().remove(5);
+        gap.getMarketContext().getFifteenMinuteCandles().get(8).setVol("invalid");
+        assertEquals(TradingAction.SELL, strategy.evaluate(gap, config).getAction());
+        gap.getMarketContext().getFifteenMinuteCandles().getFirst().setVol("invalid");
+        assertEquals(TradingAction.SELL, strategy.evaluate(gap, config).getAction());
+        // A stale, future or contradictory latest price cannot be used for protection.
+        assertTrue(strategy.evaluate(gap.setEvaluatedAt(Instant.ofEpochMilli(START + 81 * BAR)), config).isHold());
+        assertTrue(strategy.evaluate(gap.setEvaluatedAt(Instant.ofEpochMilli(START + 79 * BAR)), config).isHold());
+        gap.setEvaluatedAt(Instant.ofEpochMilli(START + 80 * BAR));
+        gap.getMarketContext().getFifteenMinuteCandles().getFirst().setHigh("1");
+        assertTrue(strategy.evaluate(gap, config).isHold());
+    }
+
+    @Test void exchangeDustStaysInLedgerWithoutBlockingAnOtherwiseValidEntry() {
+        var context = breakoutContext();
+        BigDecimal dust = new BigDecimal("0.000000007225046249");
+        context.getMarketContext().setTradingState(new TradingState().setTrackedBaseAmount(dust).setAverageCost(new BigDecimal("100")));
+        var instrument = new InstrumentInfoResp();
+        instrument.setLotSz("0.00000001");
+        instrument.setMinSz("0.00001");
+        context.getMarketContext().setInstrument(instrument);
+        var config = new IntradayTechnicalStrategyConfig().setMode(IntradayTechnicalPolicy.Mode.VOLUME_BREAKOUT)
+                .setEntryRsiMax(new BigDecimal("100"));
+        var decision = strategy.evaluate(context, config);
+        assertEquals(TradingAction.BUY, decision.getAction(), decision.getReason());
+        assertEquals(dust, context.tradingState().getTrackedBaseAmount());
+        assertEquals(dust, decision.getMetadata().get("managedDustAmount"));
+        context.tradingState().setTrackedBaseAmount(new BigDecimal("0.00002")).setAverageCost(new BigDecimal("107.9"));
+        assertTrue(strategy.evaluate(context, config).isHold());
+        // Unknown instrument limits must not silently classify owned assets as dust.
+        context.tradingState().setTrackedBaseAmount(dust);
+        context.getMarketContext().setInstrument(null);
+        assertTrue(strategy.evaluate(context, config).isHold());
     }
 
     @Test void rejectsMissingWarmupGapsBadOhlcFutureAndStaleCandles() {
@@ -96,6 +149,20 @@ class IntradayTechnicalStrategyTest {
         return new StrategyEvaluationContext().setStrategyId("day").setBar("15m").setProperties(new TradingProperties())
                 .setEvaluatedAt(Instant.ofEpochMilli(START + 80 * BAR))
                 .setMarketContext(new TradingDecisionContext().setFifteenMinuteCandles(candles).setTradingState(new TradingState()));
+    }
+
+    private static StrategyEvaluationContext breakoutContext() {
+        var context = context();
+        List<CandleResp> candles = new ArrayList<>();
+        for (int i = 79; i >= 0; i--) {
+            var row = candle(i, BigDecimal.valueOf(100).add(BigDecimal.valueOf(i, 1)).toPlainString(), "1");
+            BigDecimal close = new BigDecimal(row.getClose());
+            row.setHigh(close.add(new BigDecimal("0.05")).toPlainString());
+            row.setLow(close.subtract(new BigDecimal("0.15")).toPlainString());
+            candles.add(row);
+        }
+        context.getMarketContext().setFifteenMinuteCandles(candles);
+        return context;
     }
     private static CandleResp candle(int i, String close, String confirm) {
         BigDecimal value = new BigDecimal(close);

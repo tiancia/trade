@@ -5,6 +5,14 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class IntradayTechnicalPolicyTest {
     private final IntradayTechnicalPolicy policy = new IntradayTechnicalPolicy();
+
+    @Test void priceProtectionIncludesExactStopAndTargetBoundaries() {
+        var config = settings(IntradayTechnicalPolicy.Mode.TREND_PULLBACK);
+        assertEquals(IntradayTechnicalPolicy.Action.EXIT, policy.priceProtection(99.4, config, 100).action());
+        assertEquals(IntradayTechnicalPolicy.Action.EXIT, policy.priceProtection(101.8, config, 100).action());
+        assertEquals(IntradayTechnicalPolicy.Action.HOLD, policy.priceProtection(100, config, 100).action());
+        assertEquals(IntradayTechnicalPolicy.Action.HOLD, policy.priceProtection(98, config, 0).action());
+    }
     private static IntradayTechnicalPolicy.Settings settings(IntradayTechnicalPolicy.Mode mode) {
         return new IntradayTechnicalPolicy.Settings(mode, 18, 20, 20, 72, 0.8, .001, .03, 2.5, .006, .018, .003);
     }

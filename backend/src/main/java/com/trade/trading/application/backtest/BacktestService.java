@@ -9,6 +9,7 @@ import com.trade.client.okx.dto.TickerResp;
 import com.trade.common.support.TradingMath;
 import com.trade.trading.application.strategy.ConfiguredTradingStrategy;
 import com.trade.trading.application.strategy.IntradayTechnicalStrategy;
+import com.trade.trading.application.strategy.IntradayTechnicalStrategyConfig;
 import com.trade.trading.application.strategy.StrategyEvaluationContext;
 import com.trade.trading.application.strategy.TradingStrategyRegistry;
 import com.trade.trading.domain.backtest.BacktestEquityPoint;
@@ -71,8 +72,7 @@ public class BacktestService {
                 .setRequest(prepared.request())
                 .setStrategyConfigVersion(prepared.strategy().configuration().version())
                 .setStrategyConfigSnapshot(prepared.strategy().configuration().params());
-        pruneRuns();
-        runs.put(run.getRunId(), run);
+        retainRun(run);
         try {
             executor.execute(() -> execute(run, prepared.strategy()));
         } catch (RejectedExecutionException e) {
@@ -120,13 +120,6 @@ public class BacktestService {
                     ),
                     request
             );
-            if (IntradayTechnicalStrategy.TYPE.equals(configured.type())) {
-                for (int i = 1; i < candles.size(); i++) {
-                    if (candleTime(candles.get(i)).toEpochMilli() - candleTime(candles.get(i - 1)).toEpochMilli() != 900_000L) {
-                        throw new IllegalArgumentException("15m historical data contains gaps; next-open fills cannot be simulated");
-                    }
-                }
-            }
             run.setCandleCount(candles.size())
                     .setProcessedCandleCount(1)
                     .setFirstCandleAt(candleTime(candles.getFirst()))
@@ -141,12 +134,17 @@ public class BacktestService {
             List<BacktestEquityPoint> equityCurve = new ArrayList<>();
             CandleResp firstCandle = candles.getFirst();
             equityCurve.add(equityPoint(broker, firstCandle));
+            int windowLimit = configured.config() instanceof IntradayTechnicalStrategyConfig intraday
+                    ? intraday.warmupCandles() : candles.size();
 
             for (int i = 0; i < candles.size() - 1; i++) {
                 CandleResp signalCandle = candles.get(i);
                 CandleResp fillCandle = candles.get(i + 1);
-                List<CandleResp> windowNewestFirst = new ArrayList<>(candles.subList(0, i + 1));
-                Collections.reverse(windowNewestFirst);
+                // The immutable source keeps retained contexts stable without copying
+                // every preceding candle on every step. Intraday indicators use the
+                // same bounded warmup window as realtime evaluation.
+                List<CandleResp> windowNewestFirst = candles
+                        .subList(Math.max(0, i + 1 - windowLimit), i + 1).reversed();
                 Instant evaluatedAt = IntradayTechnicalStrategy.TYPE.equals(configured.type())
                         ? candleTime(signalCandle).plusSeconds(15 * 60L)
                         : candleTime(signalCandle);
@@ -293,8 +291,15 @@ public class BacktestService {
             source = List.of();
         }
         Map<Long, CandleResp> unique = new LinkedHashMap<>();
+        long interval = BacktestPolicy.barDurationMillis(request.getBar());
+        long firstTimestamp = BacktestPolicy.firstCandleTimestamp(request);
+        long expectedCount = BacktestPolicy.expectedCandleCount(request);
+        long endExclusive = firstTimestamp + expectedCount * interval;
         source.stream()
                 .filter(candle -> candle != null && (request.isIncludeUnconfirmed() || "1".equals(candle.getConfirm())))
+                // Historical sources may return an inclusive upper boundary. Only
+                // explicit includeUnconfirmed runs may use a bar closing after to.
+                .filter(candle -> timestamp(candle) >= firstTimestamp && timestamp(candle) < endExclusive)
                 .sorted(Comparator.comparingLong(BacktestService::timestamp))
                 .forEach(candle -> unique.put(timestamp(candle), candle));
         List<CandleResp> candles = List.copyOf(unique.values());
@@ -306,8 +311,17 @@ public class BacktestService {
                     "Backtest returned more candles than maxCandles=" + request.getMaxCandles()
             );
         }
-        for (CandleResp candle : candles) {
+        if (candles.size() != expectedCount) {
+            throw new IllegalArgumentException("Historical data is incomplete or contains gaps for the requested range; expected "
+                    + expectedCount + " usable candles but received " + candles.size());
+        }
+        for (int i = 0; i < candles.size(); i++) {
+            CandleResp candle = candles.get(i);
             candleTime(candle);
+            if (timestamp(candle) != firstTimestamp + i * interval) {
+                throw new IllegalArgumentException("Historical data contains gaps or misaligned " + request.getBar()
+                        + " candles; next-open fills cannot be simulated");
+            }
             price(candle.getOpen(), "open", candle);
             price(candle.getClose(), "close", candle);
         }
@@ -392,17 +406,20 @@ public class BacktestService {
                 .setStatus(BacktestStatus.FAILED);
     }
 
-    private void pruneRuns() {
+    private synchronized void retainRun(BacktestRun run) {
         int removeCount = runs.size() - MAX_RETAINED_RUNS + 1;
-        if (removeCount <= 0) {
-            return;
+        if (removeCount > 0) {
+            runs.values().stream()
+                    .filter(existing -> existing.getStatus() == BacktestStatus.SUCCEEDED
+                            || existing.getStatus() == BacktestStatus.FAILED)
+                    .sorted(Comparator.comparing(BacktestRun::getCreatedAt))
+                    .limit(removeCount)
+                    .forEach(existing -> runs.remove(existing.getRunId(), existing));
         }
-        runs.values().stream()
-                .filter(run -> run.getStatus() == BacktestStatus.SUCCEEDED
-                        || run.getStatus() == BacktestStatus.FAILED)
-                .sorted(Comparator.comparing(BacktestRun::getCreatedAt))
-                .limit(removeCount)
-                .forEach(run -> runs.remove(run.getRunId(), run));
+        if (runs.size() >= MAX_RETAINED_RUNS) {
+            throw new IllegalArgumentException("Backtest capacity is full with active runs; retry later");
+        }
+        runs.put(run.getRunId(), run);
     }
 
 

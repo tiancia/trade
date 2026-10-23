@@ -187,6 +187,9 @@ public class TradingStrategyEngine {
             strategyIds = List.of();
         }
         return new TradingRuntimeStatus()
+                .setInstId(properties.getInstId())
+                .setBaseCcy(properties.getBaseCcy())
+                .setQuoteCcy(properties.getQuoteCcy())
                 .setExecutionMode(properties.getExecutionMode())
                 .setLiveEnabled(properties.isLiveEnabled())
                 .setRunningStrategyIds(strategyIds)

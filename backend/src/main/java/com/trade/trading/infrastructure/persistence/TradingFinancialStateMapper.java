@@ -27,6 +27,12 @@ public interface TradingFinancialStateMapper {
 
     int updateRiskState(TradingRiskStateRow row);
 
+    int recordTradeTime(
+            @Param("accountScope") String accountScope,
+            @Param("tradeTime") java.time.Instant tradeTime,
+            @Param("updatedAt") java.time.Instant updatedAt
+    );
+
     int recordReconciliationSuccess(
             @Param("accountScope") String accountScope,
             @Param("reconciledAt") java.time.Instant reconciledAt,

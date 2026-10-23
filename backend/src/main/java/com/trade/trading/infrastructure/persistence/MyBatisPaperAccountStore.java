@@ -7,6 +7,7 @@ import com.trade.trading.domain.model.TradingRiskState;
 import com.trade.trading.domain.paper.PaperAccount;
 import com.trade.trading.domain.paper.PaperEquityPoint;
 import com.trade.trading.domain.paper.PaperFill;
+import com.trade.trading.domain.risk.RiskStateTransitions;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
@@ -107,6 +108,11 @@ public class MyBatisPaperAccountStore implements PaperAccountStore {
                 result.realizedPnl(), next.cash(), next.positionQuantity(), next.equity(), next.version(), command.now());
         mapper.insertFill(fill);
         update(next);
+        // Persist the trade fact with the fill, even when risk controls are off
+        // or a later optional risk-counter update fails.
+        TradingRiskState riskState = risk(command.instId(), next.sessionId());
+        riskState.setLastTradeTime(RiskStateTransitions.latestTradeTime(riskState.getLastTradeTime(), command.now()));
+        if (mapper.updateRisk(next.sessionId(), write(riskState)) != 1) conflict();
         sample(next, command.strategyId(), command.strategyConfigVersion(), "FILL", command.now());
         return new AppliedFill(fill, next, false);
     }
@@ -133,7 +139,10 @@ public class MyBatisPaperAccountStore implements PaperAccountStore {
         if (current == null || !Objects.equals(current.sessionId(), sessionId)
                 || current.version() != expectedAccountVersion) conflict();
         TradingRiskState stored = risk(instId, sessionId);
+        String committedTradeTime = stored.getLastTradeTime();
         TradingRiskState next = Objects.requireNonNull(transition.apply(stored), "Risk transition result must not be null");
+        next.setLastTradeTime(RiskStateTransitions.latestTradeTime(next.getLastTradeTime(),
+                committedTradeTime == null || committedTradeTime.isBlank() ? null : Instant.parse(committedTradeTime)));
         if (mapper.updateRisk(sessionId, write(next)) != 1) conflict();
         return next;
     }
