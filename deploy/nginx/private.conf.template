@@ -4,6 +4,14 @@ resolver 127.0.0.11 valid=10s ipv6=off;
 resolver_timeout 5s;
 server_tokens off;
 
+# The browser's Host keeps an explicit SSH/local port even though Docker maps
+# it to 8080/8081. Never reuse a caller-supplied X-Forwarded-Port value.
+map "$scheme:$http_host" $trade_forwarded_port {
+    default 80;
+    ~:(?<trade_host_port>[0-9]+)$ $trade_host_port;
+    ~^https: 443;
+}
+
 server {
     listen 8080;
     listen [::]:8080;

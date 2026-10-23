@@ -37,6 +37,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -49,6 +50,10 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
+import static org.mockito.ArgumentMatchers.any;
 
 class LiveOrderExecutionServiceTest {
     @TempDir
@@ -124,6 +129,53 @@ class LiveOrderExecutionServiceTest {
         assertTrue(replay.isIdempotentReplay());
         assertEquals(OrderStatus.FILLED.name(), replay.getOrderStatus());
         assertEquals(first.getOrderSize(), replay.getOrderSize());
+    }
+
+    @Test
+    void incompleteAndTimedOutAcknowledgementsStayUnknownAndBlockTheNextSignal() {
+        List<OkxResponse<OrderActionResp>> responses = new ArrayList<>();
+        responses.add(null);
+        responses.add(OkxResponse.success(List.of()));
+        responses.add(new OkxResponse<>());
+        responses.add(OkxResponse.fail("50004", "endpoint timeout"));
+        responses.add(OkxResponse.fail("50026", "system error"));
+        OrderActionResp missingOrderId = new OrderActionResp();
+        missingOrderId.setSCode("0");
+        responses.add(OkxResponse.success(List.of(missingOrderId)));
+        OrderActionResp differentClientId = new OrderActionResp();
+        differentClientId.setSCode("0");
+        differentClientId.setOrdId("exchange");
+        differentClientId.setClOrdId("other-order");
+        responses.add(OkxResponse.success(List.of(differentClientId)));
+
+        for (OkxResponse<OrderActionResp> response : responses) {
+            OkxApi okx = mock(OkxApi.class);
+            when(okx.placeOrder(any())).thenReturn(response);
+            InMemoryTradingOrderRepository orders = new InMemoryTradingOrderRepository();
+            LiveOrderExecutionService execution = broker(liveProperties(), okx, orders);
+            TradingDecisionRecord first = new TradingDecisionRecord().setDecisionId("uncertain-submit");
+
+            assertThrows(IllegalStateException.class,
+                    () -> execution.execute(buyDecision(), context("0", "1000"), first));
+
+            assertEquals(OrderStatus.SUBMIT_UNKNOWN.name(), first.getOrderStatus());
+            TradingDecisionRecord next = new TradingDecisionRecord().setDecisionId("next-signal");
+            execution.execute(buyDecision(), context("0", "1000"), next);
+            assertEquals("SKIPPED", next.getExecutionStatus());
+            verify(okx, times(1)).placeOrder(any());
+        }
+    }
+
+    @Test
+    void explicitBusinessRejectionRemainsTerminal() {
+        OkxApi okx = mock(OkxApi.class);
+        when(okx.placeOrder(any())).thenReturn(OkxResponse.fail("51008", "insufficient balance"));
+        TradingDecisionRecord record = new TradingDecisionRecord().setDecisionId("rejected-submit");
+
+        assertThrows(com.trade.trading.application.port.ExchangeOrderGateway.OrderRejectedException.class,
+                () -> broker(liveProperties(), okx).execute(buyDecision(), context("0", "1000"), record));
+
+        assertEquals(OrderStatus.REJECTED.name(), record.getOrderStatus());
     }
 
     @Test
@@ -318,11 +370,12 @@ class LiveOrderExecutionServiceTest {
     }
 
     @Test
-    void dedicatedPositionCanBeSoldOnceReconciliationAdoptsItIntoManagedLedger() {
+    void dedicatedPositionCanBeSoldWhenTheFillLedgerOwnsIt() {
         TradingProperties properties = liveProperties();
         properties.getReconciliation().setPositionOwnership(TradingProperties.PositionOwnership.DEDICATED_ACCOUNT);
         TradingStateRepository repository = new TradingStateRepository(tempDir.resolve("dedicated.json"));
-        repository.recordExchangePosition(BigDecimal.ONE, BigDecimal.ONE, new BigDecimal("50000"), java.time.Instant.now());
+        repository.recordBuy(BigDecimal.ONE, new BigDecimal("50000"));
+        repository.recordExchangePosition(BigDecimal.ONE, null, null, java.time.Instant.now());
         FakeOkxApi api = new FakeOkxApi(filledOrder("sell", "1", "50000"));
         TradingDecisionRecord record = new TradingDecisionRecord();
 

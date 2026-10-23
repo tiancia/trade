@@ -72,13 +72,9 @@ def make_client(ClobClient, host, chain_id, private_key, creds, signature_type, 
     if funder:
         kwargs["funder"] = funder
 
-    try:
-        return ClobClient(**kwargs)
-    except TypeError:
-        kwargs.pop("signature_type", None)
-        if not funder:
-            kwargs.pop("funder", None)
-        return ClobClient(**kwargs)
+    # A different signature type can select a different signing account. Never
+    # retry a failed constructor by silently changing its security parameters.
+    return ClobClient(**kwargs)
 
 
 def api_creds_from_payload(ApiCreds, payload):
@@ -91,6 +87,8 @@ def api_creds_from_payload(ApiCreds, payload):
             api_secret=api_secret,
             api_passphrase=api_passphrase,
         )
+    if api_key or api_secret or api_passphrase:
+        raise RuntimeError("Polymarket API key, secret and passphrase must be configured together")
     return None
 
 
@@ -154,7 +152,24 @@ def accepts_keyword(callable_value, name):
     for parameter in signature.parameters.values():
         if parameter.kind == inspect.Parameter.VAR_KEYWORD:
             return True
-    return name in signature.parameters
+    parameter = signature.parameters.get(name)
+    return parameter is not None and parameter.kind != inspect.Parameter.POSITIONAL_ONLY
+
+
+def declared_order_type_keyword(callable_value):
+    # **kwargs alone does not prove an SDK uses an order type: an unrecognized
+    # spelling could be swallowed while the explicit parameter defaults to GTC.
+    try:
+        parameters = inspect.signature(callable_value).parameters
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Cannot verify Polymarket client order type support") from exc
+    for name in ("orderType", "order_type"):
+        parameter = parameters.get(name)
+        if parameter is not None and parameter.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY,
+        ):
+            return name
+    raise RuntimeError("Installed Polymarket client cannot preserve the requested order type")
 
 
 def can_accept_positional_count(callable_value, count):
@@ -197,13 +212,10 @@ def create_market_order(client, order_args, options):
 
 def post_signed_order(client, signed_order, order_type_value):
     method = client.post_order
-    if accepts_keyword(method, "orderType"):
-        return method(signed_order, orderType=order_type_value)
-    if accepts_keyword(method, "order_type"):
-        return method(signed_order, order_type=order_type_value)
-    if can_accept_positional_count(method, 2):
-        return method(signed_order, order_type_value)
-    return method(signed_order)
+    # An SDK default may be GTC, leaving an order resting when FAK/FOK was
+    # requested. Unsupported adapters must fail before submitting anything.
+    keyword = declared_order_type_keyword(method)
+    return method(signed_order, **{keyword: order_type_value})
 
 
 def post_order(client, OrderArgs, order_args, order_type_value, options):
@@ -216,16 +228,9 @@ def post_order(client, OrderArgs, order_args, order_type_value, options):
         kwargs = {"order_args": order_args}
         if options is not None and accepts_keyword(method, "options"):
             kwargs["options"] = options
-        if accepts_keyword(method, "order_type"):
-            kwargs["order_type"] = order_type_value
-        elif accepts_keyword(method, "orderType"):
-            kwargs["orderType"] = order_type_value
+        kwargs[declared_order_type_keyword(method)] = order_type_value
         return method(**kwargs)
-    if options is not None and can_accept_positional_count(method, 3):
-        return method(order_args, options, order_type_value)
-    if can_accept_positional_count(method, 2):
-        return method(order_args, order_type_value)
-    return method(order_args)
+    raise RuntimeError("Installed Polymarket client cannot preserve the requested order type")
 
 
 def post_market_order(client, MarketOrderArgs, order_args, order_type_value, options):
@@ -242,16 +247,9 @@ def post_market_order(client, MarketOrderArgs, order_args, order_type_value, opt
         kwargs = {"order_args": order_args}
         if options is not None and accepts_keyword(method, "options"):
             kwargs["options"] = options
-        if accepts_keyword(method, "order_type"):
-            kwargs["order_type"] = order_type_value
-        elif accepts_keyword(method, "orderType"):
-            kwargs["orderType"] = order_type_value
+        kwargs[declared_order_type_keyword(method)] = order_type_value
         return method(**kwargs)
-    if options is not None and can_accept_positional_count(method, 3):
-        return method(order_args, options, order_type_value)
-    if can_accept_positional_count(method, 2):
-        return method(order_args, order_type_value)
-    return method(order_args)
+    raise RuntimeError("Installed Polymarket client cannot preserve the requested order type")
 
 
 def build_market_order_args(MarketOrderArgs, payload, side, order_type_value):
@@ -326,5 +324,6 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        print(str(exc), file=sys.stderr)
+        # Provider exceptions can embed signed requests and authentication headers.
+        print(f"Polymarket order bridge failed ({type(exc).__name__}).", file=sys.stderr)
         sys.exit(1)

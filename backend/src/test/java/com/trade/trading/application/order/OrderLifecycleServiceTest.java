@@ -14,6 +14,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class OrderLifecycleServiceTest {
     @Test
@@ -62,6 +63,22 @@ class OrderLifecycleServiceTest {
         assertEquals(true, refreshed.changed());
         assertEquals(0, new BigDecimal("0.002").compareTo(refreshed.order().getFilledBaseAmount()));
         assertEquals(4L, refreshed.order().getVersion());
+    }
+
+    @Test
+    void staleTerminalObservationCannotEraseAnAlreadyCommittedPartialFill() {
+        InMemoryTradingOrderRepository repository = new InMemoryTradingOrderRepository();
+        OrderLifecycleService service = new OrderLifecycleService(repository, new SimpleMeterRegistry());
+        String key = "stale-filled";
+        service.reserve(submission(key));
+        service.markPartiallyFilled(key, "exchange-1",
+                new OrderFill(new BigDecimal("0.002"), new BigDecimal("50000"), BigDecimal.ZERO, "USDT"));
+
+        assertThrows(IllegalStateException.class, () -> service.markFilled(key, "exchange-1",
+                new OrderFill(new BigDecimal("0.001"), new BigDecimal("50000"), BigDecimal.ZERO, "USDT")));
+
+        assertEquals(OrderStatus.PARTIALLY_FILLED, service.find(key).orElseThrow().getStatus());
+        assertEquals(0, new BigDecimal("0.002").compareTo(service.find(key).orElseThrow().getFilledBaseAmount()));
     }
 
     private static OrderSubmission submission(String key) {

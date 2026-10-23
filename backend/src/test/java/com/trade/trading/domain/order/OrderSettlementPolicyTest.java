@@ -49,6 +49,39 @@ class OrderSettlementPolicyTest {
                 "exchange", "client", "BTC-USDT", "buy", "filled", "0.1", "1", "1", "100", "100", "0", "USDT")));
     }
 
+    @Test
+    void refusesToCloseFilledOrdersWithoutTrustworthyCumulativeAmounts() {
+        var order = local("buy");
+        for (String cumulative : new String[] {null, "", "0", "-1", "invalid"}) {
+            var observation = new ExchangeOrderObservation("exchange", "client", "BTC-USDT", "buy", "filled",
+                    "0", cumulative, "0", "100", "100", "0", "USDT");
+            assertThrows(IllegalStateException.class, () -> policy.prepare(order, observation));
+        }
+        // The most recent trade is not a substitute for missing cumulative totals.
+        assertThrows(IllegalStateException.class, () -> policy.prepare(order,
+                new ExchangeOrderObservation("exchange", "client", "BTC-USDT", "buy", "filled",
+                        "0", null, "0.2", "100", "100", "0", "USDT")));
+        assertThrows(IllegalStateException.class, () -> policy.prepare(order,
+                new ExchangeOrderObservation("exchange", "client", "BTC-USDT", "buy", "filled",
+                        "0", "1", "0.2", null, "100", "0", "USDT")));
+    }
+
+    @Test
+    void allowsUnfilledCancellationButRejectsLostPartialFillOnCancellation() {
+        var canceled = new ExchangeOrderObservation("exchange", "client", "BTC-USDT", "buy", "canceled",
+                "0", "0", "0", "", "", "0", "USDT");
+        assertEquals(OrderStatus.CANCELED, policy.prepare(local("buy"), canceled).target());
+        var partiallyFilled = TradingOrder.restore(local("buy").snapshot().toBuilder()
+                .filledBaseAmount(new BigDecimal("0.5")).build());
+        assertThrows(IllegalStateException.class, () -> policy.prepare(partiallyFilled, canceled));
+    }
+
+    @Test
+    void rejectsMalformedFeeInsteadOfSilentlyTreatingItAsFree() {
+        assertThrows(IllegalStateException.class,
+                () -> policy.prepare(local("buy"), observed("buy", "filled", "invalid", "USDT")));
+    }
+
     private static TradingOrder local(String side) {
         return TradingOrder.restore(TradingOrder.Snapshot.builder().instId("BTC-USDT").side(side).clientOrderId("client")
                 .exchangeOrderId("exchange").status(OrderStatus.ACCEPTED).build());

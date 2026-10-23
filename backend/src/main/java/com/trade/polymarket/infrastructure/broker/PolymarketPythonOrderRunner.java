@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -22,6 +23,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -34,6 +36,7 @@ import java.util.regex.Pattern;
 @Component
 public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
     private static final Logger log = LoggerFactory.getLogger(PolymarketPythonOrderRunner.class);
+    private static final int MAX_PROCESS_OUTPUT_BYTES = 1_048_576;
 
     private final AiPolymarketProperties properties;
     private final PolymarketClientProperties clientProperties;
@@ -85,11 +88,7 @@ public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
                         stderr.length()
                 );
                 throw new RuntimeException("Polymarket order script failed, exitCode="
-                        + output.exitCode()
-                        + ", stderr="
-                        + stderr
-                        + ", stdout="
-                        + stdout);
+                        + output.exitCode());
             }
             log.info(
                     "Polymarket order script finished: exitCode=0, stdoutChars={}, stderrChars={}",
@@ -106,22 +105,34 @@ public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
     }
 
     static ProcessOutput runProcess(Process process, String payload, long timeoutMs) throws Exception {
+        long startedAt = System.nanoTime();
+        long timeoutNanos = TimeUnit.MILLISECONDS.toNanos(timeoutMs);
         try (var input = process.getOutputStream();
              var output = process.getInputStream();
              var error = process.getErrorStream()) {
-            FutureTask<String> stdout = new FutureTask<>(() -> readAll(output));
-            FutureTask<String> stderr = new FutureTask<>(() -> readAll(error));
-            // Drain both pipes while the script runs: a full pipe otherwise prevents exit.
-            Thread.ofVirtual().start(stdout);
-            Thread.ofVirtual().start(stderr);
-            try {
+            FutureTask<String> stdout = new FutureTask<>(() -> readLimited(output, process::destroyForcibly));
+            FutureTask<String> stderr = new FutureTask<>(() -> readLimited(error, process::destroyForcibly));
+            FutureTask<Void> stdin = new FutureTask<>(() -> {
                 // Stdin avoids leaking order payload details into process arguments.
                 input.write(payload.getBytes(StandardCharsets.UTF_8));
                 input.close();
-                if (!process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
-                    throw new RuntimeException("Polymarket order script timed out after " + Duration.ofMillis(timeoutMs));
+                return null;
+            });
+            // Drain both pipes while the script runs: a full pipe otherwise prevents exit.
+            Thread.ofVirtual().start(stdout);
+            Thread.ofVirtual().start(stderr);
+            Thread.ofVirtual().start(stdin);
+            try {
+                // One deadline covers blocked stdin, process execution, and pipe draining.
+                stdin.get(remainingNanos(startedAt, timeoutNanos), TimeUnit.NANOSECONDS);
+                if (!process.waitFor(remainingNanos(startedAt, timeoutNanos), TimeUnit.NANOSECONDS)) {
+                    throw new TimeoutException();
                 }
-                return new ProcessOutput(process.exitValue(), stdout.get(), stderr.get());
+                return new ProcessOutput(process.exitValue(),
+                        stdout.get(remainingNanos(startedAt, timeoutNanos), TimeUnit.NANOSECONDS),
+                        stderr.get(remainingNanos(startedAt, timeoutNanos), TimeUnit.NANOSECONDS));
+            } catch (TimeoutException e) {
+                throw new RuntimeException("Polymarket order script timed out after " + Duration.ofMillis(timeoutMs));
             } finally {
                 // An interrupted/failed caller must not leave an order script running.
                 if (process.isAlive()) {
@@ -129,20 +140,29 @@ public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
                 }
                 stdout.cancel(true);
                 stderr.cancel(true);
+                stdin.cancel(true);
             }
         }
+    }
+
+    private static long remainingNanos(long startedAt, long timeoutNanos) throws TimeoutException {
+        long remaining = timeoutNanos - (System.nanoTime() - startedAt);
+        if (remaining <= 0) {
+            throw new TimeoutException();
+        }
+        return remaining;
     }
 
     record ProcessOutput(int exitCode, String stdout, String stderr) {
     }
 
-    private String buildPayload(PolymarketOrderRequest request) throws Exception {
+    String buildPayload(PolymarketOrderRequest request) throws Exception {
         AiPolymarketProperties.ExecutionProperties execution = properties.getExecution();
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("host", clientProperties.normalizedClobBaseUrl());
         payload.put("chainId", execution.getChainId());
         payload.put("signatureType", execution.getSignatureType());
-        payload.put("orderType", execution.getOrderType());
+        payload.put("orderType", requireText(request.getOrderType(), "Polymarket order type is required"));
         payload.put("privateKeyEnvName", execution.getPrivateKeyEnvName());
         payload.put("apiKeyEnvName", execution.getApiKeyEnvName());
         payload.put("apiSecretEnvName", execution.getApiSecretEnvName());
@@ -227,8 +247,20 @@ public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
     }
 
     private static String readAll(java.io.InputStream inputStream) throws Exception {
+        return readLimited(inputStream, () -> { });
+    }
+
+    private static String readLimited(java.io.InputStream inputStream, Runnable onLimitExceeded) throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        inputStream.transferTo(buffer);
+        byte[] chunk = new byte[8_192];
+        int count;
+        while ((count = inputStream.read(chunk)) != -1) {
+            if (count > MAX_PROCESS_OUTPUT_BYTES - buffer.size()) {
+                onLimitExceeded.run();
+                throw new IOException("Polymarket subprocess output exceeds " + MAX_PROCESS_OUTPUT_BYTES + " bytes");
+            }
+            buffer.write(chunk, 0, count);
+        }
         return buffer.toString(StandardCharsets.UTF_8);
     }
 

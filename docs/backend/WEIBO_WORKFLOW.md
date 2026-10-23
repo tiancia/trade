@@ -119,7 +119,7 @@ review 短轮询只订阅 `callback_query`，批准后立即尝试发布；配�
 
 ## 管理 API
 
-全部要求 `X-Weibo-Admin-Token`，OAuth callback 仍用 state 校验。
+全部要求 `X-Weibo-Admin-Token`，OAuth callback 仍用 state 校验。回调先在独立短事务中消费 state，提交后才请求微博和保存账号令牌；外部交换、账号查询或令牌保存失败都不会恢复已用 state，必须重新获取授权链接。外部请求期间不持有数据库事务。
 
 管理 POST / PUT / DELETE 还需 `X-Trade-CSRF: 1`，浏览器请求须来自可信 Origin；该标记不替代微博令牌。任务管理的命令行调用同样需要这个头。
 

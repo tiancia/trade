@@ -25,6 +25,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -171,26 +172,41 @@ public class FundSafetyService {
     }
 
     private void cancelOutstandingOrders() {
+        List<String> errors = new ArrayList<>();
         try {
             int timeout = Math.max(1, properties.getFundSafety().getDeadManTimeoutSeconds());
             requireActionOk(
                     okxApi.cancelAllAfter(new CancelAllAfterReq().setTimeOut(String.valueOf(timeout))),
                     "arm cancel-all-after"
             );
-            for (OrderInfoResp order : pendingOrders()) {
-                OkxResponse<OrderActionResp> response = okxApi.cancelOrder(new CancelOrderReq()
-                        .setInstId(properties.getInstId())
-                        .setOrdId(order.getOrdId())
-                        .setClOrdId(order.getClOrdId()));
-                requireActionOk(response, "cancel pending order");
-            }
-            repository.recordActionError(properties.financialAccountScope(), null);
         } catch (RuntimeException e) {
-            // HALTED was persisted first, so cancellation failure cannot reopen
-            // submissions. Surface the error for operator remediation.
-            repository.recordActionError(properties.financialAccountScope(), e.getMessage());
+            errors.add("arm cancel-all-after: " + e.getMessage());
+            log.error("Fund stop persisted but exchange cancel-all-after failed", e);
+        }
+        try {
+            for (OrderInfoResp order : pendingOrders()) {
+                try {
+                    OkxResponse<OrderActionResp> response = okxApi.cancelOrder(new CancelOrderReq()
+                            .setInstId(properties.getInstId())
+                            .setOrdId(order.getOrdId())
+                            .setClOrdId(order.getClOrdId()));
+                    requireActionOk(response, "cancel pending order");
+                } catch (RuntimeException e) {
+                    errors.add("cancel order " + order.getOrdId() + ": " + e.getMessage());
+                    log.error("Fund stop persisted but pending order cancellation failed: ordId={}",
+                            order.getOrdId(), e);
+                }
+            }
+        } catch (RuntimeException e) {
+            errors.add("query pending orders: " + e.getMessage());
+            log.error("Fund stop persisted but pending order query failed", e);
+        }
+        // Every emergency action is independent: timer failures and a rejected
+        // cancellation must not prevent best-effort cancellation of other orders.
+        repository.recordActionError(properties.financialAccountScope(),
+                errors.isEmpty() ? null : String.join("; ", errors));
+        if (!errors.isEmpty()) {
             counter("cancel_failed").increment();
-            log.error("Fund stop persisted but exchange cancellation failed", e);
         }
     }
 

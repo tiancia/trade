@@ -9,6 +9,7 @@ import com.trade.weibo.domain.model.WeiboAuthorization;
 import com.trade.weibo.domain.model.WeiboAuthorizeUrl;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
@@ -62,11 +63,12 @@ public class WeiboOAuthService {
         return new WeiboAuthorizeUrl(api.buildAuthorizeUrl(state), state, expiresAt);
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public WeiboAuthorization handleCallback(String code, String state) {
         String cleanCode = requiredText(code, "code is required");
         String cleanState = requiredText(state, "state is required");
         Instant now = Instant.now(clock);
+        // Consume and commit before provider I/O. A failed code exchange must not revive this state.
         if (!stateRepository.consume(cleanState, now)) {
             throw new WeiboOAuthException("OAuth state is invalid, expired, or already used");
         }

@@ -97,6 +97,8 @@ REST / WebSocket market data
 
 真实订单可靠性依赖持久化幂等键、确定性 `clOrdId`、状态机、乐观锁、状态历史和累计成交账本。仓位、成本、风险状态与资金级停止状态以 MySQL 为权威；`data/trading-state.json` 只保存策略选择、策略画像和有界决策记忆。事件管道依赖固定容量、显式队满策略、handler 异常隔离、指标与优雅排空。修改这些路径前应先读对应测试。
 
+含糊的下单确认保持 `SUBMIT_UNKNOWN` 并阻断后续新单。结算校验累计成交量、均价及单调性；有未决订单时暂缓账户余额核对，现货账户余额不替代成交账本记仓。紧急停止的定时器与各笔撤单独立尽力执行，错误保留供人工处理。
+
 页面参数编辑经 `StrategyConfigurationController → TradingStrategyRegistry` 保存 MySQL 当前配置及不可变版本历史；新决策冻结所用配置版本。`application/paper` 编排独立的 PAPER 初始资金、批次、成交与估值账本，`domain/paper` 负责现金、成本和盈亏演进。具体口径与接口见 [策略参数版本与模拟资金](TRADING_SIMULATION.md)。
 
 策略输入显式区分1m、5m、15m。`intraday-technical` 提供趋势回踩、放量突破和震荡回归三种15m现货多头候选，复用纯领域指标；每分钟事件扫描独立评估确认收盘信号，订单及PAPER账本保存每个方向的稳定信号身份。新增实例不自动切换当前策略，不改变LIVE门禁；收益与频率需要独立回测、样本外及PAPER验证。
@@ -112,6 +114,8 @@ REST / WebSocket market data
 Polymarket 市场资格规则在 `domain/rule/PolymarketMarketFilters`，参数由 `MarketEligibilityPolicy` 表达，不依赖配置绑定类；行情采集和下单校验共同复用。
 
 `PolymarketOrderPolicy` 负责执行阈值和数量计算，解析后的业务有效性由 `PolymarketDecisionRules` 校验。故事的分节、篇幅、续写、连续性和伏笔回收位于 `domain/rule/StoryDraftPolicy`，AI 调用循环留在应用服务。
+
+Polymarket Python 桥接使用请求冻结的订单类型，不允许 SDK 兼容分支丢弃订单或签名类型；不完整的 API 凭据直接拒绝。Java 子进程的 stdin、运行和输出排空共用超时，每个输出流最多接收 1 MiB，失败异常不包含原始 SDK 输出。凭据辅助工具需显式选择联网及显示秘密，详见 [工具说明](../../tools/polymarket/README.md)。
 
 共享 AI 审计接口在 `ai/application/port`，记录在 `ai/domain/model`，MyBatis 实现在 `ai/infrastructure/persistence`。
 

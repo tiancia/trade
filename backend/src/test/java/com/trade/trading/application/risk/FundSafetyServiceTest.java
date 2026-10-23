@@ -2,6 +2,9 @@ package com.trade.trading.application.risk;
 
 import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.dto.OkxResponse;
+import com.trade.client.okx.dto.OrderActionResp;
+import com.trade.client.okx.dto.OrderInfoResp;
+import com.trade.client.okx.dto.CancelOrderReq;
 import com.trade.trading.application.port.FundSafetyRepository;
 import com.trade.trading.application.port.TradingOrderRepository;
 import com.trade.trading.domain.model.ExecutionMode;
@@ -28,8 +31,43 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.argThat;
 
 class FundSafetyServiceTest {
+    @Test
+    void emergencyCancellationContinuesAfterTimerAndIndividualOrderFailures() {
+        TradingProperties properties = new TradingProperties();
+        properties.setExecutionMode(ExecutionMode.LIVE);
+        FundSafetyRepository repository = mock(FundSafetyRepository.class);
+        TradingOrderRepository orders = mock(TradingOrderRepository.class);
+        TradingStateRepository state = mock(TradingStateRepository.class);
+        OkxApi okx = mock(OkxApi.class);
+        FundSafetyState halted = new FundSafetyState().setStatus(FundSafetyStatus.HALTED);
+        when(repository.halt(anyString(), anyString(), anyString(), any())).thenReturn(halted);
+        when(repository.getOrCreate("live")).thenReturn(halted);
+        when(okx.cancelAllAfter(any())).thenThrow(new IllegalStateException("timer unavailable"));
+        OrderInfoResp first = new OrderInfoResp();
+        first.setOrdId("first");
+        OrderInfoResp second = new OrderInfoResp();
+        second.setOrdId("second");
+        when(okx.getPendingOrders(any())).thenReturn(OkxResponse.success(List.of(first, second)));
+        OrderActionResp rejected = new OrderActionResp();
+        rejected.setSCode("51000");
+        rejected.setSMsg("cancel failed");
+        when(okx.cancelOrder(any(CancelOrderReq.class))).thenReturn(
+                OkxResponse.success(List.of(rejected)), OkxResponse.success(List.of()));
+        FundSafetyService service = new FundSafetyService(repository, orders, state, okx,
+                properties, new SimpleMeterRegistry());
+
+        service.halt("operator-api", "stop");
+
+        verify(okx).cancelOrder(argThat(order -> "first".equals(order.getOrdId())));
+        verify(okx).cancelOrder(argThat(order -> "second".equals(order.getOrdId())));
+        verify(repository).recordActionError(eq("live"), argThat(error ->
+                error.contains("timer unavailable") && error.contains("first") && error.contains("cancel failed")));
+        assertThrows(FundSafetyService.TradingFundsHaltedException.class, service::requireActive);
+    }
+
     @Test
     void haltIsPersistedBeforeExchangeCancellationAndBlocksNewOrders() {
         TradingProperties properties = new TradingProperties();

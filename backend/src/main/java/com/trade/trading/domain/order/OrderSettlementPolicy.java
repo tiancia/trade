@@ -1,6 +1,5 @@
 package com.trade.trading.domain.order;
 
-import com.trade.common.support.TradingMath;
 import java.math.BigDecimal;
 import java.util.Locale;
 
@@ -15,10 +14,14 @@ public final class OrderSettlementPolicy {
                        String executionStatus, OrderFill fill, FillAmounts amounts) {}
     public Plan prepare(TradingOrder local, ExchangeOrderObservation observed) {
         verifyIdentity(local, observed);
-        FillAmounts amounts = fillAmounts(observed);
+        String state = normalizeState(observed.getState());
+        FillAmounts amounts = fillAmounts(observed, state);
+        if (local.getFilledBaseAmount() != null
+                && amounts.filledSize().compareTo(local.getFilledBaseAmount()) < 0) {
+            throw new IllegalStateException("Exchange cumulative fill regressed below the durable order checkpoint");
+        }
         OrderFill fill = amounts.filledSize().signum() > 0
                 ? new OrderFill(amounts.filledSize(), amounts.averagePrice(), amounts.fee(), observed.getFeeCcy()) : null;
-        String state = normalizeState(observed.getState());
         OrderStatus target = switch (state) {
             case "filled" -> OrderStatus.FILLED;
             case "partially_filled" -> OrderStatus.PARTIALLY_FILLED;
@@ -55,29 +58,47 @@ public final class OrderSettlementPolicy {
         return new CumulativeSpotAmounts(reduction, BigDecimal.ZERO);
     }
 
-    private static FillAmounts fillAmounts(ExchangeOrderObservation order) {
+    private static FillAmounts fillAmounts(ExchangeOrderObservation order, String state) {
         // This broker currently submits market/taker orders. OKX also exposes a
         // separate positive rebate field for maker scenarios; accepting one
         // without an explicit ledger column would silently distort cost, so
         // fail closed until that execution type is deliberately supported.
-        if (TradingMath.decimal(order.getRebate()).signum() != 0) {
+        if (decimal(order.getRebate(), "rebate").signum() != 0) {
             throw new IllegalStateException(
                     "Separate OKX rebate accounting is not supported by the live settlement ledger"
             );
         }
-        BigDecimal filledSize = TradingMath.decimal(order.getAccFillSz());
-        if (filledSize.signum() <= 0) {
-            filledSize = TradingMath.decimal(order.getFillSz());
+        BigDecimal filledSize = decimal(order.getAccFillSz(), "accFillSz");
+        BigDecimal lastFillSize = decimal(order.getFillSz(), "fillSz");
+        if (filledSize.signum() < 0 || lastFillSize.signum() < 0
+                || lastFillSize.compareTo(filledSize) > 0) {
+            throw new IllegalStateException("Exchange order has inconsistent cumulative fill quantities");
         }
-        BigDecimal averagePrice = TradingMath.decimal(order.getAvgPx());
-        if (averagePrice.signum() <= 0) {
-            averagePrice = TradingMath.decimal(order.getFillPx());
+        if (("filled".equals(state) || "partially_filled".equals(state)) && filledSize.signum() <= 0) {
+            throw new IllegalStateException("Filled exchange order requires a positive cumulative accFillSz");
+        }
+        // fillSz/fillPx describe the latest trade, not cumulative order totals.
+        // Falling back to them can permanently close an under-accounted order.
+        BigDecimal averagePrice = decimal(order.getAvgPx(), "avgPx");
+        if (filledSize.signum() > 0 && averagePrice.signum() <= 0) {
+            throw new IllegalStateException("Exchange cumulative fill requires a positive avgPx");
         }
         return new FillAmounts(
                 filledSize,
                 averagePrice,
-                TradingMath.decimal(order.getFee())
+                decimal(order.getFee(), "fee")
         );
+    }
+
+    private static BigDecimal decimal(String value, String field) {
+        if (!hasText(value)) {
+            return BigDecimal.ZERO;
+        }
+        try {
+            return new BigDecimal(value.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalStateException("Invalid exchange order decimal: " + field, e);
+        }
     }
 
     private static void verifyIdentity(TradingOrder localOrder, ExchangeOrderObservation exchangeOrder) {

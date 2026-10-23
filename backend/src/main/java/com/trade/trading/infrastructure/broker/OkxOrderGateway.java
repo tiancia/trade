@@ -21,17 +21,45 @@ public class OkxOrderGateway implements ExchangeOrderGateway {
 
     public OrderActionResp placeOrder(PlaceOrderReq req) {
         OkxResponse<OrderActionResp> response = okxApi.placeOrder(req);
-        OrderActionResp actionResp = OkxResponses.first(response)
-                .orElseThrow(() -> new OrderRejectedException(OkxResponses.failureMessage(response, "order action")));
-        if (!OkxResponses.isOk(response) || (actionResp.getSCode() != null && !"0".equals(actionResp.getSCode()))) {
-            throw new OrderRejectedException(orderRejectedMessage(response, actionResp));
+        OrderActionResp actionResp = OkxResponses.first(response).orElse(null);
+        // An absent acknowledgement, timeout, or system error cannot prove that
+        // the exchange rejected a submit. Leave it unresolved so the durable
+        // clOrdId is queried and new exposure stays blocked.
+        if (response == null || !hasText(response.getCode())
+                || ambiguousCode(response.getCode())
+                || actionResp != null && ambiguousCode(actionResp.getSCode())) {
+            throw ambiguousSubmission(response, actionResp);
+        }
+        if (!"0".equals(response.getCode())
+                || actionResp != null && hasText(actionResp.getSCode()) && !"0".equals(actionResp.getSCode())) {
+            throw new OrderRejectedException("OKX order rejected: " + orderResponseMessage(response, actionResp));
+        }
+        if (actionResp == null || response.getData().size() != 1
+                || !"0".equals(actionResp.getSCode()) || !hasText(actionResp.getOrdId())
+                || !hasText(req.getClOrdId()) || !req.getClOrdId().equals(actionResp.getClOrdId())) {
+            throw ambiguousSubmission(response, actionResp);
         }
         log.info("OKX order accepted: ordId={}, clOrdId={}", actionResp.getOrdId(), actionResp.getClOrdId());
         return actionResp;
     }
 
-    private static String orderRejectedMessage(OkxResponse<OrderActionResp> response, OrderActionResp actionResp) {
-        return "OKX order rejected, code=" + (response == null ? null : response.getCode())
+    private static boolean ambiguousCode(String code) {
+        return "50004".equals(code) || "50026".equals(code)
+                || "50001".equals(code) || "50013".equals(code);
+    }
+
+    private static IllegalStateException ambiguousSubmission(
+            OkxResponse<OrderActionResp> response, OrderActionResp actionResp) {
+        return new IllegalStateException("OKX order submission result is ambiguous; reconcile clOrdId. "
+                + orderResponseMessage(response, actionResp));
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private static String orderResponseMessage(OkxResponse<OrderActionResp> response, OrderActionResp actionResp) {
+        return "code=" + (response == null ? null : response.getCode())
                 + ", msg=" + (response == null ? null : response.getMsg())
                 + ", sCode=" + (actionResp == null ? null : actionResp.getSCode())
                 + ", sMsg=" + (actionResp == null ? null : actionResp.getSMsg())

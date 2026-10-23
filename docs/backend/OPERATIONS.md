@@ -174,6 +174,12 @@ Invoke-RestMethod http://127.0.0.1:8080/api/trading/safety
 
 停止顺序是：MySQL `okx_fund_safety_state=HALTED` -> 设置 OKX cancel-all-after -> 查询并逐笔撤销挂单。应用启动和后续对账循环都会重申该交换所侧停止；若进程失联，则由已设置的 cancel-all-after 在超时后兜底。即使撤单 API 失败，新单仍被本地持久化门禁阻止；此时 `lastActionError` 非空，需要在 OKX 控制台人工核对。
 
+定时器设置失败后仍尝试查询并撤单，单笔撤单失败后仍处理其他订单；`lastActionError` 聚合这些失败。不能把本地停止成功等同于交易所全部撤单成功。
+
+对账期间，任一订单结算失败会使整轮失败；正常未决订单仍存在时暂缓余额核对，也不刷新完整对账成功时间。现货账户的余额快照只用于核对，不能自动导入受管理仓位或重置成本，即使选择 `dedicated-account`。该模式要求交易所与账本一致，差异触发 HALT；人工存入资产或旧账不一致时须先核清成交与资金来源，不能靠切换该模式接管余额。
+
+OKX 的超时、空响应或缺少完整身份确认会使订单保持 `SUBMIT_UNKNOWN`。先按原 `clOrdId` 查询与结算，禁止因未收到确认就创建新订单；50004 的含糊结果语义见 [OKX 官方说明](https://www.okx.com/en-us/help/api-faq)。累计成交快照缺少有效数量或均价、数值错误或数量回退时保留未决并报告失败，等待取得完整快照后再推进账本。
+
 要让停止动作操作真实 OKX 账户，必须选择 `execution-mode=live`；`live-enabled` 可以并建议在事故处理期间保持
 `false`。`execution-mode=paper` 下的停止只更新 PAPER 资金域，不会向真实账户发送撤单。
 

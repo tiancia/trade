@@ -125,11 +125,19 @@ public class OrderReconciliationService {
                     );
                 }
             }
-            reconcilePosition();
             lastReconciledCount = reconciled;
             if (!errors.isEmpty()) {
                 throw new IllegalStateException(String.join("; ", errors));
             }
+            // A balance can already include fills that are not yet checkpointed
+            // in the order ledger. Comparing/adopting that balance while an
+            // order is still working would race its next cumulative fill.
+            if (!orderRepository.findReconciliationCandidates(properties.getInstId(), 1).isEmpty()) {
+                counter("pending").increment();
+                timer.stop(timer("pending"));
+                return;
+            }
+            reconcilePosition();
             recordSuccess();
             counter("completed").increment();
             timer.stop(timer("completed"));
@@ -224,8 +232,11 @@ public class OrderReconciliationService {
                 == TradingProperties.PositionOwnership.DEDICATED_ACCOUNT;
         stateRepository.recordExchangePosition(
                 exchangeQuantity,
-                dedicated ? exchangeQuantity : null,
-                dedicated ? exchangeAverageCost : null,
+                // Spot ownership only advances through durable fill checkpoints.
+                // Even a dedicated account must not import an uncheckpointed
+                // fill (or a manual deposit) from a balance snapshot.
+                dedicated && !properties.isSpotInstrument() ? exchangeQuantity : null,
+                dedicated && !properties.isSpotInstrument() ? exchangeAverageCost : null,
                 Instant.now()
         );
         String reason = ReconciliationPolicy.positionMismatch(dedicated, before.getTrackedBaseAmount(),

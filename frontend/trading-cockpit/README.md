@@ -23,6 +23,8 @@ NEXT_PUBLIC_TRADE_API_URL=https://your-backend.example.com
 
 当前生产方案使用 Docker Node SSR，由 gateway 转发同源 `/api/`，按生产部署说明操作。若另外选择 Sites/Cloudflare Worker 部署，可设置运行时 `TRADE_API_URL=https://your-backend.example.com`，站点 Worker 会把同源 `/api/*` 请求（包括 K 线 SSE 流）转发到该后端；未设置时继续展示安全演示快照。这是另一种部署方式，不是当前生产入口。
 
+Worker 保留请求的 Origin、CSRF 标记及认证头，先清除调用方的 `Forwarded`、`X-Forwarded-*` 和 `X-Real-IP`，再根据实际站点 URL 重建转发主机、协议与端口，避免客户端伪造后端的有效请求来源。
+
 后端不可达时，页面会清楚标记为“演示数据”，任务启停和回测交互也只修改浏览器内的演示快照，不会触发真实交易。
 
 实时 K 线优先使用后端 SSE 增量推送，页面可见时始终每 15 秒读取最新快照，补偿连接中断或丢失的增量。后端默认订阅 1m、5m、15m、1H、4H；缓存过旧或缺少历史时主动请求 OKX REST。页面同时检查最近 30 秒是否收到数据，以及最新 K 线是否属于当前周期，过期时显示“行情已过期”，SSE 连通本身不会显示行情正常。策略页的“设为当前策略”会携带后端版本号提交，避免多个操作员页面静默互相覆盖。线上跨域部署时，还需在后端设置 `TRADE_TRADING_FRONTEND_ALLOWED_ORIGIN_PATTERNS`。
@@ -53,7 +55,7 @@ PAPER 总览支持设置初始资金、创建独立模拟会话，查看现金�
 
 `build/font-urls.ts` 为vinext在Windows上的字体缓存路径补齐站点相对URL，普通构建和Docker Node SSR构建共用；Dockerfile及忽略白名单均需包含此文件。生产HTML不得出现 `file:///` 或本机磁盘字体URL，字体文件应从站点的静态资源路径返回。
 
-当前使用 `vinext` 0.0.55，包含 Windows 静态资源路径修复。其固定依赖的 `image-size` 2.0.2 存在图片解析死循环漏洞，因此只对该依赖覆盖为兼容的 2.0.4。升级 `vinext` 后需重新检查此覆盖是否仍有必要。全量依赖审计仍包含上游尚未修复的 `braces` 深层嵌套模式拒绝服务告警；不要为清除告警而强制降级框架。
+当前使用 `vinext` 0.0.55，包含 Windows 静态资源路径修复。其固定依赖的 `image-size` 2.0.2 存在图片解析死循环漏洞，因此只对该依赖覆盖为兼容的 2.0.4。升级 `vinext` 后需重新检查此覆盖是否仍有必要。2026-10-23 本轮 `npm audit` 返回 0 项漏洞，先前关于 `braces` 的审计告警记录已过时；锁文件中的 `braces` 仍为 3.0.3，本轮未升级依赖。审计结果随供应商公告与依赖变化，应定期复核。
 
 ## 接入的后端接口
 

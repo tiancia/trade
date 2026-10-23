@@ -23,10 +23,18 @@ public final class OrderChange {
         return new OrderChange(OrderStatus.SUBMITTING, next -> next.submittedAt(now), "submission ownership acquired");
     }
     public TradingOrder apply(TradingOrder current, Instant now) {
-        return current.change(target, next -> {
+        TradingOrder updated = current.change(target, next -> {
             mutation.accept(next);
             if (current.getCompletedAt() != null) { next.completedAt(current.getCompletedAt()); }
         }, now);
+        // Recheck after every CAS retry, against the latest persisted order.
+        // The caller's observation may have been collected before another
+        // worker committed a larger cumulative fill.
+        if (current.getFilledBaseAmount() != null && updated.getFilledBaseAmount() != null
+                && updated.getFilledBaseAmount().compareTo(current.getFilledBaseAmount()) < 0) {
+            throw new IllegalStateException("Order cumulative fill cannot regress");
+        }
+        return updated;
     }
     public static OrderChange markAccepted(String exchangeOrderId, Instant now) {
         return new OrderChange(OrderStatus.ACCEPTED,

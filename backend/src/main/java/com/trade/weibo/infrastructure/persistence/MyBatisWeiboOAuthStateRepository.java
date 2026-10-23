@@ -2,6 +2,8 @@ package com.trade.weibo.infrastructure.persistence;
 
 import com.trade.weibo.application.port.WeiboOAuthStateRepository;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -23,6 +25,7 @@ public class MyBatisWeiboOAuthStateRepository implements WeiboOAuthStateReposito
     }
 
     @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean consume(String state, Instant usedAt) {
         return mapper.consumeOAuthState(state, Timestamp.from(usedAt)) == 1;
     }
