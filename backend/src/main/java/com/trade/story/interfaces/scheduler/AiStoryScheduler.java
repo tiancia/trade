@@ -28,6 +28,9 @@ public class AiStoryScheduler {
         long startedAt = System.currentTimeMillis();
         log.info("AI story scheduled trigger fired");
         Optional<StoryGenerationResult> result = service.generateStory();
+        if (result.filter(StoryGenerationResult::isDegraded).isPresent()) {
+            throw new IllegalStateException("AI story retained a degraded artifact after a failed generation step");
+        }
         log.info(
                 "AI story scheduled trigger finished: ran={}, title={}, outputPath={}, elapsedMs={}",
                 result.isPresent(),

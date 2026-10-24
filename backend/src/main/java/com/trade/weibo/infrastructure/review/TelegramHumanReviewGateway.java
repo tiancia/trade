@@ -58,6 +58,8 @@ public class TelegramHumanReviewGateway implements HumanReviewGateway {
         this.clock = clock;
     }
 
+    @Override public boolean disabled() { return !ready(); }
+
     @Override
     public boolean submit(ReviewRequest request) {
         if (!ready() || !"weibo".equals(request.module()) || !request.expiresAt().isAfter(now())) return false;

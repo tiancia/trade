@@ -1,0 +1,17 @@
+[Unit]
+Description=Encrypted off-host Trade MySQL snapshot
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/trade
+UMask=0077
+ExecStart=/bin/bash /opt/trade/deploy/scripts/backup-mysql.sh --recipients /etc/trade-backup/recipients.txt --destination backup@backup-host:/srv/trade-backups --identity /etc/trade-backup/ssh_key --known-hosts /etc/trade-backup/known_hosts --heartbeat-config /etc/trade-backup/heartbeat.curl --output /var/backups/trade
+TimeoutStartSec=30min
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Replace backup-host and provision a separate machine + independent heartbeat
+# before enabling the timer. The age private key belongs on the recovery machine.

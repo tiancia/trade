@@ -97,6 +97,11 @@ mybatis:
 
 # 项目自定义配置
 trade:
+  management:
+    auth:
+      # Management APIs fail closed (503) until a bcrypt htpasswd file is configured.
+      enabled: ${TRADE_MANAGEMENT_AUTH_ENABLED:true}
+      credentials-file: ${TRADE_MANAGEMENT_AUTH_CREDENTIALS_FILE:}
   # 自动任务启动开关：只启动循环，不替代对应业务开关；false 时可通过任务管理 API 手动启动。
   automation:
     weibo:

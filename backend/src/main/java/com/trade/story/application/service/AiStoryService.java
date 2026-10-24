@@ -57,6 +57,8 @@ public class AiStoryService {
     // Story generation is long-running and writes files, so overlapping runs
     // are skipped instead of queued.
     private final ReentrantLock generationLock = new ReentrantLock();
+    // Accessed only by the thread holding generationLock.
+    private boolean generationDegraded;
 
     public AiStoryService(
             AiTextClient aiTextClient,
@@ -129,6 +131,7 @@ public class AiStoryService {
             return Optional.empty();
         }
 
+        generationDegraded = false;
         String generationId = UUID.randomUUID().toString();
         long startedAtMillis = System.currentTimeMillis();
         try {
@@ -144,6 +147,7 @@ public class AiStoryService {
             // Topic planning establishes the continuity bible used by every
             // section prompt that follows.
             StoryTrendContext trendContext = trendCollector.collect();
+            generationDegraded = trendContext.isDegraded();
             List<String> recentStoryNames = fileRepository.recentStoryNames();
             String topicPrompt = promptBuilder.buildTopicPrompt(trendContext, recentStoryNames, properties);
             String rawTopicResponse = null;
@@ -203,7 +207,8 @@ public class AiStoryService {
                     .setGeneratedAt(Instant.now())
                     .setSectionCount(drafts.size())
                     .setTargetCharCount(properties.getTargetCharCount())
-                    .setActualCharCount(actualCharCount);
+                    .setActualCharCount(actualCharCount)
+                    .setDegraded(generationDegraded);
 
             log.info(
                     "AI story generation finished: generationId={}, title={}, chars={}, outputPath={}, elapsedMs={}",
@@ -216,13 +221,12 @@ public class AiStoryService {
             return Optional.of(result);
         } catch (Exception e) {
             log.error(
-                    "AI story generation failed: generationId={}, elapsedMs={}, error={}",
+                    "AI story generation failed: generationId={}, elapsedMs={}, failureType={}",
                     generationId,
                     System.currentTimeMillis() - startedAtMillis,
-                    e.getMessage(),
-                    e
+                    e.getClass().getSimpleName()
             );
-            return Optional.empty();
+            throw new IllegalStateException("AI story generation failed", e);
         } finally {
             generationLock.unlock();
         }
@@ -482,12 +486,12 @@ public class AiStoryService {
                     "KEEP_ORIGINAL_SECTION_DRAFT"
             );
         } catch (Exception e) {
+            generationDegraded = true;
             log.warn(
-                    "AI story section rewrite failed: generationId={}, section={}, error={}",
+                    "AI story section rewrite failed: generationId={}, section={}, failureType={}",
                     generationId,
                     sectionIndex,
-                    e.getMessage(),
-                    e
+                    e.getClass().getSimpleName()
             );
         }
         return originalDraft;
@@ -511,6 +515,7 @@ public class AiStoryService {
             rawResponse = aiTextClient.generateJson(prompt);
             List<StorySectionDraft> edited = responseParser.parseFinalEditResponse(rawResponse);
             if (edited.size() != drafts.size()) {
+                generationDegraded = true;
                 log.warn(
                         "AI story final edit section count mismatch: generationId={}, original={}, edited={}",
                         generationId,
@@ -541,7 +546,8 @@ public class AiStoryService {
                     "KEEP_PRE_EDIT_DRAFTS"
             );
         } catch (Exception e) {
-            log.warn("AI story final edit failed: generationId={}, error={}", generationId, e.getMessage(), e);
+            generationDegraded = true;
+            log.warn("AI story final edit failed: generationId={}, failureType={}", generationId, e.getClass().getSimpleName());
         }
         return drafts;
     }
@@ -554,6 +560,7 @@ public class AiStoryService {
             String errorMessage,
             String fallbackAction
     ) {
+        generationDegraded = true;
         try {
             parseErrorSink.save(new AiResponseParseErrorRecord()
                     .setSource("STORY")

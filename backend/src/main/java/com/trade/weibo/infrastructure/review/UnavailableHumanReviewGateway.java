@@ -5,6 +5,8 @@ import com.trade.weibo.domain.model.ReviewRequest;
 
 /** Fail-closed placeholder: does not send messages or fabricate review decisions. */
 public class UnavailableHumanReviewGateway implements HumanReviewGateway {
+    @Override public boolean disabled() { return true; }
+
     @Override
     public boolean submit(ReviewRequest request) {
         return false;

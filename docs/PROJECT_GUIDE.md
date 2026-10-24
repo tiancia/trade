@@ -161,7 +161,7 @@ Docker daemon 的代理不会自动成为 Java 客户端代理，也不能保证
 
 Docker 网络分三组：`app` 连接网关、两个前端和后端；`data` 连接后端、MySQL、Redis，并设置 `internal: true`；`outbound` 连接后端与 egress。backend 同时加入三组。服务名只在相应 Docker 网络内解析，电脑浏览器不能直接访问 `backend:8080`。
 
-Prometheus、Grafana 归可选 `monitoring` profile，默认不启动。启用后宿主机入口仍绑定回环：9090、3001。公共域名/TLS 模式由 [compose.public.yaml](../compose.public.yaml) 提供，是另一种访问方式；默认私有模式不叠加该文件。公共模式会替换网关端口，具体操作见部署说明。
+Prometheus、Grafana、Alertmanager 归可选 `monitoring` profile，默认不启动；启用需先配置真实外部通知接收端。宿主机入口绑定回环：9090、3001、9093。公共域名/TLS 模式由 [compose.public.yaml](../compose.public.yaml) 提供，强制客户端证书与 Basic 口令；默认私有模式不叠加该文件。公共模式会替换网关端口，具体操作见部署说明。
 
 ## 4. 配置和认证：每份东西给谁用
 
@@ -185,7 +185,7 @@ Prometheus、Grafana 归可选 `monitoring` profile，默认不启动。启用�
 | 国内服务器 SSH 密码或登录密钥 | 电脑 SSH/SFTP | 登录、建立访问隧道、传发布包 |
 | gateway 用户 `operator` 与网关密码 | 浏览器弹出的登录框；curl 的 `-u operator` | 进入私有 Web 网关 |
 
-两个前端无需额外的应用令牌，X 控制台打开后自动读取内容。网关完成账号密码认证后移除向后端转发的 Basic Authorization；后端仅在容器网络内提供 API，由网关和网络隔离限制访问。
+两个前端无需额外的应用令牌，X 控制台打开后自动读取内容。网关与后端分别校验个人 Basic 凭据；Authorization 仅向后端 API 转发，前端服务器不接收口令。后端管理 GET 和写接口均要求认证，未配置 bcrypt 凭据文件时返回 503；后端端口仍仅在容器网络内可达。网关包含限速与 JSON 审计，公网 HTTPS 额外强制受信客户端证书和 CRL；配置与凭据撤销见[部署说明](../deploy/README.md)。
 
 德国转发密钥只用于国内主机/容器连接德国专用用户，不能拿它当电脑登录国内主机的密钥。OKX 只读凭据、X OAuth 凭据、Telegram Bot Token、DeepSeek Key 均属于后端运行配置，不输入前端、不打进镜像。
 
@@ -317,7 +317,7 @@ curl.exe --noproxy "*" -sS --max-time 30 -u operator 'http://127.0.0.1:18080/api
 curl.exe --noproxy "*" -sS --max-time 30 -u operator 'http://127.0.0.1:18080/api/automation/tasks'
 ```
 
-运行状态应符合 PAPER、liveEnabled=False；最新一次决策完成后再检查 lastError 和 lastDecision。automation 的 lastRunSuccessful 只表示调度入口没有向外抛异常；交易引擎可能捕获错误并保存到自己的 lastError。
+运行状态应符合 PAPER、liveEnabled=False；最新一次决策完成后再检查 lastError 和 lastDecision。automation 的 lastRunSuccessful 表示对应调度入口的结果；story、weibo、x 会把内部失败或降级结果反馈给调度入口，交易引擎仍可能捕获错误并保存到自己的 lastError，需同时检查交易状态。
 
 在 **国内 Ubuntu Bash** 定义日常命令并查看容器：
 

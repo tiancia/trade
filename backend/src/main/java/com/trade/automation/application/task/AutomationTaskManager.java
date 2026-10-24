@@ -4,10 +4,16 @@ import com.trade.automation.domain.model.AutomationLoopDefinition;
 import com.trade.automation.domain.model.AutomationLoopStatus;
 import com.trade.automation.domain.model.AutomationTaskDefinition;
 import com.trade.automation.domain.model.AutomationTaskStatus;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.TaskScheduler;
@@ -36,10 +42,18 @@ public class AutomationTaskManager implements DisposableBean {
     private static final Logger log = LoggerFactory.getLogger(AutomationTaskManager.class);
 
     private final TaskScheduler scheduler;
+    private final MeterRegistry meterRegistry;
     private final Map<String, ManagedTask> tasks = new LinkedHashMap<>();
 
-    public AutomationTaskManager(@Qualifier("automationTaskScheduler") TaskScheduler scheduler) {
+    public AutomationTaskManager(TaskScheduler scheduler) {
+        this(scheduler, new SimpleMeterRegistry());
+    }
+
+    @Autowired
+    public AutomationTaskManager(@Qualifier("automationTaskScheduler") TaskScheduler scheduler,
+                                 MeterRegistry meterRegistry) {
         this.scheduler = scheduler;
+        this.meterRegistry = meterRegistry;
     }
 
     public synchronized void register(AutomationTaskDefinition definition) {
@@ -193,9 +207,23 @@ public class AutomationTaskManager implements DisposableBean {
             private Instant lastRunCompletedAt;
             private Boolean lastRunSuccessful;
             private String lastError;
+            private final Counter succeeded;
+            private final Counter failed;
+            private final Counter skipped;
+            private final Timer duration;
+            private final AtomicLong lastSuccess = new AtomicLong(-1);
 
             private ManagedLoop(AutomationLoopDefinition definition) {
                 this.definition = definition;
+                String task = ManagedTask.this.definition.id();
+                succeeded = runCounter(task, definition.id(), "success");
+                failed = runCounter(task, definition.id(), "failure");
+                skipped = runCounter(task, definition.id(), "skipped");
+                duration = Timer.builder("trade.automation.duration")
+                        .tags("task", task, "loop", definition.id()).register(meterRegistry);
+                Gauge.builder("trade.automation.last.success", lastSuccess, AtomicLong::get)
+                        .description("Last completed run: 1 success, 0 failure, -1 not run")
+                        .tags("task", task, "loop", definition.id()).register(meterRegistry);
             }
 
             private synchronized void schedule(Duration delay, long expectedGeneration) {
@@ -216,11 +244,12 @@ public class AutomationTaskManager implements DisposableBean {
                 // keeps scheduler delay bounded without building a backlog.
                 boolean locked = executionLock.tryLock();
                 if (!locked) {
-                    complete(false, "Another loop in the same task is still running", expectedGeneration);
+                    skipped.increment();
                     schedule(definition.fixedDelay(), expectedGeneration);
                     return;
                 }
 
+                long started = System.nanoTime();
                 try {
                     if (!startRun(expectedGeneration)) {
                         return;
@@ -228,9 +257,13 @@ public class AutomationTaskManager implements DisposableBean {
                     definition.action().run();
                     complete(true, null, expectedGeneration);
                 } catch (Exception e) {
-                    log.error("Automation task loop failed: task={}, loop={}", ManagedTask.this.definition.id(), definition.id(), e);
-                    complete(false, e.getMessage(), expectedGeneration);
+                    // Provider exception messages may contain credentials, request bodies or URLs.
+                    log.error("Automation task loop failed: task={}, loop={}, failureType={}",
+                            ManagedTask.this.definition.id(), definition.id(), e.getClass().getSimpleName());
+                    complete(false, "Loop failed (" + e.getClass().getSimpleName()
+                            + "); inspect task logs and persisted workflow state", expectedGeneration);
                 } finally {
+                    duration.record(System.nanoTime() - started, java.util.concurrent.TimeUnit.NANOSECONDS);
                     executionLock.unlock();
                     // An execution from a stopped generation must not revive its old scheduling chain.
                     schedule(definition.fixedDelay(), expectedGeneration);
@@ -253,6 +286,8 @@ public class AutomationTaskManager implements DisposableBean {
                 lastRunCompletedAt = Instant.now();
                 lastRunSuccessful = successful;
                 lastError = error;
+                lastSuccess.set(successful ? 1 : 0);
+                (successful ? succeeded : failed).increment();
             }
 
             private synchronized void cancel() {
@@ -276,5 +311,11 @@ public class AutomationTaskManager implements DisposableBean {
                 );
             }
         }
+    }
+
+    private Counter runCounter(String task, String loop, String outcome) {
+        return Counter.builder("trade.automation.runs")
+                .description("Completed automation loop runs and overlap skips")
+                .tags("task", task, "loop", loop, "outcome", outcome).register(meterRegistry);
     }
 }

@@ -95,6 +95,8 @@ services:
       POLYMARKET_ORDER_SCRIPT: /app/tools/polymarket/polymarket_place_order.py
       TRADE_TRADING_FRONTEND_ALLOWED_ORIGIN_PATTERNS: http://127.0.0.1:${COCKPIT_LOCAL_PORT:-18080},http://localhost:${COCKPIT_LOCAL_PORT:-18080}
       TRADE_METRICS_ENVIRONMENT: production
+      TRADE_MANAGEMENT_AUTH_CREDENTIALS_FILE: /run/secrets/gateway.htpasswd
+      TRADE_MANAGEMENT_AUTH_ENABLED: "true"
       SERVER_ADDRESS: 0.0.0.0
       SERVER_FORWARD_HEADERS_STRATEGY: framework
       SERVER_SHUTDOWN: graceful
@@ -102,6 +104,9 @@ services:
       JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=65.0 -XX:+ExitOnOutOfMemoryError}
     volumes:
       - backend_data:/app/data
+    secrets:
+      - source: gateway_htpasswd
+        target: gateway.htpasswd
     networks: [app, data, outbound]
     depends_on:
       mysql: {condition: service_healthy}
@@ -208,6 +213,24 @@ services:
     mem_limit: 256m
     logging: *logging
 
+  alertmanager:
+    profiles: [monitoring]
+    image: ${ALERTMANAGER_IMAGE:-prom/alertmanager:v0.30.0}
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/etc/alertmanager/entrypoint.sh"]
+    volumes:
+      - ./deploy/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./deploy/alertmanager/entrypoint.sh:/etc/alertmanager/entrypoint.sh:ro
+      - alertmanager_data:/alertmanager
+    secrets: [alertmanager_webhook_url]
+    networks: [app]
+    ports: ["127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    logging: *logging
+
 networks:
   app: {}
   data: {internal: true}
@@ -219,6 +242,7 @@ volumes:
   backend_data: {name: "${DATA_VOLUME_PREFIX:-trade-production}_backend"}
   prometheus_data: {name: "${DATA_VOLUME_PREFIX:-trade-production}_prometheus"}
   grafana_data: {name: "${DATA_VOLUME_PREFIX:-trade-production}_grafana"}
+  alertmanager_data: {name: "${DATA_VOLUME_PREFIX:-trade-production}_alertmanager"}
 
 secrets:
   egress_key:
@@ -227,3 +251,5 @@ secrets:
     file: ${SECRETS_DIRECTORY:-./deploy/secrets}/egress_known_hosts
   gateway_htpasswd:
     file: ${SECRETS_DIRECTORY:-./deploy/secrets}/gateway.htpasswd
+  alertmanager_webhook_url:
+    file: ${ALERTMANAGER_WEBHOOK_URL_FILE:-./deploy/secrets/alertmanager_webhook_url}

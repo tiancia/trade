@@ -3,6 +3,14 @@
 resolver 127.0.0.11 valid=10s ipv6=off;
 resolver_timeout 5s;
 server_tokens off;
+include /etc/nginx/includes/management-controls.conf;
+
+# Container-local liveness probe; the public TLS listeners always require a client certificate.
+server {
+    listen 127.0.0.1:8082;
+    location = /healthz { access_log off; return 200 "gateway ok\n"; }
+    location / { return 404; }
+}
 
 # Preserve an explicit external HTTPS port when it differs from container 443.
 map "$scheme:$http_host" $trade_forwarded_port {
@@ -34,11 +42,16 @@ server {
     ssl_certificate /etc/nginx/tls/fullchain.pem;
     ssl_certificate_key /etc/nginx/tls/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_client_certificate /etc/nginx/tls/client-ca.pem;
+    ssl_crl /etc/nginx/tls/client-crl.pem;
+    ssl_verify_client on;
+    ssl_verify_depth 2;
 
     auth_basic "Trade dashboard";
     auth_basic_user_file /run/secrets/gateway.htpasswd;
 
     include /etc/nginx/includes/proxy-common.conf;
+    proxy_set_header Authorization "";
     include /etc/nginx/includes/api.conf;
 
     location / {
@@ -55,11 +68,16 @@ server {
     ssl_certificate /etc/nginx/tls/fullchain.pem;
     ssl_certificate_key /etc/nginx/tls/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_client_certificate /etc/nginx/tls/client-ca.pem;
+    ssl_crl /etc/nginx/tls/client-crl.pem;
+    ssl_verify_client on;
+    ssl_verify_depth 2;
 
     auth_basic "Trade dashboard";
     auth_basic_user_file /run/secrets/gateway.htpasswd;
 
     include /etc/nginx/includes/proxy-common.conf;
+    proxy_set_header Authorization "";
     include /etc/nginx/includes/api.conf;
 
     location / {

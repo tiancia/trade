@@ -3,10 +3,12 @@ package com.trade.automation.infrastructure.config;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.mock.web.MockServletContext;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,6 +20,10 @@ import org.springframework.web.filter.ForwardedHeaderFilter;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
 import java.util.Map;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -34,13 +40,15 @@ class ManagementWebConfigurationTest {
     private AnnotationConfigWebApplicationContext context;
     private MockMvc mvc;
     private ProbeController controller;
+    @TempDir Path directory;
 
     @BeforeEach
     void setUp() {
         context = new AnnotationConfigWebApplicationContext();
         context.setServletContext(new MockServletContext());
         context.getEnvironment().getPropertySources().addFirst(new MapPropertySource("test", Map.of(
-                "trade.trading.frontend-allowed-origin-patterns", "https://cockpit.example,http://localhost:*"
+                "trade.trading.frontend-allowed-origin-patterns", "https://cockpit.example,http://localhost:*",
+                "trade.management.auth.enabled", "false"
         )));
         context.register(ManagementWebConfiguration.class, TestWebConfiguration.class);
         context.refresh();
@@ -121,6 +129,31 @@ class ManagementWebConfigurationTest {
         mvc.perform(post("/api/text-game/sessions")).andExpect(status().isOk());
         mvc.perform(post("/api/marketplace/items")).andExpect(status().isOk());
         assertEquals(2, controller.writes.get());
+    }
+
+    @Test
+    void applicationAuthenticationCoversEveryManagementRouteBeforeCsrfAndKeepsPlayerAndOAuthRoutes() throws Exception {
+        context.close();
+        Path file = directory.resolve("operators");
+        Files.writeString(file, "operator:" + new BCryptPasswordEncoder(4).encode("test-password") + "\n");
+        context = new AnnotationConfigWebApplicationContext();
+        context.setServletContext(new MockServletContext());
+        context.getEnvironment().getPropertySources().addFirst(new MapPropertySource("auth", Map.of(
+                "trade.management.auth.credentials-file", file.toString())));
+        context.register(ManagementWebConfiguration.class, TestWebConfiguration.class);
+        context.refresh();
+        mvc = MockMvcBuilders.webAppContextSetup(context).build();
+        String authorization = "Basic " + Base64.getEncoder().encodeToString("operator:test-password".getBytes(StandardCharsets.UTF_8));
+        for (String path : MANAGEMENT_PATHS) {
+            mvc.perform(post(path).header("X-Trade-CSRF", "1")).andExpect(status().isUnauthorized());
+            mvc.perform(post(path).header("Authorization", authorization)).andExpect(status().isForbidden());
+            mvc.perform(post(path).header("Authorization", authorization).header("X-Trade-CSRF", "1"))
+                    .andExpect(status().isOk());
+        }
+        mvc.perform(get("/api/automation/tasks")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/automation/tasks").header("Authorization", authorization)).andExpect(status().isOk());
+        mvc.perform(get("/api/weibo/oauth/callback")).andExpect(status().isOk());
+        mvc.perform(post("/api/text-game/sessions")).andExpect(status().isOk());
     }
 
     @TestConfiguration(proxyBeanMethods = false)

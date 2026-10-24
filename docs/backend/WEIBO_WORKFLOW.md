@@ -13,6 +13,8 @@ AI 复用 `client.ai.AiTextClient` 和 `trade.ai.client`，不新增 SDK 或读�
 关闭审核时使用 `UnavailableHumanReviewGateway`，草稿停在 `PENDING_REVIEW`。
 装配及审核行为属于 `weibo`，协议留在 `client/telegram`，没有顶层 `telegram` 模块。
 
+后台循环逐项隔离故障，但会把生成、审核投递、发布 `FAILED/UNKNOWN`、发布中断恢复和已启用发布时凭据不可用反馈到 `/api/automation/tasks` 的 `lastRunSuccessful=false`。故障不清除已存草稿或未知发布状态，也不自动重发；显式禁用、无待处理项和配额/幂等预留未获准属于正常跳过。运行计数 `trade.automation.runs`、耗时 `trade.automation.duration` 和最近结果 `trade.automation.last.success` 使用 `task=weibo` 与循环名；敏感错误、账号和草稿 ID 不进入指标标签。
+
 ## DDD 结构
 
 ```text

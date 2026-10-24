@@ -3,6 +3,7 @@ package com.trade.automation.infrastructure.config;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.cors.CorsConfiguration;
@@ -15,20 +16,26 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Set;
 
-/** Browser request protection for operational APIs already protected by the deployment gateway. */
+/** Application authentication and browser request protection for operational APIs. */
 @Configuration
+@EnableConfigurationProperties(ManagementAuthenticationProperties.class)
 public class ManagementWebConfiguration implements WebMvcConfigurer {
     private static final Set<String> SAFE_METHODS = Set.of("GET", "HEAD", "OPTIONS", "TRACE");
     private final CorsConfiguration allowedOrigins = new CorsConfiguration();
+    private final ManagementAuthenticationInterceptor authentication;
 
     public ManagementWebConfiguration(
-            @Value("${trade.trading.frontend-allowed-origin-patterns:http://localhost:*}") List<String> originPatterns
+            @Value("${trade.trading.frontend-allowed-origin-patterns:http://localhost:*}") List<String> originPatterns,
+            ManagementAuthenticationProperties authenticationProperties
     ) {
         allowedOrigins.setAllowedOriginPatterns(originPatterns);
+        authentication = new ManagementAuthenticationInterceptor(authenticationProperties);
     }
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(authentication).addPathPatterns("/api/automation/**", "/api/trading/**", "/api/x/**",
+                "/api/weibo/**", "/api/text-game/admin/**");
         registry.addInterceptor(new HandlerInterceptor() {
             @Override
             public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)

@@ -90,9 +90,11 @@ chmod 600 deploy/.env deploy/backend.env
 - `TRADE_X_TARGET_USER_ID`，以及 `X_API_KEY`、`X_API_SECRET`、`X_ACCESS_TOKEN`、`X_ACCESS_TOKEN_SECRET`；
 - `OKX_ACCESS_KEY`、`OKX_SECRET_KEY`、`OKX_ACCESS_PASSPHRASE`：仅 LIVE 的私有账户和订单接口需要；PAPER 使用独立模拟资金账本及公共行情，可留空；
 
-两个前端无需应用令牌，页面和管理 API 统一由网关账号密码及网络隔离限制访问；保持后端端口仅在容器网络内可达。
+页面通过 Basic Auth 登录；管理 API 由后端独立校验同一份 bcrypt `gateway.htpasswd`，包括 GET。后端缺少认证配置时返回 503，非法或缺少凭据返回 401。Compose 强制开启认证并只读挂载哈希文件；保持后端端口仅在容器网络内可达。凭据只向后端 API 转发，前端服务器不接收口令。
 
-管理写接口统一要求 `X-Trade-CSRF: 1`，浏览器请求还校验同源或配置允许的 Origin；驾驶舱自动附加该头，命令行调用也必须带上。后端与驾驶舱应一起更新，避免旧前端的写操作收到 403；读取不受影响。
+管理写接口还要求 `X-Trade-CSRF: 1`，浏览器请求校验同源或配置允许的 Origin；驾驶舱自动附加该头。命令行需同时携带 Basic 凭据及 CSRF 头，例如 `curl --user operator -H 'X-Trade-CSRF: 1' ...`（交互输入口令）。原有微博和文字游戏业务令牌仍须携带。后端与网关须一起更新，旧网关会剥除 Authorization。原生开发运行需要配置 `TRADE_MANAGEMENT_AUTH_CREDENTIALS_FILE`；仅隔离开发环境可显式设置 `TRADE_MANAGEMENT_AUTH_ENABLED=false`。
+
+每位操作者使用独立账号，新增使用 `htpasswd -B deploy/secrets/gateway.htpasswd alice`，已有文件勿加 `-c`。使用 bcrypt cost 4–14，生产建议 cost 10–12。更新或撤销后重建 backend 与 gateway，使只读挂载和后端快照同时更新；后端只缓存成功凭据的 SHA256 30 秒，不保存明文，重建后立即清空。后端限制每分钟 30 次未缓存的口令验证，网关每来源 IP 限制平均 10 请求/秒、突发 100；收到 429 后按 Retry-After 等待。网关 JSON 审计保留来源 IP、账号、客户端证书序列号、方法、路径、结果与 request_id；应用审计记录写操作及拒绝的操作者、路径和状态。均不记录 Authorization、请求体或查询参数。容器日志仍在本机，外部收集与保留期限需另行配置。
 
 `backend.env` 使用 **raw** 格式：每行 `KEY=value`，不要给值额外加引号，不要 `source`，也不要放 shell 命令。它只在运行时注入后端，不参与镜像构建。
 
@@ -359,7 +361,7 @@ bash deploy/scripts/release.sh rollback --release deploy/releases/某份历史�
 
 部分构建的 `--base` 默认读取本地 `deploy/release.env`；没有完整基线时会在构建前报错。建议每次从目标服务器下载当前成功清单，并用 `--base` 显式指定，保留其他服务实际部署的镜像引用。基线只接受镜像清单字段，不要传入基础设施 `.env` 或业务 `backend.env`。基线与输出可以是同一文件，但建议用 `--output deploy/new-release.env` 保留原清单。
 
-单独更新前端用 `cockpit` 或 `x-console`；只更换网关配置或密码可执行 `deploy gateway`，更换隧道 key / VPS 地址可执行 `deploy egress`。选中的应用始终重建，单独发布不会启动或重建其依赖，首次必须先完成全量部署。
+单独更新前端用 `cockpit` 或 `x-console`；只更换网关配置可执行 `deploy gateway`，更换操作者密码须 `deploy backend gateway`，更换隧道 key / VPS 地址可执行 `deploy egress`。选中的应用始终重建，单独发布不会启动或重建其依赖，首次必须先完成全量部署。
 
 `deploy/releases/current.env` 保存当前成功镜像，`previous.env` 保存前一成功版本，还有时间戳快照。失败保持 `current.env`；失败的回滚目标保存在 `target-*.env`，可以显式传入重试。成功回滚后再次回滚会切回刚才版本。一次只允许一个发布进程运行。
 
@@ -390,29 +392,61 @@ bash deploy/scripts/release.sh deploy backend --release deploy/new-release.env -
 
 第一次启动空库会执行现有 `CREATE TABLE IF NOT EXISTS` schema；旧库不会自动补列或索引。涉及 schema 的版本发布前，先按 [数据库升级说明](../backend/src/main/resources/db/README.md) 做适用性检查和备份，手工执行对应补丁；数据库恢复需单独安排，应用镜像回滚不能替代它。
 
-简单的停机一致性备份示例（沿用上面的 `dc` 函数，卷名按自己的前缀调整）：
+### 加密异机数据库备份
+
+[backup-mysql.sh](scripts/backup-mysql.sh) 对全部 InnoDB 业务表执行在线事务快照，直接经过 gzip 和 age 公钥加密，再通过严格校验主机指纹的 SCP 上传异机。只有异机 SHA256 核验及独立备份监控的成功心跳均完成，才输出 `BACKUP_OFFSITE_OK`；任何阶段失败都返回非零。它不停止交易应用，也不写明文 dump，不会删除旧备份。脚本与发布共用 `.release.lock`，备份期间也不要另行执行 DDL。
+
+先在生产服务器安装 `age`、OpenSSH client、curl 和 util-linux；在独立恢复机器生成 age 密钥，将**公钥**放到生产的 `/etc/trade-backup/recipients.txt`，私钥留在恢复机器或离线保险库。准备独立备份服务器账号、受限 SSH 私钥和经人工核对的 `known_hosts`；备份服务器必须与业务主机处于不同故障域，不能把同机另一目录当异机。生产仅持有加密公钥，不需要解密私钥。
+
+另在独立外部监控创建每日备份心跳，要求超过 26 小时无成功心跳即通知值守人；将其专用 HTTPS URL 放入 root 可读的 `/etc/trade-backup/heartbeat.curl`，格式为 `url = "https://实际监控端点"`。该服务必须在本机、Docker、网络或备份任务全部失效时仍能发出告警。上述目录设 700，私钥与心跳配置设 600，勿提交仓库。
 
 ```bash
-umask 077
-mkdir -p backups
-dc stop backend
-dc exec -T mysql sh -ec 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysqldump --single-transaction --no-tablespaces -u "$MYSQL_USER" "$MYSQL_DATABASE"' \
-  > "backups/mysql-$(date -u +%Y%m%dT%H%M%SZ).sql"
-docker run --rm --mount source=trade-production_backend,target=/data,readonly \
-  --mount type=bind,src="$PWD/backups",dst=/backup alpine:3.22 \
-  tar -czf /backup/backend-data.tgz -C /data .
-dc start backend
+bash deploy/scripts/backup-mysql.sh \
+  --recipients /etc/trade-backup/recipients.txt \
+  --destination backup@真实异机地址:/srv/trade-backups \
+  --identity /etc/trade-backup/ssh_key --known-hosts /etc/trade-backup/known_hosts \
+  --heartbeat-config /etc/trade-backup/heartbeat.curl --output /var/backups/trade
 ```
 
-确认命令成功后再继续更新。备份可能包含账户及内容数据，应加密保存到服务器之外，并定期验证恢复。另行安全备份运行配置和密钥，不能放进代码仓库。
+首次手工运行成功后，复制 [systemd service](systemd/trade-mysql-backup.service) 和 [timer](systemd/trade-mysql-backup.timer) 到 `/etc/systemd/system/`，把 service 的 `backup-host`、路径和用户改成实际值，再执行 `systemctl daemon-reload`、`systemctl enable --now trade-mysql-backup.timer`。默认每天 UTC 03:15 加 0–15 分钟随机延迟；用 `systemctl list-timers trade-mysql-backup.timer` 和 `journalctl -u trade-mysql-backup.service` 核对。当前代码不会自动安装或启用定时器。
 
-默认不开 Prometheus / Grafana。有足够余量时先在 `deploy/.env` 填强 `GRAFANA_ADMIN_PASSWORD`，再执行：
+这是每日逻辑快照，初始恢复点目标约 24 小时，不提供 binlog 时间点恢复，也不包含 MySQL 用户授权、存储过程、事件、`backend_data`、运行配置和密钥。`backend_data` 的策略与本地状态应在维护窗口停止 backend 后另做加密异机卷备份；将对应时间的运行配置、发布镜像清单和密钥分别安全备份。数据库与应用卷并非在线原子快照，不能混用任意时点的状态文件。备份服务本地文件会累积，须在恢复验证后按容量安排保留策略；异机保留至少一份生产账号无法修改的版本或不可变副本。
+
+### 隔离恢复演练
+
+在独立恢复机器取回异机 `.sql.gz.age` 和相邻 `.sha256` 文件，预先加载与生产匹配的 MySQL 8 镜像，准备 age 私钥，运行：
 
 ```bash
-dc --profile monitoring up -d --no-deps prometheus grafana
+bash deploy/scripts/restore-drill.sh \
+  --backup /srv/restore/mysql-20261024T031500Z-123.sql.gz.age \
+  --identity /secure/offline-age-key --image mysql:8.0
 ```
 
-监控只监听宿主机回环 `127.0.0.1:9090` 和 `127.0.0.1:3001`，通过 SSH 本地转发访问。复用现有交易告警规则和仪表盘；默认保留七天指标。发布脚本不更新这两个可选服务，数据库 / 缓存 / 监控的版本升级单独安排。
+脚本先校验 SHA256，再解密流式导入**新建**、无网络、无发布端口、无业务数据卷的临时 MySQL；检查存在业务表并执行 `mysqlcheck`，仅成功后输出 `RESTORE_DRILL_OK`。退出时仅删除本次新建容器及其匿名卷；不会连接生产 MySQL、启动 backend 或恢复真实交易。它验证 SQL 可导入与表检查，不替代逐域数据核对、业务恢复测试和资金对账。
+
+至少每月以及每次 schema 变更后执行一次，并在仓库外记录所用异机备份、恢复耗时和结果；用外部日程/监控监督演练是否逾期。灾难恢复时先恢复隔离环境、核对数据库/策略版本及真实交易所订单与仓位，保持实盘停机，完成资金对账及人工确认后才恢复业务。仅备份命令成功不等于完成恢复演练；本地 mock 测试也不代表真实数据库恢复已通过。
+
+### 告警投递与独立存活监控
+
+默认不开监控。启用前填强 `GRAFANA_ADMIN_PASSWORD`，并在 `deploy/secrets/alertmanager_webhook_url` 写入一个外部 **HTTPS、支持 Alertmanager JSON 的**值守通知端点，设适当读取权限；可通过 `ALERTMANAGER_WEBHOOK_URL_FILE` 指定其他秘密文件。缺文件、空值或示例地址会使 Alertmanager 拒绝启动；不要直接使用不兼容的 Telegram/Slack API 地址。需要这些渠道时在外部使用兼容适配器，或按 [Alertmanager 官方接收器配置](https://prometheus.io/docs/alerting/latest/configuration/) 修改接收器。
+
+```bash
+dc --profile monitoring up -d --no-deps prometheus grafana alertmanager
+```
+
+生产 Prometheus 的 `alerting` 已指向 Alertmanager；交易告警按规则发送并包含恢复通知。Alertmanager 自身通知失败也有规则，但同一失效通道无法保证送达自己的故障，所以还需要独立外部存活监控。三个服务仅绑定回环 9090/3001/9093，通过 SSH 转发访问；默认指标保留七天。发布脚本不更新这三个可选服务，配置/版本升级单独安排。
+
+启用后先用 `dc exec -T prometheus promtool check config /etc/prometheus/prometheus.yml` 和 `dc exec -T alertmanager amtool check-config /etc/alertmanager/alertmanager.yml` 检查，再向回环 Alertmanager API 投入临时测试告警：
+
+```bash
+curl --fail --silent --show-error -H 'Content-Type: application/json' \
+  --data '[{"labels":{"alertname":"TradeNotificationTest","severity":"critical"},"annotations":{"summary":"Verify delivery with the designated operator"}}]' \
+  http://127.0.0.1:9093/api/v2/alerts
+```
+
+须由真实收件人确认到达，再通过实际 Prometheus 规则触发验证完整链路；API 返回 2xx、告警页面出现、或进程健康均不能作为送达证据。测试结束后在 Alertmanager 检查其恢复。配置独立外部监测生产主机、HTTPS网关、备份心跳及通知服务；同机 Prometheus/Alertmanager 在整机或网络失效时无法自报。
+
+现有 Compose 仍是**单机部署**，容器自动重启与异机备份不能提供高可用。消除该单点需要独立故障域的数据库复制/托管数据库、受控故障切换、外部监控和备用应用主机；在确认持久化数据、领导者租约及交易对账前不可直接启动第二个 LIVE 实例。仓库配置与脚本不代表上述基础设施已建立或已上线。
 
 ## 可选：双域名 HTTPS 公共模式
 
@@ -428,9 +462,13 @@ chmod 700 deploy/secrets/tls
 ```text
 deploy/secrets/tls/fullchain.pem
 deploy/secrets/tls/privkey.pem
+deploy/secrets/tls/client-ca.pem
+deploy/secrets/tls/client-crl.pem
 ```
 
 证书文件使用 644、私钥使用 root 所有的 600。复制真实文件，避免把指向容器挂载目录外部的符号链接放进来。公共模式的路径可用 `TLS_DIRECTORY`、`ACME_DIRECTORY` 覆盖，均相对于仓库根目录。
+
+公网 HTTPS 强制 mTLS 客户端证书及 Basic 口令：每位操作者取得专用客户端证书/私钥（clientAuth 用途），浏览器导入其 PKCS#12；服务端只放受信 CA 的证书 `client-ca.pem` 和仍在有效期内的撤销列表 `client-crl.pem`，CA 私钥留在离线签发端。签发、撤销与 CRL 更新可按 [OpenSSL CA 文档](https://docs.openssl.org/3.5/man1/openssl-ca/)执行；撤销客户端后发布新 CRL 并重建 gateway，同时撤销相应 Basic 账号。使用短期客户端证书并在 CRL 到期前更新。缺少客户端证书、非受信证书或已撤销证书都无法进入管理站点；缺少 CA/CRL 文件时 Nginx 拒绝启动。证书私钥不要与口令一起共享或放到服务器。该方案不提供 OIDC/硬件密钥登录或集中身份管理。
 
 若用 Certbot，首次网关尚未启动且 80 空闲时可用 [standalone 模式](https://eff-certbot.readthedocs.io/en/stable/using.html#standalone)：
 
@@ -461,7 +499,7 @@ dc() {
 }
 ```
 
-浏览器改为访问两个 `https://` 域名，仍需网关密码；HTTP 仅处理证书验证和跳转 HTTPS。私有模式的回环 Web 端口会被替换，不与公共端口同时发布。
+浏览器改为访问两个 `https://` 域名，须选择客户端证书并输入个人 Basic 口令；HTTP 仅处理证书验证和跳转 HTTPS。CLI 另外提供 `--cert`、`--key` 和 `--user`。私有模式的回环 Web 端口会被替换，不与公共端口同时发布。网关容器健康探针使用容器内回环 8082，不提供外部免证书访问入口。
 
 切换私有 / 公共模式时保留相同项目名、数据卷前缀和运行配置，并执行目标模式的**全量发布**，不要只更新 `gateway` 或某个单服务，因为后端的来源配置也随模式变化。切到公共模式用 `deploy --access public`；切回私有模式用 `deploy --access private`。访问模式不存入镜像历史，镜像回滚不会恢复旧访问模式，回滚时须明确选择当前要使用的模式。
 

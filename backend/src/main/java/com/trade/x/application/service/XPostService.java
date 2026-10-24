@@ -54,9 +54,9 @@ public class XPostService {
         this.policy = policy; this.generationIntervalMs = generationIntervalMs; this.clock = clock;
     }
 
-    public Optional<XPost> generate() { return generate("manual:" + UUID.randomUUID()); }
+    public Optional<XPost> generate() { return generate("manual:" + UUID.randomUUID(), false); }
 
-    private Optional<XPost> generate(String key) {
+    private Optional<XPost> generate(String key, boolean requireReviewDelivery) {
         policy.requireGeneration();
         Instant now = now();
         XPost reserved = XPost.generating(policy.targetUserId(), key, now, policy);
@@ -78,15 +78,21 @@ public class XPostService {
             log.warn("X draft generation failed: postId={}", reserved.id());
         }
         requireSaved(posts.save(generated, reserved.revision()));
-        submitReview(generated);
+        boolean delivered = submitReview(generated);
+        if (requireReviewDelivery && !delivered) throw new IllegalStateException("X review delivery failed");
         return Optional.of(generated);
     }
 
-    public void runGeneration() {
-        if (!policy.enabled() || !policy.generationEnabled()) return;
+    public boolean runGeneration() {
+        if (!policy.enabled() || !policy.generationEnabled()) return true;
         // One durable reservation per UTC interval and account, including multiple app instances.
-        try { generate("scheduled:" + Math.floorDiv(now().toEpochMilli(), generationIntervalMs)); }
-        catch (RuntimeException failure) { log.warn("X scheduled generation unavailable"); }
+        try {
+            Optional<XPost> result = generate("scheduled:" + Math.floorDiv(now().toEpochMilli(), generationIntervalMs), true);
+            return result.isEmpty() || result.get().status() != XPostStatus.GENERATION_FAILED;
+        } catch (RuntimeException failure) {
+            log.warn("X scheduled generation unavailable");
+            return false;
+        }
     }
 
     public List<XPost> recent(int limit) { return posts.recent(limit); }
@@ -119,15 +125,15 @@ public class XPostService {
         return changed;
     }
 
-    public void runReviews() {
-        if (!policy.enabled()) return;
+    public boolean runReviews() {
+        if (!policy.enabled()) return true;
         boolean[] approved = {false};
         reviews.poll(decision -> {
             boolean applied = consumeReview(decision);
             if (applied && decision.approved()) approved[0] = true;
             return applied;
         });
-        if (approved[0]) runPublishing();
+        return !approved[0] || runPublishing();
     }
 
     private boolean consumeReview(XReviewDecision decision) {
@@ -162,45 +168,53 @@ public class XPostService {
         };
     }
 
-    public void runPublishing() {
-        if (!policy.enabled()) return;
+    public boolean runPublishing() {
+        if (!policy.enabled()) return true;
+        boolean successful = true;
         for (XPost snapshot : posts.actionable(100)) {
-            try { process(snapshot); }
-            catch (RuntimeException failure) { log.warn("X post processing failed: postId={}, state={}", snapshot.id(), snapshot.status()); }
+            try { if (!process(snapshot)) successful = false; }
+            catch (RuntimeException failure) {
+                successful = false;
+                log.warn("X post processing failed: postId={}, state={}", snapshot.id(), snapshot.status());
+            }
         }
+        return successful;
     }
 
-    private void process(XPost snapshot) {
+    private boolean process(XPost snapshot) {
         Instant now = now();
         if (snapshot.status() == XPostStatus.GENERATING) {
             if (!snapshot.updatedAt().plus(policy.claimTimeout()).isAfter(now)) {
-                posts.save(snapshot.generationFailed(now), snapshot.revision());
+                requireSaved(posts.save(snapshot.generationFailed(now), snapshot.revision()));
+                return false;
             }
-            return;
+            return true;
         }
         if (snapshot.status() == XPostStatus.PUBLISHING) {
             if (!snapshot.publishStartedAt().plus(policy.claimTimeout()).isAfter(now)) {
                 XPost interrupted = snapshot.finish(XPostStatus.UNKNOWN, null,
                         "Publishing interrupted; verify on X before taking further action", now);
-                if (posts.finishPublishing(interrupted, snapshot.revision())) logPublishingFailure(interrupted);
+                requireSaved(posts.finishPublishing(interrupted, snapshot.revision()));
+                logPublishingFailure(interrupted);
+                return false;
             }
-            return;
+            return true;
         }
-        if (!snapshot.live(now)) { posts.save(snapshot.expire(now), snapshot.revision()); return; }
-        if (snapshot.status() == XPostStatus.PENDING_REVIEW) { submitReview(snapshot); return; }
+        if (!snapshot.live(now)) { posts.save(snapshot.expire(now), snapshot.revision()); return true; }
+        if (snapshot.status() == XPostStatus.PENDING_REVIEW) return submitReview(snapshot);
         if (!policy.publishingEnabled()) {
             recordWaiting(snapshot, "Waiting to publish: X workflow publishing is disabled", now);
-            return;
+            return true;
         }
         if (!policy.targetUserId().equals(snapshot.targetUserId())) {
             recordWaiting(snapshot, "Waiting to publish: X target account differs from this draft", now);
-            return;
+            return true;
         }
         if (!publisher.credentialsAvailable(snapshot.targetUserId())) {
             String reason = publisher.unavailableReason(snapshot.targetUserId());
             recordWaiting(snapshot, "Waiting to publish: " + (reason == null
                     ? "Publisher gates or credentials are unavailable" : reason), now);
-            return;
+            return false;
         }
         policy.requirePublishing();
         String validated = XPostTextValidator.normalizeAndValidate(snapshot.body(), snapshot.contentPolicy());
@@ -211,7 +225,7 @@ public class XPostService {
             posts.find(snapshot.id()).filter(latest -> latest.revision() == snapshot.revision()
                     && latest.status() == XPostStatus.APPROVED).ifPresent(latest -> recordWaiting(latest,
                             "Waiting to publish: local daily attempt limit or minimum interval", now));
-            return;
+            return true;
         }
         XPost finished;
         try {
@@ -230,6 +244,7 @@ public class XPostService {
         }
         requireSaved(posts.finishPublishing(finished, claimed.revision()));
         if (finished.status() != XPostStatus.PUBLISHED) logPublishingFailure(finished);
+        return finished.status() == XPostStatus.PUBLISHED;
     }
 
     private void recordWaiting(XPost snapshot, String reason, Instant now) {
@@ -243,8 +258,9 @@ public class XPostService {
         log.warn("X publishing unsuccessful: postId={}, state={}, reason={}", post.id(), post.status(), post.lastError());
     }
 
-    private void submitReview(XPost post) {
-        if (post.status() != XPostStatus.PENDING_REVIEW || !policy.targetUserId().equals(post.targetUserId()) || !post.live(now())) return;
+    private boolean submitReview(XPost post) {
+        if (post.status() != XPostStatus.PENDING_REVIEW || !policy.targetUserId().equals(post.targetUserId()) || !post.live(now())) return true;
+        if (reviews.disabled()) return true;
         try {
             var content = post.contentPolicy();
             String noteLabel = post.contentVersion() > 1
@@ -257,7 +273,7 @@ public class XPostService {
                         + "本稿是 AI 虚构对话，不得冒充真实聊天截图、亲历或读者投稿。"
                     : "自由文本审核：按草稿冻结的方向、语气和额外规则判断风格；"
                         + "形式与换行是否有效，是否与近期内容雷同；虚构内容是否诚实呈现，避免冒充真实经历或事实依据。";
-            reviews.submit(new XReviewRequest(post.id(), post.contentVersion(), post.targetUserId(), post.body(),
+            return reviews.submit(new XReviewRequest(post.id(), post.contentVersion(), post.targetUserId(), post.body(),
                     noteLabel + (post.reviewNote() == null ? "无原始说明" : post.reviewNote())
                     + "\n创作说明仅用于审核，不随正文发布。"
                     + "\n审核重点：正文是否按冻结语言自然表达、符合冻结内容方向；" + formatReview
@@ -268,7 +284,7 @@ public class XPostService {
                     + "\n冻结格式：" + content.format()
                     + "\n字数范围：" + content.minChars() + "–" + content.maxChars()
                     + "\n额外规则：" + content.instructions(), post.expiresAt()));
-        } catch (RuntimeException failure) { log.warn("X review delivery unavailable: postId={}", post.id()); }
+        } catch (RuntimeException failure) { log.warn("X review delivery unavailable: postId={}", post.id()); return false; }
     }
 
     private Instant now() { return Instant.now(clock).truncatedTo(ChronoUnit.MICROS); }

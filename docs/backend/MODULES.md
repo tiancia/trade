@@ -32,6 +32,8 @@
 
 同一任务内的多个循环共用互斥锁，避免同时修改同一外部账户或本地状态；每次执行完成后按 fixed delay 自调度。业务逻辑必须留在所属域，不能迁入 automation。
 
+Story、Weibo、X 的调度入口会把内部已落库的生成、审核投递和发布失败反馈给 manager；批量执行仍隔离单条失败，但整轮 `lastRunSuccessful=false`。Story 的降级产物保留并标记 `degraded`，该轮同样报失败。禁用、配额或幂等预留未获准、无待处理项属于正常跳过；互斥锁忙只计 skipped，不覆盖上次运行结果。所有已登记循环都提供按 task/loop 标记的运行计数、耗时和最近结果 Micrometer 指标。
+
 ### trading
 
 Trading 是最复杂的业务域，先按四层组织，再按业务与技术能力拆分：

@@ -21,6 +21,13 @@ class OrderStateMachineTest {
 
     @Test
     void rejectsTerminalRollbackAndSkippedStates() {
+        assertTrue(OrderStateMachine.canTransition(OrderStatus.SUBMIT_UNKNOWN, OrderStatus.ABANDONED));
+        assertThrows(OrderStateMachine.IllegalOrderStateTransitionException.class,
+                () -> OrderStateMachine.requireTransition(OrderStatus.ACCEPTED, OrderStatus.ABANDONED));
+        assertThrows(OrderStateMachine.IllegalOrderStateTransitionException.class,
+                () -> OrderStateMachine.requireTransition(OrderStatus.ABANDONED, OrderStatus.SUBMITTING));
+        assertThrows(OrderStateMachine.IllegalOrderStateTransitionException.class,
+                () -> OrderStateMachine.requireTransition(OrderStatus.ABANDONED, OrderStatus.ACCEPTED));
         assertThrows(
                 OrderStateMachine.IllegalOrderStateTransitionException.class,
                 () -> OrderStateMachine.requireTransition(OrderStatus.FILLED, OrderStatus.ACCEPTED)

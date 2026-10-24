@@ -9,6 +9,8 @@
 - Prometheus：指标采集与告警规则计算；
 - Grafana：指标查询与仪表盘展示。
 
+本地开发的 Prometheus 仅计算规则，不配置通知接收人。生产的 Alertmanager、真实投递验收、异机备份及恢复演练使用[部署说明](../../deploy/README.md#数据备份和监控)；不要将本地告警页面误认为已向值守人员发出通知。
+
 后续增加 Kafka、MinIO、Loki 等中间件时，在 `services` 中增加服务；只有存在独立配置时，才在本目录下增加对应子目录。监控专属配置统一保留在 `observability/` 下。
 
 ## 目录结构

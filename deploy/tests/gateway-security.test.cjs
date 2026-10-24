@@ -19,7 +19,33 @@ test('framework forwarding metadata cannot bypass gateway values with standard o
   assert.equal(headers.get('x-forwarded-port'), '$trade_forwarded_port');
   assert.equal(headers.get('x-forwarded-for'), '$remote_addr');
   assert.equal(headers.get('x-real-ip'), '$remote_addr');
-  assert.equal(headers.get('authorization'), '""', 'gateway Basic Auth credentials must remain private');
+  assert.equal(headers.has('authorization'), false, 'API forwarding sets Authorization only once');
+});
+
+test('only backend API locations receive Basic credentials and retain all sanitized forwarding headers', () => {
+  const api = fs.readFileSync(path.join(nginx, 'includes/api.conf'), 'utf8');
+  const backend = fs.readFileSync(path.join(nginx, 'includes/backend-proxy.conf'), 'utf8');
+  assert.equal((api.match(/include \/etc\/nginx\/includes\/backend-proxy\.conf;/g) || []).length, 2);
+  assert.match(backend, /include \/etc\/nginx\/includes\/proxy-common\.conf;/);
+  assert.match(backend, /proxy_set_header Authorization \$http_authorization;/);
+  for (const template of ['private.conf.template', 'default.conf.template']) {
+    const source = fs.readFileSync(path.join(nginx, template), 'utf8');
+    assert.equal((source.match(/proxy_set_header Authorization "";/g) || []).length, 2);
+  }
+});
+
+test('every public TLS server requires a client certificate and a revocation list', () => {
+  const source = fs.readFileSync(path.join(nginx, 'default.conf.template'), 'utf8');
+  assert.equal((source.match(/listen 443 ssl;/g) || []).length, 2);
+  assert.equal((source.match(/ssl_verify_client on;/g) || []).length, 2);
+  assert.equal((source.match(/ssl_client_certificate \/etc\/nginx\/tls\/client-ca\.pem;/g) || []).length, 2);
+  assert.equal((source.match(/ssl_crl \/etc\/nginx\/tls\/client-crl\.pem;/g) || []).length, 2);
+  assert.match(source, /listen 127\.0\.0\.1:8082;/);
+  const controls = fs.readFileSync(path.join(nginx, 'includes/management-controls.conf'), 'utf8');
+  assert.match(controls, /limit_req_zone \$binary_remote_addr/);
+  assert.match(controls, /limit_req_status 429;/);
+  assert.match(controls, /log_format trade_audit escape=json/);
+  assert.doesNotMatch(controls, /\$(request_uri|http_authorization|request_body)\b/);
 });
 
 // Read the actual map's regex order and replacement, then exercise the port

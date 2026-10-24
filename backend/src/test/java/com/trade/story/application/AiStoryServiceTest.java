@@ -27,6 +27,7 @@ import java.util.Queue;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class AiStoryServiceTest {
     @TempDir
@@ -42,7 +43,7 @@ class AiStoryServiceTest {
         FakeAiTextClient ai = new FakeAiTextClient();
         var service = new AiStoryService(ai, new FixedTrendCollector(properties), new AiStoryPromptBuilder(),
                 new AiStoryResponseParser(), new StoryFileRepository(properties), properties);
-        assertTrue(service.generateStory().isEmpty());
+        assertThrows(IllegalStateException.class, service::generateStory);
         assertTrue(ai.prompts.isEmpty());
     }
 
@@ -149,6 +150,7 @@ class AiStoryServiceTest {
         assertTrue(result.isPresent());
         assertEquals(1, repository.savedDrafts.size());
         assertEquals(originalContent, repository.savedDrafts.get(0).getContent());
+        assertTrue(result.orElseThrow().isDegraded());
         assertEquals(List.of("SECTION_REWRITE_PAYLOAD", "FINAL_EDIT_PAYLOAD"),
                 parseErrors.stream().map(AiResponseParseErrorRecord::getPhase).toList());
         assertEquals(List.of("KEEP_ORIGINAL_SECTION_DRAFT", "KEEP_PRE_EDIT_DRAFTS"),

@@ -66,6 +66,28 @@ class MyBatisTradingOrderRepositoryTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
+    void abandonedUnknownRetainsIdentityAndPersistsOperatorEvidenceWithoutBecomingResubmittable() {
+        var submission = new OrderSubmission("manual-recovery", "manual-client", "decision", "strategy",
+                "BTC-USDT", "BUY", "buy", "cash", "market", "quote_ccy", BigDecimal.TEN);
+        lifecycleService.reserve(submission);
+        lifecycleService.markSubmitUnknown("manual-recovery", "timeout");
+        var current = lifecycleService.find("manual-recovery").orElseThrow();
+        var change = com.trade.trading.domain.order.OrderChange.abandonUnknown(
+                "Operator operator-7; evidence=exchange-support-ticket-123", java.time.Instant.now());
+        var next = change.apply(current, java.time.Instant.now());
+        orderRepository.compareAndSet(current, next, change.reason());
+
+        assertEquals(OrderStatus.ABANDONED, lifecycleService.find("manual-recovery").orElseThrow().getStatus());
+        assertFalse(lifecycleService.reserve(submission).acquired());
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_orders WHERE status IN ('SUBMITTING','SUBMIT_UNKNOWN')", Integer.class));
+        assertEquals(change.reason(), jdbcTemplate.queryForObject(
+                "SELECT reason FROM okx_order_status_history WHERE to_status = 'ABANDONED'", String.class));
+    }
+
+    @Autowired
+    private TradingOrderRepository orderRepository;
+
+    @Test
     void uniqueKeyAndOptimisticStateTransitionsArePersistedWithHistory() {
         OrderSubmission submission = new OrderSubmission(
                 "database-idempotency-key",

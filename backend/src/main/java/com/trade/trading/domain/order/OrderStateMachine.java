@@ -41,7 +41,8 @@ public final class OrderStateMachine {
                 OrderStatus.PARTIALLY_FILLED,
                 OrderStatus.FILLED,
                 OrderStatus.CANCELED,
-                OrderStatus.REJECTED
+                OrderStatus.REJECTED,
+                OrderStatus.ABANDONED
         ));
         result.put(OrderStatus.ACCEPTED, EnumSet.of(
                 OrderStatus.PARTIALLY_FILLED,
@@ -62,6 +63,7 @@ public final class OrderStateMachine {
         result.put(OrderStatus.FILLED, EnumSet.noneOf(OrderStatus.class));
         result.put(OrderStatus.CANCELED, EnumSet.noneOf(OrderStatus.class));
         result.put(OrderStatus.REJECTED, EnumSet.noneOf(OrderStatus.class));
+        result.put(OrderStatus.ABANDONED, EnumSet.noneOf(OrderStatus.class));
         return Map.copyOf(result);
     }
 

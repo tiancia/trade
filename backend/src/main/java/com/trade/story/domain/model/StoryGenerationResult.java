@@ -17,4 +17,6 @@ public class StoryGenerationResult {
     private int sectionCount;
     private int targetCharCount;
     private int actualCharCount;
+    /** An artifact was retained after an AI/parse/edit step failed. */
+    private boolean degraded;
 }

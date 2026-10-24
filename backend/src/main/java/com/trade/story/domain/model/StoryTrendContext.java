@@ -13,4 +13,5 @@ public class StoryTrendContext {
     private Instant collectedAt;
     private List<String> sources = new ArrayList<>();
     private String trendText;
+    private boolean degraded;
 }

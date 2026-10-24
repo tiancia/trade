@@ -67,6 +67,28 @@ class XPostServiceTest {
         verify(publisher, never()).publish(any());
     }
 
+    @Test void scheduledAiAndReviewFailuresAreReportedWithoutLosingPersistedState() {
+        when(generator.generate(eq(content), anyList())).thenThrow(new IllegalStateException("AI quota exhausted"));
+        assertFalse(service.runGeneration());
+        assertEquals(XPostStatus.GENERATION_FAILED, state.get().status());
+
+        when(generator.generate(eq(content), anyList())).thenReturn(new GeneratedXPost("把复杂问题拆成可验证的小步骤。", "一般方法"));
+        when(reviews.submit(any())).thenReturn(false);
+        assertFalse(service.runGeneration());
+        assertEquals(XPostStatus.PENDING_REVIEW, state.get().status());
+        assertFalse(service.runPublishing());
+
+        when(reviews.disabled()).thenReturn(true);
+        assertTrue(service.runPublishing());
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test void scheduledReservationSkipDoesNotReportFailureOrCallAi() {
+        when(repository.reserveGeneration(any(), any(), anyInt())).thenReturn(false);
+        assertTrue(service.runGeneration());
+        verifyNoInteractions(generator, reviews, publisher);
+    }
+
     @Test void dialogueReviewKeepsQuotedLinesAndCreativeNoteSeparate() {
         var dialogueContent = new XContentPolicy("成年人的暧昧", "简体中文", "自然", "仅短对话", 5, 120,
                 XContentPolicy.Format.CHAT_DIALOGUE);

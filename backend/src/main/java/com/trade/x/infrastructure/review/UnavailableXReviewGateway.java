@@ -4,5 +4,7 @@ import com.trade.x.application.port.XHumanReviewGateway;
 import com.trade.x.domain.model.XReviewRequest;
 
 public class UnavailableXReviewGateway implements XHumanReviewGateway {
+    @Override public boolean disabled() { return true; }
+
     @Override public boolean submit(XReviewRequest request) { return false; }
 }

@@ -23,6 +23,8 @@ cd backend
 
 `.env.example` 是环境变量清单，不会被 Spring Boot 自动加载。请把所需变量配置到当前 Shell、IDE Run Configuration 或部署环境中。默认数据库账号为 `root`、密码为空；实际环境应显式设置 `SPRING_DATASOURCE_*`。
 
+管理 API 默认要求 HTTP Basic 认证：用 `htpasswd -cB` 创建个人 bcrypt 凭据文件，并设置 `TRADE_MANAGEMENT_AUTH_CREDENTIALS_FILE` 为其绝对路径；未配置时管理 API 返回 503。原生本机开发若显式关闭 `TRADE_MANAGEMENT_AUTH_ENABLED`，须限制为隔离环境。生产 Compose 强制开启认证，复用只读挂载的网关凭据文件。管理写请求仍需 `X-Trade-CSRF: 1`，详见[运维手册](../docs/backend/OPERATIONS.md)。
+
 当前运行配置启用 OKX 自动 PAPER 交易，以及每三小时生成、经 Telegram 人工审核后发布的 X 工作流；OKX 真实下单、Polymarket 和小说生成保持关闭。首次在未知环境验收时，按 [运维手册](../docs/backend/OPERATIONS.md) 的安全启动覆盖值关闭自动任务。X 需要由运行环境提供目标账号、审核会话 / 审核人以及供应商凭据。
 
 ## 开发与运维入口

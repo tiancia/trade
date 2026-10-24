@@ -1,0 +1,26 @@
+groups:
+  - name: operations
+    rules:
+      - alert: NonTradingAutomationFailure
+        expr: increase(trade_automation_runs_total{outcome="failure",task=~"story|weibo|x"}[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: A story, Weibo or X automation loop failed
+          description: Inspect task status and provider credentials/quota; a later empty loop does not erase this failure window.
+      - alert: AlertmanagerUnavailable
+        expr: up{job="alertmanager"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Alertmanager is unavailable; notification delivery is impaired
+          description: Check the independent external monitor and Alertmanager service immediately.
+      - alert: AlertmanagerNotificationFailures
+        expr: increase(alertmanager_notifications_failed_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Alertmanager could not deliver notifications
+          description: Inspect the receiver and use the independent external monitor; this route may also fail.

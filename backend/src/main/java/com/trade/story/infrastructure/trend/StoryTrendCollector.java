@@ -39,6 +39,7 @@ public class StoryTrendCollector {
     public StoryTrendContext collect() {
         List<String> sources = new ArrayList<>();
         StringBuilder trendText = new StringBuilder();
+        boolean degraded = false;
 
         if (properties.isTrendFetchEnabled()) {
             for (String url : properties.getTrendSourceUrls()) {
@@ -52,7 +53,9 @@ public class StoryTrendCollector {
                         appendSourceText(trendText, url.trim(), text);
                     }
                 } catch (Exception e) {
-                    log.warn("Fetch story trend source failed: url={}, error={}", url, e.getMessage());
+                    degraded = true;
+                    if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                    log.warn("Fetch story trend source failed: failureType={}", e.getClass().getSimpleName());
                 }
                 if (trendText.length() >= properties.getTrendSourceMaxChars()) {
                     break;
@@ -71,6 +74,7 @@ public class StoryTrendCollector {
         return new StoryTrendContext()
                 .setCollectedAt(Instant.now())
                 .setSources(sources)
+                .setDegraded(degraded)
                 .setTrendText(limit(trendText.toString(), properties.getTrendSourceMaxChars()));
     }
 

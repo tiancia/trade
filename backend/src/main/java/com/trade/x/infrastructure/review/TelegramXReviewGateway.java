@@ -58,6 +58,8 @@ public class TelegramXReviewGateway implements XHumanReviewGateway {
         this.clock = clock;
     }
 
+    @Override public boolean disabled() { return !ready(); }
+
     @Override
     public boolean submit(XReviewRequest request) {
         if (!ready() || !workflow.getTargetUserId().equals(request.targetUserId()) || !request.expiresAt().isAfter(now())) return false;

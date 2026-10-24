@@ -110,6 +110,22 @@ class OrderReconciliationServiceTest {
     }
 
     @Test
+    void repeatedNotFoundKeepsUnknownIdentityAndHaltsInsteadOfAssumingOrderWasNeverAccepted() {
+        Fixture fixture = fixture("unknown");
+        fixture.lifecycle().markSubmitUnknown("unknown", "submit timeout");
+        when(fixture.okx().getOrder(any())).thenReturn(OkxResponse.fail("51603", "Order does not exist"));
+
+        for (int i = 0; i < 3; i++) {
+            assertThrows(IllegalStateException.class, fixture.service()::reconcileOnce);
+        }
+
+        assertEquals(OrderStatus.SUBMIT_UNKNOWN, fixture.lifecycle().find("unknown").orElseThrow().getStatus());
+        verify(fixture.safety()).halt(org.mockito.ArgumentMatchers.eq("order-reconciliation"), any());
+        verify(fixture.okx(), never()).placeOrder(any());
+        verify(fixture.okx(), never()).getAccountBalance(any());
+    }
+
+    @Test
     void failedSettlementDoesNotImportBalanceAheadOfItsFillCheckpoint() {
         Fixture fixture = fixture("failed-settlement");
         doThrow(new IllegalStateException("transient settlement failure")).doCallRealMethod()

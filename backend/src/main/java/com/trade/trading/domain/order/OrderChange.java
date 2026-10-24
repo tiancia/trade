@@ -102,6 +102,13 @@ public final class OrderChange {
                         .failureMessage(message),
                 "submission result is ambiguous and requires reconciliation");
     }
+    /** Operator attestation, never an inference from an empty exchange lookup. */
+    public static OrderChange abandonUnknown(String auditReason, Instant now) {
+        return new OrderChange(OrderStatus.ABANDONED,
+                next -> next.failureCode("OPERATOR_CONFIRMED_NOT_ACCEPTED")
+                        .failureMessage(auditReason).completedAt(now),
+                auditReason);
+    }
     public static boolean hasSameExchangeState(TradingOrder left, TradingOrder right) {
         return Objects.equals(left.getExchangeOrderId(), right.getExchangeOrderId())
                 && decimalEquals(left.getFilledBaseAmount(), right.getFilledBaseAmount())

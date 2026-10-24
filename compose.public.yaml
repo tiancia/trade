@@ -19,4 +19,4 @@ services:
       - ${TLS_DIRECTORY:-./deploy/secrets/tls}:/etc/nginx/tls:ro
       - ${ACME_DIRECTORY:-./deploy/acme}:/var/www/acme:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-check-certificate -q -O /dev/null https://127.0.0.1/healthz"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8082/healthz"]

@@ -111,7 +111,9 @@ X 的 `x` 任务也包含生成、审核、发布三个循环。启动 schema �
 
 查询、启动和停止任务：
 
-管理写请求（automation、trading、X、微博和文字游戏管理接口）统一要求 `X-Trade-CSRF: 1`。浏览器还必须来自同源或配置允许的 Origin；无 Origin 的命令行客户端也要带这个头。它是跨站请求防护标记，不替代网关认证或各业务已有鉴权。GET 查询和 OAuth 回调保持原有行为。
+管理 API（automation、trading、X、微博和文字游戏管理接口）的 GET 与写请求均由应用独立校验 HTTP Basic 凭据；`TRADE_MANAGEMENT_AUTH_CREDENTIALS_FILE` 指向 bcrypt htpasswd 文件。未配置时这些接口返回 503，配置文件无效时启动失败；生产 Compose 强制开启并挂载网关同一份哈希文件。每人使用独立账号，修改/撤销后重建 backend 与 gateway。仅隔离开发环境可显式关闭 `TRADE_MANAGEMENT_AUTH_ENABLED`。微博 OAuth GET 回调继续通过自身 state 鉴权；浏览器 CORS 预检不执行业务操作。原有业务令牌校验保留。
+
+管理写请求还要求 `X-Trade-CSRF: 1`，浏览器须同源或来自允许的 Origin；无 Origin 的 CLI 同样需要。CSRF 标记不替代身份校验。下面 PowerShell 示例须同时通过 `-Authentication Basic -Credential (Get-Credential)` 提供凭据；仅本机回环 HTTP 调试时 PowerShell 还需显式允许非 HTTPS 认证，生产使用部署网关的 HTTPS 或 SSH 隧道。完整部署、mTLS 公网访问、限速和审计见[部署手册](../../deploy/README.md)。
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8080/api/automation/tasks
@@ -179,6 +181,28 @@ Invoke-RestMethod http://127.0.0.1:8080/api/trading/safety
 对账期间，任一订单结算失败会使整轮失败；正常未决订单仍存在时暂缓余额核对，也不刷新完整对账成功时间。现货账户的余额快照只用于核对，不能自动导入受管理仓位或重置成本，即使选择 `dedicated-account`。该模式要求交易所与账本一致，差异触发 HALT；人工存入资产或旧账不一致时须先核清成交与资金来源，不能靠切换该模式接管余额。
 
 OKX 的超时、空响应或缺少完整身份确认会使订单保持 `SUBMIT_UNKNOWN`。先按原 `clOrdId` 查询与结算，禁止因未收到确认就创建新订单；50004 的含糊结果语义见 [OKX 官方说明](https://www.okx.com/en-us/help/api-faq)。累计成交快照缺少有效数量或均价、数值错误或数量回退时保留未决并报告失败，等待取得完整快照后再推进账本。
+
+对于持续返回 51603 的未知单，`GET /api/trading/orders/unresolved` 返回待处理订单及版本。查不到并不能证明从未成交，[OKX 订单查询文档](https://www.okx.com/docs-v5/en/#order-book-trading-trade-get-order-details)规定了历史记录保留范围；系统不会按超时或查询次数自动清除未知单。默认连续三次对账失败仍会 HALT。
+
+人工核实未被接受时，可用 `POST /api/trading/orders/{idempotencyKey}/abandon` 解除该单的对账阻塞，无需改库。先保持资金 HALTED，停止发单工作进程，并独立核查**原账户**的订单历史、成交明细和资产变动；保存完整导出或交易所支持工单等证据。已发现成交、已取得 `ordId` 或尚不能确认的订单必须继续查证并结算，不能 abandon。30 分钟冷却和当前 51603 仅是额外门禁，不能代替人工证据。
+
+请求体示例（通过已认证的管理入口发送，并携带 `X-Trade-CSRF: 1`）：
+
+```json
+{
+  "expectedVersion": 2,
+  "expectedSafetyVersion": 3,
+  "clientOrderId": "replace-with-original-clOrdId",
+  "operatorReference": "operator-7",
+  "reason": "exchange confirmed request not accepted",
+  "evidence": "exchange-support-ticket-123",
+  "confirmation": "I_VERIFIED_HISTORY_FILLS_AND_ASSETS_ORDER_NOT_ACCEPTED"
+}
+```
+
+接口要求原 LIVE 账户配置、有效领导权、当前 HALTED 资金版本、当前订单版本、匹配的 `clOrdId`，且订单为 `SUBMIT_UNKNOWN`、无交易所订单 ID、无累计成交；提交及最后变更都须超过 30 分钟。服务重新查询 OKX，必须得到 51603 且该标的无挂单；鉴权失败、网络错误、空响应或查到订单均拒绝。CAS 竞争返回 409，不自动重试。成功后以 `ABANDONED` 终态保留原幂等键与 `clOrdId`、人工说明及状态历史，原订单重放仍不会重新提交；该状态代表人工核查结论，不能当作交易所拒单回执。操作不会恢复资金，且会使原完整对账成功状态失效，必须重新执行下述完整对账与显式 resume。状态字段使用现有 VARCHAR，无需数据库结构迁移。
+
+使用过 abandon 后，镜像回滚目标必须能识别 `ABANDONED` 状态；不应回退到尚未包含该枚举值的后端版本。该账本沿用单个 OKX 账户的部署约定，不应通过更换 API 凭据来处理另一账户的历史订单。
 
 要让停止动作操作真实 OKX 账户，必须选择 `execution-mode=live`；`live-enabled` 可以并建议在事故处理期间保持
 `false`。`execution-mode=paper` 下的停止只更新 PAPER 资金域，不会向真实账户发送撤单。

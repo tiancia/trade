@@ -4,6 +4,8 @@
 
 ## 内容配置
 
+`/api/automation/tasks` 的 X 循环会报告生成失败、Telegram 投递失败、发布 `FAILED/UNKNOWN`、发布中断恢复和已启用发布时的凭据不可用。单条失败保持其持久化状态，不重发未知发布；整轮 `lastRunSuccessful=false`，后续循环继续调度。显式禁用功能、无候选和额度/幂等预留未获准属于正常跳过。Micrometer 提供 `trade.automation.runs`、`trade.automation.duration` 和 `trade.automation.last.success`，以 `task=x` 和循环名区分；错误消息、账号和草稿 ID 不进入指标标签。
+
 在 `application.yml` 的 `trade.x.workflow.content` 或部署环境变量中设置：
 
 ```ini

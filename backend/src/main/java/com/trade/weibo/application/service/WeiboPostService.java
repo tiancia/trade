@@ -55,7 +55,9 @@ public class WeiboPostService {
         this.clock = clock;
     }
 
-    public Optional<WeiboPost> generate(HotEvent event) {
+    public Optional<WeiboPost> generate(HotEvent event) { return generate(event, false); }
+
+    private Optional<WeiboPost> generate(HotEvent event, boolean requireReviewDelivery) {
         policy.requireGeneration();
         Instant now = Instant.now(clock);
         WeiboPost reserved = WeiboPost.generating(policy.targetUid(), event, now, policy);
@@ -69,18 +71,25 @@ public class WeiboPostService {
             log.warn("Weibo generation failed: postId={}", reserved.id());
         }
         requireSaved(posts.save(generated, reserved.revision()));
-        submitReview(generated);
+        boolean delivered = submitReview(generated);
+        if (requireReviewDelivery && !delivered) throw new IllegalStateException("Weibo review delivery failed");
         return Optional.of(generated);
     }
 
-    public void runGeneration() {
-        if (!policy.enabled() || !policy.generationEnabled() || policy.targetUid().isBlank()) return;
+    /** A failed item does not prevent the remaining events from being processed. */
+    public boolean runGeneration() {
+        if (!policy.enabled() || !policy.generationEnabled() || policy.targetUid().isBlank()) return true;
+        boolean successful = true;
         for (HotEvent event : source.collect()) {
-            try { generate(event); }
-            catch (RuntimeException e) {
+            try {
+                Optional<WeiboPost> result = generate(event, true);
+                if (result.isPresent() && result.get().status() == WeiboPostStatus.GENERATION_FAILED) successful = false;
+            } catch (RuntimeException e) {
+                successful = false;
                 log.warn("Weibo event skipped: eventKey={}", event.key());
             }
         }
+        return successful;
     }
 
     public List<WeiboPost> recent(int limit) { return posts.recent(limit); }
@@ -112,15 +121,15 @@ public class WeiboPostService {
         return reviewed;
     }
 
-    public void runReviews() {
-        if (!policy.enabled()) return;
+    public boolean runReviews() {
+        if (!policy.enabled()) return true;
         boolean[] approved = {false};
         reviews.poll(decision -> {
             boolean applied = consumeReview(decision);
             if (applied && decision.approved()) approved[0] = true;
             return applied;
         });
-        if (approved[0]) runPublishing();
+        return !approved[0] || runPublishing();
     }
 
     private boolean consumeReview(ReviewDecision decision) {
@@ -166,43 +175,48 @@ public class WeiboPostService {
         };
     }
 
-    public void runPublishing() {
-        if (!policy.enabled()) return;
+    public boolean runPublishing() {
+        if (!policy.enabled()) return true;
+        boolean successful = true;
         for (WeiboPost snapshot : posts.actionable(100)) {
-            try { process(snapshot); }
+            try { if (!process(snapshot)) successful = false; }
             catch (RuntimeException e) {
+                successful = false;
                 // No provider payloads in logs. Other posts remain isolated from a failed item.
                 log.warn("Weibo post processing failed: postId={}, state={}", snapshot.id(), snapshot.status());
             }
         }
+        return successful;
     }
 
-    private void process(WeiboPost snapshot) {
+    private boolean process(WeiboPost snapshot) {
         Instant now = Instant.now(clock);
         if (snapshot.status() == WeiboPostStatus.GENERATING) {
             if (!snapshot.updatedAt().plus(policy.claimTimeout()).isAfter(now)) {
-                posts.save(snapshot.generationFailed(now), snapshot.revision());
+                requireSaved(posts.save(snapshot.generationFailed(now), snapshot.revision()));
+                return false;
             }
-            return;
+            return true;
         }
         if (snapshot.status() == WeiboPostStatus.PUBLISHING) {
             if (!snapshot.publishStartedAt().plus(policy.claimTimeout()).isAfter(now)) {
-                posts.finishPublishing(snapshot.finish(WeiboPostStatus.UNKNOWN, null,
-                        "Publishing interrupted; verify on Weibo before taking further action", now), snapshot.revision());
+                requireSaved(posts.finishPublishing(snapshot.finish(WeiboPostStatus.UNKNOWN, null,
+                        "Publishing interrupted; verify on Weibo before taking further action", now), snapshot.revision()));
+                return false;
             }
-            return;
+            return true;
         }
         if (!snapshot.live(now)) {
             posts.save(snapshot.expire(now), snapshot.revision());
-            return;
+            return true;
         }
-        if (snapshot.status() == WeiboPostStatus.PENDING_REVIEW) { submitReview(snapshot); return; }
-        if (!policy.publishingEnabled() || !policy.targetUid().equals(snapshot.targetUid())
-                || !publisher.credentialsAvailable(snapshot.targetUid())) return;
+        if (snapshot.status() == WeiboPostStatus.PENDING_REVIEW) return submitReview(snapshot);
+        if (!policy.publishingEnabled() || !policy.targetUid().equals(snapshot.targetUid())) return true;
+        if (!publisher.credentialsAvailable(snapshot.targetUid())) return false;
         policy.requirePublishing();
         WeiboPost claimed = snapshot.claim(now);
         if (!posts.claimPublishing(claimed, snapshot.revision(), dayStart(now), policy.dailyPublishLimit(),
-                policy.publishInterval())) return;
+                policy.publishInterval())) return true;
 
         // The durable claim and attempt are committed before sending to the provider.
         WeiboPost finished;
@@ -222,17 +236,19 @@ public class WeiboPostService {
         }
         // A failed completion transaction leaves a durable PUBLISHING claim, later recovered to UNKNOWN.
         requireSaved(posts.finishPublishing(finished, claimed.revision()));
+        return finished.status() == WeiboPostStatus.PUBLISHED;
     }
 
-    private void submitReview(WeiboPost post) {
+    private boolean submitReview(WeiboPost post) {
         if (post.status() != WeiboPostStatus.PENDING_REVIEW || !policy.targetUid().equals(post.targetUid())
-                || !post.live(Instant.now(clock))) return;
+                || !post.live(Instant.now(clock))) return true;
+        if (reviews.disabled()) return true;
         try {
-            reviews.submit(new ReviewRequest("weibo", post.id(), post.contentVersion(), post.body(),
+            return reviews.submit(new ReviewRequest("weibo", post.id(), post.contentVersion(), post.body(),
                     "目标账号：" + post.targetUid() + "\n事件：" + post.event().title()
                             + "\n来源：" + post.event().sourceUrl() + "\n事件时间：" + post.event().occurredAt()
                             + "\n来源摘要：" + post.event().summary() + "\n审核说明：" + post.reviewNote(), post.expiresAt()));
-        } catch (RuntimeException e) { log.warn("Weibo review delivery unavailable: postId={}", post.id()); }
+        } catch (RuntimeException e) { log.warn("Weibo review delivery unavailable: postId={}", post.id()); return false; }
     }
 
     private static Instant dayStart(Instant now) { return now.truncatedTo(ChronoUnit.DAYS); }

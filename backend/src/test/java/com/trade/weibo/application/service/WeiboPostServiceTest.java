@@ -56,6 +56,31 @@ class WeiboPostServiceTest {
     }
 
     @Test
+    void generationReportsPartialFailureAndStillProcessesTheNextEvent() {
+        HotEvent second = new HotEvent("第二事件", "https://example.test/news/2", "另一来源摘要", now, now);
+        when(source.collect()).thenReturn(java.util.List.of(event, second));
+        when(generator.generate(eq(event), anyInt())).thenThrow(new IllegalStateException("AI quota exhausted"));
+        when(reviews.submit(any())).thenReturn(true);
+
+        assertFalse(service(now).runGeneration());
+        assertEquals(2, stored.size());
+        assertEquals(1, stored.values().stream().filter(post -> post.status() == WeiboPostStatus.GENERATION_FAILED).count());
+        assertEquals(1, stored.values().stream().filter(post -> post.status() == WeiboPostStatus.PENDING_REVIEW).count());
+    }
+
+    @Test
+    void failedReviewDeliveryIsVisibleWhileDisabledReviewIsANormalSkip() {
+        when(source.collect()).thenReturn(java.util.List.of(event));
+        when(reviews.submit(any())).thenReturn(false);
+        assertFalse(service(now).runGeneration());
+        assertEquals(WeiboPostStatus.PENDING_REVIEW, stored.values().iterator().next().status());
+        assertFalse(service(now).runPublishing());
+        when(reviews.disabled()).thenReturn(true);
+        assertTrue(service(now).runPublishing());
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test
     void unavailableReviewLeavesDraftPendingAndEventIsNotGeneratedTwice() {
         WeiboPost draft = service(now).generate(event).orElseThrow();
         assertEquals(WeiboPostStatus.PENDING_REVIEW, draft.status());
@@ -96,7 +121,7 @@ class WeiboPostServiceTest {
     void networkFailureAndServerFailureAreUnknownAndNeverRetried() {
         WeiboPost draft = generateAndApprove();
         when(publisher.publish(any())).thenThrow(new RuntimeException("secret provider payload"));
-        service(now).runPublishing();
+        assertFalse(service(now).runPublishing());
         assertEquals(WeiboPostStatus.UNKNOWN, service(now).get(draft.id()).status());
         assertFalse(service(now).get(draft.id()).lastError().contains("secret"));
         service(now).runPublishing();

@@ -4,7 +4,7 @@
 
 本项目用 Spring Boot Actuator + Micrometer 暴露指标，由 Prometheus 抓取和计算告警，Grafana 负责查询与展示。监控服务已纳入仓库根目录 `A:\trade\compose.yaml` 统一管理，专属配置位于 `backend/infrastructure/observability/`；启动基础设施不会开启 trading、自动任务或真实下单开关。
 
-当前范围是指标、看板和 Prometheus 告警规则。日志仍由应用日志系统负责；如果需要跨服务日志检索和调用链追踪，可在此基础上继续接入 Loki、OpenTelemetry 和 Tempo。
+本地开发提供指标、看板和规则计算；生产 `monitoring` profile 还提供 Alertmanager 投递，须先配置真实外部接收端并验收到达。日志仍由应用日志系统负责；跨服务日志检索与调用链追踪需单独接入。
 
 ## 数据流
 
@@ -85,6 +85,7 @@ Micrometer 的点号名称在 Prometheus 中转换为下划线；Counter 还会�
 | 业务面 | 主要指标 | 关键标签或含义 |
 | --- | --- | --- |
 | 应用与 HTTP | `up`、`http_server_requests_seconds_*`、`jvm_*`、`process_*` | 存活、5xx、p95、堆内存、CPU |
+| 自动任务（含 story/Weibo/X） | `trade_automation_runs_total`、`trade_automation_duration_seconds_*`、`trade_automation_last_success` | 固定 task/loop；outcome=success/failure/skipped；最近结果 -1 未运行、0 失败、1 成功 |
 | 策略决策 | `trade_trading_decisions_runs_total`、`trade_trading_decisions_duration_seconds_*`、`trade_trading_decisions_actions_total`、`trade_trading_decisions_running` | trigger、outcome、action、execution_status |
 | 风控 | `trade_trading_risk_assessments_total`、`trade_trading_risk_violations_total` | allowed/blocked、primary_rule、rule |
 | 事件总线 | `trade_trading_events_queue_*`、`trade_trading_events_published_total`、`trade_trading_events_dropped_total`、`trade_trading_events_handled_total` | 队列容量、背压、丢弃原因、handler 结果 |
@@ -97,6 +98,8 @@ Micrometer 的点号名称在 Prometheus 中转换为下划线；Counter 还会�
 | K 线 SSE | `trade_trading_candles_stream_clients`、`trade_trading_candles_stream_queue_depth`、`*_dropped_total`、`*_failed_total` | 客户端、I/O 队列和背压 |
 
 对账的 `pending` 表示订单仍未决，不刷新完整对账成功时间，也不清除既有连续失败计数。
+
+自动任务的禁用、无工作和额度跳过属于正常返回，可能显示最近成功；真实生成失败、降级产物、审核投递失败及发布 FAILED/UNKNOWN 会反馈失败。最近结果随后续成功刷新，累计 failure counter 保留失败证据；互斥忙计 skipped，不覆盖上次结果。任务 API 不返回原始供应商异常文本。人工未知订单解除另计 `trade_trading_orders_manual_recovery_total{outcome="abandoned"}`，操作细节保留在订单状态审计中。
 
 所有 Spring 指标都带有：
 
@@ -132,9 +135,9 @@ Micrometer 的点号名称在 Prometheus 中转换为下划线；Counter 还会�
 - Redis 热行情缓存降级；
 - K 线 SSE 更新被背压丢弃。
 
-规则会在 Prometheus 和 Grafana 中产生 pending/firing 状态，但仓库没有内置通知目标。生产值守需要把 Prometheus 接到 Alertmanager 或公司告警平台，并为 critical 告警配置明确的负责人、静默和升级策略。
+生产 Prometheus 已通过 `alerting` 连接 Alertmanager，`operations-alerts.yml` 另外覆盖非交易自动任务过去 15 分钟的失败、Alertmanager 不可用与通知投递失败。外部 HTTPS 接收端由 secret 配置，缺少有效接收端时 Alertmanager 拒绝启动；本地开发 Compose 仍只计算规则。实际启用、接收端配置与真实投递验收见[部署说明](../../deploy/README.md#告警投递与独立存活监控)。critical 告警仍须明确负责人、静默与升级策略；另用外部存活监控覆盖整机/网络失效及通知通道自身失效。
 
-`SUBMIT_UNKNOWN` 告警不能通过盲目重试处理。应先使用订单幂等键和 `clOrdId` 对账 OKX，再推进订单状态。
+`SUBMIT_UNKNOWN` 告警不能通过盲目重试处理。先使用订单幂等键和 `clOrdId` 对账 OKX；长期 51603 的人工证据解除流程见[运维手册](OPERATIONS.md)。查不到不是未成交证明，解除后也保持 HALTED，须重新完整对账和显式恢复。
 
 ## 安全与生产化
 

@@ -10,9 +10,10 @@ public enum OrderStatus {
     CANCEL_PENDING,
     CANCELED,
     REJECTED,
-    SUBMIT_UNKNOWN;
+    SUBMIT_UNKNOWN,
+    ABANDONED;
 
     public boolean isTerminal() {
-        return this == FILLED || this == CANCELED || this == REJECTED;
+        return this == FILLED || this == CANCELED || this == REJECTED || this == ABANDONED;
     }
 }
