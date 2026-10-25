@@ -1,21 +1,18 @@
 # syntax=docker/dockerfile:1
 # Build from the repository root: docker build -f backend/Dockerfile .
-ARG BUILD_JAVA_IMAGE=eclipse-temurin:21-jdk-jammy
+ARG BUILD_JAVA_IMAGE=maven:3.9.14-eclipse-temurin-21
 ARG RUNTIME_JAVA_IMAGE=eclipse-temurin:21-jre-jammy
 FROM ${BUILD_JAVA_IMAGE} AS build
 WORKDIR /workspace/backend
 COPY backend/.mvn/ .mvn/
-COPY backend/mvnw backend/pom.xml ./
-RUN sed -i 's/\r$//' mvnw && chmod +x mvnw
-# Keep Maven dependencies in an ordinary build layer. External BuildKit caches
-# retain this layer across fresh runners; cache mounts alone are not exported.
-RUN MVNW_VERBOSE=true ./mvnw -B -ntp dependency:go-offline
+COPY backend/pom.xml ./
+RUN mvn -s .mvn/ci-settings.xml -B -ntp dependency:go-offline
 COPY backend/src/ src/
 # The existing full test suite also validates these infrastructure files.
 COPY backend/infrastructure/ infrastructure/
 COPY compose.yaml /workspace/compose.yaml
 # Package runs the offline provider tests; the opt-in exchange test stays off.
-RUN RUN_INTEGRATION_TESTS=false ./mvnw -B -ntp clean package
+RUN RUN_INTEGRATION_TESTS=false mvn -s .mvn/ci-settings.xml -B -ntp clean package
 # Rename before extraction so the slim executable jar keeps the runtime path.
 RUN cp target/trade-0.0.1-SNAPSHOT.jar app.jar \
     && java -Djarmode=tools -jar app.jar extract --layers --destination extracted
