@@ -178,8 +178,11 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
         BigDecimal observedFill = zeroIfNull(cumulativeFilledSize);
         BigDecimal observedPosition = zeroIfNull(cumulativePositionQuantity);
         BigDecimal observedQuoteCost = zeroIfNull(cumulativeQuoteCost);
-        if (observedFill.signum() <= 0 || observedPosition.signum() <= 0) {
+        if (observedFill.signum() <= 0) {
             return SpotFillApplication.unchanged();
+        }
+        if (observedPosition.signum() <= 0) {
+            throw new IllegalStateException("A positive cumulative fill requires a positive net position quantity");
         }
         String normalizedSide = normalizeSide(side);
 

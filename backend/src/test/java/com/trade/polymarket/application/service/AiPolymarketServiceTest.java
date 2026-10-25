@@ -23,8 +23,50 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.*;
 
 class AiPolymarketServiceTest {
+    @Test
+    void liveAuditFailureStopsBeforeCollectingOrExecutingAndReleasesDecisionLock() {
+        var properties = new AiPolymarketProperties();
+        properties.setEnabled(true);
+        properties.getExecution().setEnabled(true);
+        var collector = mock(PolymarketMarketContextCollector.class);
+        var executor = mock(PolymarketOrderExecutor.class);
+        var audit = mock(PolymarketDecisionAuditSink.class);
+        when(audit.start(any())).thenThrow(new IllegalStateException("database unavailable"));
+        var service = new AiPolymarketService(prompt -> "{}", collector, new AiPolymarketPromptBuilder(),
+                new AiPolymarketDecisionParser(), executor, properties, audit);
+
+        assertThrows(IllegalStateException.class, service::runDecision);
+        verifyNoInteractions(collector, executor);
+        verify(audit).save(argThat(record -> record.getError().contains("requires a persisted decision audit")));
+
+        doReturn(1L).when(audit).start(any());
+        when(collector.collect()).thenReturn(new PolymarketDecisionContext().setMarkets(List.of()));
+        assertFalse(service.runDecision());
+        verify(collector).collect();
+        verifyNoInteractions(executor);
+    }
+
+    @Test
+    void executionFailureIsAuditedAndPropagatedToScheduler() {
+        var properties = new AiPolymarketProperties();
+        properties.setEnabled(true);
+        var executor = mock(PolymarketOrderExecutor.class);
+        when(executor.execute(any(), any())).thenThrow(new IllegalStateException("order rejected"));
+        var audit = new CapturingAuditSink();
+        var service = new AiPolymarketService(prompt -> "{\"action\":\"HOLD\",\"reason\":\"fixture\"}",
+                new FakeContextCollector(context()), new AiPolymarketPromptBuilder(),
+                new AiPolymarketDecisionParser(), executor, properties, audit);
+
+        assertThrows(IllegalStateException.class, service::runDecision);
+        assertEquals("order rejected", audit.record.getError());
+        assertNotNull(audit.record.getCompletedAt());
+    }
+
     @Test
     void savesAiResponseConfidenceProbabilityAndExecutionResult() {
         AiPolymarketProperties properties = new AiPolymarketProperties();

@@ -42,17 +42,24 @@ public class AutomationTaskManager implements DisposableBean {
     private static final Logger log = LoggerFactory.getLogger(AutomationTaskManager.class);
 
     private final TaskScheduler scheduler;
+    private final TaskScheduler tradingScheduler;
     private final MeterRegistry meterRegistry;
     private final Map<String, ManagedTask> tasks = new LinkedHashMap<>();
 
     public AutomationTaskManager(TaskScheduler scheduler) {
-        this(scheduler, new SimpleMeterRegistry());
+        this(scheduler, scheduler, new SimpleMeterRegistry());
+    }
+
+    public AutomationTaskManager(TaskScheduler scheduler, MeterRegistry meterRegistry) {
+        this(scheduler, scheduler, meterRegistry);
     }
 
     @Autowired
     public AutomationTaskManager(@Qualifier("automationTaskScheduler") TaskScheduler scheduler,
+                                 @Qualifier("tradingTaskScheduler") TaskScheduler tradingScheduler,
                                  MeterRegistry meterRegistry) {
         this.scheduler = scheduler;
+        this.tradingScheduler = tradingScheduler;
         this.meterRegistry = meterRegistry;
     }
 
@@ -132,6 +139,7 @@ public class AutomationTaskManager implements DisposableBean {
 
     private final class ManagedTask {
         private final AutomationTaskDefinition definition;
+        private final TaskScheduler taskScheduler;
         private final AtomicBoolean running = new AtomicBoolean(false);
         private final AtomicLong generation = new AtomicLong();
         // Shared across loops in one task so a slow loop cannot overlap with
@@ -141,6 +149,7 @@ public class AutomationTaskManager implements DisposableBean {
 
         private ManagedTask(AutomationTaskDefinition definition) {
             this.definition = definition;
+            this.taskScheduler = "trading".equals(normalize(definition.id())) ? tradingScheduler : scheduler;
             for (AutomationLoopDefinition loop : definition.loops()) {
                 loops.put(loop.id(), new ManagedLoop(loop));
             }
@@ -232,7 +241,7 @@ public class AutomationTaskManager implements DisposableBean {
                 }
                 Duration normalizedDelay = delay == null || delay.isNegative() ? Duration.ZERO : delay;
                 nextRunAt = Instant.now().plus(normalizedDelay);
-                future = scheduler.schedule(() -> runAndReschedule(expectedGeneration), nextRunAt);
+                future = taskScheduler.schedule(() -> runAndReschedule(expectedGeneration), nextRunAt);
             }
 
             private void runAndReschedule(long expectedGeneration) {

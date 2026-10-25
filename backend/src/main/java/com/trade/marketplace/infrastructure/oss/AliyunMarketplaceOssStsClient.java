@@ -99,8 +99,6 @@ public class AliyunMarketplaceOssStsClient implements MarketplaceOssStsClient {
                 throw new MarketplaceUnavailableException(
                         "Aliyun STS request failed with status "
                                 + response.statusCode()
-                                + ", body="
-                                + response.body()
                 );
             }
             return credentials(response.body());

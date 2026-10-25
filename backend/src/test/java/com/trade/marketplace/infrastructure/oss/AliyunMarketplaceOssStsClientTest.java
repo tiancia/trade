@@ -92,7 +92,8 @@ class AliyunMarketplaceOssStsClientTest {
 
     @Test
     void failedStsRequestsCannotReturnAnUploadFormOrExposeSigningSecrets() throws Exception {
-        var client = clientReturning(503, "{\"Code\":\"ServiceUnavailable\",\"Message\":\"Try again later\"}");
+        var client = clientReturning(503,
+                "{\"Code\":\"ServiceUnavailable\",\"Message\":\"long-term-secret temporary-secret temporary-token\"}");
         var failure = assertThrows(MarketplaceUnavailableException.class, () -> client.createUploadForm(uploadRequest()));
         assertTrue(failure.getMessage().contains("503"));
         assertNoSigningSecrets(failure);

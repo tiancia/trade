@@ -4,7 +4,9 @@
  *
  * <p>The main flow is: collect candidate markets, build an AI prompt, parse a
  * decision, pass valid orders to the executor, and persist an audit trail for
- * every run. Market horizon, turnover, and liquidity rules live in domain.rule and are shared by collection and execution. Follow
+ * every run. Live BUY submissions first commit a persistent single-account reservation;
+ * ambiguous results retain it across restarts until manual reconciliation.
+ * Market horizon, turnover, and liquidity rules live in domain.rule and are shared by collection and execution. Follow
  * {@link com.trade.polymarket.interfaces.scheduler.AiPolymarketScheduler} into
  * {@link com.trade.polymarket.application.service.AiPolymarketService} and finally
  * {@link com.trade.polymarket.application.execution.PolymarketOrderExecutor}.</p>

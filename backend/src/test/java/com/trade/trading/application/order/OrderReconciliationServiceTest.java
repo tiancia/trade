@@ -188,6 +188,29 @@ class OrderReconciliationServiceTest {
         verify(fixture.okx(), never()).getAccountBalance(any());
     }
 
+    @Test
+    void missingAccountDataCannotBeRecordedAsSuccessfulPositionReconciliation() {
+        Fixture fixture = fixture(null);
+        when(fixture.okx().getAccountBalance(any())).thenReturn(OkxResponse.success(List.of()));
+
+        assertThrows(IllegalStateException.class, fixture.service()::reconcileOnce);
+
+        assertNull(fixture.state().getState().getPositionLastReconciledAt());
+        assertEquals(1, fixture.service().status().getConsecutiveFailures());
+    }
+
+    @Test
+    void missingBalanceDetailsCannotBeRecordedAsSuccessfulPositionReconciliation() {
+        Fixture fixture = fixture(null);
+        when(fixture.okx().getAccountBalance(any()))
+                .thenReturn(OkxResponse.success(List.of(new AccountBalanceResp())));
+
+        assertThrows(IllegalStateException.class, fixture.service()::reconcileOnce);
+
+        assertNull(fixture.state().getState().getPositionLastReconciledAt());
+        assertEquals(1, fixture.service().status().getConsecutiveFailures());
+    }
+
     private Fixture fixture(String key) {
         TradingProperties properties = new TradingProperties();
         properties.setExecutionMode(ExecutionMode.LIVE);

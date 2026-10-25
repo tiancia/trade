@@ -23,9 +23,21 @@ public class AutomationConfiguration {
 
     @Bean(name = "automationTaskScheduler", destroyMethod = "shutdown")
     public ThreadPoolTaskScheduler automationTaskScheduler() {
+        return scheduler(4, "automation-task-");
+    }
+
+    @Bean(name = "tradingTaskScheduler", destroyMethod = "shutdown")
+    public ThreadPoolTaskScheduler tradingTaskScheduler() {
+        // Trading loops share one task lock, so reserve one execution thread
+        // plus one for the database lease heartbeat. Provider/AI requests in
+        // other domains must never consume either resource.
+        return scheduler(2, "trading-task-");
+    }
+
+    private static ThreadPoolTaskScheduler scheduler(int poolSize, String threadNamePrefix) {
         ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
-        scheduler.setPoolSize(4);
-        scheduler.setThreadNamePrefix("automation-task-");
+        scheduler.setPoolSize(poolSize);
+        scheduler.setThreadNamePrefix(threadNamePrefix);
         scheduler.setWaitForTasksToCompleteOnShutdown(false);
         scheduler.setRemoveOnCancelPolicy(true);
         return scheduler;

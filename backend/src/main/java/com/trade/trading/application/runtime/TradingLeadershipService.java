@@ -52,7 +52,7 @@ public class TradingLeadershipService {
     public TradingLeadershipService(
             TradingLeaderLeaseRepository repository,
             TradingProperties properties,
-            @Qualifier("automationTaskScheduler") TaskScheduler scheduler,
+            @Qualifier("tradingTaskScheduler") TaskScheduler scheduler,
             MeterRegistry meterRegistry
     ) {
         this(repository, properties, scheduler, meterRegistry, resolveOwnerId(properties));

@@ -32,7 +32,7 @@ db/
 | --- | --- | --- |
 | `ai` | [schema/ai/schema.sql](schema/ai/schema.sql) | 共享 AI 响应解析失败审计 |
 | `trading` | [schema/trading/schema.sql](schema/trading/schema.sql) | OKX 决策、行情、策略、回测、订单、资金状态与领导租约 |
-| `polymarket` | [schema/polymarket/schema.sql](schema/polymarket/schema.sql) | Polymarket 决策、请求与执行审计 |
+| `polymarket` | [schema/polymarket/schema.sql](schema/polymarket/schema.sql) | Polymarket 决策、请求、执行审计与持久执行预留 |
 | `textgame` | [schema/textgame/schema.sql](schema/textgame/schema.sql) | 剧情、版本、会话与事件 |
 | `marketplace` | [schema/marketplace/schema.sql](schema/marketplace/schema.sql) | 集市用户、商品、会话与消息 |
 | `weibo` | [schema/weibo/schema.sql](schema/weibo/schema.sql) | 微博 OAuth、账号、草稿、审核与发布记录 |
@@ -44,7 +44,7 @@ schema 使用 `CREATE TABLE IF NOT EXISTS`，既可初始化新库，也会为�
 
 ### 开发库删表后重建
 
-如果原有业务表全部删除，再启动应用且上述 SQL 初始化成功，七份完整 schema 会重新创建当前的 52 张表，所有表的主键均为自增 `id`。新库或按完整 schema 重建的库无需再执行自增主键升级补丁。
+如果原有业务表全部删除，再启动应用且上述 SQL 初始化成功，七份完整 schema 会重新创建当前的 53 张表，所有表的主键均为自增 `id`。新库或按完整 schema 重建的库无需再执行自增主键升级补丁。
 
 此方式仅适用于允许丢弃全部数据的开发库：删表会丢失订单、资金状态、审核、账号、会话和其他历史记录，重建只恢复 schema 中的初始化种子，不恢复旧数据。先停止所有应用实例和其他写入者，并关闭自动任务、真实下单及对外发布开关；需保留数据时使用旧库升级脚本。
 
@@ -52,7 +52,7 @@ schema 使用 `CREATE TABLE IF NOT EXISTS`，既可初始化新库，也会为�
 
 ## 主键开发规范
 
-全部 52 张表统一使用以下单列主键定义；后续新增或重建的业务表也必须遵守：
+全部 53 张表统一使用以下单列主键定义；后续新增或重建的业务表也必须遵守：
 
 ```sql
 id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY

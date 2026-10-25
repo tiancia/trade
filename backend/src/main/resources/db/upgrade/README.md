@@ -70,6 +70,7 @@ MySQL DDL 会隐式提交，无法用事务回滚；脚本不能重复执行。�
 | [trading/migration_add_okx_strategy_decision_fields.sql](trading/migration_add_okx_strategy_decision_fields.sql) | OKX 决策的策略字段 |
 | [trading/migration_add_ai_decision_confidence.sql](trading/migration_add_ai_decision_confidence.sql) | Trading AI 决策置信度字段 |
 | [polymarket/migration_add_polymarket_decision_audits.sql](polymarket/migration_add_polymarket_decision_audits.sql) | Polymarket 决策、AI 请求与执行审计 |
+| [polymarket/migration_add_polymarket_execution_guard.sql](polymarket/migration_add_polymarket_execution_guard.sql) | 单账户持久执行预留；含糊结果保留阻断，不随重启或超时自动释放。升级前停掉 Polymarket 任务并核对旧的未决执行 |
 | [ai/migration_add_ai_response_parse_errors.sql](ai/migration_add_ai_response_parse_errors.sql) | 跨业务 AI 解析失败审计 |
 | [textgame/migration_add_text_game_story_engine.sql](textgame/migration_add_text_game_story_engine.sql) | 文字游戏剧情、版本、会话和事件 |
 | [weibo/migration_add_weibo_oauth.sql](weibo/migration_add_weibo_oauth.sql) | 微博 OAuth state 与账号 token |

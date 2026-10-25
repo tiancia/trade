@@ -213,10 +213,12 @@ public class OrderReconciliationService {
         OkxResponse<AccountBalanceResp> response = okxApi.getAccountBalance(new AccountBalanceReq()
                 .setCcy(properties.getBaseCcy()));
         OkxResponses.requireOk(response, "spot balance reconciliation");
-        AccountBalanceResp account = OkxResponses.first(response).orElse(null);
-        BalanceDetail base = account == null || account.getDetails() == null
-                ? null
-                : account.getDetails().stream()
+        AccountBalanceResp account = OkxResponses.first(response)
+                .orElseThrow(() -> new IllegalStateException("OKX spot balance reconciliation response has no account data"));
+        if (account.getDetails() == null) {
+            throw new IllegalStateException("OKX spot balance reconciliation response has no balance details");
+        }
+        BalanceDetail base = account.getDetails().stream()
                 .filter(detail -> properties.getBaseCcy().equalsIgnoreCase(detail.getCcy()))
                 .findFirst()
                 .orElse(null);

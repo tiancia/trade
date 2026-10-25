@@ -39,6 +39,28 @@
 
 Shell、IDE 或 systemd 已有环境变量会覆盖 YAML 回退值。启停自动任务前，应核对 `TRADE_AUTOMATION_TRADING_AUTO_START`、`TRADE_AUTOMATION_X_AUTO_START` 等实际值；修改后重启 Java 进程，仅修改 YAML 不会覆盖已有环境变量。systemd 部署可通过服务的 `EnvironmentFile=/etc/trade/trade.env` 注入运行配置；实际文件不进入仓库。SSH 隧道和 Java 服务需分别常驻，普通进程与容器中的 `127.0.0.1` 指向各自网络环境。
 
+### Polymarket 未决执行恢复
+
+Polymarket LIVE BUY 执行前使用独立事务预留 `polymarket_execution_guard`。只有正常执行结果和最终审计均提交后才释放；超时、拒绝或不完整确认、进程崩溃及审计失败均保留预留。后续调度会报失败而不再提交真实订单，重启和等待不会解除。该门禁覆盖共享同一数据库的后端实例，当前配置按单账户使用固定 `primary` 名称。
+
+部署时确认模块 schema 已创建门禁表；禁用启动 SQL 初始化的已有库先按[数据库升级说明](../../backend/src/main/resources/db/upgrade/README.md)应用对应建表脚本。首次启用门禁前停止旧版所有 Polymarket 任务并核实已有订单，旧版未决执行不会自动转换为新门禁记录。
+
+恢复步骤：
+
+1. 通过受保护网关停止所有实例的 `polymarket` 自动任务，保持真实执行开关关闭。
+2. 查询 `SELECT guard_name, pending_decision_id, updated_at FROM polymarket_execution_guard WHERE guard_name = 'primary';`，按该决策 ID 检查 `polymarket_decision_runs` 和 `polymarket_order_executions` 审计。
+3. 在真实 Polymarket 账户核对该时间、token、金额对应的订单和成交，记录已接受、已拒绝或尚无法确定的结论。无法确定时保持阻断；数据库日志或脚本退出码不能替代账户核实。
+4. 记录核实依据后，仅释放已核实的决策预留。下列模板默认不更新任何行，必须把 `NULL` 改成实际已核实的决策 ID；核对受影响行数为 1。不要删除门禁行或批量清空未决字段。
+
+```sql
+SET @verified_decision_id = NULL; -- 改为实际已核实的决策 ID
+UPDATE polymarket_execution_guard
+SET pending_decision_id = NULL, updated_at = CURRENT_TIMESTAMP(6)
+WHERE guard_name = 'primary' AND pending_decision_id = @verified_decision_id;
+```
+
+确认交易所状态与审计记录一致后，才按原有开关和账户验收流程恢复任务。该门禁防止含糊结果后继续下单，不提供自动成交对账或头寸管理。
+
 ## 安全启动
 
 首次启动或未知环境中，至少确认以下能力关闭：

@@ -256,6 +256,35 @@ class MyBatisTradingFinancialStateStoreTest {
     }
 
     @Test
+    void inconsistentFinalFillFailsInsteadOfClosingWithAnOlderCapitalCheckpoint() {
+        Instant firstTime = Instant.parse("2026-10-23T00:00:00Z");
+        store.applyCumulativeSpotFill(1L, "live", "BTC-USDT", "buy",
+                new BigDecimal("2"), new BigDecimal("1.98"), new BigDecimal("200"),
+                new BigDecimal("100"), new BigDecimal("-0.02"), "BTC", "partially_filled", firstTime);
+
+        assertThrows(IllegalStateException.class, () -> store.applyCumulativeSpotFill(
+                1L, "live", "BTC-USDT", "buy", new BigDecimal("3"), new BigDecimal("2.97"),
+                new BigDecimal("190"), new BigDecimal("63.333333333333333333"),
+                new BigDecimal("-0.03"), "BTC", "filled", firstTime.plusSeconds(1)));
+
+        assertDecimal("1.98", store.getOrCreatePosition("live", "BTC-USDT", BigDecimal.ZERO, BigDecimal.ZERO).getQuantity());
+        assertDecimal("2", jdbcTemplate.queryForObject(
+                "SELECT cumulative_filled_size FROM okx_order_fill_ledger WHERE order_id = 1", BigDecimal.class));
+        assertEquals("partially_filled", jdbcTemplate.queryForObject(
+                "SELECT exchange_state FROM okx_order_fill_ledger WHERE order_id = 1", String.class));
+        assertEquals(firstTime.toString(), store.getOrCreateRiskState("live", null).getLastTradeTime());
+    }
+
+    @Test
+    void positiveFillWithNonpositiveNetQuantityCannotBeSilentlyDiscarded() {
+        assertThrows(IllegalStateException.class, () -> store.applyCumulativeSpotFill(
+                1L, "live", "BTC-USDT", "buy", BigDecimal.ONE, BigDecimal.ZERO, BigDecimal.TEN,
+                BigDecimal.TEN, BigDecimal.ONE.negate(), "BTC", "filled", Instant.now()));
+
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_order_fill_ledger", Integer.class));
+    }
+
+    @Test
     void advancingFillsCommitTradeTimeWithoutRiskCallbacksAndStaleRiskWritesCannotRegressIt() {
         Instant firstTime = Instant.parse("2026-10-23T00:00:00Z");
         TradingRiskState staleRisk = store.getOrCreateRiskState("live", new TradingRiskState()

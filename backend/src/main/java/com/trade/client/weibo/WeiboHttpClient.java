@@ -78,7 +78,8 @@ public class WeiboHttpClient {
         try {
             return objectMapper.readTree(raw);
         } catch (Exception e) {
-            throw new IllegalStateException("Parse Weibo response error, body=" + raw, e);
+            // OAuth responses can contain tokens even when their JSON is malformed.
+            throw new IllegalStateException("Parse Weibo response error");
         }
     }
 

@@ -24,6 +24,54 @@ class PolymarketPythonOrderRunnerTest {
     Path tempDir;
 
     @Test
+    void requiresExplicitProviderAcceptanceAndOrderIdentity() {
+        var runner = new PolymarketPythonOrderRunner(new AiPolymarketProperties(), new PolymarketClientProperties());
+        for (String status : new String[]{"live", "matched", "delayed", "unmatched"}) {
+            runner.assertOrderAccepted("{\"success\":true,\"errorMsg\":\"\",\"orderID\":\"fixture-order\",\"status\":\""
+                    + status + "\"}");
+        }
+        runner.assertOrderAccepted("{\"success\":true,\"orderId\":\"fixture-order\",\"status\":\"matched\"}");
+
+        for (String response : new String[]{
+                "", "null", "[]", "{}", "DUMMY_PROVIDER_SECRET",
+                "{\"success\":false,\"errorMsg\":\"DUMMY_PROVIDER_SECRET\"}",
+                "{\"success\":\"true\",\"orderID\":\"order\",\"status\":\"matched\"}",
+                "{\"success\":true,\"errorMsg\":\"rejected\",\"orderID\":\"order\",\"status\":\"matched\"}",
+                "{\"success\":true,\"orderID\":\"\",\"status\":\"matched\"}",
+                "{\"success\":true,\"orderID\":\"order\",\"status\":\"rejected\"}",
+                "{\"success\":true,\"orderID\":\"order\",\"status\":\"matched\"} {}"
+        }) {
+            IllegalStateException failure = assertThrows(IllegalStateException.class,
+                    () -> runner.assertOrderAccepted(response), response);
+            assertTrue(failure.getMessage().contains("verify the order before retrying"));
+            assertFalse(failure.getMessage().contains("DUMMY_PROVIDER_SECRET"));
+            assertEquals(null, failure.getCause());
+        }
+    }
+
+    @Test
+    void zeroExitCodeDoesNotTurnRejectedOrderIntoSuccessfulExecution() throws Exception {
+        Path script = Files.writeString(tempDir.resolve("RejectedOrder.java"), """
+                class RejectedOrder {
+                    public static void main(String[] args) throws Exception {
+                        System.in.readAllBytes();
+                        System.out.print("{\\\"success\\\":false,\\\"errorMsg\\\":\\\"rejected\\\"}");
+                    }
+                }
+                """);
+        var properties = new AiPolymarketProperties();
+        properties.getExecution().setPythonCommand(javaExecutable().toString());
+        properties.getExecution().setScriptPath(script.toString());
+        properties.getExecution().setPrivateKey("dummy");
+        var runner = new PolymarketPythonOrderRunner(properties, new PolymarketClientProperties());
+
+        RuntimeException failure = assertThrows(RuntimeException.class,
+                () -> runner.placeOrder(new PolymarketOrderRequest().setOrderType("FAK")));
+
+        assertTrue(failure.getCause().getMessage().contains("did not confirm order acceptance"));
+    }
+
+    @Test
     void resolvesRelativeScriptPathFromParentDirectoryWhenMissingUnderWorkingDirectory() throws Exception {
         Path workingDirectory = Files.createDirectory(tempDir.resolve("backend"));
         Path scriptsDirectory = Files.createDirectories(tempDir.resolve("tools").resolve("polymarket"));

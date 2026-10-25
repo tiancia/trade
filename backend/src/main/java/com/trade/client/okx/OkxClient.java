@@ -24,8 +24,12 @@ public class OkxClient implements OkxRestClient {
     }
 
     public OkxClient(OkxClientProperties properties) {
+        this(properties, buildHttpClient(properties));
+    }
+
+    OkxClient(OkxClientProperties properties, HttpClient httpClient) {
         this.properties = properties;
-        this.httpClient = buildHttpClient(properties);
+        this.httpClient = httpClient;
         this.objectMapper = new ObjectMapper()
                 .setSerializationInclusion(JsonInclude.Include.NON_NULL);
         this.signer = new OkxSigner(properties);
@@ -108,9 +112,12 @@ public class OkxClient implements OkxRestClient {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             int statusCode = response.statusCode();
             if (statusCode < 200 || statusCode >= 300) {
-                throw new RuntimeException("OKX HTTP error, status=" + statusCode + ", body=" + response.body());
+                throw new RuntimeException("OKX HTTP error, status=" + statusCode);
             }
             return response.body();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Send OKX request interrupted", e);
         } catch (Exception e) {
             throw new RuntimeException("Send OKX request error", e);
         }
@@ -122,7 +129,8 @@ public class OkxClient implements OkxRestClient {
                     .constructParametricType(OkxResponse.class, dataClass);
             return objectMapper.readValue(body, javaType);
         } catch (Exception e) {
-            throw new RuntimeException("Parse OKX response error, body=" + body, e);
+            // Parser exception messages may contain private account or order response fragments.
+            throw new RuntimeException("Parse OKX response error");
         }
     }
 

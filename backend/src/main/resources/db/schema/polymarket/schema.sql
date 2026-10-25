@@ -2,6 +2,14 @@
 -- Loaded at application startup; existing database upgrades are manual under db/upgrade/polymarket/.
 -- CREATE TABLE IF NOT EXISTS does not add missing columns to existing tables.
 
+-- Persistent single-account barrier. Never clear this row during startup or on a timeout.
+CREATE TABLE IF NOT EXISTS `polymarket_execution_guard` (
+    `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    `guard_name` varchar(64) NOT NULL UNIQUE,
+    `pending_decision_id` bigint,
+    `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- -----------------------------------------------------------------------------
 -- Polymarket AI decisions and order-execution audit
 -- -----------------------------------------------------------------------------

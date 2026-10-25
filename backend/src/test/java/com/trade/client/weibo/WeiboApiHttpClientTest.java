@@ -14,6 +14,7 @@ import java.util.concurrent.Flow;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -80,7 +81,7 @@ class WeiboApiHttpClientTest {
 
     @Test
     void httpErrorRedactsAccessTokenFromUri() {
-        CapturingSender sender = new CapturingSender("{\"error\":\"expired token\"}", 401);
+        CapturingSender sender = new CapturingSender("{\"error\":\"expired secret-token\"}", 401);
         WeiboApi api = new WeiboApi(new WeiboHttpClient(properties(), sender));
 
         WeiboHttpException error = assertThrows(WeiboHttpException.class, () -> api.getUid("secret-token"));
@@ -88,6 +89,15 @@ class WeiboApiHttpClientTest {
         assertEquals(401, error.statusCode());
         assertFalse(error.getMessage().contains("secret-token"));
         assertTrue(error.getMessage().contains("access_token=***"));
+    }
+
+    @Test
+    void malformedOAuthResponseDoesNotLeakReturnedTokenThroughParserExceptions() {
+        CapturingSender sender = new CapturingSender("synthetic-secret-token", 200);
+        WeiboApi api = new WeiboApi(new WeiboHttpClient(properties(), sender));
+        var failure = assertThrows(IllegalStateException.class, () -> api.exchangeCode("callback-code"));
+        assertEquals("Parse Weibo response error", failure.getMessage());
+        assertNull(failure.getCause());
     }
 
     @Test

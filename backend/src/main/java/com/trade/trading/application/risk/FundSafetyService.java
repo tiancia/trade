@@ -216,7 +216,10 @@ public class FundSafetyService {
                 .setInstId(properties.getInstId())
                 .setLimit(String.valueOf(properties.getReconciliation().getBatchSize())));
         OkxResponses.requireOk(response, "pending order query");
-        return response == null || response.getData() == null ? List.of() : List.copyOf(response.getData());
+        if (response.getData() == null) {
+            throw new IllegalStateException("OKX pending order response has no data; absence of pending orders is unverified");
+        }
+        return List.copyOf(response.getData());
     }
 
     private Counter counter(String outcome) {

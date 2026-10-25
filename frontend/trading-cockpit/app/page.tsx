@@ -30,7 +30,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiTimestampMillis, backtestSelectionForStrategy, buildBacktestPayload, buildPaperSessionPayload, buildStrategyParametersPayload, createJsonRequestHeaders, decisionIndicatorEntries, filterConfigurationEvents, formatDateTimeLocal, formatReturnFraction, intradayModes, marketDataIsFresh, mergeContiguousHistory, parameterFieldsForStrategy } from "./lib/trading-api.mjs";
+import { apiTimestampMillis, backtestSelectionForStrategy, buildBacktestPayload, buildPaperSessionPayload, buildStrategyParametersPayload, createJsonRequestHeaders, decisionIndicatorEntries, filterConfigurationEvents, formatDateTimeLocal, formatReturnFraction, intradayModes, marketDataIsFresh, mergeContiguousHistory, parameterFieldsForStrategy, reconcileCockpitRefresh } from "./lib/trading-api.mjs";
 
 type View = "overview" | "strategies" | "events" | "backtests";
 type ApiTimestamp = string | number;
@@ -398,8 +398,11 @@ function errorMessage(error: unknown) {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const timeout = AbortSignal.timeout(15_000);
   const response = await fetch(`${API_BASE}${path}`, {
+    cache: "no-store",
     ...init,
+    signal: init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
     headers: createJsonRequestHeaders({ headers: init?.headers, method: init?.method }),
   });
   if (!response.ok) {
@@ -443,6 +446,9 @@ export default function Home() {
   const [snapshot, setSnapshot] = useState<Snapshot>(demoSnapshot);
   const [dataMode, setDataMode] = useState<"live" | "demo">("demo");
   const [runtimeConnected, setRuntimeConnected] = useState(false);
+  const refreshAbort = useRef<AbortController | null>(null);
+  const refreshRevision = useRef(0);
+  const hasLiveSnapshot = useRef(false);
   const [refreshing, setRefreshing] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [backtestOpen, setBacktestOpen] = useState(false);
@@ -472,30 +478,29 @@ export default function Home() {
   const marketInstrument = snapshot.runtime.instId ?? paperCurrent?.instId ?? "BTC-USDT";
 
   const refresh = useCallback(async (quiet = false) => {
+    refreshAbort.current?.abort();
+    const abort = new AbortController();
+    refreshAbort.current = abort;
+    const revision = ++refreshRevision.current;
     if (!quiet) setRefreshing(true);
     const endpoints = await Promise.allSettled([
-      request<RuntimeStatus>("/api/trading/runtime/status"),
-      request<EventBusStatus>("/api/trading/runtime/events"),
-      request<Strategy[]>("/api/trading/strategies"),
-      request<AutomationTask[]>("/api/automation/tasks"),
-      request<BacktestRun[]>("/api/trading/backtests?offset=0&limit=12"),
+      request<RuntimeStatus>("/api/trading/runtime/status", { signal: abort.signal }),
+      request<EventBusStatus>("/api/trading/runtime/events", { signal: abort.signal }),
+      request<Strategy[]>("/api/trading/strategies", { signal: abort.signal }),
+      request<AutomationTask[]>("/api/automation/tasks", { signal: abort.signal }),
+      request<BacktestRun[]>("/api/trading/backtests?offset=0&limit=12", { signal: abort.signal }),
     ]);
-
-    const successful = endpoints.filter((item) => item.status === "fulfilled").length;
-    setRuntimeConnected(endpoints[0].status === "fulfilled");
-    if (successful > 0) {
-      setSnapshot((current) => ({
-        runtime: endpoints[0].status === "fulfilled" ? endpoints[0].value : current.runtime,
-        events: endpoints[1].status === "fulfilled" ? endpoints[1].value : current.events,
-        strategies: endpoints[2].status === "fulfilled" ? endpoints[2].value : current.strategies,
-        tasks: endpoints[3].status === "fulfilled" ? endpoints[3].value : current.tasks,
-        backtests: endpoints[4].status === "fulfilled" ? endpoints[4].value : current.backtests,
-      }));
+    if (abort.signal.aborted || revision !== refreshRevision.current) return;
+    const result = reconcileCockpitRefresh({ snapshot: demoSnapshot, dataMode: hasLiveSnapshot.current ? "live" : "demo" }, endpoints);
+    setRuntimeConnected(result.connected);
+    if (result.connected) {
+      hasLiveSnapshot.current = true;
+      setSnapshot(result.snapshot);
       setDataMode("live");
-      if (!quiet) setToast(`已同步 ${successful}/5 个运行时数据源`);
+      if (!quiet) setToast("已同步 5/5 个运行时数据源");
     } else {
-      setDataMode("demo");
-      if (!quiet) setToast("后端暂未连接，继续展示安全的演示快照");
+      // Keep real operations real during an outage, especially the stop command.
+      if (!quiet) setToast(hasLiveSnapshot.current ? "状态同步失败，保留上次真实快照；操作结果须由后端确认" : `后端数据尚未完整同步（${result.successful}/5），继续展示演示快照`);
     }
     setRefreshing(false);
     setPaperRefreshToken((current) => current + 1);
@@ -537,6 +542,7 @@ export default function Home() {
       window.clearTimeout(initialRefresh);
       window.clearInterval(clockTimer);
       window.clearInterval(refreshTimer);
+      refreshAbort.current?.abort();
     };
   }, [refresh]);
 
@@ -623,7 +629,7 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const task = snapshot.tasks.find((item) => item.id === "trading") ?? snapshot.tasks[0];
+  const task = snapshot.tasks.find((item) => item.id === "trading");
   const decisionLoop = task?.loops.find((loop) => loop.id === "decision");
   const eventLoop = task?.loops.find((loop) => loop.id === "event-scan");
   const queueUtilization = Math.min(100, (snapshot.events.queueDepth / Math.max(1, snapshot.events.queueCapacity)) * 100);
@@ -662,14 +668,14 @@ export default function Home() {
 
   const filteredCommands = useMemo(() => {
     const commands = [
-      { label: "打开运行总览", hint: "Overview", action: () => setActiveView("overview") },
-      { label: "查看策略矩阵", hint: "Strategies", action: () => setActiveView("strategies") },
-      { label: "检查事件背压", hint: "Events", action: () => setActiveView("events") },
-      { label: "新建策略回测", hint: "Backtest", action: openBacktest },
-      { label: "同步后端状态", hint: "Refresh", action: () => refresh() },
+      { label: "打开运行总览", hint: "Overview", command: "overview" },
+      { label: "查看策略矩阵", hint: "Strategies", command: "strategies" },
+      { label: "检查事件背压", hint: "Events", command: "events" },
+      { label: "新建策略回测", hint: "Backtest", command: "backtest" },
+      { label: "同步后端状态", hint: "Refresh", command: "refresh" },
     ];
     return commands.filter((item) => item.label.toLowerCase().includes(query.toLowerCase()));
-  }, [query, refresh, openBacktest]);
+  }, [query]);
 
   const navigate = (view: View) => {
     setActiveView(view);
@@ -677,11 +683,17 @@ export default function Home() {
   };
 
   const toggleTask = async () => {
-    if (!task) return;
+    if (!task || taskPending) return;
+    if (dataMode === "live" && !runtimeConnected && !task.running) {
+      setToast("请先同步最新运行状态，再启动交易自动化");
+      return;
+    }
     setTaskPending(true);
     if (dataMode === "live") {
       try {
         const next = await request<AutomationTask>(`/api/automation/tasks/${task.id}/${task.running ? "stop" : "start"}`, { method: "POST" });
+        refreshRevision.current += 1;
+        setRefreshing(false);
         setSnapshot((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === next.id ? next : item) }));
         setToast(next.running ? "交易自动化已启动" : "交易自动化已安全停止");
       } catch (error) {
@@ -699,6 +711,10 @@ export default function Home() {
 
   const activateStrategy = async (strategyId: string) => {
     if (strategyId === snapshot.runtime.activeStrategyId || strategyPending) return;
+    if (dataMode === "live" && !runtimeConnected) {
+      setToast("请先同步最新运行状态，再切换策略");
+      return;
+    }
     setStrategyPending(strategyId);
     if (dataMode === "live") {
       try {
@@ -709,6 +725,8 @@ export default function Home() {
             expectedRevision: snapshot.runtime.activeStrategyRevision ?? 0,
           }),
         });
+        refreshRevision.current += 1;
+        setRefreshing(false);
         setSnapshot((current) => ({
           ...current,
           runtime: {
@@ -764,6 +782,8 @@ export default function Home() {
     if (dataMode === "live") {
       try {
         const run = await request<BacktestRun>("/api/trading/backtests", { method: "POST", body: JSON.stringify(payload) });
+        refreshRevision.current += 1;
+        setRefreshing(false);
         setSnapshot((current) => ({ ...current, backtests: [run, ...current.backtests] }));
         setToast(`回测 ${run.runId} 已进入队列`);
       } catch (error) {
@@ -810,9 +830,9 @@ export default function Home() {
         </button>
 
         <div className="topbar-actions">
-          <div className={`connection-pill ${dataMode}`}>
+          <div className={`connection-pill ${dataMode === "live" && !runtimeConnected ? "demo" : dataMode}`}>
             <span className="connection-dot" />
-            {dataMode === "live" ? "后端已连接" : "演示数据"}
+            {dataMode === "live" ? runtimeConnected ? "后端已连接" : "同步中断 · 上次快照" : "演示数据"}
           </div>
           <span className="clock">{clock ? clock.toLocaleTimeString("zh-CN", { hour12: false }) : "--:--:--"}</span>
           <button className="icon-button" aria-label="刷新状态" onClick={() => refresh()}>
@@ -855,13 +875,15 @@ export default function Home() {
           </div>
         </div>
 
+        {dataMode === "live" && !runtimeConnected && <p className="inline-error" role="status">状态同步中断，当前显示上次真实快照。请同步后再启动自动化或切换策略；停止命令仍会提交后端确认。</p>}
+
         {activeView === "overview" && (
           <>
             <section className="metric-grid" aria-label="核心指标">
               <MetricCard icon={WalletCards} label="模拟资产净值" value={paperMode && paperCurrent ? number(paperCurrent.equity, 2) : "—"} delta={paperCurrent && paperMode ? paperCurrent.quoteCcy : "待开始模拟"} detail={paperCurrent && paperMode ? `初始资金 ${number(paperCurrent.initialCash, 2)} · ${paperCurrent.valuationStale ? "估值待更新" : "当前模拟会话"}` : paperMode ? "下方设置资金，开始独立模拟" : "当前为实盘模式"} />
               <MetricCard icon={TrendingUp} label="已实现盈亏" value={paperMode && paperCurrent ? number(paperCurrent.realizedPnl, 2) : "—"} delta={paperCurrent && paperMode ? paperCurrent.quoteCcy : "暂无模拟"} detail={paperCurrent && paperMode ? `本次模拟 · 手续费 ${number(paperCurrent.totalFeesQuote, 4)}` : "基于模拟实际成交统计"} />
               <MetricCard icon={Gauge} label="风险利用率" value={dataMode === "demo" ? "38.2%" : "—"} delta={dataMode === "demo" ? "演示值" : "暂无数据"} detail={dataMode === "demo" ? "上限 72%" : "风险利用率尚未接入"} progress={dataMode === "demo" ? 38.2 : undefined} />
-              <MetricCard icon={Clock3} label="下次策略决策" value={decisionLoop?.nextRunAt ? timeAgoFuture(decisionLoop.nextRunAt, clock) : "待调度"} delta={task?.running ? "运行中" : "已暂停"} positive={Boolean(task?.running)} detail="decision loop" />
+              <MetricCard icon={Clock3} label="下次策略决策" value={decisionLoop?.nextRunAt ? timeAgoFuture(decisionLoop.nextRunAt, clock) : "待调度"} delta={!task ? "任务未读取" : task.running ? "运行中" : "已暂停"} positive={Boolean(task?.running)} detail="decision loop" />
             </section>
 
             <PaperSimulationPanel dataMode={dataMode} executionMode={dataMode === "live" && !runtimeConnected ? "运行模式未确认" : snapshot.runtime.executionMode} refreshToken={paperRefreshToken} onCurrentChange={setPaperCurrent} />
@@ -949,7 +971,7 @@ export default function Home() {
       <aside className="right-rail">
         <section className="rail-card system-card">
           <div className="rail-card-heading"><span>系统状态</span><Activity size={16} /></div>
-          <div className="system-state"><span className="pulse-ring"><i /></span><div><strong>{snapshot.runtime.lastError ? "需要关注" : "系统运行稳定"}</strong><small>{dataMode === "live" ? "来自实时后端" : "安全演示快照"}</small></div></div>
+          <div className="system-state"><span className="pulse-ring"><i /></span><div><strong>{dataMode === "live" && !runtimeConnected ? "系统状态未确认" : snapshot.runtime.lastError ? "需要关注" : "系统运行稳定"}</strong><small>{dataMode === "live" ? runtimeConnected ? "来自实时后端" : "上次真实快照 · 同步中断" : "安全演示快照"}</small></div></div>
           {snapshot.runtime.lastError && <p className="runtime-error danger-text">{snapshot.runtime.lastError}</p>}
           <div className="health-list">
             <div><span>事件总线</span><b><i className={snapshot.events.running ? "healthy" : "warning"} />{snapshot.events.running ? "正常" : "停止"}</b></div>
@@ -961,8 +983,8 @@ export default function Home() {
         <section className="rail-card automation-card">
           <div className="rail-card-heading"><span>交易自动化</span><Bot size={16} /></div>
           <div className="automation-switch-row">
-            <div><strong>{task?.running ? "循环运行中" : "当前已暂停"}</strong><small>启动不会绕过后端安全门</small></div>
-            <button className={`toggle ${task?.running ? "on" : ""}`} onClick={toggleTask} disabled={taskPending} aria-label={task?.running ? "停止交易自动化" : "启动交易自动化"} aria-pressed={task?.running}>
+            <div><strong>{!task ? "未读取到交易任务" : task.running ? "循环运行中" : "当前已暂停"}</strong><small>{task ? "启动不会绕过后端安全门" : "同步任务状态后可操作"}</small></div>
+            <button className={`toggle ${task?.running ? "on" : ""}`} onClick={toggleTask} disabled={!task || taskPending || (dataMode === "live" && !runtimeConnected && !task.running)} aria-label={task?.running ? "停止交易自动化" : "启动交易自动化"} aria-pressed={task?.running}>
               <span>{taskPending ? <LoaderCircle size={12} className="spin" /> : task?.running ? <Check size={12} /> : null}</span>
             </button>
           </div>
@@ -999,7 +1021,7 @@ export default function Home() {
         <div className="modal-backdrop" onMouseDown={() => setCommandOpen(false)}>
           <section className="command-menu" role="dialog" aria-modal="true" aria-label="命令菜单" onMouseDown={(event) => event.stopPropagation()}>
             <div className="command-search"><Search size={18} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="输入命令或页面名称…" /><kbd>ESC</kbd></div>
-            <div className="command-group"><span>快速跳转</span>{filteredCommands.map((item) => <button key={item.label} onClick={() => { item.action(); setCommandOpen(false); setQuery(""); }}><span><Command size={14} />{item.label}</span><small>{item.hint}</small></button>)}</div>
+            <div className="command-group"><span>快速跳转</span>{filteredCommands.map((item) => <button key={item.label} onClick={() => { if (item.command === "backtest") openBacktest(); else if (item.command === "refresh") void refresh(); else if (item.command === "overview" || item.command === "strategies" || item.command === "events") setActiveView(item.command); setCommandOpen(false); setQuery(""); }}><span><Command size={14} />{item.label}</span><small>{item.hint}</small></button>)}</div>
           </section>
         </div>
       )}

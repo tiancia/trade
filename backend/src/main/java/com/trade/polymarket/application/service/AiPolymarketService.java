@@ -8,7 +8,9 @@ import com.trade.polymarket.application.decision.AiPolymarketDecisionParser;
 import com.trade.polymarket.application.decision.AiPolymarketPromptBuilder;
 import com.trade.polymarket.application.execution.PolymarketOrderExecutor;
 import com.trade.polymarket.application.port.PolymarketDecisionAuditSink;
+import com.trade.polymarket.application.port.PolymarketExecutionGuard;
 import com.trade.polymarket.domain.model.AiPolymarketDecision;
+import com.trade.polymarket.domain.model.PolymarketAction;
 import com.trade.polymarket.domain.model.PolymarketDecisionAuditRecord;
 import com.trade.polymarket.domain.model.PolymarketDecisionContext;
 import com.trade.polymarket.domain.model.PolymarketOrderResult;
@@ -38,6 +40,7 @@ public class AiPolymarketService {
     private final AiPolymarketProperties properties;
     private final PolymarketDecisionAuditSink auditSink;
     private final AiResponseParseErrorSink parseErrorSink;
+    private final PolymarketExecutionGuard executionGuard;
     // Market discovery and execution share mutable cursors/risk limits, so run
     // only one decision loop at a time.
     private final ReentrantLock decisionLock = new ReentrantLock();
@@ -63,7 +66,6 @@ public class AiPolymarketService {
         );
     }
 
-    @Autowired
     public AiPolymarketService(
             AiTextClient aiTextClient,
             PolymarketMarketContextCollector contextCollector,
@@ -74,6 +76,22 @@ public class AiPolymarketService {
             PolymarketDecisionAuditSink auditSink,
             AiResponseParseErrorSink parseErrorSink
     ) {
+        this(aiTextClient, contextCollector, promptBuilder, decisionParser, orderExecutor, properties,
+                auditSink, parseErrorSink, PolymarketExecutionGuard.UNAVAILABLE);
+    }
+
+    @Autowired
+    public AiPolymarketService(
+            AiTextClient aiTextClient,
+            PolymarketMarketContextCollector contextCollector,
+            AiPolymarketPromptBuilder promptBuilder,
+            AiPolymarketDecisionParser decisionParser,
+            PolymarketOrderExecutor orderExecutor,
+            AiPolymarketProperties properties,
+            PolymarketDecisionAuditSink auditSink,
+            AiResponseParseErrorSink parseErrorSink,
+            PolymarketExecutionGuard executionGuard
+    ) {
         this.aiTextClient = aiTextClient;
         this.contextCollector = contextCollector;
         this.promptBuilder = promptBuilder;
@@ -82,6 +100,7 @@ public class AiPolymarketService {
         this.properties = properties;
         this.auditSink = auditSink;
         this.parseErrorSink = parseErrorSink == null ? AiResponseParseErrorSink.NOOP : parseErrorSink;
+        this.executionGuard = executionGuard == null ? PolymarketExecutionGuard.UNAVAILABLE : executionGuard;
     }
 
     public boolean runDecision() {
@@ -101,15 +120,20 @@ public class AiPolymarketService {
         }
 
         Instant startedAt = Instant.now();
-        Long decisionId = persistAuditStart(startedAt);
+        Long decisionId = null;
         long startedAtMillis = System.currentTimeMillis();
         PolymarketDecisionContext context = null;
         String prompt = null;
         String rawAiResponse = null;
         AiPolymarketDecision decision = null;
         PolymarketOrderResult result = null;
+        boolean executionReserved = false;
         String error = null;
         try {
+            decisionId = persistAuditStart(startedAt);
+            if (properties.getExecution().isEnabled() && decisionId == null) {
+                throw new IllegalStateException("Polymarket live execution requires a persisted decision audit");
+            }
             log.info(
                     "AI Polymarket decision started: decisionId={}, executionEnabled={}, marketLimit={}, marketSlugs={}, marketIds={}, clobTokenIds={}",
                     decisionId,
@@ -186,6 +210,12 @@ public class AiPolymarketService {
                     decision.getReason()
             );
 
+            if (properties.getExecution().isEnabled() && decision.getAction() == PolymarketAction.BUY) {
+                if (!executionGuard.reserve(decisionId)) {
+                    throw new IllegalStateException("Polymarket has an unresolved live execution; verify it before placing another order");
+                }
+                executionReserved = true;
+            }
             result = orderExecutor.execute(decision, context);
             log.info(
                     "AI Polymarket decision finished: decisionId={}, result={}, elapsedMs={}",
@@ -203,9 +233,10 @@ public class AiPolymarketService {
                     e.getMessage(),
                     e
             );
-            return false;
+            throw new IllegalStateException("AI Polymarket decision failed", e);
         } finally {
-            persistAuditRecord(new PolymarketDecisionAuditRecord()
+            try {
+                boolean audited = persistAuditRecord(new PolymarketDecisionAuditRecord()
                     .setDecisionId(decisionId)
                     .setStartedAt(startedAt)
                     .setCompletedAt(Instant.now())
@@ -216,15 +247,27 @@ public class AiPolymarketService {
                     .setAiDecision(decision)
                     .setOrderResult(result)
                     .setError(error));
-            decisionLock.unlock();
+                // A crash, transport failure or lost audit must leave the durable reservation in place.
+                // Only a confirmed result whose audit committed permits the next live execution.
+                if (executionReserved && result != null) {
+                    if (!audited) {
+                        throw new IllegalStateException("Polymarket execution audit failed; live execution remains blocked");
+                    }
+                    executionGuard.release(decisionId);
+                }
+            } finally {
+                decisionLock.unlock();
+            }
         }
     }
 
-    private void persistAuditRecord(PolymarketDecisionAuditRecord auditRecord) {
+    private boolean persistAuditRecord(PolymarketDecisionAuditRecord auditRecord) {
         try {
             auditSink.save(auditRecord);
+            return true;
         } catch (Exception e) {
             log.warn("Persist Polymarket AI decision audit record failed: {}", e.getMessage(), e);
+            return false;
         }
     }
 

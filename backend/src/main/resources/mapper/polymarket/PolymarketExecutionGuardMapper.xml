@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.polymarket.infrastructure.persistence.PolymarketExecutionGuardMapper">
+    <insert id="insertIfAbsent">
+        INSERT IGNORE INTO polymarket_execution_guard (guard_name, updated_at)
+        VALUES ('primary', CURRENT_TIMESTAMP(6))
+    </insert>
+
+    <update id="reserve">
+        UPDATE polymarket_execution_guard
+        SET pending_decision_id = #{decisionId}, updated_at = CURRENT_TIMESTAMP(6)
+        WHERE guard_name = 'primary' AND pending_decision_id IS NULL
+    </update>
+
+    <update id="release">
+        UPDATE polymarket_execution_guard
+        SET pending_decision_id = NULL, updated_at = CURRENT_TIMESTAMP(6)
+        WHERE guard_name = 'primary' AND pending_decision_id = #{decisionId}
+    </update>
+</mapper>

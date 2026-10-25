@@ -6,7 +6,7 @@ public class WeiboHttpException extends RuntimeException {
 
     public WeiboHttpException(String method, String uri, int statusCode, String responseBody) {
         super("Weibo HTTP error, method=" + method + ", uri=" + uri
-                + ", status=" + statusCode + ", body=" + responseBody);
+                + ", status=" + statusCode);
         this.statusCode = statusCode;
         this.responseBody = responseBody;
     }

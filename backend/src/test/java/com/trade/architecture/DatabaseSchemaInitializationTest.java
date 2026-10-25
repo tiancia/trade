@@ -42,7 +42,7 @@ class DatabaseSchemaInitializationTest {
             initializer.setResourceLoader(new H2SchemaResourceLoader());
             assertTrue(initializer.initializeDatabase());
             var jdbc = new JdbcTemplate(dataSource);
-            assertEquals(52, jdbc.queryForObject("""
+            assertEquals(53, jdbc.queryForObject("""
                     SELECT COUNT(*) FROM information_schema.tables
                     WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
                     """, Integer.class));
@@ -53,11 +53,15 @@ class DatabaseSchemaInitializationTest {
 
             jdbc.update("UPDATE okx_fund_safety_state SET reason = ? WHERE account_scope = 'live'",
                     "Reviewed by operator");
+            jdbc.update("INSERT INTO polymarket_execution_guard (guard_name, pending_decision_id) VALUES (?, ?)",
+                    "primary", 42L);
             assertTrue(initializer.initializeDatabase());
             assertEquals("Reviewed by operator", jdbc.queryForObject(
                     "SELECT reason FROM okx_fund_safety_state WHERE account_scope = 'live'", String.class));
             assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM okx_fund_safety_state", Integer.class));
             assertEquals(7, jdbc.queryForObject("SELECT COUNT(*) FROM marketplace_categories", Integer.class));
+            assertEquals(42L, jdbc.queryForObject(
+                    "SELECT pending_decision_id FROM polymarket_execution_guard WHERE guard_name = 'primary'", Long.class));
         }
     }
 

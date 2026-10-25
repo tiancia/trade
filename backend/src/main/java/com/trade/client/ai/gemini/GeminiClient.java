@@ -39,7 +39,11 @@ public class GeminiClient {
     }
 
     public GeminiClient(GeminiClientProperties properties) {
-        this.httpClient = buildHttpClient(properties);
+        this(properties, buildHttpClient(properties));
+    }
+
+    GeminiClient(GeminiClientProperties properties, HttpClient httpClient) {
+        this.httpClient = httpClient;
         this.objectMapper = new ObjectMapper()
                 .setDefaultPropertyInclusion(JsonInclude.Include.NON_NULL);
         this.apiKey = properties.requiredApiKey();
@@ -93,7 +97,8 @@ public class GeminiClient {
         try {
             return objectMapper.readValue(body, GeminiGenerateResp.class);
         } catch (Exception e) {
-            throw new AiResponseParseException("Parse Gemini response error: " + e.getMessage(), body, e);
+            // Parser exception messages can contain response fragments; retain raw data only for the audit sink.
+            throw new AiResponseParseException("Parse Gemini response error", body);
         }
     }
 
@@ -112,9 +117,12 @@ public class GeminiClient {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             int statusCode = response.statusCode();
             if (statusCode < 200 || statusCode >= 300) {
-                throw new RuntimeException("Gemini HTTP error, status=" + statusCode + ", body=" + response.body());
+                throw new RuntimeException("Gemini HTTP error, status=" + statusCode);
             }
             return response.body();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Send Gemini request interrupted", e);
         } catch (Exception e) {
             throw new RuntimeException("Send Gemini request error", e);
         }

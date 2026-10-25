@@ -47,7 +47,7 @@ test("market freshness requires a recent observation and the current candle peri
 
 // Mount the real page with inert JSX and hooks so transport completion order is
 // exercised without adding a DOM test framework to the production dependency tree.
-async function mountMarketRequests({ runtime = {}, configuration, history = [] } = {}) {
+async function mountMarketRequests({ runtime = {}, configuration, history = [], dataMode = "demo", connected = false, tasks } = {}) {
   const callbacks = [];
   const effects = [];
   const states = [];
@@ -61,7 +61,9 @@ async function mountMarketRequests({ runtime = {}, configuration, history = [] }
     useState(initial) {
       let value = typeof initial === "function" ? initial() : initial;
       if (renderingEditor && editorIndex < editorStates.length) value = editorStates[editorIndex++];
-      else if (value?.runtime) value = { ...value, runtime: { ...value.runtime, ...runtime } };
+      else if (value?.runtime) value = { ...value, runtime: { ...value.runtime, ...runtime }, ...(tasks ? { tasks } : {}) };
+      else if (value === "demo") value = dataMode;
+      else if (states.length === 3) value = connected;
       const state = { value };
       states.push(state);
       return [state.value, (next) => { state.value = typeof next === "function" ? next(state.value) : next; }];
@@ -78,7 +80,7 @@ async function mountMarketRequests({ runtime = {}, configuration, history = [] }
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   vm.runInNewContext(compiled, {
-    exports, process: { env: {} }, URL, Headers, AbortController,
+    exports, process: { env: {} }, URL, Headers, AbortController, AbortSignal,
     window: { setTimeout: (callback) => timers.push(callback), clearTimeout() {}, setInterval() {}, clearInterval() {} },
     EventSource: class {
       listeners = {};
@@ -95,8 +97,13 @@ async function mountMarketRequests({ runtime = {}, configuration, history = [] }
       throw new Error(`Unexpected import: ${name}`);
     },
   });
-  exports.default();
+  const tree = exports.default();
   return {
+    refresh: callbacks.find((callback) => callback.toString().includes("/api/trading/runtime/status")),
+    snapshot: states.find((state) => state.value?.runtime),
+    mode: states.find((state) => state.value === dataMode),
+    connected: states[3],
+    tree,
     load: callbacks.find((callback) => callback.toString().includes("/api/trading/market/candles?")),
     effect: effects.find((effect) => effect.dependencies[0] === "1m").callback,
     market: states.find((state) => state.value?.candles),
@@ -111,6 +118,104 @@ async function mountMarketRequests({ runtime = {}, configuration, history = [] }
     pending, timers, sources,
   };
 }
+
+function findElement(tree, predicate) {
+  if (!tree || typeof tree !== "object") return undefined;
+  if (predicate(tree)) return tree;
+  for (const child of [tree.props?.children].flat(Infinity)) {
+    const match = findElement(child, predicate);
+    if (match) return match;
+  }
+}
+
+function resolveSnapshot(pending, marker) {
+  const values = [
+    { executionMode: "LIVE", marker }, { accepted: marker }, [{ id: `strategy-${marker}` }],
+    [{ id: "trading", running: true, loops: [] }], [{ runId: `run-${marker}` }],
+  ];
+  pending.forEach((item, index) => item.resolve(Response.json(values[index])));
+}
+
+test("a partial initial refresh never labels demo balances or automation as live", async () => {
+  const harness = await mountMarketRequests();
+  const previous = harness.snapshot.value;
+  const loading = harness.refresh(true);
+  harness.pending[0].resolve(Response.json({ executionMode: "LIVE" }));
+  harness.pending.slice(1).forEach((item) => item.reject(new Error("offline")));
+  await loading;
+  assert.equal(harness.mode.value, "demo");
+  assert.equal(harness.connected.value, false);
+  assert.equal(harness.snapshot.value, previous);
+});
+
+test("an outage keeps the last real snapshot and never returns live controls to demo mode", async () => {
+  const harness = await mountMarketRequests();
+  const loading = harness.refresh(true);
+  resolveSnapshot(harness.pending, 1);
+  await loading;
+  const previous = harness.snapshot.value;
+  assert.equal(harness.mode.value, "live");
+  assert.equal(harness.connected.value, true);
+  const retry = harness.refresh(true);
+  harness.pending.slice(5).forEach((item) => item.reject(new Error("offline")));
+  await retry;
+  assert.equal(harness.snapshot.value, previous);
+  assert.equal(harness.mode.value, "live");
+  assert.equal(harness.connected.value, false);
+});
+
+test("a late refresh cannot overwrite newer runtime state", async () => {
+  const harness = await mountMarketRequests();
+  const old = harness.refresh(true);
+  const next = harness.refresh(true);
+  assert.equal(harness.pending[0].init.signal.aborted, true);
+  resolveSnapshot(harness.pending.slice(5), 2);
+  await next;
+  resolveSnapshot(harness.pending.slice(0, 5), 1);
+  await old;
+  assert.equal(harness.snapshot.value.runtime.marker, 2);
+});
+
+test("a refresh started before a stop response cannot restore the old running state", async () => {
+  const harness = await mountMarketRequests({ dataMode: "live", connected: true });
+  const loading = harness.refresh(true);
+  const toggle = findElement(harness.tree, (node) => node.props?.["aria-label"] === "停止交易自动化");
+  const stopping = toggle.props.onClick();
+  assert.match(harness.pending[5].url, /\/api\/automation\/tasks\/trading\/stop$/);
+  harness.pending[5].resolve(Response.json({ id: "trading", running: false, loops: [] }));
+  await stopping;
+  resolveSnapshot(harness.pending.slice(0, 5), 1);
+  await loading;
+  assert.equal(harness.snapshot.value.tasks[0].running, false);
+});
+
+test("stopping during a disconnection still submits a real command", async () => {
+  const harness = await mountMarketRequests({ dataMode: "live", connected: false });
+  const toggle = findElement(harness.tree, (node) => node.props?.["aria-label"] === "停止交易自动化");
+  assert.equal(toggle.props.disabled, false);
+  const stopping = toggle.props.onClick();
+  assert.match(harness.pending[0].url, /\/trading\/stop$/);
+  harness.pending[0].resolve(Response.json({ id: "trading", running: false, loops: [] }));
+  await stopping;
+  assert.equal(harness.snapshot.value.tasks[0].running, false);
+});
+
+test("a disconnected snapshot cannot start trading automation", async () => {
+  const harness = await mountMarketRequests({ dataMode: "live", connected: false, tasks: [{ id: "trading", running: false, loops: [] }] });
+  const toggle = findElement(harness.tree, (node) => node.props?.["aria-label"] === "启动交易自动化");
+  assert.equal(toggle.props.disabled, true);
+  await toggle.props.onClick();
+  assert.equal(harness.pending.length, 0);
+  assert.equal(harness.snapshot.value.tasks[0].running, false);
+});
+
+test("missing trading automation cannot fall back to starting another task", async () => {
+  const harness = await mountMarketRequests({ dataMode: "live", connected: true, tasks: [{ id: "x-posting", running: false, loops: [] }] });
+  const toggle = findElement(harness.tree, (node) => node.props?.["aria-label"] === "启动交易自动化");
+  assert.equal(toggle.props.disabled, true);
+  await toggle.props.onClick();
+  assert.equal(harness.pending.length, 0);
+});
 
 test("late candle requests cannot replace a newer interval", async () => {
   const harness = await mountMarketRequests();

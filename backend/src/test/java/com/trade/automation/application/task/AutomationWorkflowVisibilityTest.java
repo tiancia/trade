@@ -2,6 +2,8 @@ package com.trade.automation.application.task;
 
 import com.trade.automation.domain.model.AutomationLoopDefinition;
 import com.trade.automation.domain.model.AutomationTaskDefinition;
+import com.trade.polymarket.application.service.AiPolymarketService;
+import com.trade.polymarket.interfaces.scheduler.AiPolymarketScheduler;
 import com.trade.story.application.service.AiStoryService;
 import com.trade.story.domain.model.StoryGenerationResult;
 import com.trade.story.interfaces.scheduler.AiStoryScheduler;
@@ -45,6 +47,12 @@ class AutomationWorkflowVisibilityTest {
         verifyRun("weibo", new WeiboScheduler(weibo)::publish, false);
         when(weibo.runPublishing()).thenReturn(true);
         verifyRun("weibo", new WeiboScheduler(weibo)::publish, true);
+
+        AiPolymarketService polymarket = mock(AiPolymarketService.class);
+        when(polymarket.runDecision()).thenThrow(new IllegalStateException("order rejected"));
+        verifyRun("polymarket", new AiPolymarketScheduler(polymarket)::runScheduledDecision, false);
+        doReturn(false).when(polymarket).runDecision();
+        verifyRun("polymarket", new AiPolymarketScheduler(polymarket)::runScheduledDecision, true);
     }
 
     private void verifyRun(String task, Runnable action, boolean successful) {

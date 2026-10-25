@@ -1,6 +1,27 @@
 const EPOCH_MILLISECONDS_THRESHOLD = 100_000_000_000;
 
 /**
+ * A partial refresh must never promote demo funds, tasks or strategies to live data.
+ * Once connected, an outage preserves the last real snapshot and its live controls.
+ * @template T
+ * @param {{snapshot: T, dataMode: "live" | "demo"}} previous
+ * @param {PromiseSettledResult<unknown>[]} endpoints
+ * @returns {{snapshot: T, dataMode: "live" | "demo", connected: boolean, successful: number}}
+ */
+export function reconcileCockpitRefresh(previous, endpoints) {
+  const keys = ["runtime", "events", "strategies", "tasks", "backtests"];
+  const successful = endpoints.filter((item) => item.status === "fulfilled").length;
+  if (endpoints.length !== keys.length || successful !== keys.length) {
+    return { ...previous, connected: false, successful };
+  }
+  const snapshot = /** @type {T} */ (Object.fromEntries(keys.map((key, index) => {
+    const item = endpoints[index];
+    return [key, item.status === "fulfilled" ? item.value : undefined];
+  })));
+  return { snapshot, dataMode: "live", connected: true, successful };
+}
+
+/**
  * A connected stream is healthy only while current-period candles keep arriving.
  * @param {{ts: string}[]} candles
  * @param {string} bar

@@ -30,6 +30,8 @@
 
 两者位于 `automation/application/task`；HTTP 入口在 `interfaces/web`，任务定义和快照在 `domain/model`，调度器装配在 `infrastructure/config`。
 
+普通业务任务使用 `automationTaskScheduler` 的四个线程。交易任务和数据库租约心跳使用独立的 `tradingTaskScheduler` 两个线程，避免其他域的同步 AI 请求占满调度池后延迟交易和租约续约；交易循环仍共用同一任务互斥锁。
+
 同一任务内的多个循环共用互斥锁，避免同时修改同一外部账户或本地状态；每次执行完成后按 fixed delay 自调度。业务逻辑必须留在所属域，不能迁入 automation。
 
 Story、Weibo、X 的调度入口会把内部已落库的生成、审核投递和发布失败反馈给 manager；批量执行仍隔离单条失败，但整轮 `lastRunSuccessful=false`。Story 的降级产物保留并标记 `degraded`，该轮同样报失败。禁用、配额或幂等预留未获准、无待处理项属于正常跳过；互斥锁忙只计 skipped，不覆盖上次运行结果。所有已登记循环都提供按 task/loop 标记的运行计数、耗时和最近结果 Micrometer 指标。
@@ -99,7 +101,7 @@ REST / WebSocket market data
 
 真实订单可靠性依赖持久化幂等键、确定性 `clOrdId`、状态机、乐观锁、状态历史和累计成交账本。仓位、成本、风险状态与资金级停止状态以 MySQL 为权威；`data/trading-state.json` 只保存策略选择、策略画像和有界决策记忆。事件管道依赖固定容量、显式队满策略、handler 异常隔离、指标与优雅排空。修改这些路径前应先读对应测试。
 
-含糊的下单确认保持 `SUBMIT_UNKNOWN` 并阻断后续新单。结算校验累计成交量、均价及单调性；有未决订单时暂缓账户余额核对，现货账户余额不替代成交账本记仓。紧急停止的定时器与各笔撤单独立尽力执行，错误保留供人工处理。
+含糊的下单确认保持 `SUBMIT_UNKNOWN` 并阻断后续新单。结算校验累计成交量、均价及单调性；累计成交量相等或增加但净数量或成本倒退时，结算事务失败并保留旧账本，订单继续待对账。有未决订单时暂缓账户余额核对，现货账户余额不替代成交账本记仓；余额响应必须有账户和明细，缺失数据不当作零余额。LIVE 恢复必须收到明确的挂单列表，缺失列表不当作没有挂单。紧急停止的定时器与各笔撤单独立尽力执行，错误保留供人工处理。
 
 页面参数编辑经 `StrategyConfigurationController → TradingStrategyRegistry` 保存 MySQL 当前配置及不可变版本历史；新决策冻结所用配置版本。`application/paper` 编排独立的 PAPER 初始资金、批次、成交与估值账本，`domain/paper` 负责现金、成本和盈亏演进。具体口径与接口见 [策略参数版本与模拟资金](TRADING_SIMULATION.md)。
 
@@ -118,6 +120,8 @@ Polymarket 市场资格规则在 `domain/rule/PolymarketMarketFilters`，参数�
 `PolymarketOrderPolicy` 负责执行阈值和数量计算，解析后的业务有效性由 `PolymarketDecisionRules` 校验。故事的分节、篇幅、续写、连续性和伏笔回收位于 `domain/rule/StoryDraftPolicy`，AI 调用循环留在应用服务。
 
 Polymarket Python 桥接使用请求冻结的订单类型，不允许 SDK 兼容分支丢弃订单或签名类型；不完整的 API 凭据直接拒绝。Java 子进程的 stdin、运行和输出排空共用超时，每个输出流最多接收 1 MiB，失败异常不包含原始 SDK 输出。凭据辅助工具需显式选择联网及显示秘密，详见 [工具说明](../../tools/polymarket/README.md)。
+
+Polymarket LIVE 决策在开始采集和 AI 调用前必须创建持久化审计记录；BUY 在执行前还须以独立事务预留 `polymarket_execution_guard` 的单账户门禁。超时、确认不完整、进程退出或执行审计失败都会保留未决预留，阻断同数据库下所有实例的后续真实下单，重启和等待均不自动释放。正常结果及审计均提交后才释放，未决恢复按[运维手册](OPERATIONS.md)人工核实。子进程正常退出后仍校验 CLOB 的接受标志、错误、订单 ID 和状态；`PLACED` 表示接受，不代表成交。采集、AI 或执行异常在保存审计后传播到任务管理器，计为失败；禁用、互斥锁忙和没有候选市场仍属于正常跳过。
 
 共享 AI 审计接口在 `ai/application/port`，记录在 `ai/domain/model`，MyBatis 实现在 `ai/infrastructure/persistence`。
 

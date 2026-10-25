@@ -29,8 +29,16 @@ public final class PositionAccounting {
     }
     public static Delta cumulativeDelta(BigDecimal observedFill, BigDecimal observedPosition, BigDecimal observedCost,
                                         BigDecimal appliedFill, BigDecimal appliedPosition, BigDecimal appliedCost) {
-        if (observedFill.compareTo(appliedFill) < 0 || observedPosition.compareTo(appliedPosition) < 0
-                || observedCost.compareTo(appliedCost) < 0) { return new Delta(false, BigDecimal.ZERO, BigDecimal.ZERO); }
+        if (observedFill.compareTo(appliedFill) < 0) {
+            return new Delta(false, BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+        // A stale fill observation can be ignored. An equal/newer cumulative
+        // fill with less owned quantity or cost is inconsistent: silently
+        // ignoring it would let the surrounding settlement close the order
+        // without applying its final capital change.
+        if (observedPosition.compareTo(appliedPosition) < 0 || observedCost.compareTo(appliedCost) < 0) {
+            throw new IllegalStateException("Exchange cumulative position or cost regressed without a stale fill quantity");
+        }
         BigDecimal quantity = observedPosition.subtract(appliedPosition);
         BigDecimal cost = observedCost.subtract(appliedCost);
         return new Delta(quantity.signum() != 0 || cost.signum() != 0, quantity, cost);

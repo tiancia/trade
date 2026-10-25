@@ -1,5 +1,7 @@
 package com.trade.polymarket.infrastructure.broker;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.client.polymarket.PolymarketClientProperties;
 import com.trade.common.support.TradingMath;
@@ -90,6 +92,7 @@ public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
                 throw new RuntimeException("Polymarket order script failed, exitCode="
                         + output.exitCode());
             }
+            assertOrderAccepted(stdout);
             log.info(
                     "Polymarket order script finished: exitCode=0, stdoutChars={}, stderrChars={}",
                     stdout.length(),
@@ -101,6 +104,33 @@ public class PolymarketPythonOrderRunner implements PolymarketOrderRunner {
             throw new RuntimeException("Polymarket order script interrupted", e);
         } catch (Exception e) {
             throw new RuntimeException("Run Polymarket order script error", e);
+        }
+    }
+
+    void assertOrderAccepted(String response) {
+        final JsonNode result;
+        try {
+            result = objectMapper.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                    .readTree(response);
+        } catch (Exception e) {
+            // Parser exceptions can contain provider output; keep it out of the cause chain.
+            throw new IllegalStateException("Polymarket order acknowledgement is invalid; verify the order before retrying");
+        }
+        if (result == null || !result.isObject()) {
+            throw new IllegalStateException("Polymarket order acknowledgement is missing; verify the order before retrying");
+        }
+        JsonNode success = result.path("success");
+        JsonNode error = result.path("errorMsg");
+        boolean hasError = !error.isMissingNode() && !error.isNull()
+                && (!error.isTextual() || !error.textValue().isBlank());
+        if (!success.isBoolean() || !success.booleanValue() || hasError || result.hasNonNull("error")) {
+            throw new IllegalStateException("Polymarket did not confirm order acceptance; verify the order before retrying");
+        }
+        JsonNode orderId = result.hasNonNull("orderID") ? result.path("orderID") : result.path("orderId");
+        JsonNode status = result.path("status");
+        if (!orderId.isTextual() || orderId.textValue().isBlank() || !status.isTextual()
+                || !List.of("live", "matched", "delayed", "unmatched").contains(status.textValue())) {
+            throw new IllegalStateException("Polymarket order acknowledgement is incomplete; verify the order before retrying");
         }
     }
 

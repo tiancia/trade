@@ -23,17 +23,49 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.argThat;
 
 class FundSafetyServiceTest {
+    @Test
+    void missingPendingOrderDataCannotAuthorizeLiveResume() {
+        TradingProperties properties = new TradingProperties();
+        properties.setExecutionMode(ExecutionMode.LIVE);
+        FundSafetyRepository repository = mock(FundSafetyRepository.class);
+        TradingOrderRepository orders = mock(TradingOrderRepository.class);
+        TradingStateRepository state = mock(TradingStateRepository.class);
+        OkxApi okx = mock(OkxApi.class);
+        Instant reconciledAt = Instant.now();
+        when(repository.getOrCreate("live")).thenReturn(new FundSafetyState()
+                .setStatus(FundSafetyStatus.HALTED).setVersion(4)
+                .setHaltedAt(reconciledAt.minusSeconds(60)));
+        when(okx.getPendingOrders(any())).thenReturn(OkxResponse.success(null));
+        when(orders.findReconciliationCandidates(anyString(), anyInt())).thenReturn(List.of());
+        when(state.getState()).thenReturn(new TradingState()
+                .setPositionLastReconciledAt(reconciledAt.toString())
+                .setRiskState(new TradingRiskState().setLastReconciliationAt(reconciledAt.toString())));
+        when(okx.cancelAllAfter(any())).thenReturn(OkxResponse.success(List.of()));
+        FundSafetyService service = new FundSafetyService(repository, orders, state, okx,
+                properties, new SimpleMeterRegistry());
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> service.resume(4, "operator checked", "RESUME_LIVE_TRADING"));
+
+        assertTrue(error.getMessage().contains("no data"));
+        verify(repository, never()).resume(anyString(), anyLong(), anyString(), any());
+        verify(okx, never()).cancelAllAfter(any());
+    }
+
     @Test
     void emergencyCancellationContinuesAfterTimerAndIndividualOrderFailures() {
         TradingProperties properties = new TradingProperties();

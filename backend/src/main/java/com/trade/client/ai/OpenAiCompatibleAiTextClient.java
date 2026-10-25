@@ -32,7 +32,11 @@ public class OpenAiCompatibleAiTextClient implements AiTextClient {
     private final AiClientProperties properties;
 
     public OpenAiCompatibleAiTextClient(AiClientProperties properties) {
-        this.httpClient = buildHttpClient(properties);
+        this(properties, buildHttpClient(properties));
+    }
+
+    OpenAiCompatibleAiTextClient(AiClientProperties properties, HttpClient httpClient) {
+        this.httpClient = httpClient;
         this.properties = properties;
     }
 
@@ -46,19 +50,16 @@ public class OpenAiCompatibleAiTextClient implements AiTextClient {
         }
 
         String rawResponse = postRaw(requestBody);
-        log.info("OpenAI-compatible raw response: {}", rawResponse);
 
         try {
             return extractAssistantContent(rawResponse);
         } catch (AiResponseParseException e) {
             throw e;
-        } catch (RuntimeException e) {
-            throw new AiResponseParseException(e.getMessage(), rawResponse, e);
         } catch (Exception e) {
+            // Parser exception messages can contain response fragments; retain raw data only for the audit sink.
             throw new AiResponseParseException(
-                    "Parse OpenAI-compatible response error: " + e.getMessage(),
-                    rawResponse,
-                    e
+                    "Parse OpenAI-compatible response error",
+                    rawResponse
             );
         }
     }
@@ -85,9 +86,9 @@ public class OpenAiCompatibleAiTextClient implements AiTextClient {
 
         int statusCode = response.statusCode();
         if (statusCode < 200 || statusCode >= 300) {
-            log.warn("OpenAI-compatible HTTP error response: status={}, body={}", statusCode, response.body());
+            log.warn("OpenAI-compatible HTTP request failed: status={}", statusCode);
             throw new RuntimeException(
-                    "OpenAI-compatible HTTP error, status=" + statusCode + ", body=" + response.body()
+                    "OpenAI-compatible HTTP error, status=" + statusCode
             );
         }
         return response.body();

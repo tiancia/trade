@@ -6,14 +6,21 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class PositionAccountingTest {
     @Test
-    void duplicateAndRegressingCumulativeSnapshotsHaveNoDelta() {
+    void duplicateAndStaleCumulativeSnapshotsHaveNoDelta() {
         assertFalse(PositionAccounting.cumulativeDelta(n("2"), n("1.98"), n("200"), n("2"), n("1.98"), n("200")).changed());
         assertFalse(PositionAccounting.cumulativeDelta(n("1"), n("0.99"), n("100"), n("2"), n("1.98"), n("200")).changed());
-        assertFalse(PositionAccounting.cumulativeDelta(n("3"), n("2.97"), n("190"), n("2"), n("1.98"), n("200")).changed());
         var delta = PositionAccounting.cumulativeDelta(n("3"), n("2.97"), n("330"), n("2"), n("1.98"), n("200"));
         assertTrue(delta.changed());
         assertEquals(n("0.99"), delta.quantity());
         assertEquals(n("130"), delta.quoteCost());
+    }
+
+    @Test
+    void newerFillCannotSilentlyDiscardRegressingPositionOrCost() {
+        assertThrows(IllegalStateException.class, () -> PositionAccounting.cumulativeDelta(
+                n("3"), n("2.97"), n("190"), n("2"), n("1.98"), n("200")));
+        assertThrows(IllegalStateException.class, () -> PositionAccounting.cumulativeDelta(
+                n("3"), n("1.97"), n("300"), n("2"), n("1.98"), n("200")));
     }
 
     @Test
