@@ -7,13 +7,18 @@ WORKDIR /workspace/backend
 COPY backend/.mvn/ .mvn/
 COPY backend/mvnw backend/pom.xml ./
 RUN sed -i 's/\r$//' mvnw && chmod +x mvnw
+# Keep Maven dependencies in an ordinary build layer. External BuildKit caches
+# retain this layer across fresh runners; cache mounts alone are not exported.
+RUN ./mvnw -B -ntp dependency:go-offline
 COPY backend/src/ src/
 # The existing full test suite also validates these infrastructure files.
 COPY backend/infrastructure/ infrastructure/
 COPY compose.yaml /workspace/compose.yaml
 # Package runs the offline provider tests; the opt-in exchange test stays off.
-RUN --mount=type=cache,target=/root/.m2 \
-    RUN_INTEGRATION_TESTS=false ./mvnw -B -ntp clean package
+RUN RUN_INTEGRATION_TESTS=false ./mvnw -B -ntp clean package
+# Rename before extraction so the slim executable jar keeps the runtime path.
+RUN cp target/trade-0.0.1-SNAPSHOT.jar app.jar \
+    && java -Djarmode=tools -jar app.jar extract --layers --destination extracted
 
 FROM ${RUNTIME_JAVA_IMAGE} AS runtime
 RUN apt-get update \
@@ -35,7 +40,12 @@ ENV PATH="/opt/polymarket-venv/bin:${PATH}" \
 COPY --chown=10001:10001 tools/polymarket/polymarket_place_order.py /app/tools/polymarket/polymarket_place_order.py
 # Imports and signature inspection only: constructing a client or placing an order is forbidden here.
 RUN python -c "import runpy; bridge = runpy.run_path('/app/tools/polymarket/polymarket_place_order.py'); bridge['load_client_symbols']()"
-COPY --from=build --chown=10001:10001 /workspace/backend/target/trade-0.0.1-SNAPSHOT.jar /app/app.jar
+# Stable dependencies are separate from application code, so a code-only change
+# does not make the server download another complete executable archive.
+COPY --from=build --chown=10001:10001 /workspace/backend/extracted/dependencies/ ./
+COPY --from=build --chown=10001:10001 /workspace/backend/extracted/spring-boot-loader/ ./
+COPY --from=build --chown=10001:10001 /workspace/backend/extracted/snapshot-dependencies/ ./
+COPY --from=build --chown=10001:10001 /workspace/backend/extracted/application/ ./
 USER 10001:10001
 EXPOSE 8080
 HEALTHCHECK --interval=20s --timeout=6s --start-period=90s --retries=6 \

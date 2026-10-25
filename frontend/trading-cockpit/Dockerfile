@@ -15,8 +15,11 @@ FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production \
     PORT=3000
 WORKDIR /app
-# Standalone output includes the server, assets, and required runtime packages.
-COPY --from=build --chown=node:node /app/dist/standalone ./
+# Keep stable runtime packages out of the layer changed by application builds.
+COPY --from=build --chown=node:node /app/dist/standalone/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/dist/standalone/server.js /app/dist/standalone/package.json ./
+COPY --from=build --chown=node:node /app/dist/standalone/public ./public
+COPY --from=build --chown=node:node /app/dist/standalone/dist ./dist
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

@@ -3,9 +3,9 @@ set -euo pipefail
 umask 077
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
-CONFIG_FILE="$ROOT_DIR/deploy/.env"
+CONFIG_FILE=''
 RELEASE_FILE=''
-RECORD_DIR="$ROOT_DIR/deploy/releases"
+RECORD_DIR=''
 ACTION=''
 NO_PULL=false
 TARGETS=()
@@ -15,6 +15,8 @@ ACCESS_MODE=${DEPLOY_ACCESS_MODE:-private}
 manifest_tmp=''
 record_tmp=''
 mutation_started=false
+phase=''
+phase_started_at=0
 
 usage() {
   cat <<'EOF'
@@ -28,6 +30,7 @@ Commands:
   rollback   Deploy deploy/releases/previous.env (or an explicit --release)
 
 Options:
+  --root DIR      Existing deployment root; defaults to this script's repository
   --config FILE   Runtime secrets/config; defaults to deploy/.env
   --release FILE  Non-secret image manifest; deploy/validate: deploy/release.env
   --access MODE   private (default), or public with compose.public.yaml
@@ -55,18 +58,35 @@ EOF
 
 fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 require_value() { [[ $# -ge 2 && -n $2 && $2 != --* ]] || fail "$1 requires a value"; }
+phase_start() {
+  phase=$1
+  phase_started_at=$SECONDS
+  printf 'DEPLOY_STAGE stage=%s event=start elapsed_seconds=0 exit_code=0\n' "$phase"
+}
+phase_complete() {
+  printf 'DEPLOY_STAGE stage=%s event=complete elapsed_seconds=%s exit_code=0\n' \
+    "$phase" "$((SECONDS - phase_started_at))"
+  phase=''
+}
 cleanup() {
-  status=$?
-  [[ -z $manifest_tmp ]] || rm -f -- "$manifest_tmp"
-  [[ -z $record_tmp ]] || rm -f -- "$record_tmp"
-  if ((status != 0)) && [[ $mutation_started == true ]]; then
-    printf 'Deployment failed. Containers may be stopped or partially updated. Last successful image records were retained; inspect the stack, then retry or rollback.\n' >&2
+  local status=$?
+  trap - EXIT
+  if ((status != 0)) && [[ -n $phase ]]; then
+    printf 'DEPLOY_STAGE stage=%s event=failed elapsed_seconds=%s exit_code=%s\n' \
+      "$phase" "$((SECONDS - phase_started_at))" "$status" >&2 || true
   fi
+  [[ -z $manifest_tmp ]] || rm -f -- "$manifest_tmp" || true
+  [[ -z $record_tmp ]] || rm -f -- "$record_tmp" || true
+  if ((status != 0)) && [[ $mutation_started == true ]]; then
+    printf 'Deployment failed. Containers may be stopped or partially updated. Last successful image records were retained; inspect the stack, then retry or rollback.\n' >&2 || true
+  fi
+  exit "$status"
 }
 trap cleanup EXIT
 
 while (($#)); do
   case "$1" in
+    --root) require_value "$@"; ROOT_DIR=$2; shift 2 ;;
     --config) require_value "$@"; CONFIG_FILE=$2; shift 2 ;;
     --release) require_value "$@"; RELEASE_FILE=$2; shift 2 ;;
     --access) require_value "$@"; ACCESS_MODE=$2; shift 2 ;;
@@ -80,7 +100,15 @@ while (($#)); do
   esac
 done
 
+phase_start validation
 [[ -n $ACTION ]] || { usage >&2; exit 1; }
+[[ -d $ROOT_DIR ]] || fail 'Deployment root directory does not exist'
+ROOT_DIR=$(cd -- "$ROOT_DIR" && pwd -P)
+[[ $ROOT_DIR != / ]] || fail 'Deployment root must not be the filesystem root'
+[[ -d $ROOT_DIR/deploy ]] || fail 'deploy directory not found at deployment root'
+[[ -f $ROOT_DIR/compose.prod.yaml ]] || fail 'compose.prod.yaml not found at deployment root'
+CONFIG_FILE=${CONFIG_FILE:-"$ROOT_DIR/deploy/.env"}
+RECORD_DIR="$ROOT_DIR/deploy/releases"
 case "$ACCESS_MODE" in private|public) ;; *) fail 'Access mode must be private or public' ;; esac
 [[ $WAIT_TIMEOUT =~ ^[1-9][0-9]*$ ]] || fail 'DEPLOY_WAIT_TIMEOUT must be a positive number of seconds'
 for service in "${TARGETS[@]}"; do
@@ -100,7 +128,6 @@ if [[ -z $RELEASE_FILE ]]; then
 fi
 [[ -f $CONFIG_FILE ]] || fail "Runtime configuration not found: $CONFIG_FILE"
 [[ -f $RELEASE_FILE ]] || fail "Image manifest not found: $RELEASE_FILE"
-[[ -f $ROOT_DIR/compose.prod.yaml ]] || fail 'compose.prod.yaml not found at repository root'
 if [[ $ACCESS_MODE == public ]]; then
   [[ -f $ROOT_DIR/compose.public.yaml ]] || fail 'compose.public.yaml not found at repository root'
 fi
@@ -183,6 +210,7 @@ done
 compose_run() { env "${image_environment[@]}" "${compose[@]}" "$@"; }
 
 compose_run config -q
+phase_complete
 if [[ $ACTION == validate ]]; then
   printf 'Compose configuration and image manifest are valid (%s access). No containers changed.\n' "$ACCESS_MODE"
   exit 0
@@ -194,14 +222,17 @@ if [[ $FULL_DEPLOY == true ]]; then
 fi
 # Complete every pull/image check before stopping or changing a container.
 if [[ $NO_PULL == true ]]; then
+  phase_start local_image_check
   image_list=$(compose_run config --images "${pull_targets[@]}")
   [[ -n $image_list ]] || fail 'Compose returned no required images'
   while IFS= read -r image; do
     [[ -z $image ]] || docker image inspect "$image" >/dev/null
   done <<< "$image_list"
 else
+  phase_start image_pull
   compose_run pull "${pull_targets[@]}"
 fi
+phase_complete
 
 if ((${#current[@]})); then
   record_tmp=$(mktemp "$RECORD_DIR/.record.XXXXXX")
@@ -219,13 +250,20 @@ record_tmp=''
 
 mutation_started=true
 if [[ $FULL_DEPLOY == true ]]; then
+  phase_start dependencies_start
   compose_run up -d --pull never --no-recreate --wait --wait-timeout "$WAIT_TIMEOUT" mysql redis
+  phase_complete
 fi
+phase_start container_stop
 compose_run stop "${TARGETS[@]}"
+phase_complete
 # Recreate selected applications so bind-mounted files replaced atomically on
 # the host (SSH keys, certificates, gateway template) bind to their new inode.
+phase_start container_start_and_health
 compose_run up -d --pull never --no-deps --force-recreate --wait --wait-timeout "$WAIT_TIMEOUT" "${TARGETS[@]}"
+phase_complete
 
+phase_start release_record
 record_tmp=$(mktemp "$RECORD_DIR/.record.XXXXXX")
 write_manifest "$record_tmp" activated
 mv -f -- "$record_tmp" "$RECORD_DIR/current.env"
@@ -235,5 +273,6 @@ write_manifest "$record_tmp" activated
 mv -f -- "$record_tmp" "$ROOT_DIR/deploy/release.env"
 record_tmp=''
 mutation_started=false
+phase_complete
 printf '%s succeeded for: %s\n' "$ACTION" "${TARGETS[*]}"
 printf 'Successful image record: %s/current.env\n' "$RECORD_DIR"

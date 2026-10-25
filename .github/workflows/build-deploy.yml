@@ -180,13 +180,58 @@ jobs:
           : "${TCR_PASSWORD:?Missing TCR_PASSWORD}"
           printf '%s\n' "$TCR_PASSWORD" | docker login "$REGISTRY_HOST" --username "$TCR_USERNAME" --password-stdin
 
+      - name: Set up cached Docker builder
+        if: inputs.build
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Restore backend build layers
+        if: inputs.build && contains(env.TARGET_SERVICES, 'backend')
+        id: cache-backend
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/trade-build-cache/backend
+          key: ${{ runner.os }}-trade-buildkit-v1-backend-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-trade-buildkit-v1-backend-
+
+      - name: Restore cockpit build layers
+        if: inputs.build && contains(env.TARGET_SERVICES, 'cockpit')
+        id: cache-cockpit
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/trade-build-cache/cockpit
+          key: ${{ runner.os }}-trade-buildkit-v1-cockpit-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-trade-buildkit-v1-cockpit-
+
+      - name: Restore x-console build layers
+        if: inputs.build && contains(env.TARGET_SERVICES, 'x-console')
+        id: cache-x-console
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/trade-build-cache/x-console
+          key: ${{ runner.os }}-trade-buildkit-v1-x-console-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-trade-buildkit-v1-x-console-
+
+      - name: Restore egress build layers
+        if: inputs.build && contains(env.TARGET_SERVICES, 'egress')
+        id: cache-egress
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/trade-build-cache/egress
+          key: ${{ runner.os }}-trade-buildkit-v1-egress-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-trade-buildkit-v1-egress-
+
       - name: Build and push only the selected images
         if: inputs.build
         run: |
           set -euo pipefail
           read -r -a targets <<< "$TARGET_SERVICES"
           args=(--registry "$IMAGE_REGISTRY" --tag "$IMAGE_TAG"
-            --platform linux/amd64 --output "$RELEASE_DIR/release.env" --push)
+            --platform linux/amd64 --output "$RELEASE_DIR/release.env"
+            --cache-dir "$RUNNER_TEMP/trade-build-cache" --push)
           if [[ $SERVICE != all ]]; then
             args+=(--base "$RELEASE_DIR/base-release.env")
           fi
@@ -197,6 +242,45 @@ jobs:
             cat "$RELEASE_DIR/release.env"
             printf '%s\n' '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Inspect reusable build caches
+        if: ${{ always() && inputs.build }}
+        id: cache-ready
+        run: |
+          for service in backend cockpit x-console egress; do
+            marker="$RUNNER_TEMP/trade-build-cache/.exported-$service"
+            if [[ " $TARGET_SERVICES " == *" $service "* && -f "$RUNNER_TEMP/trade-build-cache/$service/index.json" && -f "$marker" && $(cat -- "$marker") == "$IMAGE_TAG" ]]; then
+              printf '%s=true\n' "${service//-/_}" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+      - name: Save backend build layers
+        if: ${{ always() && inputs.build && steps.cache-ready.outputs.backend == 'true' && steps.cache-backend.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/trade-build-cache/backend
+          key: ${{ runner.os }}-trade-buildkit-v1-backend-${{ github.sha }}
+
+      - name: Save cockpit build layers
+        if: ${{ always() && inputs.build && steps.cache-ready.outputs.cockpit == 'true' && steps.cache-cockpit.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/trade-build-cache/cockpit
+          key: ${{ runner.os }}-trade-buildkit-v1-cockpit-${{ github.sha }}
+
+      - name: Save x-console build layers
+        if: ${{ always() && inputs.build && steps.cache-ready.outputs.x_console == 'true' && steps.cache-x-console.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/trade-build-cache/x-console
+          key: ${{ runner.os }}-trade-buildkit-v1-x-console-${{ github.sha }}
+
+      - name: Save egress build layers
+        if: ${{ always() && inputs.build && steps.cache-ready.outputs.egress == 'true' && steps.cache-egress.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/trade-build-cache/egress
+          key: ${{ runner.os }}-trade-buildkit-v1-egress-${{ github.sha }}
 
       - name: Save the complete image manifest
         if: inputs.build
@@ -301,7 +385,7 @@ jobs:
           remote_dir="$DEPLOY_ROOT/deploy/incoming/$IMAGE_TAG-deploy-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -F "$SSH_CONFIG" trade-deploy "mkdir -p '$DEPLOY_ROOT/deploy/incoming' && mkdir '$remote_dir'"
           scp -F "$SSH_CONFIG" "$RELEASE_DIR/release.env" \
-            deploy/scripts/cleanup-images.sh "trade-deploy:$remote_dir/"
+            deploy/scripts/release.sh deploy/scripts/cleanup-images.sh "trade-deploy:$remote_dir/"
           remote_script=$(cat <<'REMOTE'
           set -euo pipefail
           root=$1
@@ -325,8 +409,9 @@ jobs:
           IFS= read -r registry_user
           [[ -n $registry_user ]] || { echo 'Missing TCR username on stdin.' >&2; exit 1; }
           docker login "$registry_host" --username "$registry_user" --password-stdin
-          bash deploy/scripts/release.sh validate --release "$manifest" --access "$access"
-          DEPLOY_WAIT_TIMEOUT=300 bash deploy/scripts/release.sh deploy "${targets[@]}" --release "$manifest" --access "$access"
+          release_script="$(dirname -- "$manifest")/release.sh"
+          bash "$release_script" validate --root "$root" --release "$manifest" --access "$access"
+          DEPLOY_WAIT_TIMEOUT=300 bash "$release_script" deploy "${targets[@]}" --root "$root" --release "$manifest" --access "$access"
           echo DEPLOYMENT_OK
           # Cleanup reacquires the release lock and protects fresh success records.
           # A cleanup failure must not turn a healthy deployment into a failed one.

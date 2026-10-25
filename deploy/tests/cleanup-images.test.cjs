@@ -377,7 +377,8 @@ function runWorkflow(options = {}) {
   write(local(name + '/docker-config-path'), '');
   write(local(name + '/scratch/.keep'), '');
   write(local(name + '/server/deploy/incoming/version/release.env'), manifest());
-  write(local(name + '/server/deploy/scripts/release.sh'), [
+  write(local(name + '/server/deploy/scripts/release.sh'), '#!/usr/bin/env bash\nexit 89\n');
+  write(local(name + '/server/deploy/incoming/version/release.sh'), [
     '#!/usr/bin/env bash', 'set -euo pipefail',
     'test -f "$DOCKER_CONFIG/config.json"',
     'printf "release" >> "$WORKFLOW_AUDIT"',
@@ -477,10 +478,52 @@ test('workflow preserves exact service scope, access mode, normal pulls, and TCR
         'cleanup', '--root', result.root, '--registry', registry, '--apply',
       ]);
       assert.deepEqual(result.calls.find((call) => call[0] === 'release' && call[1] === 'deploy'), [
-        'release', 'deploy', ...targets, '--release', result.manifestPath, '--access', access,
+        'release', 'deploy', ...targets, '--root', result.root, '--release', result.manifestPath, '--access', access,
       ]);
     }
   }
+});
+
+test('workflow ships its release script and restores independent service caches before building', () => {
+  const deployScript = runnerScript('Deploy only the selected services');
+  assert.match(deployScript, /deploy\/scripts\/release\.sh deploy\/scripts\/cleanup-images\.sh/);
+  assert.match(remoteScript, /release_script="\$\(dirname -- "\$manifest"\)\/release\.sh"/);
+  assert.match(remoteScript, /bash "\$release_script" validate --root "\$root"/);
+  assert.match(remoteScript, /bash "\$release_script" deploy "\$\{targets\[@\]\}" --root "\$root"/);
+  const build = runnerScript('Build and push only the selected images');
+  assert.match(build, /--cache-dir "\$RUNNER_TEMP\/trade-build-cache"/);
+  for (const service of ['backend', 'cockpit', 'x-console', 'egress']) {
+    const restoreStart = workflowText.indexOf('- name: Restore ' + service + ' build layers');
+    const saveStart = workflowText.indexOf('- name: Save ' + service + ' build layers');
+    assert.ok(restoreStart >= 0 && restoreStart < workflowText.indexOf('- name: Build and push only the selected images'));
+    assert.ok(saveStart > restoreStart);
+    const restore = workflowText.slice(restoreStart, workflowText.indexOf('\n      - name:', restoreStart));
+    const save = workflowText.slice(saveStart, workflowText.indexOf('\n      - name:', saveStart));
+    assert.ok(restore.includes('/trade-build-cache/' + service));
+    assert.ok(restore.includes('trade-buildkit-v1-' + service + '-'));
+    assert.match(save, /always\(\)/, 'successful exports should survive later push failures');
+    assert.ok(save.includes('/trade-build-cache/' + service));
+  }
+});
+
+test('cache persistence ignores restored indexes and stale export markers', () => {
+  const name = 'cache-ready-' + (++sequence);
+  write(local(name + '/output'), '');
+  for (const service of ['backend', 'cockpit', 'x-console', 'egress']) {
+    write(local(name + '/trade-build-cache/' + service + '/index.json'), '{}');
+  }
+  write(local(name + '/trade-build-cache/.exported-cockpit'), 'old-release\n');
+  write(local(name + '/trade-build-cache/.exported-x-console'), 'current-release\n');
+  write(local(name + '/trade-build-cache/.exported-egress'), 'current-release\n');
+  const result = cp.spawnSync(bash, ['-c', runnerScript('Inspect reusable build caches')], {
+    env: { ...process.env, RUNNER_TEMP: posix(name), GITHUB_OUTPUT: posix(name + '/output'),
+      IMAGE_TAG: 'current-release', TARGET_SERVICES: 'backend cockpit x-console egress' },
+    encoding: 'utf8', timeout: 15_000,
+  });
+  if (result.error) throw result.error;
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.deepEqual(fs.readFileSync(local(name + '/output'), 'utf8').trim().split(/\r?\n/),
+    ['x_console=true', 'egress=true']);
 });
 
 function runSelection(options = {}) {
