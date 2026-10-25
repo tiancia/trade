@@ -6,7 +6,10 @@
     tags: cnb:arch:amd64
     cpus: 4
   services:
-    - docker
+    - name: docker
+      options:
+        rootlessBuildkitd:
+          enabled: true
   docker:
     # Node-local cache; a different hosted node may start with an empty cache.
     volumes:

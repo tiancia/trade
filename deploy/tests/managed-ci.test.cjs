@@ -33,6 +33,8 @@ const password = 'synthetic-password $with spaces';
 const privateKey = 'synthetic-private-key-material';
 const hostKey = 'synthetic-known-host-key-material';
 const originalDockerConfig = '{"auths":{"preserve-existing":"synthetic-existing-config"}}\n';
+const originalBuildxCurrent = '{"Name":"fixture-platform-builder","Global":true}\n';
+const originalBuildxInstance = '{"Name":"fixture-platform-builder","Driver":"remote","Nodes":[{"Endpoint":"unix:///run/platform-buildkit.sock"}]}\n';
 const put = (file, value) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, value, { mode: 0o755 });
@@ -66,6 +68,8 @@ function mockTool() {
   }));
   const imageServices = { BACKEND_IMAGE: 'backend', COCKPIT_IMAGE: 'cockpit', X_CONSOLE_IMAGE: 'x-console', EGRESS_IMAGE: 'egress' };
   const configPath = process.env.DOCKER_CONFIG || '';
+  const buildxConfig = process.env.BUILDX_CONFIG ? local(process.env.BUILDX_CONFIG) : undefined;
+  const selectedBuilder = process.env.BUILDX_BUILDER;
   if (tool === 'git') {
     record({});
     if (!args.includes('rev-parse') || args.at(-1) !== 'HEAD') reject('Only the checked-out HEAD may select a build commit');
@@ -73,7 +77,7 @@ function mockTool() {
     return;
   }
   if (tool === 'docker') {
-    record({ dockerConfig: configPath });
+    record({ dockerConfig: configPath, buildxConfig, builder: selectedBuilder });
     if (args[0] === 'login') {
       if (args[1] !== 'ccr.ccs.tencentyun.com' || !args.includes('--password-stdin') || args.includes('--password') || args.includes('-p')) {
         reject('Registry password must use stdin and the fixed TCR host');
@@ -88,13 +92,37 @@ function mockTool() {
       return;
     }
     if (args[0] === 'buildx' && args[1] === 'create') {
+      if (state.builderMode === 'platform') reject('Platform builds must not create nested BuildKit containers');
       if (!args.includes('--name') || args[args.indexOf('--driver') + 1] !== 'docker-container' || !args.includes('--use')) {
         reject('Builds need their own named BuildKit builder');
       }
       process.stdout.write('synthetic-builder\n');
       return;
     }
-    if (args[0] === 'buildx' && args[1] === 'rm' && args[2] === '--force') return;
+    if (args[0] === 'buildx' && args[1] === 'inspect') {
+      if (state.builderMode !== 'platform') reject('Only platform mode may query the existing builder');
+      if (!buildxConfig || fs.readFileSync(path.join(buildxConfig, 'current'), 'utf8') !== state.originalBuildxCurrent) {
+        reject('Platform mode lost the original builder selection metadata');
+      }
+      if (JSON.stringify(args) === JSON.stringify(['buildx', 'inspect', '--format', '{{.Name}}'])) {
+        if (configPath !== process.env.TEST_ORIGINAL_DOCKER_CONFIG) reject('Select the platform builder before changing Docker auth/context');
+        process.stdout.write((selectedBuilder || 'fixture-platform-builder') + '\n');
+        return;
+      }
+      if (JSON.stringify(args) !== JSON.stringify(['buildx', 'inspect', '--bootstrap'])) {
+        reject('Platform mode may only select then bootstrap the existing builder');
+      }
+      if (configPath === process.env.TEST_ORIGINAL_DOCKER_CONFIG) reject('Bootstrap must use temporary registry authentication');
+      if (selectedBuilder !== 'fixture-platform-builder') reject('Bootstrap lost the frozen platform builder name');
+      if (fs.existsSync(path.join(local(configPath), 'buildx'))) reject('Platform metadata must not be copied to temporary auth');
+      if (state.fail === 'bootstrap') return reject('synthetic platform bootstrap failure', 31);
+      process.stdout.write('Name: fixture-platform-builder\nDriver: remote\n');
+      return;
+    }
+    if (args[0] === 'buildx' && args[1] === 'rm' && args[2] === '--force') {
+      if (state.builderMode === 'platform') reject('Platform-owned builders must never be removed');
+      return;
+    }
     return reject('Unexpected Docker operation');
   }
   if (tool === 'build_images') {
@@ -105,7 +133,7 @@ function mockTool() {
       else targets.push(args[index]);
     }
     const previous = options.base ? parseManifest(fs.readFileSync(local(options.base), 'utf8')) : {};
-    record({ options, targets, previous, dockerConfig: configPath, builder: process.env.BUILDX_BUILDER });
+    record({ options, targets, previous, dockerConfig: configPath, builder: selectedBuilder, buildxConfig });
     if (options.registry !== state.registry || options.platform !== 'linux/amd64' || !options.push || !options['cache-dir']) {
       reject('The established build-images entry point must receive platform, persistent cache and push');
     }
@@ -184,6 +212,10 @@ function run(options = {}) {
   put(local('ssh/key'), privateKey + '\n');
   put(local('ssh/known-hosts'), hostKey + '\n');
   put(local('original-docker/config.json'), originalDockerConfig);
+  for (const directory of ['original-docker/buildx', 'platform-buildx']) {
+    put(local(directory + '/current'), originalBuildxCurrent);
+    put(local(directory + '/instances/fixture-platform-builder'), originalBuildxInstance);
+  }
   put(local('cache/preserve-cache'), 'persistent cache must survive request cleanup\n');
   put(local('scratch/.keep'), '');
   put(local('audit.jsonl'), '');
@@ -191,7 +223,8 @@ function run(options = {}) {
   put(local(output + '/release.env'), 'STALE=must-not-be-archived\n');
   put(local(output + '/preserve-other-artifact'), 'keep\n');
   put(local('state.json'), JSON.stringify({ sha: actualSha, username, password, privateKey, hostKey, registry,
-    baseline: options.baseline || serialize(baseline()), fail: options.fail }));
+    baseline: options.baseline || serialize(baseline()), fail: options.fail,
+    builderMode: options.builderMode || 'isolated', originalBuildxCurrent }));
   const env = {
     ...process.env, PATH: process.env.PATH,
     TEST_NODE: nodePath, TEST_MOCK: path.join(root, 'mock.cjs'), TEST_BIN: unixRoot + '/bin',
@@ -208,6 +241,14 @@ function run(options = {}) {
     IMAGE_REGISTRY: registry, GITHUB_ACTIONS: 'false', GIT_COMMIT: 'c'.repeat(40), SOURCE_SHA: 'd'.repeat(40),
     ...options.env,
   };
+  if (!Object.hasOwn(options.env || {}, 'CI_BUILDER_MODE')) {
+    if (options.builderMode) env.CI_BUILDER_MODE = options.builderMode;
+    else delete env.CI_BUILDER_MODE;
+  }
+  delete env.BUILDX_CONFIG;
+  delete env.BUILDX_BUILDER;
+  if (options.explicitBuildx) env.BUILDX_CONFIG = unix('platform-buildx');
+  if (options.platformBuilder) env.BUILDX_BUILDER = options.platformBuilder;
   if (!options.defaultOutput) env.OUTPUT_DIR = unix(output);
   else delete env.OUTPUT_DIR;
   if (options.defaults) { delete env.BUILD_REQUESTED; delete env.DEPLOY_REQUESTED; }
@@ -224,6 +265,10 @@ function run(options = {}) {
   assert.ok(!diagnostic.includes(username), 'Registry user must not be printed to CI logs');
   assert.deepEqual(fs.readdirSync(local('scratch')), ['.keep'], 'Temporary registry and SSH data must be removed on every exit');
   assert.equal(fs.readFileSync(local('original-docker/config.json'), 'utf8'), originalDockerConfig);
+  for (const directory of ['original-docker/buildx', 'platform-buildx']) {
+    assert.equal(fs.readFileSync(local(directory + '/current'), 'utf8'), originalBuildxCurrent);
+    assert.equal(fs.readFileSync(local(directory + '/instances/fixture-platform-builder'), 'utf8'), originalBuildxInstance);
+  }
   assert.equal(fs.readFileSync(local('ssh/key'), 'utf8'), privateKey + '\n');
   assert.equal(fs.readFileSync(local('ssh/known-hosts'), 'utf8'), hostKey + '\n');
   assert.equal(fs.readFileSync(local('cache/preserve-cache'), 'utf8'), 'persistent cache must survive request cleanup\n');
@@ -271,6 +316,57 @@ test('all build-only works with default flags and no production SSH credentials'
   assert.equal(build.options.base, undefined);
   assert.ok(!result.calls.some((call) => ['ssh', 'scp'].includes(call.tool)));
   for (const [key, service] of Object.entries(services)) assert.equal(result.artifact[key], registry + '/' + service + ':' + result.artifact.RELEASE_VERSION);
+});
+
+test('platform mode preserves default builder metadata while separating temporary registry authentication', () => {
+  const result = run({ service: 'all', noSSH: true, builderMode: 'platform' });
+  assert.equal(result.status, 0, result.diagnostic);
+  const docker = result.calls.filter((call) => call.tool === 'docker');
+  assert.deepEqual(docker.map((call) => call.args.slice(0, 2)), [
+    ['buildx', 'inspect'], ['login', 'ccr.ccs.tencentyun.com'], ['buildx', 'inspect'],
+  ]);
+  const selection = docker[0];
+  assert.deepEqual(selection.args, ['buildx', 'inspect', '--format', '{{.Name}}']);
+  assert.equal(path.normalize(selection.dockerConfig), path.normalize(result.local('original-docker')));
+  assert.equal(selection.builder, undefined, 'the original implicit selection must be queried in its own context');
+  const inspect = docker.at(-1);
+  const build = result.calls.find((call) => call.tool === 'build_images');
+  assert.equal(inspect.buildxConfig, result.local('original-docker/buildx'));
+  assert.equal(build.buildxConfig, result.local('original-docker/buildx'));
+  assert.equal(inspect.builder, 'fixture-platform-builder', 'bootstrap must retain the exact selected name after auth changes');
+  assert.equal(build.builder, 'fixture-platform-builder');
+  assert.notEqual(path.normalize(build.dockerConfig), path.normalize(result.local('original-docker')));
+  assert.equal(build.dockerConfig, inspect.dockerConfig);
+  assert.ok(result.artifact);
+});
+
+test('platform mode keeps an explicit BUILDX_CONFIG and BUILDX_BUILDER without creating or removing builders', () => {
+  const result = run({ service: 'all', noSSH: true, builderMode: 'platform', explicitBuildx: true,
+    platformBuilder: 'fixture-platform-builder' });
+  assert.equal(result.status, 0, result.diagnostic);
+  for (const call of result.calls.filter((entry) => entry.tool === 'docker' || entry.tool === 'build_images')) {
+    assert.equal(call.buildxConfig, result.local('platform-buildx'));
+    assert.equal(call.builder, 'fixture-platform-builder');
+  }
+  const selection = result.calls.find((call) => call.tool === 'docker' && call.args.includes('--format'));
+  assert.equal(path.normalize(selection.dockerConfig), path.normalize(result.local('original-docker')));
+  assert.ok(!result.calls.some((call) => call.tool === 'docker' && ['create', 'use', 'rm'].includes(call.args[1])));
+});
+
+test('platform bootstrap and build failures preserve shared metadata, remove temporary auth and never create or remove a builder', () => {
+  for (const fail of ['bootstrap', 'build_images']) {
+    const result = run({ service: 'all', noSSH: true, builderMode: 'platform', explicitBuildx: true,
+      platformBuilder: 'fixture-platform-builder', fail });
+    assert.equal(result.status, 31, result.diagnostic);
+    assert.equal(result.artifact, undefined);
+    assert.ok(!result.calls.some((call) => call.tool === 'docker' && ['create', 'use', 'rm'].includes(call.args[1])));
+    const selection = result.calls.find((call) => call.tool === 'docker' && call.args.includes('--format'));
+    const bootstrap = result.calls.find((call) => call.tool === 'docker' && call.args.includes('--bootstrap'));
+    assert.equal(path.normalize(selection.dockerConfig), path.normalize(result.local('original-docker')));
+    assert.notEqual(path.normalize(bootstrap.dockerConfig), path.normalize(result.local('original-docker')));
+    assert.equal(bootstrap.builder, 'fixture-platform-builder');
+    assert.equal(result.calls.some((call) => call.tool === 'build_images'), fail === 'build_images');
+  }
 });
 
 test('failed registry login or build/push cannot deploy or leave a stale success manifest', () => {
@@ -345,7 +441,7 @@ test('deploy-only rejects foreign, inherited, incomplete, duplicate and executab
 test('invalid service, boolean, registry or run id cannot reuse old artifacts or contact external tools', () => {
   for (const env of [{ SERVICE: 'backend; echo injected' }, { BUILD_REQUESTED: 'yes' },
     { DEPLOY_REQUESTED: 'yes' }, { CI_RUN_ID: '0' }, { CI_RUN_ID: '-1' },
-    { IMAGE_REGISTRY: 'foreign.example/team' }]) {
+    { IMAGE_REGISTRY: 'foreign.example/team' }, { CI_BUILDER_MODE: 'unsupported' }]) {
     const result = run({ service: 'all', noSSH: true, env });
     assert.notEqual(result.status, 0, result.diagnostic);
     assert.equal(result.artifact, undefined);

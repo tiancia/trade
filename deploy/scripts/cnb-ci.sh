@@ -35,6 +35,8 @@ export BUILD_REQUESTED=${BUILD_REQUESTED:-true}
 export DEPLOY_REQUESTED=${DEPLOY_REQUESTED:-false}
 export CI_RUN_ID=${CI_RUN_ID:-$(date +%s)}
 export BUILD_CACHE_DIR=${BUILD_CACHE_DIR:-/root/.cache/trade-build-cache}
+# The hosted service owns BuildKit; nested docker-container builders cannot run.
+export CI_BUILDER_MODE=platform
 case "$SERVICE" in all|backend|cockpit|x-console|frontends|egress) ;; *) fail 'Unsupported SERVICE selection' ;; esac
 case "$BUILD_REQUESTED" in true|false) ;; *) fail 'BUILD_REQUESTED must be true or false' ;; esac
 case "$DEPLOY_REQUESTED" in true|false) ;; *) fail 'DEPLOY_REQUESTED must be true or false' ;; esac

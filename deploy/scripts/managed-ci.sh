@@ -14,6 +14,7 @@ DEPLOY_PORT=${DEPLOY_PORT:-22}
 CI_RUN_ID=${CI_RUN_ID:-${BUILD_NUMBER:-}}
 OUTPUT_DIR=${OUTPUT_DIR:-"$PWD/.ci-output"}
 BUILD_CACHE_DIR=${BUILD_CACHE_DIR:-}
+CI_BUILDER_MODE=${CI_BUILDER_MODE:-isolated}
 WAIT_TIMEOUT=${DEPLOY_WAIT_TIMEOUT:-300}
 REGISTRY_HOST=ccr.ccs.tencentyun.com
 EXPECTED_REGISTRY=ccr.ccs.tencentyun.com/tiancia-trade
@@ -39,6 +40,7 @@ Environment:
   CI_RUN_ID              Positive CI run number; falls back to BUILD_NUMBER
   IMAGE_REGISTRY         Must be ccr.ccs.tencentyun.com/tiancia-trade when set
   BUILD_CACHE_DIR        Persistent local cache; defaults to $HOME/.cache/trade-build-cache
+  CI_BUILDER_MODE        isolated (default) or platform; platform retains the provided Buildx builder
   OUTPUT_DIR             Artifact directory; defaults to $PWD/.ci-output
   EXISTING_RELEASE_MANIFEST  Complete non-secret manifest text for build=false
   TCR_USERNAME / TCR_PASSWORD  Injected registry credentials
@@ -86,6 +88,7 @@ rm -f -- "$OUTPUT_DIR/release.env"
 
 case "$BUILD_REQUESTED" in true|false) ;; *) fail 'BUILD_REQUESTED must be true or false' ;; esac
 case "$DEPLOY_REQUESTED" in true|false) ;; *) fail 'DEPLOY_REQUESTED must be true or false' ;; esac
+case "$CI_BUILDER_MODE" in isolated|platform) ;; *) fail 'CI_BUILDER_MODE must be isolated or platform' ;; esac
 [[ $BUILD_REQUESTED == true || $DEPLOY_REQUESTED == true ]] || fail 'Select building, deployment, or both'
 case "$SERVICE" in
   backend|cockpit|x-console|egress) targets=("$SERVICE") ;;
@@ -226,13 +229,32 @@ if [[ $BUILD_REQUESTED == true ]]; then
     read_manifest "$work_dir/base-release.env" baseline false
     build_args+=(--base "$work_dir/base-release.env")
   fi
+  if [[ $CI_BUILDER_MODE == platform ]]; then
+    # Buildx normally stores its builder selection under DOCKER_CONFIG/buildx.
+    # Keep the hosted worker's builder metadata while isolating registry auth.
+    if [[ -z ${BUILDX_CONFIG:-} ]]; then
+      [[ -n ${DOCKER_CONFIG:-} || -n ${HOME:-} ]] || fail 'The platform builder requires BUILDX_CONFIG, DOCKER_CONFIG, or HOME'
+      export BUILDX_CONFIG="${DOCKER_CONFIG:-$HOME/.docker}/buildx"
+    fi
+    # A temporary auth config can also change the current Docker context. Freeze
+    # its selected builder by name before switching, including implicit selection.
+    platform_builder=$(docker buildx inspect --format '{{.Name}}')
+    [[ $platform_builder =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || fail 'The platform did not provide a valid Buildx builder name'
+    export BUILDX_BUILDER="$platform_builder"
+  fi
   mkdir -- "$work_dir/docker"
   export DOCKER_CONFIG="$work_dir/docker"
   printf '%s\n' "$TCR_PASSWORD" | docker login "$REGISTRY_HOST" --username "$TCR_USERNAME" --password-stdin
-  builder_name="trade-ci-$CI_RUN_ID-$nonce"
-  docker buildx create --name "$builder_name" --driver docker-container --use
-  builder_created=true
-  export BUILDX_BUILDER="$builder_name"
+  if [[ $CI_BUILDER_MODE == platform ]]; then
+    # CNB supplies BuildKit. A new docker-container worker requires nested mounts
+    # which are forbidden in its sandbox. Never create or remove its builder.
+    docker buildx inspect --bootstrap
+  else
+    builder_name="trade-ci-$CI_RUN_ID-$nonce"
+    docker buildx create --name "$builder_name" --driver docker-container --use
+    builder_created=true
+    export BUILDX_BUILDER="$builder_name"
+  fi
   printf 'Managed CI building services: %s; version: %s\n' "${targets[*]}" "$image_tag"
   bash "$SCRIPT_ROOT/deploy/scripts/build-images.sh" "${build_args[@]}" "${targets[@]}"
   read_manifest "$work_dir/release.env" manifest true

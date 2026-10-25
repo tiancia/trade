@@ -65,7 +65,7 @@ function mockTool() {
     return reject('Docker and SSH are forbidden in adapter contract tests');
   }
   const environment = Object.fromEntries(['SOURCE_SHA', 'SERVICE', 'BUILD_REQUESTED', 'DEPLOY_REQUESTED',
-    'CI_RUN_ID', 'OUTPUT_DIR', 'BUILD_CACHE_DIR', 'DEPLOY_SSH_KEY_FILE', 'DEPLOY_KNOWN_HOSTS_FILE']
+    'CI_RUN_ID', 'CI_BUILDER_MODE', 'OUTPUT_DIR', 'BUILD_CACHE_DIR', 'DEPLOY_SSH_KEY_FILE', 'DEPLOY_KNOWN_HOSTS_FILE']
     .map((key) => [key, process.env[key] || '']));
   const needsSsh = environment.DEPLOY_REQUESTED === 'true'
     || environment.BUILD_REQUESTED === 'true' && environment.SERVICE !== 'all';
@@ -119,7 +119,7 @@ function run(options = {}) {
   write(local('repository/.ci-output/release-previous.env'), 'STALE-ATTACHMENT-SENTINEL\n');
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
-    if (/^(DEPLOY_|TCR_|SOURCE_SHA$|SERVICE$|BUILD_REQUESTED$|BUILD_NUMBER$|CI_RUN_ID$|BUILD_CACHE_DIR$|OUTPUT_DIR$|CNB_BUILD_ID$)/.test(key)) delete env[key];
+    if (/^(DEPLOY_|TCR_|SOURCE_SHA$|SERVICE$|BUILD_REQUESTED$|BUILD_NUMBER$|CI_RUN_ID$|CI_BUILDER_MODE$|BUILD_CACHE_DIR$|OUTPUT_DIR$|CNB_BUILD_ID$)/.test(key)) delete env[key];
   }
   Object.assign(env, { TEST_NODE: node, TEST_CNB_MOCK: local('mock.cjs'), TEST_CNB_STATE: local('state.json'),
     TEST_CNB_AUDIT: local('audit.jsonl'), TEST_CNB_BIN: posix('bin'), TEST_CNB_SCRIPT: posix('repository/deploy/scripts/cnb-ci.sh'),
@@ -161,11 +161,20 @@ test('default CNB run builds all services with a numeric manual ID and produces 
   assert.equal(call.environment.SERVICE, 'all');
   assert.equal(call.environment.BUILD_REQUESTED, 'true');
   assert.equal(call.environment.DEPLOY_REQUESTED, 'false');
+  assert.equal(call.environment.CI_BUILDER_MODE, 'platform');
   assert.match(call.environment.CI_RUN_ID, /^[1-9][0-9]{0,19}$/);
   assert.equal(call.environment.BUILD_CACHE_DIR, '/root/.cache/trade-build-cache');
   assert.equal(call.environment.OUTPUT_DIR, result.posix('repository/.ci-output'));
   assert.deepEqual(call.credentials, { usernameMatches: true, passwordMatches: true, rawKeyRemoved: true, rawKnownHostsRemoved: true });
   assert.equal(result.calls.filter((entry) => entry.tool === 'chmod').length, 0);
+  assertManifest(result);
+  assertNoSecrets(result);
+});
+
+test('CNB forces platform builder mode even when the caller requests an isolated nested container', () => {
+  const result = run({ environment: { CI_BUILDER_MODE: 'isolated', CI_RUN_ID: '42' } });
+  assert.equal(result.status, 0, result.diagnostic);
+  assert.equal(managedCall(result).environment.CI_BUILDER_MODE, 'platform');
   assertManifest(result);
   assertNoSecrets(result);
 });
