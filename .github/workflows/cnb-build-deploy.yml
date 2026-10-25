@@ -1,0 +1,62 @@
+name: Submit build or deployment to CNB
+run-name: Submit CNB task / ${{ github.event_name == 'push' && 'all' || inputs.service }} / ${{ github.ref_name }}
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Services to build or deploy in CNB
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - backend
+          - cockpit
+          - x-console
+          - frontends
+          - egress
+      build:
+        description: Build and push new images in CNB
+        type: boolean
+        default: true
+      deploy:
+        description: Build/push then deploy selected images, or deploy an existing manifest
+        type: boolean
+        default: false
+      existing_release_manifest:
+        description: Complete release.env text when build is unchecked
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+# This serializes submissions. CNB and the production release lock control execution.
+concurrency:
+  group: trade-cnb-trigger
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    name: Submit CNB task (submission status only)
+    if: github.repository == 'tiancia/trade' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Check out the source revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Submit a task to the mainland managed builder
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          SERVICE: ${{ github.event_name == 'push' && 'all' || inputs.service }}
+          BUILD_REQUESTED: ${{ github.event_name == 'push' && 'true' || (inputs.build && 'true' || 'false') }}
+          DEPLOY_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy && 'true' || 'false' }}
+          EXISTING_RELEASE_MANIFEST: ${{ inputs.existing_release_manifest }}
+        run: node deploy/scripts/trigger-cnb.cjs

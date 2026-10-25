@@ -5,6 +5,7 @@ backend/target/
 frontend/**/dist/
 frontend/**/node_modules/
 frontend/**/*.tsbuildinfo
+/.ci-output/
 
 # Local runtime data and secrets
 backend/.env

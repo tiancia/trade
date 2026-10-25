@@ -1,0 +1,69 @@
+# Installed as .cnb.yml in the private tiancia/trade-ci control repository.
+# Application code is checked out separately from the trusted GitHub main history.
+.trade-pipeline: &trade-pipeline
+  name: Build GitHub revision and publish selected services
+  runner:
+    tags: cnb:arch:amd64
+    cpus: 4
+  services:
+    - docker
+  docker:
+    # Node-local cache; a different hosted node may start with an empty cache.
+    volumes:
+      - main:/root/.cache/trade-build-cache:copy-on-write
+  imports:
+    - https://cnb.cool/tiancia/trade-ci-secrets/-/blob/main/env.yml
+  stages:
+    - name: Check out trusted GitHub source and run managed CI
+      script: |
+        set +x
+        bash <<'CNB_BUILD'
+        set +x
+        set -euo pipefail
+        umask 077
+        fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
+        requested_sha=${SOURCE_SHA:-}
+        [[ -z $requested_sha || $requested_sha =~ ^[a-f0-9]{40}$ ]] \
+          || fail 'SOURCE_SHA must be empty or one complete lowercase commit SHA'
+        [[ ! -e trade && ! -L trade ]] || fail 'The source destination already exists; refusing to replace it'
+        export GIT_TERMINAL_PROMPT=0
+        timeout 300 git clone --no-checkout --single-branch --branch main --filter=blob:none \
+          https://github.com/tiancia/trade.git trade
+        timeout 180 git -C trade fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+        main_sha=$(timeout 30 git -C trade rev-parse --verify refs/remotes/origin/main)
+        SOURCE_SHA=${requested_sha:-$main_sha}
+        [[ $SOURCE_SHA =~ ^[a-f0-9]{40}$ ]] || fail 'GitHub main did not resolve to one complete commit SHA'
+        timeout 30 git -C trade cat-file -e "$SOURCE_SHA^{commit}" \
+          || fail 'The requested source commit is not available in GitHub main history'
+        timeout 30 git -C trade merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main \
+          || fail 'The requested source commit is outside trusted GitHub main history'
+        timeout 180 git -C trade -c advice.detachedHead=false checkout --detach "$SOURCE_SHA"
+        actual_sha=$(timeout 30 git -C trade rev-parse HEAD)
+        [[ $actual_sha == "$SOURCE_SHA" ]] || fail 'The checked-out commit differs from SOURCE_SHA'
+        export SOURCE_SHA
+        printf 'Verified GitHub source: %s\n' "$SOURCE_SHA"
+        bash trade/deploy/scripts/cnb-ci.sh
+        CNB_BUILD
+  endStages:
+    # Best effort: endStages do not change the primary build/deployment result.
+    # The adapter also prints the non-secret manifest for retries if upload fails.
+    # Attachment authorization for API/manual events still requires a live run.
+    - name: Retain the published image manifest
+      image: cnbcool/attachments:latest
+      settings:
+        type: UPLOAD
+        commit: ${CNB_COMMIT}
+        attachments:
+          - ./trade/.ci-output/release-*.env
+        ttl: 30
+
+main:
+  # Installing/updating the control configuration must not build old GitHub code.
+  push:
+    - stages:
+        - name: Configuration ready
+          script: printf '%s\n' 'CNB configuration ready; start product builds from GitHub or web_trigger'
+  api_trigger_trade:
+    - <<: *trade-pipeline
+  web_trigger:
+    - <<: *trade-pipeline
