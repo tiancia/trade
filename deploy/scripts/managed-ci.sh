@@ -238,7 +238,7 @@ if [[ $BUILD_REQUESTED == true ]]; then
     fi
     # A temporary auth config can also change the current Docker context. Freeze
     # its selected builder by name before switching, including implicit selection.
-    platform_builder=$(docker buildx inspect --format '{{.Name}}')
+    platform_builder=$(docker buildx inspect | awk '$1 == "Name:" {print $2; exit}')
     [[ $platform_builder =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || fail 'The platform did not provide a valid Buildx builder name'
     export BUILDX_BUILDER="$platform_builder"
   fi
