@@ -11,14 +11,13 @@ const sn = 'cnb-ah1-1k5phlmac';
 const url = `https://cnb.cool/tiancia/trade-ci/-/build/logs/${sn}`;
 const base = (changes = {}) => ({ GITHUB_REPOSITORY: 'tiancia/trade', GITHUB_REF: 'refs/heads/main',
   GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_SHA: sha, GITHUB_RUN_ID: '123', CNB_TOKEN: token,
-  SERVICE: 'all', BUILD_REQUESTED: 'true', DEPLOY_REQUESTED: 'false', EXISTING_RELEASE_MANIFEST: '', ...changes });
+  SERVICE: 'all', MODE: 'build', EXISTING_RELEASE_MANIFEST: '', ...changes });
 const response = (changes = {}) => ({ ok: true, status: 200,
   json: async () => ({ success: true, sn, buildLogUrl: url, message: token }), ...changes });
 
-test('main pushes always queue all image builds without deploying or inheriting caller selections', async () => {
+test('manual build submits the fixed main source with safe API options and no token in its payload', async () => {
   let request;
-  const result = await triggerCnb({ env: base({ GITHUB_EVENT_NAME: 'push', SERVICE: 'backend',
-    BUILD_REQUESTED: 'false', DEPLOY_REQUESTED: 'true', EXISTING_RELEASE_MANIFEST: 'ignore this' }),
+  const result = await triggerCnb({ env: base(),
   fetchImpl: async (...args) => { request = args; return response(); } });
   assert.equal(request[0], 'https://api.cnb.cool/tiancia/trade-ci/-/build/start');
   assert.equal(request[1].method, 'POST');
@@ -28,7 +27,8 @@ test('main pushes always queue all image builds without deploying or inheriting 
   assert.ok(request[1].signal instanceof AbortSignal);
   const body = JSON.parse(request[1].body);
   assert.deepEqual(body.env, { SOURCE_SHA: sha, CI_RUN_ID: '123', SERVICE: 'all', BUILD_REQUESTED: 'true',
-    DEPLOY_REQUESTED: 'false', EXISTING_RELEASE_MANIFEST: '', DEPLOY_ROOT: '/opt/trade', ACCESS_MODE: 'private' });
+    DEPLOY_REQUESTED: 'false', CI_ACTION: 'release', EXISTING_RELEASE_MANIFEST: '',
+    DEPLOY_ROOT: '/opt/trade', ACCESS_MODE: 'private' });
   assert.equal(body.branch, 'main');
   assert.equal(body.event, 'api_trigger_trade');
   assert.equal(body.sync, 'false');
@@ -36,9 +36,36 @@ test('main pushes always queue all image builds without deploying or inheriting 
   assert.equal(result.sn, sn);
 });
 
+test('four modes determine CNB action and build/deploy flags independently of legacy checkboxes', () => {
+  for (const [mode, build, deploy, action] of [
+    ['build', 'true', 'false', 'release'],
+    ['build_deploy', 'true', 'true', 'release'],
+    ['deploy', 'false', 'true', 'release'],
+    ['rollback', 'false', 'true', 'rollback'],
+  ]) {
+    const request = buildRequest(base({ MODE: mode, BUILD_REQUESTED: 'obsolete', DEPLOY_REQUESTED: 'obsolete',
+      EXISTING_RELEASE_MANIFEST: mode === 'deploy' ? 'RELEASE_VERSION=historic\n' : '' }));
+    assert.equal(request.env.BUILD_REQUESTED, build, mode);
+    assert.equal(request.env.DEPLOY_REQUESTED, deploy, mode);
+    assert.equal(request.env.CI_ACTION, action, mode);
+    assert.ok(request.title.includes(`: ${mode} all `));
+  }
+});
+
+test('rollback needs no manifest and ignores stale build flags and historical manifest input', () => {
+  for (const changes of [{}, { BUILD_REQUESTED: 'true', DEPLOY_REQUESTED: 'false',
+    EXISTING_RELEASE_MANIFEST: 'RELEASE_VERSION=old\n' }]) {
+    const request = buildRequest(base({ ...changes, MODE: 'rollback' }));
+    assert.equal(request.env.BUILD_REQUESTED, 'false');
+    assert.equal(request.env.DEPLOY_REQUESTED, 'true');
+    assert.equal(request.env.CI_ACTION, 'rollback');
+    assert.equal(request.env.EXISTING_RELEASE_MANIFEST, '');
+  }
+});
+
 test('manual selections and multiline history are transported as JSON without shell evaluation', () => {
   const manifest = 'RELEASE_VERSION=historic\nBACKEND_IMAGE=registry/backend:historic\n';
-  const request = buildRequest(base({ SERVICE: 'backend', BUILD_REQUESTED: 'false', DEPLOY_REQUESTED: 'true',
+  const request = buildRequest(base({ SERVICE: 'backend', MODE: 'deploy',
     EXISTING_RELEASE_MANIFEST: manifest }));
   assert.equal(request.env.EXISTING_RELEASE_MANIFEST, manifest);
   assert.equal(request.env.SERVICE, 'backend');
@@ -53,12 +80,14 @@ test('manual selections and multiline history are transported as JSON without sh
 test('untrusted sources and invalid selections fail before any HTTP request', async () => {
   const invalid = [
     { GITHUB_REPOSITORY: 'another/trade' }, { GITHUB_REF: 'refs/heads/feature' },
-    { GITHUB_EVENT_NAME: 'pull_request' }, { GITHUB_SHA: 'main' }, { GITHUB_SHA: 'A'.repeat(40) },
+    { GITHUB_EVENT_NAME: 'push' }, { GITHUB_EVENT_NAME: 'pull_request' },
+    { GITHUB_EVENT_NAME: 'repository_dispatch' }, { GITHUB_SHA: 'main' }, { GITHUB_SHA: 'A'.repeat(40) },
     { GITHUB_RUN_ID: '0' }, { GITHUB_RUN_ID: '1'.repeat(21) }, { CNB_TOKEN: '' }, { CNB_TOKEN: 'bad\r\nheader' },
-    { SERVICE: 'backend;echo injected' }, { BUILD_REQUESTED: 'yes' }, { DEPLOY_REQUESTED: 'yes' },
-    { BUILD_REQUESTED: 'false', DEPLOY_REQUESTED: 'false' },
-    { BUILD_REQUESTED: 'false', DEPLOY_REQUESTED: 'true', EXISTING_RELEASE_MANIFEST: '   ' },
-    { EXISTING_RELEASE_MANIFEST: 'stale' }, { EXISTING_RELEASE_MANIFEST: 'x'.repeat(16385) },
+    { SERVICE: 'backend;echo injected' }, { MODE: 'invalid' }, { MODE: '' }, { MODE: undefined },
+    { MODE: 'deploy', EXISTING_RELEASE_MANIFEST: '' },
+    { MODE: 'deploy', EXISTING_RELEASE_MANIFEST: '   ' },
+    { EXISTING_RELEASE_MANIFEST: 'stale' }, { MODE: 'build_deploy', EXISTING_RELEASE_MANIFEST: 'stale' },
+    { EXISTING_RELEASE_MANIFEST: 'x'.repeat(16385) },
     { EXISTING_RELEASE_MANIFEST: 'null\0byte' },
   ];
   for (const changes of invalid) {

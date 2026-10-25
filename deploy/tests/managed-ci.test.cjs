@@ -104,9 +104,9 @@ function mockTool() {
       if (!buildxConfig || fs.readFileSync(path.join(buildxConfig, 'current'), 'utf8') !== state.originalBuildxCurrent) {
         reject('Platform mode lost the original builder selection metadata');
       }
-      if (JSON.stringify(args) === JSON.stringify(['buildx', 'inspect', '--format', '{{.Name}}'])) {
+      if (JSON.stringify(args) === JSON.stringify(['buildx', 'inspect'])) {
         if (configPath !== process.env.TEST_ORIGINAL_DOCKER_CONFIG) reject('Select the platform builder before changing Docker auth/context');
-        process.stdout.write((selectedBuilder || 'fixture-platform-builder') + '\n');
+        process.stdout.write('Name: ' + (selectedBuilder || 'fixture-platform-builder') + '\nDriver: remote\n');
         return;
       }
       if (JSON.stringify(args) !== JSON.stringify(['buildx', 'inspect', '--bootstrap'])) {
@@ -182,8 +182,9 @@ eval "$1"`;
         encoding: 'utf8', timeout: 3000, env: process.env,
       }).split('\0').slice(0, -1);
       if (decoded[0] !== '-c' || decoded[2] !== '--') reject('Remote deployment must preserve quoted positional arguments');
-      if (input !== state.username + '\n' + state.password + '\n') reject('Remote registry credentials must travel through stdin');
-      record({ sshConfig: config, remoteScript: decoded[1], remoteArgs: decoded.slice(3), authenticatedStdin: true });
+      const rollback = decoded.slice(3)[7] === 'rollback';
+      if (input !== (rollback ? '' : state.username + '\n' + state.password + '\n')) reject('Unexpected remote credential transport');
+      record({ sshConfig: config, remoteScript: decoded[1], remoteArgs: decoded.slice(3), authenticatedStdin: !rollback });
       if (state.fail === 'remote_deploy') return reject('synthetic remote deployment failure', 37);
       process.stdout.write('DEPLOYMENT_OK\n');
     } else {
@@ -326,7 +327,7 @@ test('platform mode preserves default builder metadata while separating temporar
     ['buildx', 'inspect'], ['login', 'ccr.ccs.tencentyun.com'], ['buildx', 'inspect'],
   ]);
   const selection = docker[0];
-  assert.deepEqual(selection.args, ['buildx', 'inspect', '--format', '{{.Name}}']);
+  assert.deepEqual(selection.args, ['buildx', 'inspect']);
   assert.equal(path.normalize(selection.dockerConfig), path.normalize(result.local('original-docker')));
   assert.equal(selection.builder, undefined, 'the original implicit selection must be queried in its own context');
   const inspect = docker.at(-1);
@@ -348,7 +349,7 @@ test('platform mode keeps an explicit BUILDX_CONFIG and BUILDX_BUILDER without c
     assert.equal(call.buildxConfig, result.local('platform-buildx'));
     assert.equal(call.builder, 'fixture-platform-builder');
   }
-  const selection = result.calls.find((call) => call.tool === 'docker' && call.args.includes('--format'));
+  const selection = result.calls.find((call) => call.tool === 'docker' && call.args[1] === 'inspect' && call.args.length === 2);
   assert.equal(path.normalize(selection.dockerConfig), path.normalize(result.local('original-docker')));
   assert.ok(!result.calls.some((call) => call.tool === 'docker' && ['create', 'use', 'rm'].includes(call.args[1])));
 });
@@ -360,7 +361,7 @@ test('platform bootstrap and build failures preserve shared metadata, remove tem
     assert.equal(result.status, 31, result.diagnostic);
     assert.equal(result.artifact, undefined);
     assert.ok(!result.calls.some((call) => call.tool === 'docker' && ['create', 'use', 'rm'].includes(call.args[1])));
-    const selection = result.calls.find((call) => call.tool === 'docker' && call.args.includes('--format'));
+    const selection = result.calls.find((call) => call.tool === 'docker' && call.args[1] === 'inspect' && call.args.length === 2);
     const bootstrap = result.calls.find((call) => call.tool === 'docker' && call.args.includes('--bootstrap'));
     assert.equal(path.normalize(selection.dockerConfig), path.normalize(result.local('original-docker')));
     assert.notEqual(path.normalize(bootstrap.dockerConfig), path.normalize(result.local('original-docker')));
@@ -389,7 +390,7 @@ test('deployment stages this checkout helpers and invokes the incoming release w
   const deploy = result.calls.find((call) => call.remoteScript);
   assert.equal(deploy.authenticatedStdin, true);
   assert.deepEqual(deploy.remoteArgs.slice(0, 1), ['/opt/trade']);
-  assert.deepEqual(deploy.remoteArgs.slice(2), ['public', 'frontends', 'ccr.ccs.tencentyun.com', registry, '300']);
+  assert.deepEqual(deploy.remoteArgs.slice(2), ['public', 'frontends', 'ccr.ccs.tencentyun.com', registry, '300', 'release']);
   assert.match(deploy.remoteArgs[1], /^\/opt\/trade\/deploy\/incoming\/.+\/release\.env$/);
   assert.ok((deploy.remoteScript.match(/--root/g) || []).length >= 2);
   assert.match(deploy.remoteScript, /release_script=.*manifest/);
@@ -438,9 +439,27 @@ test('deploy-only rejects foreign, inherited, incomplete, duplicate and executab
   assert.deepEqual(all.calls, []);
 });
 
+test('rollback selects the server previous release without registry login, rebuilds or a supplied manifest', () => {
+  for (const fail of [undefined, 'remote_deploy']) {
+    const result = run({ service: 'frontends', fail, env: { CI_ACTION: 'rollback',
+      EXISTING_RELEASE_MANIFEST: '', TCR_USERNAME: '', TCR_PASSWORD: '' } });
+    assert.equal(result.status, fail ? 37 : 0, result.diagnostic);
+    assert.equal(result.artifact, undefined);
+    assert.ok(!result.calls.some((call) => ['docker', 'git', 'build_images'].includes(call.tool)));
+    assert.ok(!result.calls.some((call) => call.transfer === 'baseline'));
+    const rollback = result.calls.find((call) => call.remoteScript);
+    assert.equal(rollback.remoteArgs[7], 'rollback');
+    assert.equal(rollback.remoteArgs[3], 'frontends');
+    assert.equal(rollback.authenticatedStdin, false);
+    assert.match(rollback.remoteScript, /"\$release_script" rollback/);
+    assert.match(rollback.remoteScript, /--no-pull/);
+    assert.match(rollback.remoteScript, /ROLLBACK_OK/);
+  }
+});
+
 test('invalid service, boolean, registry or run id cannot reuse old artifacts or contact external tools', () => {
   for (const env of [{ SERVICE: 'backend; echo injected' }, { BUILD_REQUESTED: 'yes' },
-    { DEPLOY_REQUESTED: 'yes' }, { CI_RUN_ID: '0' }, { CI_RUN_ID: '-1' },
+    { DEPLOY_REQUESTED: 'yes' }, { CI_ACTION: 'invalid' }, { CI_RUN_ID: '0' }, { CI_RUN_ID: '-1' },
     { IMAGE_REGISTRY: 'foreign.example/team' }, { CI_BUILDER_MODE: 'unsupported' }]) {
     const result = run({ service: 'all', noSSH: true, env });
     assert.notEqual(result.status, 0, result.diagnostic);

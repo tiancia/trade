@@ -64,7 +64,7 @@ function mockTool() {
     record({});
     return reject('Docker and SSH are forbidden in adapter contract tests');
   }
-  const environment = Object.fromEntries(['SOURCE_SHA', 'SERVICE', 'BUILD_REQUESTED', 'DEPLOY_REQUESTED',
+  const environment = Object.fromEntries(['SOURCE_SHA', 'SERVICE', 'BUILD_REQUESTED', 'DEPLOY_REQUESTED', 'CI_ACTION',
     'CI_RUN_ID', 'CI_BUILDER_MODE', 'OUTPUT_DIR', 'BUILD_CACHE_DIR', 'DEPLOY_SSH_KEY_FILE', 'DEPLOY_KNOWN_HOSTS_FILE']
     .map((key) => [key, process.env[key] || '']));
   const needsSsh = environment.DEPLOY_REQUESTED === 'true'
@@ -85,7 +85,7 @@ function mockTool() {
   const version = environment.BUILD_REQUESTED === 'false' ? 'historical-release.1'
     : `sha-${environment.SOURCE_SHA}-cn-${environment.CI_RUN_ID}-123456abcdef`;
   record({ environment, credentials, version });
-  if (state.produceManifest !== false) {
+  if (state.produceManifest !== false && environment.CI_ACTION !== 'rollback') {
     let manifest = 'RELEASE_VERSION=' + version + '\n'
       + Object.entries({ BACKEND_IMAGE: 'backend', COCKPIT_IMAGE: 'cockpit', X_CONSOLE_IMAGE: 'x-console', EGRESS_IMAGE: 'egress' })
         .map(([key, service]) => `${key}=${state.registry}/${service}:${version}`).join('\n') + '\n';
@@ -249,6 +249,19 @@ test('success without a valid complete manifest is rejected and malformed secret
     assert.ok(!result.outputs.some((file) => file.startsWith('release-')));
     assertNoSecrets(result);
   }
+});
+
+test('rollback normalizes flags, requires SSH, and succeeds without publishing an image manifest', () => {
+  const result = run({ environment: { CI_ACTION: 'rollback', BUILD_REQUESTED: 'true', DEPLOY_REQUESTED: 'false',
+    DEPLOY_SSH_PRIVATE_KEY: privateKey, DEPLOY_KNOWN_HOSTS: knownHosts } });
+  assert.equal(result.status, 0, result.diagnostic);
+  assert.equal(managedCall(result).environment.CI_ACTION, 'rollback');
+  assert.equal(managedCall(result).environment.BUILD_REQUESTED, 'false');
+  assert.equal(managedCall(result).environment.DEPLOY_REQUESTED, 'true');
+  assert.deepEqual(result.outputs, []);
+  assert.deepEqual(fs.readdirSync(result.local('temporary')), []);
+  assert.ok(!result.stdout.includes('IMAGE_MANIFEST_BEGIN'));
+  assertNoSecrets(result);
 });
 
 test('deploy-only mode accepts a valid historical version and still cleans ephemeral SSH files', () => {

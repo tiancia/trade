@@ -243,7 +243,7 @@ curl -fsS -u operator http://127.0.0.1:18080/api/automation/tasks
 
 [GitHub 触发入口](../.github/workflows/cnb-build-deploy.yml)只向私有控制仓库 `tiancia/trade-ci` 提交构建请求；GitHub 任务成功表示请求被接受，最终构建、推送与部署结果以 CNB 任务为准。控制仓库使用 [CNB 流水线](ci/cnb.yml)，从固定的 GitHub 仓库检出指定提交，并验证该提交属于 `main` 历史，再调用 [CNB 适配器](scripts/cnb-ci.sh)和 [managed-ci.sh](scripts/managed-ci.sh)。
 
-默认构建全部镜像并推送现有 TCR，实际部署由参数控制。TCR 和生产 SSH 凭据只在 CNB 注入；不进入 GitHub 请求、构建上下文或镜像。BuildKit 按服务保存本地 OCI 缓存，CNB 节点数据卷提供复用；节点变化或缓存淘汰后可能需要重新填充。实际节点与缓存命中以运行详情为准。
+GitHub 入口仅允许手动触发，支持只构建、构建并部署、仅部署及回滚四种模式，并按服务选择范围。回滚读取生产服务器的上一成功镜像清单，检查本地镜像齐全后再切换，保留发布锁和健康检查。TCR 和生产 SSH 凭据只在 CNB 注入；不进入 GitHub 请求、构建上下文或镜像。BuildKit 按服务保存本地 OCI 缓存，CNB 节点数据卷提供复用；节点变化或缓存淘汰后可能需要重新填充。实际节点与缓存命中以运行详情为准。
 
 镜像版本包含实际 GitHub SHA、数值运行号和随机后缀。所有选定镜像推送成功后生成非秘密清单 `release.env`，后续部署失败仍保留该清单用于重试。清单只表示镜像已发布，生产切换结果须另看 `DEPLOYMENT_OK` 与成功版本记录。服务端发布锁、健康检查及回滚入口复用现有脚本。
 

@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const ENDPOINT = 'https://api.cnb.cool/tiancia/trade-ci/-/build/start';
 const LOG_PREFIX = 'https://cnb.cool/tiancia/trade-ci/-/build/logs/';
 const SERVICES = new Set(['all', 'backend', 'cockpit', 'x-console', 'frontends', 'egress']);
+const MODES = new Set(['build', 'build_deploy', 'deploy', 'rollback']);
 
 class TriggerError extends Error {}
 const fail = (message) => { throw new TriggerError(message); };
@@ -16,39 +17,38 @@ function buildRequest(env) {
   if (env.GITHUB_REPOSITORY !== 'tiancia/trade' || env.GITHUB_REF !== 'refs/heads/main') {
     fail('Only the tiancia/trade main branch may submit this task.');
   }
-  if (!['push', 'workflow_dispatch'].includes(env.GITHUB_EVENT_NAME)) {
-    fail('Only main pushes and manual workflow runs may submit this task.');
+  if (env.GITHUB_EVENT_NAME !== 'workflow_dispatch') {
+    fail('Only manual workflow runs may submit this task.');
   }
   if (!/^[a-f0-9]{40}$/.test(env.GITHUB_SHA || '')) fail('GITHUB_SHA must be a complete commit SHA.');
   if (!/^[1-9][0-9]{0,19}$/.test(env.GITHUB_RUN_ID || '')) fail('GITHUB_RUN_ID must be a positive run number.');
 
-  const automatic = env.GITHUB_EVENT_NAME === 'push';
-  const service = automatic ? 'all' : env.SERVICE;
-  const build = automatic ? 'true' : env.BUILD_REQUESTED;
-  const deploy = automatic ? 'false' : env.DEPLOY_REQUESTED;
-  const manifest = automatic ? '' : (env.EXISTING_RELEASE_MANIFEST || '');
+  const service = env.SERVICE;
+  const mode = env.MODE;
   if (!SERVICES.has(service)) fail('Select a supported service.');
-  if (!['true', 'false'].includes(build) || !['true', 'false'].includes(deploy)) {
-    fail('Build and deploy selections must be true or false.');
-  }
-  if (build !== 'true' && deploy !== 'true') fail('Select building, deployment, or both.');
+  if (!MODES.has(mode)) fail('Select a supported mode.');
+  const build = ['build', 'build_deploy'].includes(mode) ? 'true' : 'false';
+  const deploy = mode === 'build' ? 'false' : 'true';
+  const action = mode === 'rollback' ? 'rollback' : 'release';
+  const manifest = mode === 'rollback' ? '' : (env.EXISTING_RELEASE_MANIFEST || '');
   if (typeof manifest !== 'string' || Buffer.byteLength(manifest, 'utf8') > 16384 || manifest.includes('\0')) {
     fail('The release manifest must be plain text of at most 16 KiB.');
   }
-  if (build === 'false' && !manifest.trim()) fail('Deploy-only runs require a complete release.env manifest.');
-  if (build === 'true' && manifest.trim()) fail('A historical manifest is only accepted when building is disabled.');
+  if (mode === 'deploy' && !manifest.trim()) fail('Deploy-only runs require a complete release.env manifest.');
+  if (mode !== 'deploy' && manifest.trim()) fail('A historical manifest is only accepted in deploy mode.');
 
   return {
     branch: 'main',
     event: 'api_trigger_trade',
     sync: 'false',
-    title: `GitHub ${env.GITHUB_RUN_ID}: ${build === 'true' ? 'build' : 'deploy'} ${service} ${env.GITHUB_SHA.slice(0, 12)}`,
+    title: `GitHub ${env.GITHUB_RUN_ID}: ${mode} ${service} ${env.GITHUB_SHA.slice(0, 12)}`,
     env: {
       SOURCE_SHA: env.GITHUB_SHA,
       CI_RUN_ID: env.GITHUB_RUN_ID,
       SERVICE: service,
       BUILD_REQUESTED: build,
       DEPLOY_REQUESTED: deploy,
+      CI_ACTION: action,
       EXISTING_RELEASE_MANIFEST: manifest,
       DEPLOY_ROOT: '/opt/trade',
       ACCESS_MODE: 'private',

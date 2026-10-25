@@ -33,6 +33,12 @@ actual_sha=$(git -C "$SOURCE_ROOT" rev-parse HEAD)
 export SERVICE=${SERVICE:-all}
 export BUILD_REQUESTED=${BUILD_REQUESTED:-true}
 export DEPLOY_REQUESTED=${DEPLOY_REQUESTED:-false}
+export CI_ACTION=${CI_ACTION:-release}
+case "$CI_ACTION" in
+  release) ;;
+  rollback) export BUILD_REQUESTED=false DEPLOY_REQUESTED=true ;;
+  *) fail 'CI_ACTION must be release or rollback' ;;
+esac
 export CI_RUN_ID=${CI_RUN_ID:-$(date +%s)}
 export BUILD_CACHE_DIR=${BUILD_CACHE_DIR:-/root/.cache/trade-build-cache}
 # The hosted service owns BuildKit; nested docker-container builders cannot run.
@@ -59,6 +65,7 @@ unset DEPLOY_SSH_PRIVATE_KEY DEPLOY_KNOWN_HOSTS
 
 status=0
 bash "$SOURCE_ROOT/deploy/scripts/managed-ci.sh" || status=$?
+[[ $CI_ACTION != rollback ]] || exit "$status"
 
 valid_manifest() {
   local line key value

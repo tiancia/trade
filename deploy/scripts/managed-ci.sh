@@ -6,6 +6,7 @@ umask 077
 
 SCRIPT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 SERVICE=${SERVICE:-backend}
+CI_ACTION=${CI_ACTION:-release}
 BUILD_REQUESTED=${BUILD_REQUESTED:-true}
 DEPLOY_REQUESTED=${DEPLOY_REQUESTED:-false}
 ACCESS_MODE=${ACCESS_MODE:-private}
@@ -34,6 +35,7 @@ Usage: bash deploy/scripts/managed-ci.sh
 
 Environment:
   SERVICE                backend (default), cockpit, x-console, frontends, egress, all
+  CI_ACTION              release (default) or rollback; rollback uses server previous.env
   BUILD_REQUESTED        true (default) or false
   DEPLOY_REQUESTED       false (default) or true
   ACCESS_MODE            private (default) or public
@@ -86,6 +88,11 @@ OUTPUT_DIR=$(cd -- "$OUTPUT_DIR" && pwd -P)
 [[ $OUTPUT_DIR != / ]] || fail 'OUTPUT_DIR must not be the filesystem root'
 rm -f -- "$OUTPUT_DIR/release.env"
 
+case "$CI_ACTION" in
+  release) ;;
+  rollback) BUILD_REQUESTED=false; DEPLOY_REQUESTED=true ;;
+  *) fail 'CI_ACTION must be release or rollback' ;;
+esac
 case "$BUILD_REQUESTED" in true|false) ;; *) fail 'BUILD_REQUESTED must be true or false' ;; esac
 case "$DEPLOY_REQUESTED" in true|false) ;; *) fail 'DEPLOY_REQUESTED must be true or false' ;; esac
 case "$CI_BUILDER_MODE" in isolated|platform) ;; *) fail 'CI_BUILDER_MODE must be isolated or platform' ;; esac
@@ -104,9 +111,11 @@ DEPLOY_ROOT=${DEPLOY_ROOT%/}
 [[ $DEPLOY_ROOT =~ ^/[A-Za-z0-9_./-]+$ && $DEPLOY_ROOT != *'/../'* && $DEPLOY_ROOT != */.. \
   && $DEPLOY_ROOT != *'/./'* && $DEPLOY_ROOT != */. ]] || fail 'DEPLOY_ROOT must be an absolute repository path without dot segments'
 [[ $WAIT_TIMEOUT =~ ^[1-9][0-9]*$ ]] || fail 'DEPLOY_WAIT_TIMEOUT must be a positive number of seconds'
-[[ -n ${TCR_USERNAME:-} && -n ${TCR_PASSWORD:-} ]] || fail 'Inject TCR_USERNAME and TCR_PASSWORD through CI credentials'
-[[ ! $TCR_USERNAME =~ [[:cntrl:]] && $TCR_PASSWORD != *$'\n'* && $TCR_PASSWORD != *$'\r'* ]] \
-  || fail 'Registry credentials must not contain line breaks or control characters in the username'
+if [[ $CI_ACTION == release ]]; then
+  [[ -n ${TCR_USERNAME:-} && -n ${TCR_PASSWORD:-} ]] || fail 'Inject TCR_USERNAME and TCR_PASSWORD through CI credentials'
+  [[ ! $TCR_USERNAME =~ [[:cntrl:]] && $TCR_PASSWORD != *$'\n'* && $TCR_PASSWORD != *$'\r'* ]] \
+    || fail 'Registry credentials must not contain line breaks or control characters in the username'
+fi
 
 work_parent=$(cd -- "${TMPDIR:-/tmp}" && pwd -P)
 work_dir=$(mktemp -d "$work_parent/trade-managed-ci.XXXXXX")
@@ -161,7 +170,7 @@ write_manifest() {
 }
 
 declare -A manifest=() baseline=()
-if [[ $BUILD_REQUESTED == false ]]; then
+if [[ $BUILD_REQUESTED == false && $CI_ACTION == release ]]; then
   [[ -n ${EXISTING_RELEASE_MANIFEST:-} ]] || fail 'Provide EXISTING_RELEASE_MANIFEST for build=false'
   printf '%s\n' "$EXISTING_RELEASE_MANIFEST" > "$work_dir/release.env"
   read_manifest "$work_dir/release.env" manifest true
@@ -260,19 +269,24 @@ if [[ $BUILD_REQUESTED == true ]]; then
   read_manifest "$work_dir/release.env" manifest true
   [[ ${manifest[RELEASE_VERSION]} == "$image_tag" ]] || fail 'Build output does not match this source-pinned release'
 fi
-validate_selected_images manifest
-write_manifest "$work_dir/release.env" manifest
-record_tmp=$(mktemp "$OUTPUT_DIR/.release.XXXXXX")
-cat -- "$work_dir/release.env" > "$record_tmp"
-mv -f -- "$record_tmp" "$OUTPUT_DIR/release.env"
-record_tmp=''
-printf 'Image manifest ready: %s/release.env\n' "$OUTPUT_DIR"
+if [[ $CI_ACTION == release ]]; then
+  validate_selected_images manifest
+  write_manifest "$work_dir/release.env" manifest
+  record_tmp=$(mktemp "$OUTPUT_DIR/.release.XXXXXX")
+  cat -- "$work_dir/release.env" > "$record_tmp"
+  mv -f -- "$record_tmp" "$OUTPUT_DIR/release.env"
+  record_tmp=''
+  printf 'Image manifest ready: %s/release.env\n' "$OUTPUT_DIR"
+fi
 
 if [[ $DEPLOY_REQUESTED == true ]]; then
-  remote_dir="$DEPLOY_ROOT/deploy/incoming/${manifest[RELEASE_VERSION]}-cn-$CI_RUN_ID-$nonce"
+  remote_version=rollback
+  [[ $CI_ACTION == rollback ]] || remote_version=${manifest[RELEASE_VERSION]}
+  remote_dir="$DEPLOY_ROOT/deploy/incoming/$remote_version-cn-$CI_RUN_ID-$nonce"
   ssh -F "$ssh_config" trade-deploy "set -eu; umask 077; mkdir -p '$DEPLOY_ROOT/deploy/incoming'; mkdir '$remote_dir'"
-  scp -F "$ssh_config" "$work_dir/release.env" "$SCRIPT_ROOT/deploy/scripts/release.sh" \
-    "$SCRIPT_ROOT/deploy/scripts/cleanup-images.sh" "trade-deploy:$remote_dir/"
+  upload_files=("$SCRIPT_ROOT/deploy/scripts/release.sh" "$SCRIPT_ROOT/deploy/scripts/cleanup-images.sh")
+  [[ $CI_ACTION == rollback ]] || upload_files+=("$work_dir/release.env")
+  scp -F "$ssh_config" "${upload_files[@]}" "trade-deploy:$remote_dir/"
   remote_script=$(cat <<'REMOTE'
 set +x
 set -euo pipefail
@@ -283,6 +297,7 @@ service=$4
 registry_host=$5
 registry=$6
 wait_timeout=$7
+action=$8
 case "$service" in
   backend|cockpit|x-console|egress) targets=("$service") ;;
   frontends) targets=(cockpit x-console) ;;
@@ -291,13 +306,22 @@ case "$service" in
 esac
 cd "$root"
 umask 077
+release_script="$(dirname -- "$manifest")/release.sh"
+if [[ $action == rollback ]]; then
+  # release.sh checks required local images before stopping containers and holds
+  # the production lock through health checks and successful record updates.
+  DEPLOY_WAIT_TIMEOUT="$wait_timeout" bash "$release_script" rollback "${targets[@]}" \
+    --root "$root" --access "$access" --no-pull
+  printf 'ROLLBACK_OK\n'
+  exit 0
+fi
+[[ $action == release ]] || exit 1
 docker_config=$(mktemp -d)
 trap 'rm -f -- "$docker_config/config.json"; rmdir -- "$docker_config" 2>/dev/null || true' EXIT
 export DOCKER_CONFIG="$docker_config"
 IFS= read -r registry_user
 [[ -n $registry_user ]] || { printf 'Missing registry username on stdin.\n' >&2; exit 1; }
 docker login "$registry_host" --username "$registry_user" --password-stdin
-release_script="$(dirname -- "$manifest")/release.sh"
 bash "$release_script" validate --root "$root" --release "$manifest" --access "$access"
 DEPLOY_WAIT_TIMEOUT="$wait_timeout" bash "$release_script" deploy "${targets[@]}" \
   --root "$root" --release "$manifest" --access "$access"
@@ -307,8 +331,12 @@ if ! bash "$(dirname -- "$manifest")/cleanup-images.sh" --root "$root" --registr
 fi
 REMOTE
   )
-  printf -v remote_command 'bash -c %q -- %q %q %q %q %q %q %q' \
+  printf -v remote_command 'bash -c %q -- %q %q %q %q %q %q %q %q' \
     "$remote_script" "$DEPLOY_ROOT" "$remote_dir/release.env" "$ACCESS_MODE" "$SERVICE" \
-    "$REGISTRY_HOST" "$IMAGE_REGISTRY" "$WAIT_TIMEOUT"
-  printf '%s\n%s\n' "$TCR_USERNAME" "$TCR_PASSWORD" | ssh -F "$ssh_config" trade-deploy "$remote_command"
+    "$REGISTRY_HOST" "$IMAGE_REGISTRY" "$WAIT_TIMEOUT" "$CI_ACTION"
+  if [[ $CI_ACTION == rollback ]]; then
+    ssh -F "$ssh_config" trade-deploy "$remote_command" < /dev/null
+  else
+    printf '%s\n%s\n' "$TCR_USERNAME" "$TCR_PASSWORD" | ssh -F "$ssh_config" trade-deploy "$remote_command"
+  fi
 fi

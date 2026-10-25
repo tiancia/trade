@@ -1,10 +1,7 @@
 name: Submit build or deployment to CNB
-run-name: Submit CNB task / ${{ github.event_name == 'push' && 'all' || inputs.service }} / ${{ github.ref_name }}
+run-name: Submit CNB task / ${{ inputs.mode }} / ${{ inputs.service }} / ${{ github.ref_name }}
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       service:
@@ -19,16 +16,18 @@ on:
           - x-console
           - frontends
           - egress
-      build:
-        description: Build and push new images in CNB
-        type: boolean
-        default: true
-      deploy:
-        description: Build/push then deploy selected images, or deploy an existing manifest
-        type: boolean
-        default: false
+      mode:
+        description: Build, deploy, or roll back selected services
+        type: choice
+        required: true
+        default: build
+        options:
+          - build
+          - build_deploy
+          - deploy
+          - rollback
       existing_release_manifest:
-        description: Complete release.env text when build is unchecked
+        description: Complete release.env text required only for deploy mode
         type: string
         required: false
 
@@ -55,8 +54,7 @@ jobs:
       - name: Submit a task to the mainland managed builder
         env:
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
-          SERVICE: ${{ github.event_name == 'push' && 'all' || inputs.service }}
-          BUILD_REQUESTED: ${{ github.event_name == 'push' && 'true' || (inputs.build && 'true' || 'false') }}
-          DEPLOY_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy && 'true' || 'false' }}
+          SERVICE: ${{ inputs.service }}
+          MODE: ${{ inputs.mode }}
           EXISTING_RELEASE_MANIFEST: ${{ inputs.existing_release_manifest }}
         run: node deploy/scripts/trigger-cnb.cjs

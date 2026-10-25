@@ -49,13 +49,13 @@ function copiedFiles(copies, sourcePrefix, artifactDirectory) {
 }
 
 test('source-only backend edits preserve the ordinary Maven dependency layer and every offline test', () => {
-  const pom = backend.indexOf('COPY backend/mvnw backend/pom.xml');
-  const dependencies = backend.indexOf('RUN ./mvnw -B -ntp dependency:go-offline');
+  const pom = backend.search(/^COPY .*backend\/pom\.xml.*$/m);
+  const dependencies = backend.search(/^RUN (?:\.\/mvnw|mvn) (?:-s \S+ )?-B -ntp dependency:go-offline$/m);
   const sources = backend.indexOf('COPY backend/src/');
   assert.ok(pom >= 0 && dependencies > pom && sources > dependencies);
   assert.doesNotMatch(backend, /--mount=type=cache[^\n]*target=\/root\/\.m2/,
     'an empty fresh-runner cache mount must not hide the restored Maven repository');
-  assert.match(backend, /RUN RUN_INTEGRATION_TESTS=false \.\/mvnw -B -ntp clean package/);
+  assert.match(backend, /RUN RUN_INTEGRATION_TESTS=false (?:\.\/mvnw|mvn) (?:-s \S+ )?-B -ntp clean package/);
   assert.doesNotMatch(backend, /(?:skipTests|maven\.test\.skip)/);
   assert.deepEqual(runtimeCopies(backend).map((copy) => copy.sources), [
     ['/workspace/backend/extracted/dependencies/'],
