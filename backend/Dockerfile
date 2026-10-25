@@ -9,7 +9,7 @@ COPY backend/mvnw backend/pom.xml ./
 RUN sed -i 's/\r$//' mvnw && chmod +x mvnw
 # Keep Maven dependencies in an ordinary build layer. External BuildKit caches
 # retain this layer across fresh runners; cache mounts alone are not exported.
-RUN ./mvnw -B -ntp dependency:go-offline
+RUN MVNW_VERBOSE=true ./mvnw -B -ntp dependency:go-offline
 COPY backend/src/ src/
 # The existing full test suite also validates these infrastructure files.
 COPY backend/infrastructure/ infrastructure/
