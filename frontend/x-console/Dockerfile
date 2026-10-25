@@ -10,7 +10,7 @@ COPY src ./src
 RUN npm exec vite -- build --config vite.config.docker.js
 
 FROM ${NGINX_IMAGE} AS runtime
-COPY nginx.conf /etc/nginx/nginx.conf
+COPY --chmod=0644 nginx.conf /etc/nginx/nginx.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 USER nginx
 EXPOSE 8080
