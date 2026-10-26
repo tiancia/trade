@@ -1,6 +1,6 @@
 # AI 开发约定
 
-本文件补充 [仓库全局 Agent 约束](../AGENTS.md)，适用于 `backend/` 范围，并与 [架构说明](../docs/backend/ARCHITECTURE.md) 和 [贡献指南](CONTRIBUTING.md) 配合使用。若任务目录下以后出现更具体的 `AGENTS.md`，仍须遵守全局临时产物存放规则。
+本文件约束 AI 编码助手在 `backend/` 范围内的工作。开发流程与验证要求见 [贡献指南](CONTRIBUTING.md)，更具体的目录规则以最近的 `AGENTS.md` 为准。
 
 ## 项目事实
 
@@ -8,7 +8,7 @@
 - 架构形态：按业务域组织的模块化单体，域内统一先分 `interfaces`、`application`、`domain`、`infrastructure`，再按能力细分。
 - 应用入口：`src/main/java/com/trade/TradeApplication.java`。
 - 后台任务入口：`automation/application/task/AutomationTaskRegistrar.java`；`register()` 只登记任务，真正启动由 `ApplicationReadyEvent + auto-start` 或任务管理 API 触发。
-- 危险能力默认关闭。不要为通过测试或方便调试而打开自动任务、真实下单或真实发布开关。
+- 不得为通过测试或方便调试而打开自动任务、真实下单或真实发布开关。配置类默认值与当前运行模板不同，启动前核对 [运维手册](../docs/backend/OPERATIONS.md)。
 
 ## 开始修改前
 
@@ -17,34 +17,10 @@
 3. 检查配置门禁、持久化契约、Mapper XML 和相邻测试，不要只根据类名猜测行为。
 4. 需求存在多种解释时，优先选择能保持现有 API、数据库和资金安全语义的最小改动。
 
-## 代码放置规则
+## 结构与数据规则
 
-| 内容 | 放置位置 |
-| --- | --- |
-| HTTP 映射、鉴权、请求响应转换 | `<domain>/interfaces/web` |
-| 用例编排、事务边界 | `<domain>/application/<能力>`，小模块使用 `service` |
-| 用例需要的出站接口 | `<domain>/application/port`，确有替换价值时再引入 |
-| 纯业务值与规则 | `<domain>/domain/model` 或 `domain/<能力>` |
-| 共享业务异常 | `<domain>/domain/exception` |
-| MyBatis、Row、Repository/Store 实现 | `<domain>/infrastructure/persistence` |
-| Broker、外部执行器实现 | `<domain>/infrastructure/broker`，契约放 `application/port` |
-| 配置绑定、Bean 装配 | `<domain>/infrastructure/config` |
-| Prompt、AI 响应解析与校验 | `<domain>/application/decision` |
-| 定时触发 | `<domain>/interfaces/scheduler`，保持为薄入口 |
-| 外部协议、签名、供应商 DTO | `client/<provider>` |
-| 跨域任务启停和状态汇总 | `automation` |
-| 真正无业务归属的纯函数 | `common/support` |
-
-不要创建全局 `controller`、`service`、`mapper` 或泛化 `utils` 大目录。业务域之间不得直接 import；跨域生命周期由 `automation` 编排。`client`、`ai`、`common` 不得反向依赖业务域，`web` 不得直接暴露持久化 Row 或 Mapper。
-
-领域模型不得反向依赖 application、interfaces 或 infrastructure；application/port 不得依赖实现。业务域根目录不再平铺 market、execution、persistence 等能力包。`client` 按供应商组织，`common` 保留纯函数，不强制创建空层。
-
-## 数据库主键规范
-
-- 所有新增或重建的业务表统一使用单列 `id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY`，由数据库生成主键。
-- UUID、账号、会话、令牌哈希、订单幂等键和复合业务键使用独立字段及 `UNIQUE` 约束；不得改用这些字段作为主键，必须保留已有接口、外键关联、去重、UPSERT、行锁与交易幂等语义。
-- 普通业务 INSERT 不指定 `id`，不得用 `MAX(id)+1` 等应用计算替代数据库自增；确需返回新主键时使用 MyBatis 生成键回填，数字主键对应的 Java 字段使用 `Long`。初始化种子和存量迁移需要保留固定 ID 时可显式写入。
-- 修改主键时同步更新模块 schema、旧库手工升级脚本、Mapper/Row 和相关测试。遵守 [数据库主键与重建说明](src/main/resources/db/README.md)；删除旧表重建仅适用于允许丢弃全部数据的开发库，已有表不会因重启自动升级。
+- 类型放置、四层依赖与业务域边界遵守 [架构说明](../docs/backend/ARCHITECTURE.md)，不要新增全局技术类型目录或空层。
+- 主键、业务唯一约束、MyBatis 回填及重建边界遵守 [数据库开发规范](src/main/resources/db/README.md#主键开发规范)；新增表仍必须使用自增 BIGINT `id` 单列主键，不得破坏已有业务键和幂等语义。
 
 ## 高风险变更
 
@@ -54,23 +30,11 @@
 - 配置：新增配置时同步检查 `application.yml`、`.env.example`、`@ConfigurationProperties`、默认安全值和运维文档。
 - 凭据：不得读取、打印或提交 `.env`、密钥、令牌、私钥和生产数据。
 
-## 文档与归档
-
-- 仓库只保留现行架构、API、配置、使用说明和运维手册，直接更新与当前行为对应的文档。
-- 计划、排查、修复、审查、验收与架构决策历史记录，以及临时日志、截图、快照、一次性脚本，按根目录 `AGENTS.md` 直接写入桌面 `0/trade-archive/agent-artifacts/<日期>/<任务名>/`；不得先写入仓库再移动。
-- 移走过程文档时同步移除或改写仓库中的入口与引用，不添加指向个人绝对归档路径的链接。
-- 架构或业务行为变化更新现行架构说明、模块目录和对应专题；任务经过、历史方案与验收结果只写入外部归档。
+文档归属与更新规则见 [文档总导航](../docs/README.md#维护规则)。
 
 ## 验证要求
 
-先运行受影响范围的测试，交付前运行完整套件：
-
-```powershell
-.\mvnw.cmd -q "-Dtest=PackageArchitectureTest" test
-.\mvnw.cmd clean test
-```
-
-在 PowerShell 中始终给完整 `-Dtest=...` 参数加引号。测试必须离线且不得发起真实下单、发布、付费 AI 请求或生产数据库写入；需要外部凭据的测试应显式跳过。
+按 [贡献指南的质量门禁](CONTRIBUTING.md#测试与质量门禁) 先运行受影响测试，交付前运行完整 `clean test`。PowerShell 中给完整 `-Dtest=...` 参数加引号；测试必须离线，不得真实下单、发布、消耗付费 AI 请求或写入生产数据库，缺少外部凭据时显式跳过。
 
 移动 Java 类型时必须同步移动测试并使用 `clean test`，防止 `target/` 中旧 class 掩盖遗漏。结构规则由 `src/test/java/com/trade/architecture/PackageArchitectureTest.java` 保护，不要通过放宽规则来掩盖分层问题。
 

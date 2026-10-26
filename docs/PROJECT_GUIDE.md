@@ -4,7 +4,7 @@
 
 面向第一次接手项目的开发者和运维人员。先读第 1～4 节理解系统与通信，再按第 7 节连接现有环境；修改代码、发布与排障分别见第 5、8、9 节。
 
-代码事实以当前仓库为准，运行配置以服务器上的配置和发布记录为准。本文不保存真实主机地址、密码或令牌；示例中的 `CN_HOST`、`DE_HOST` 需要替换为交接提供的地址。
+代码事实以当前仓库为准，运行配置以服务器上的配置和发布记录为准。本文不保存真实主机地址、密码或令牌；示例主机名需要替换为交接提供的地址。
 
 每次接手环境或完成部署后，按第 7 节重新核验容器、代理、行情和业务状态。源码、配置模板与文档不能证明服务器已运行相应版本，也不能代替 PAPER 决策、Telegram 审核和 X 发布状态的独立验收。
 
@@ -220,14 +220,7 @@ docs/                       文档总导航、交接指南及 backend/ 后端专
 
 后端是按业务域组织的**模块化单体**，不是每个域一个独立微服务。当前业务域包括 trading、x、weibo、polymarket、story、textgame、marketplace；automation 负责跨域任务生命周期，client 负责外部供应商通信，ai 负责共享 AI 审计能力，common 放无业务归属的纯函数。
 
-| 域内目录 | 放什么 | 典型入口 |
-| --- | --- | --- |
-| interfaces | HTTP 映射、鉴权、请求转换、薄调度入口 | TradingController、TradingScheduler |
-| application | 用例编排、事务边界、调用顺序、出站 port | TradingStrategyEngine、XPostService |
-| domain | 模型、状态、不变量、纯业务规则 | 阈值策略、风控规则、订单状态机 |
-| infrastructure | MyBatis、Redis、文件、Broker、外部接入和配置装配 | MarketContextCollector、TradingStateRepository |
-
-基本方向是 interfaces → application → domain，基础设施实现 application 定义的出站接口。跨域生命周期由 automation 编排。详细规范与完整模块说明分别见 [ARCHITECTURE](backend/ARCHITECTURE.md)、[MODULES](backend/MODULES.md)。
+域内按 interfaces → application → domain 组织，基础设施实现 application 定义的出站接口；跨域生命周期由 automation 编排。各层职责和完整模块入口分别维护在 [架构说明](backend/ARCHITECTURE.md)与[模块目录](backend/MODULES.md)。
 
 ### 5.2 后台任务不是打开网页后才运行
 
@@ -294,47 +287,23 @@ MySQL 是金融状态权威，JSON 不是跨实例共享资金状态。发布应
 
 ## 7. 新人连接现有环境：十分钟操作
 
-先向维护者取得国内 SSH 地址/端口、登录方式和网关账号密码。以下电脑命令均在 **Windows PowerShell** 执行；服务器命令明确标为 Ubuntu Bash。
+先向维护者取得国内 SSH 地址/端口、登录方式和网关账号密码。完整连接与部署验收命令统一维护在[生产部署说明](../deploy/README.md#4-建立电脑访问隧道)。
 
 ### 第一步：打开访问隧道
 
-```powershell
-$DomesticSsh = 'ubuntu@CN_HOST'  # 替换 CN_HOST
-ssh -NT -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -L 127.0.0.1:18080:127.0.0.1:18080 -L 127.0.0.1:18081:127.0.0.1:18081 $DomesticSsh
-```
-
-首次连接按交接信息核对主机指纹；非默认 SSH 端口增加 `-p 实际端口`。成功后没有业务输出属于正常现象，保持该窗口运行。
-
-打开交易驾驶舱 `http://127.0.0.1:18080` 和 X 控制台 `http://127.0.0.1:18081`，先输入网关账号密码。若电脑本地端口冲突，可将 `-L` 前半段换成未占用端口，远端目标端口不变，并使用相应浏览器地址。
+按[电脑访问隧道](../deploy/README.md#4-建立电脑访问隧道)中的 PowerShell 命令操作，核验主机指纹并保持 SSH 窗口运行。浏览器打开交易驾驶舱 `http://127.0.0.1:18080` 和 X 控制台 `http://127.0.0.1:18081`，使用网关账号密码登录；本地端口冲突和非默认 SSH 端口的调整也见该节。
 
 ### 第二步：只读验收，分清进程健康与业务结果
 
-在电脑 PowerShell 检查网关和业务 API，curl 会询问网关密码：
+先执行[部署验收](../deploy/README.md#5-部署验收)中的容器、日志、代理及 GET 检查；真实 AI 生成和对外发布的验收另按业务专题进行。该节同时提供服务器 Bash 的 `dc` 函数；后续服务器排障命令以此为前提。电脑 PowerShell 可补查交易状态，curl 会询问网关密码：
 
 ```powershell
 curl.exe --noproxy "*" -sS --max-time 30 -u operator 'http://127.0.0.1:18080/api/trading/runtime/status' | ConvertFrom-Json | Select-Object executionMode, liveEnabled, activeStrategyId, lastError, lastDecision
-curl.exe --noproxy "*" -sS --max-time 30 -u operator 'http://127.0.0.1:18080/api/trading/market/candles?instId=BTC-USDT&bar=5m&limit=2'
-curl.exe --noproxy "*" -sS --max-time 30 -u operator 'http://127.0.0.1:18080/api/automation/tasks'
 ```
 
 运行状态应符合 PAPER、liveEnabled=False；最新一次决策完成后再检查 lastError 和 lastDecision。automation 的 lastRunSuccessful 表示对应调度入口的结果；story、weibo、x 会把内部失败或降级结果反馈给调度入口，交易引擎仍可能捕获错误并保存到自己的 lastError，需同时检查交易状态。
 
-在 **国内 Ubuntu Bash** 定义日常命令并查看容器：
-
-```bash
-cd /opt/trade
-dc() { docker compose --env-file deploy/.env --env-file deploy/release.env -f compose.prod.yaml "$@"; }
-dc ps
-dc logs --since=20m --tail=100 backend egress gateway
-```
-
-从 backend 容器验证完整业务代理链，公开时间接口不会下单：
-
-```bash
-dc exec -T backend curl --noproxy "" -fsS --max-time 20 --proxy http://egress:13128 https://www.okx.com/api/v5/public/time
-```
-
-检查宿主机的镜像下载隧道：
+如宿主机启用了第 2.3 节的镜像下载隧道，在**国内 Ubuntu Bash** 单独检查：
 
 ```bash
 systemctl is-active trade-docker-egress.service
@@ -345,25 +314,9 @@ Registry `/v2/` 返回 HTTP 401 是到达鉴权入口的正常挑战，不能证
 
 ## 8. 后续如何迭代部署
 
-发布统一使用 **GitHub → CNB → TCR → 国内服务器**。电脑和生产服务器无需执行镜像构建；入口、凭据和参数见 [CNB 发布说明](../deploy/README.md#cnb-发布入口)。
+发布使用 **GitHub → CNB → TCR → 国内服务器**；参数、首次全量构建、部署重试和清单格式统一见 [CNB 发布入口](../deploy/README.md#cnb-发布入口)。先检查变更并提交到 `main`，再选择服务和构建/部署模式；Compose、网关和业务配置仍需单独同步。
 
-1. 修改代码并完成受影响部分的检查，提交到 GitHub `main`。若改了 Compose、网关或业务配置，先同步服务器相应文件；CNB 只上传发布脚本和镜像清单。
-2. 在 **Actions → Submit build or deployment to CNB → Run workflow** 选择 `main`，按变更选择 `service`：`backend`、`cockpit`、`x-console`、`egress`、`frontends` 或 `all`。
-3. 选择 `mode=build_deploy` 构建并部署；若需分开执行，先用 `build`，再用 `deploy` 并在 `existing_release_manifest` 粘贴 CNB 生成的完整清单。首次没有成功基线时必须选 `all`；部分构建会经 SSH 读取服务器当前成功清单。
-4. GitHub 成功只表示任务提交成功。进入结果中的 CNB 链接核对构建、推送与 `DEPLOYMENT_OK`，再按第 7 节核对容器、行情及业务状态。
-
-GitHub 入口固定使用 `/opt/trade` 和私有访问模式。完整镜像清单包含 `RELEASE_VERSION`、`BACKEND_IMAGE`、`COCKPIT_IMAGE`、`X_CONSOLE_IMAGE`、`EGRESS_IMAGE`，即使只更新一个服务也不能省略其他项。CNB 日志会打印清单，并尝试上传清单附件；构建推送成功而部署失败时可复用清单重试，避免重复构建。
-
-服务端发布锁与健康检查保留。发布会短暂停止并重建选中的应用；全量发布包括网关。成功后更新 `deploy/release.env`、`deploy/releases/current.env` 并保留 `previous.env`。失败不会自动回滚，需要在同一 CNB 入口选择 `mode=rollback`；它使用服务器上一成功清单并要求本地镜像齐全，首次发布没有上一版可回滚。
-
-仅修改 `backend.env`、继续使用当前镜像时，在服务器执行：
-
-```bash
-cd /opt/trade
-bash deploy/scripts/release.sh deploy backend --no-pull
-```
-
-人工回滚可执行 `bash deploy/scripts/release.sh rollback --no-pull`。镜像回滚不恢复数据库、业务 env、密钥或网关文件；数据库升级和公共访问模式切换按 [生产部署说明](../deploy/README.md) 单独处理。
+GitHub 成功只表示提交被接受，生产结果须检查 CNB 日志、成功版本记录及第 7 节的业务状态。发布会短暂停止并重建应用，失败不自动回滚；仅改运行配置后的重建、回滚条件及数据库/配置不能随镜像恢复的边界，统一见[发布行为与回滚](../deploy/README.md#发布行为与回滚)。
 
 ## 9. 常见问题按链路定位
 
@@ -371,7 +324,7 @@ bash deploy/scripts/release.sh deploy backend --no-pull
 | --- | --- |
 | 电脑 localhost 页面无法连接 | 电脑 SSH 窗口是否仍运行、本地端口是否冲突、国内 SSH 是否可达；然后检查 gateway |
 | 页面可打开但 API 502 | gateway → backend；检查后端容器健康和日志，不先归因于德国 VPS |
-| 读操作正常，切换策略 403 | 驾驶舱交易令牌是否正确、刷新后是否重新填写；409 则先刷新策略版本 |
+| 读操作正常，切换策略 403 | 检查管理写请求的 CSRF 标记和允许来源，见[管理接口认证](backend/OPERATIONS.md#后台任务操作)；409 则先刷新策略版本 |
 | 新建回测 400 | 起止时间、策略、标的及其他请求参数；进入队列后的 FAILED 另看运行错误 |
 | 行情能读，决策报 OKX GET request error | 查看最底层 Caused by 和实际请求接口；PAPER 排查公共行情、产品规则及代理，LIVE 另查私有凭据、权限和出口 IP |
 | WebSocket 未就绪但行情有值 | 当前模板关闭交易所 WS，REST/Redis 仍可供行情；与浏览器 SSE 是不同层次 |
@@ -390,21 +343,16 @@ dc logs --since=2h --no-color backend 2>&1 | grep -A 70 -F 'OKX strategy decisio
 
 ## 10. 交接时提供什么，从哪里继续读
 
-维护者应通过受控渠道交接：国内/德国主机 SSH 地址与端口、主机指纹、登录授权、网关账号、必要的应用令牌、当前镜像清单、备份位置，以及宿主机 systemd 隧道/Squid 的配置维护方式。共享文档只记录字段名和职责，不写真实密钥。
+维护者应通过受控渠道交接：国内/德国主机 SSH 地址与端口、主机指纹、登录授权、网关账号、外部服务凭据的保管方式、当前镜像清单、备份位置，以及宿主机 systemd 隧道/Squid 的配置维护方式。共享文档只记录字段名和职责，不写真实密钥。
+
+后续阅读按[文档总导航](README.md)选择部署、运维或业务专题；直接跟踪实现时使用以下入口：
 
 | 想了解的内容 | 入口 |
 | --- | --- |
-| 首次安装、密钥权限、网关、发布、备份、公共模式 | [生产部署说明](../deploy/README.md) |
-| 后端全部能力、开发启动 | [backend README](../backend/README.md) |
-| 业务模块边界 | [MODULES](backend/MODULES.md) |
-| 四层职责和调用链 | [ARCHITECTURE](backend/ARCHITECTURE.md) |
 | 后台任务怎么注册/启动 | [Registrar](../backend/src/main/java/com/trade/automation/application/task/AutomationTaskRegistrar.java)、[Manager](../backend/src/main/java/com/trade/automation/application/task/AutomationTaskManager.java) |
 | 决策与 PAPER 账户读取 | [TradingStrategyEngine](../backend/src/main/java/com/trade/trading/application/strategy/TradingStrategyEngine.java)、[MarketContextCollector](../backend/src/main/java/com/trade/trading/infrastructure/market/MarketContextCollector.java) |
-| 回测参数与结果 | [回测说明](backend/TRADING_BACKTEST.md) |
-| X 审核与发布 | [X 工作流](backend/X_WORKFLOW.md)、[XPostService](../backend/src/main/java/com/trade/x/application/service/XPostService.java) |
+| X 审核与发布实现 | [XPostService](../backend/src/main/java/com/trade/x/application/service/XPostService.java) |
 | 电脑外的业务 SSH 隧道 | [egress entrypoint](../deploy/egress/entrypoint.sh) |
 | 页面/API 到底转发给谁 | [私有网关](../deploy/nginx/private.conf.template)、[API 路由](../deploy/nginx/includes/api.conf) |
-| 交易驾驶舱和 X 控制台的开发方式 | [cockpit README](../frontend/trading-cockpit/README.md)、[x-console README](../frontend/x-console/README.md) |
-| 配置同步、镜像构建与发布脚本 | [sync](../deploy/scripts/sync-backend-config.ps1)、[build](../deploy/scripts/build-images.sh)、[release](../deploy/scripts/release.sh) |
 
 后续修改端口、网关、代理方式、数据归属或后台门禁时，同时更新本文对应章节和原始配置模板；实际发布成功版本以服务器记录为准。

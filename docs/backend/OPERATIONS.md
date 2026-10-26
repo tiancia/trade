@@ -110,7 +110,7 @@ OKX 真实下单还要求 `trade.trading.execution-mode=live` 与 `live-enabled=
 6. 若启用 Redis，确认缓存写入成功且没有持续连接重试；
 7. 再按任务逐个启用业务开关和 auto-start，避免一次打开多个外部副作用。
 
-Actuator 当前暴露 health、info、metrics 和 prometheus。automation 启停 API 是运维控制面，应用内尚未提供统一运维鉴权；部署时必须由内网、网关或等价访问控制保护，不能直接暴露到公网。
+Actuator 当前暴露 health、info、metrics 和 prometheus。automation 启停 API 的应用认证与 CSRF 要求见[后台任务操作](#后台任务操作)；部署时仍须限制后端端口的网络访问，不能直接暴露到公网。
 
 ## 后台任务操作
 
@@ -177,7 +177,7 @@ $env:TRADE_TRADING_LEADERSHIP_HEARTBEAT_INTERVAL_MS="5000"
 
 ## 资金级停止与恢复
 
-策略切换、HTTP stop/resume 和手工对账无需单独的应用令牌。生产环境统一通过网关账号密码和容器网络隔离限制访问，保持后端端口不直接对公网开放；本地开发只在受信任的本机环境调用。
+策略切换、HTTP stop/resume 和手工对账无需单独的应用令牌，仍须通过[管理接口的 Basic 认证与 CSRF 校验](#后台任务操作)。生产后端端口保持在容器网络内；本地开发只在受信任的隔离环境调用。
 
 `PUT /api/trading/strategies/active` 请求体仍为 `strategyId` 和可选 `expectedRevision`，版本冲突仍返回 409。浏览器跨域访问只放行 `trade.trading.frontend-allowed-origin-patterns` 中允许的来源，CORS 不替代网关认证。以下命令用于本地后端；生产访问使用网关地址并完成网关认证。
 

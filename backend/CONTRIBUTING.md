@@ -1,6 +1,6 @@
 # 贡献指南
 
-本项目按“业务域优先、域内分层”的方式维护。全项目资料见 [文档总导航](../docs/README.md)；提交后端代码前请先阅读 [模块目录](../docs/backend/MODULES.md) 和 [架构说明](../docs/backend/ARCHITECTURE.md)。以下文件路径在更新矩阵中按仓库根目录表示，Maven 命令仍从 `backend/` 执行。
+本页负责后端开发流程与质量门禁。模块归属见 [模块目录](../docs/backend/MODULES.md)，结构规范见 [架构说明](../docs/backend/ARCHITECTURE.md)，Maven 命令从 `backend/` 执行。
 
 ## 开发流程
 
@@ -13,29 +13,7 @@
 
 ## 目录与依赖
 
-新功能优先进入所属业务域，不按技术类型创建全局目录。标准结构如下，空层不需要为了形式提前创建：
-
-```text
-<domain>/
-├─ package-info.java
-├─ interfaces/
-│  └─ web/、scheduler/
-├─ application/
-│  └─ service/ 或能力包、port/
-├─ domain/
-│  └─ model/、exception/ 或能力包
-└─ infrastructure/
-   └─ persistence/、broker/、market/、event/、config/ 等
-```
-
-必须遵守以下边界：
-
-- Controller 只处理协议和鉴权，业务流程下沉到 application service；
-- domain 不依赖 interfaces、application、infrastructure；不依赖供应商 client，原始 DTO 在应用/基础设施边界转换为领域输入；
-- infrastructure 实现 application port，port 不得反向依赖具体实现；
-- 业务域之间不直接调用；共享代码不能反向依赖业务域；
-- scheduler 只负责触发，不能复制用例逻辑；
-- 只有至少两个业务域已经稳定复用的纯能力才考虑进入 `common`。
+新功能进入所属业务域，目录、类型放置和依赖方向以 [架构说明](../docs/backend/ARCHITECTURE.md) 为准。只有至少两个业务域已经稳定复用的纯能力才考虑进入 `common`。
 
 架构测试当前只锁定已经稳定的边界。遇到历史代码违反目标分层时，优先小步引入内部模型或 port，不要仅为包名整齐而一次性重写业务语义。
 
@@ -59,15 +37,7 @@
 - 表结构、Mapper 接口、Row 类型和 XML 必须在同一变更中保持一致；
 - 合并前至少在隔离数据库验证，生产执行前必须备份。
 
-### 主键约定
-
-- 所有业务表必须以单列 `id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY` 作为数据库主键，不使用 UUID、账号、会话或复合业务字段作为主键。
-- 业务标识使用独立字段并建立所需的单列或复合 `UNIQUE` 约束；保留已有业务关联、幂等、去重、UPSERT 和行锁语义。数据库主键不能替代交易所用户 ID、审核回调身份等外部标识。
-- 普通 INSERT 省略 `id`，不得用 `MAX(id)+1` 等应用计算替代数据库自增；需要返回生成值时通过 MyBatis 回填到数字主键对应的 Java `Long` 字段。初始化种子或旧数据迁移确需保留固定 ID 时允许显式写入。
-- 新表及主键变更必须同步完整 schema、适用的旧库升级脚本、Mapper/Row 和测试；`DatabaseSchemaInitializationTest` 校验全部启动表的单列主键、BIGINT 类型和自增属性，不得放宽断言来规避规范。
-- 空开发库可由启动 schema 重建；重启不会修改已有表结构。需要保留数据的数据库必须使用经过验证的升级脚本，不能以删表作为升级流程。
-
-模块索引和重建条件见 [数据库目录](src/main/resources/db/README.md)，升级依赖和使用规则见 [数据库升级说明](src/main/resources/db/upgrade/README.md)。
+主键、业务唯一约束、MyBatis 回填与重建条件统一见 [数据库开发规范](src/main/resources/db/README.md)，旧库适用条件和顺序见 [升级说明](src/main/resources/db/upgrade/README.md)。主键变更同步升级脚本及测试；不得放宽 `DatabaseSchemaInitializationTest` 断言。
 
 ## 测试与质量门禁
 
@@ -83,20 +53,9 @@
 
 测试不得真实下单、发布内容、消耗付费 AI token 或写入生产系统。若外部集成测试缺少凭据，应通过条件显式跳过并在测试报告中可见。
 
-## 文档更新矩阵
+## 文档维护
 
-仓库只保留现行架构、API、配置、使用说明和运维手册。计划、排查、修复、审查、验收与架构决策历史记录统一放在桌面 `0/trade-archive/`，按原仓库相对路径组织，不在仓库新增过程文档。变更完成后直接更新对应现行说明，不把任务经过或历史验收结果累加到维护文档。
-
-| 变更 | 同步更新 |
-| --- | --- |
-| 全局机器、网络、端口和接手路径 | `docs/PROJECT_GUIDE.md`，新增阅读入口时更新 `docs/README.md` |
-| 生产基础设施、配置同步或发布脚本 | `deploy/README.md`；涉及系统通信时同步全局上手指南 |
-| 新模块、入口或依赖方向 | `docs/backend/MODULES.md`、`docs/backend/ARCHITECTURE.md`、对应 `package-info.java` |
-| 应用启动、停机、监控或业务故障处理 | `docs/backend/OPERATIONS.md`、必要时 `docs/backend/OBSERVABILITY.md` |
-| 架构规则和依赖方向 | 更新 `docs/backend/ARCHITECTURE.md`、`docs/backend/MODULES.md`；决策过程与历史论证放外部归档 |
-| 新环境变量 | `backend/.env.example` 和相关运维说明；生产部署变量另核对 `deploy/` 模板 |
-| 数据库升级 | `backend/src/main/resources/db/` 下模块 schema、upgrade 脚本和升级 README；新增模块同步启动列表 |
-| 开发/测试命令变化 | `backend/CONTRIBUTING.md`、`backend/README.md`、`backend/AGENTS.md`；全局入口变化同步根 README |
+文档职责与更新入口统一见 [文档总导航的维护规则](../docs/README.md#维护规则)。模块入口变化同步对应 `package-info.java`；开发命令变化同步本页与后端 README 的启动步骤。
 
 ## 评审清单
 
