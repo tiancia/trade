@@ -13,7 +13,6 @@ cache_temporary=''
 cache_backup=''
 cache_destination=''
 manifest_tmp=''
-summary_started=false
 TARGETS=()
 
 usage() {
@@ -48,55 +47,6 @@ EOF
 fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 require_value() { [[ $# -ge 2 && -n $2 && $2 != --* ]] || fail "$1 requires a value"; }
 
-filter_push_progress() {
-  # Actions has no terminal. Keep readable byte progress without terminal escapes
-  # or a new log line for every redraw of the same layer.
-  stdbuf -o0 tr '\r' '\n' | awk '
-    {
-      gsub(/\033\[[0-9;?]*[A-Za-z]/, "")
-      if ($0 ~ /^[[:space:]]*$/) next
-      if ($2 == "Pushing") {
-        pending[$1] = $0
-        now = systime()
-        if (($1 in last) && now - last[$1] < 10) next
-        last[$1] = now
-        delete pending[$1]
-      } else {
-        delete pending[$1]
-      }
-      print
-      fflush()
-    }
-    END {
-      for (layer in pending) print "Last observed progress: " pending[layer]
-      fflush()
-    }
-  '
-}
-
-push_image() {
-  local image=$1 push_command status
-  if [[ ${GITHUB_ACTIONS:-} != true ]]; then
-    docker push "$image"
-    return
-  fi
-  command -v script >/dev/null || { printf 'Error: Actions image uploads require util-linux script\n' >&2; return 1; }
-  command -v stdbuf >/dev/null || { printf 'Error: Actions image uploads require stdbuf\n' >&2; return 1; }
-  # A pseudo-terminal makes Docker emit byte progress. The workflow's job timeout
-  # bounds the run; a slow first upload must not fail at an arbitrary shorter limit.
-  printf -v push_command 'docker push %q' "$image"
-  printf 'Uploading %s (layer progress at most every 10 seconds)\n' "$image"
-  if script --quiet --return --flush --command "$push_command" /dev/null | filter_push_progress; then
-    return 0
-  else
-    status=$?
-    if [[ $status == 137 ]]; then
-      printf 'Error: Image upload was killed (exit 137): %s\n' "$image" >&2
-    fi
-    return "$status"
-  fi
-}
-
 run_phase() {
   local phase=$1 service=$2 phase_started=$SECONDS status=0 outcome elapsed
   shift 2
@@ -107,15 +57,6 @@ run_phase() {
   ((status == 0)) || outcome=failure
   printf 'phase=%s service=%s elapsed_seconds=%s status=%s exit_code=%s\n' \
     "$phase" "$service" "$elapsed" "$outcome" "$status"
-  if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
-    if [[ $summary_started == false ]]; then
-      printf '\n| Phase | Service | Seconds | Status |\n| --- | --- | ---: | --- |\n' >> "$GITHUB_STEP_SUMMARY" \
-        || printf 'Warning: could not append build timing summary.\n' >&2
-      summary_started=true
-    fi
-    printf '| %s | %s | %s | %s |\n' "$phase" "$service" "$elapsed" "$outcome" >> "$GITHUB_STEP_SUMMARY" \
-      || printf 'Warning: could not append build timing summary.\n' >&2
-  fi
   return "$status"
 }
 
@@ -321,7 +262,7 @@ done
 
 if [[ $PUSH == true ]]; then
   for index in "${!images[@]}"; do
-    run_phase push "${image_services[$index]}" push_image "${images[$index]}"
+    run_phase push "${image_services[$index]}" docker push "${images[$index]}"
   done
 fi
 

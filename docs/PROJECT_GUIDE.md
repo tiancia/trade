@@ -10,11 +10,11 @@
 
 ## 1. 先看整体：三台机器各做什么
 
-业务后端、数据库和两个管理前端都在国内 Ubuntu 上运行。德国 VPS 提供网络出口。电脑负责开发、构建镜像和通过 SSH 访问管理页面。
+业务后端、数据库和两个管理前端都在国内 Ubuntu 上运行。德国 VPS 提供网络出口。电脑负责开发和通过 SSH 访问管理页面，CNB 负责构建镜像并发布。
 
 | 位置 | 运行内容 | 职责 |
 | --- | --- | --- |
-| 开发者电脑，当前为 Windows | 浏览器、SSH/SFTP 客户端、源码、Docker Desktop 或其他构建环境 | 开发和构建 Linux 镜像；上传发布包；访问服务器管理页面 |
+| 开发者电脑，当前为 Windows | 浏览器、SSH 客户端、源码 | 开发代码、手动提交 CNB 任务、访问服务器管理页面 |
 | 国内 Ubuntu 主机 | Docker Engine + Compose、后端、两个前端、Nginx 网关、MySQL、Redis、egress 隧道容器 | 执行策略与内容工作流，保存业务数据，提供管理 API |
 | 德国 VPS | sshd、Squid | 接收国内主机建立的 SSH 隧道，由 Squid 转发外部请求 |
 
@@ -141,7 +141,7 @@ flowchart LR
 
 宿主机和 egress 容器可以同时使用 13128，因为它们属于不同的网络空间。宿主机 Docker 代理配置位于 `/etc/systemd/system/docker.service.d/trade-proxy.conf`；这个文件和 `trade-docker-egress.service` 本身**不在仓库中**，新机器需要另行交接或配置。服务是否启用及当前健康状态，应按第 7 节检查。
 
-Docker daemon 的代理不会自动成为 Java 客户端代理，也不能保证镜像构建中的 npm/Maven 下载已使用代理。当前在电脑或 CI 构建镜像；服务器拉取不稳定时使用镜像归档上传和 `docker load`。
+Docker daemon 的代理不会自动成为 Java 客户端代理，也不能保证 CNB 构建中的 npm/Maven 下载已使用代理。当前由 CNB 构建并推送 TCR；生产服务器拉取失败时，检查 daemon 的仓库及镜像层下载链路。
 
 ## 3. 服务、端口和网络边界
 
@@ -182,7 +182,7 @@ Prometheus、Grafana、Alertmanager 归可选 `monitoring` profile，默认不�
 
 | 认证 | 在哪里输入或使用 | 作用 |
 | --- | --- | --- |
-| 国内服务器 SSH 密码或登录密钥 | 电脑 SSH/SFTP | 登录、建立访问隧道、传发布包 |
+| 国内服务器 SSH 密码或登录密钥 | 电脑 SSH 客户端 | 登录、建立访问隧道、同步运行配置 |
 | gateway 用户 `operator` 与网关密码 | 浏览器弹出的登录框；curl 的 `-u operator` | 进入私有 Web 网关 |
 
 两个前端无需额外的应用令牌，X 控制台打开后自动读取内容。网关与后端分别校验个人 Basic 凭据；Authorization 仅向后端 API 转发，前端服务器不接收口令。后端管理 GET 和写接口均要求认证，未配置 bcrypt 凭据文件时返回 503；后端端口仍仅在容器网络内可达。网关包含限速与 JSON 审计，公网 HTTPS 额外强制受信客户端证书和 CRL；配置与凭据撤销见[部署说明](../deploy/README.md)。
@@ -345,37 +345,25 @@ Registry `/v2/` 返回 HTTP 401 是到达鉴权入口的正常挑战，不能证
 
 ## 8. 后续如何迭代部署
 
-长期发布流程是“代码 → 构建带版本号镜像 → 传输镜像和清单 → 校验 → 发布 → 业务验收”。服务器运行镜像，不需要长期保留前端 node_modules 或在小规格主机上执行 Maven/npm 构建。
+发布统一使用 **GitHub → CNB → TCR → 国内服务器**。电脑和生产服务器无需执行镜像构建；入口、凭据和参数见 [CNB 发布说明](../deploy/README.md#cnb-发布入口)。
 
-日常可用 [build-upload.sh](../deploy/scripts/build-upload.sh) 把构建、导出、上传和远端 SHA256 校验串成一个命令，例如 `bash deploy/scripts/build-upload.sh backend`。首次在 Git 忽略的 `deploy/upload-server.local` 保存 SSH 目标；脚本自动下载当前成功镜像清单并生成版本号，结束时打印单独执行的服务器发布命令。配置及参数见 [一键构建上传说明](../deploy/README.md#一个命令构建并上传)。
+1. 修改代码并完成受影响部分的检查，提交到 GitHub `main`。若改了 Compose、网关或业务配置，先同步服务器相应文件；CNB 只上传发布脚本和镜像清单。
+2. 在 **Actions → Submit build or deployment to CNB → Run workflow** 选择 `main`，按变更选择 `service`：`backend`、`cockpit`、`x-console`、`egress`、`frontends` 或 `all`。
+3. 选择 `mode=build_deploy` 构建并部署；若需分开执行，先用 `build`，再用 `deploy` 并在 `existing_release_manifest` 粘贴 CNB 生成的完整清单。首次没有成功基线时必须选 `all`；部分构建会经 SSH 读取服务器当前成功清单。
+4. GitHub 成功只表示任务提交成功。进入结果中的 CNB 链接核对构建、推送与 `DEPLOYMENT_OK`，再按第 7 节核对容器、行情及业务状态。
 
-1. 在电脑、WSL/Linux 或 CI 修改代码并完成离线测试；Docker Desktop 使用 Linux Engine，当前主机目标为 linux/amd64。
-2. 用 [build-images.sh](../deploy/scripts/build-images.sh) 构建镜像；命令末尾可指定 `backend`、`cockpit`、`x-console`、`egress`，支持多个服务，不指定时全量构建。部分构建用 `--base` 指向目标服务器当前成功镜像清单（默认读取本地 `deploy/release.env`），只替换选中服务的镜像引用，仍输出完整清单；具体构建命令见 [部署说明](../deploy/README.md#后续更新和回滚)。Dockerfile 内部完成打包，`--push` 只推送本次构建的镜像；也可只对选中的镜像使用 `docker save`、SFTP、`docker load`。
-3. 上传时保留 SHA256 校验。SFTP 可续传，但续传基于已有部分文件，最终仍要校验完整内容。首次离线部署还需 MySQL、Redis、Nginx 基础镜像。
-4. 保留服务器原有业务配置、密钥和数据卷；如果改了部署模板或脚本，同步上传相应文件。不是每次只传镜像就一定足够。
-5. 在服务器先 validate，再发布选定服务；发布脚本会重建选中的容器。后端重建会中断 API，并按原配置重新启动后台任务。
+GitHub 入口固定使用 `/opt/trade` 和私有访问模式。完整镜像清单包含 `RELEASE_VERSION`、`BACKEND_IMAGE`、`COCKPIT_IMAGE`、`X_CONSOLE_IMAGE`、`EGRESS_IMAGE`，即使只更新一个服务也不能省略其他项。CNB 日志会打印清单，并尝试上传清单附件；构建推送成功而部署失败时可复用清单重试，避免重复构建。
 
-服务器 Ubuntu Bash 示例，假定新镜像已 load、新的完整清单位于 `deploy/new-release.env`：
+服务端发布锁与健康检查保留。发布会短暂停止并重建选中的应用；全量发布包括网关。成功后更新 `deploy/release.env`、`deploy/releases/current.env` 并保留 `previous.env`。失败不会自动回滚，需要在同一 CNB 入口选择 `mode=rollback`；它使用服务器上一成功清单并要求本地镜像齐全，首次发布没有上一版可回滚。
+
+仅修改 `backend.env`、继续使用当前镜像时，在服务器执行：
 
 ```bash
 cd /opt/trade
-bash deploy/scripts/release.sh validate --release deploy/new-release.env
-DEPLOY_WAIT_TIMEOUT=300 bash deploy/scripts/release.sh deploy cockpit --release deploy/new-release.env --no-pull
+bash deploy/scripts/release.sh deploy backend --no-pull
 ```
 
-仅后端变更时将 `cockpit` 换成 `backend`；二者一起更新用 `deploy backend cockpit`。只有更新配置、仍使用原镜像时，也可以用现有清单 `deploy backend --no-pull` 来重新创建后端。默认不写服务名会更新五个应用服务，不适合作为每次小改动的默认动作。
-
-清单必须包含四项 `BACKEND_IMAGE`、`COCKPIT_IMAGE`、`X_CONSOLE_IMAGE`、`EGRESS_IMAGE`，即使只更新一个服务也是如此。单服务发布会保留其他服务的成功镜像记录；`--no-pull` 会先确认所需镜像存在，再停止容器。validate 不启动容器，也不代表外部网络已通过验收。
-
-成功后脚本更新 `deploy/release.env` 和 `deploy/releases/current.env`，保留 `previous.env` 及历史记录。需要回到上一成功镜像版本时：
-
-```bash
-bash deploy/scripts/release.sh rollback --no-pull
-```
-
-这是显式操作，不是自动回滚。回滚前确认历史镜像仍在；镜像回滚不恢复数据库、业务 env、密钥、网关文件或已经发布的内容。若只回滚选中服务，可指定服务名并按部署说明选择目标清单；数据库升级必须单独安排备份和迁移。首次发布尚无 previous，不能使用上一版回滚。
-
-本机 `A:\trade-deployments\` 下的历史更新包属于本地发布产物，不是克隆仓库后自动具备的工具。复用具体包前核对其版本、目标主机和校验值；可重复的通用入口以仓库 deploy/scripts 为准。
+人工回滚可执行 `bash deploy/scripts/release.sh rollback --no-pull`。镜像回滚不恢复数据库、业务 env、密钥或网关文件；数据库升级和公共访问模式切换按 [生产部署说明](../deploy/README.md) 单独处理。
 
 ## 9. 常见问题按链路定位
 
@@ -388,7 +376,7 @@ bash deploy/scripts/release.sh rollback --no-pull
 | 行情能读，决策报 OKX GET request error | 查看最底层 Caused by 和实际请求接口；PAPER 排查公共行情、产品规则及代理，LIVE 另查私有凭据、权限和出口 IP |
 | WebSocket 未就绪但行情有值 | 当前模板关闭交易所 WS，REST/Redis 仍可供行情；与浏览器 SSE 是不同层次 |
 | Docker pull 超时，业务代理正常 | 宿主机 trade-docker-egress.service 与 Docker daemon 代理；它们不是 egress 容器 |
-| 大镜像上传 Connection reset / Broken pipe | 传输中断；对同一归档续传，完成后 SHA 校验；未执行发布时原容器仍运行 |
+| CNB 构建或发布失败 | 进入 CNB 任务定位构建、推送、镜像拉取或健康检查阶段；已有完整清单时可仅重试部署 |
 | 改了 backend.env 似乎没生效 | 同步脚本不重启服务；通过 release.sh 重建 backend，不是只 restart |
 | automation 显示成功但没有决策 | 查看 trading runtime 的 lastError / lastDecision；循环未抛错不等于决策成功 |
 | Telegram 收到审核，X 没发出 | 查看草稿 status / lastError、审核版本、目标账号和发布门禁；UNKNOWN 先人工核对 |

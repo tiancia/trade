@@ -10,7 +10,7 @@ usage() {
   cat <<'EOF'
 Preview old Trade application images eligible for local deletion.
 
-Usage: bash cleanup-images.sh --root /opt/trade --registry ghcr.io/owner/repo [--apply]
+Usage: bash cleanup-images.sh --root /opt/trade --registry ccr.ccs.tencentyun.com/tiancia-trade [--apply]
 
 Without --apply, only print eligible image tags. With --apply, remove them
 without force. Keep current.env, previous.env, and every container's images.

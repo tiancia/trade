@@ -116,10 +116,10 @@ function run(current, options = {}) {
   const result = cp.spawnSync(bash, ['-c',
     'export PATH="$TEST_CACHE_BIN:/usr/bin:/bin"\nexec bash "$TEST_BUILD_SCRIPT" "$@"', '--', ...args,
   ], {
-    env: { ...process.env, GITHUB_ACTIONS: 'false', TEST_NODE: node, TEST_BUILD_SCRIPT: script,
+    env: { ...process.env, TEST_NODE: node, TEST_BUILD_SCRIPT: script,
       TEST_CACHE_BIN: current.posix('bin'), TEST_CACHE_MOCK: current.local('mock.cjs'),
       TEST_CACHE_STATE: current.local('state.json'), TEST_CACHE_AUDIT: current.local('audit.jsonl'),
-      GITHUB_STEP_SUMMARY: current.posix('summary.md') },
+    },
     encoding: 'utf8', timeout: 20_000,
   });
   if (result.error) throw result.error;
@@ -139,7 +139,6 @@ test('without cache-dir the original Docker commands and build-before-push order
   assert.match(result.calls[0][5], /\/frontend\/trading-cockpit$/);
   assert.match(result.stdout, /phase=build service=cockpit elapsed_seconds=\d+ status=success exit_code=0/);
   assert.match(result.stdout, /phase=push service=x-console elapsed_seconds=\d+ status=success exit_code=0/);
-  assert.match(fs.readFileSync(current.local('summary.md'), 'utf8'), /\| push \| cockpit \| \d+ \| success \|/);
   assert.ok(!fs.existsSync(current.local('cache')));
 });
 
@@ -205,7 +204,6 @@ test('push failure preserves its exit code and records its timing without publis
   const result = run(current, { cache: false, push: true, pushExit: 7 });
   assert.equal(result.status, 7, result.diagnostic);
   assert.match(result.stdout, /phase=push service=cockpit elapsed_seconds=\d+ status=failure exit_code=7/);
-  assert.match(fs.readFileSync(current.local('summary.md'), 'utf8'), /\| push \| cockpit \| \d+ \| failure \|/);
   assert.ok(!fs.existsSync(current.local('output/release.env')));
 });
 

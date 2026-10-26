@@ -10,8 +10,8 @@
 
 | 路径 | 用途 |
 | --- | --- |
-| [scripts/build-images.sh](scripts/build-images.sh) | 在构建机按需生成应用镜像及完整版本清单，默认构建四个服务 |
-| [scripts/build-upload.sh](scripts/build-upload.sh) | 一个命令按需构建、导出、上传镜像与完整清单，并核验 SHA256；可加 `--deploy` 自动发布 |
+| [ci/cnb.yml](ci/cnb.yml)、[scripts/cnb-ci.sh](scripts/cnb-ci.sh) | CNB 控制流水线与适配入口 |
+| [scripts/managed-ci.sh](scripts/managed-ci.sh)、[scripts/build-images.sh](scripts/build-images.sh) | CNB 构建、推送镜像并通过 SSH 发布 |
 | [scripts/release.sh](scripts/release.sh) | 在服务器校验、发布选定服务和显式回滚 |
 | [scripts/cleanup-images.sh](scripts/cleanup-images.sh) | 保留当前、上一成功清单和容器引用的镜像，预览或清理更早的本地 Trade 镜像 |
 | [scripts/sync-backend-config.ps1](scripts/sync-backend-config.ps1) | Windows 向服务器安全同步选定业务配置；本身不重启服务 |
@@ -25,7 +25,7 @@
 
 ## 部署方案
 
-本方案把后端、交易驾驶舱和 X 控制台一起部署到国内 Ubuntu，不使用 Vercel。代码在构建机打包成带版本号的 Linux 镜像，服务器只负责拉取和运行；后续更新继续使用同一套发布脚本。默认通过 SSH 隧道访问两个页面，无需准备域名或 TLS 证书。
+本方案把后端、交易驾驶舱和 X 控制台一起部署到国内 Ubuntu，不使用 Vercel。代码由 CNB 打包为带版本号的 Linux 镜像并推送 TCR，服务器负责拉取和运行；后续更新继续使用同一套发布脚本。默认通过 SSH 隧道访问两个页面，无需准备域名或 TLS 证书。
 
 ```text
 电脑浏览器 ── localhost:18080 / localhost:18081
@@ -52,9 +52,9 @@
 1. 国内 Ubuntu 上安装 [Docker Engine + Compose 插件](https://docs.docker.com/engine/install/ubuntu/)，Compose 至少 **2.30**（使用 `env_file.format: raw`）。执行 `docker version`、`docker compose version` 确认 Linux Engine 可用。部署脚本依赖 Bash 和 Ubuntu 的 `flock`。
 2. 国内服务器的 SSH 地址、端口和登录账号；电脑可以通过 SSH 登录。安全组和主机防火墙仅开放所需 SSH 入口，并尽量限定管理来源。服务器账号需能使用 Docker；可使用专用部署账号。
 3. 德国 VPS 上已有可用 Squid；准备一个只用于转发到其 `127.0.0.1:3128` 的 SSH 账号及密钥。Squid 不需要开放公网 3128。
-4. 一个国内服务器能访问的镜像仓库命名空间，例如 `registry.example.com/trade`。构建机拥有推送权限，服务器拥有拉取权限；分别执行 `docker login`。也可以使用后文的 `save/load`。
+4. 准备 TCR 命名空间 `ccr.ccs.tencentyun.com/tiancia-trade` 下的 `backend`、`cockpit`、`x-console`、`egress` 四个仓库，以及 CNB 控制仓库和部署凭据，配置见后文 [CNB 发布入口](#cnb-发布入口)。
 
-建议从 2 核 4 GB 起步，先不开监控 profile。配置内存上限合计约 2.7 GB，仍需给操作系统、Docker 和页缓存留空间；这是初始配置，不是容量测试结果。构建镜像尤其 Maven / npm 构建应放在电脑或 CI，避免占用运行服务器资源。
+建议从 2 核 4 GB 起步，先不开监控 profile。配置内存上限合计约 2.7 GB，仍需给操作系统、Docker 和页缓存留空间；这是初始配置，不是容量测试结果。Maven / npm 和镜像构建由 CNB 执行，避免占用运行服务器资源。
 
 下面除构建步骤外，都在国内 Ubuntu 的仓库根目录执行，示例目录 `/opt/trade`。不要在服务器复用开发环境根 `.env` 或 Windows 的 `A:/DockerData/...`。原 `compose.yaml` 保持本地用途，生产入口是 `compose.prod.yaml`。
 
@@ -159,15 +159,9 @@ chmod 644 deploy/secrets/gateway.htpasswd
 
 ## 3. 构建镜像并发布
 
-在电脑的 WSL / Linux 构建机或 CI 中执行，Docker Desktop 需启动 **Linux Engine**。不需要先手工生成 JAR 或 dist，Dockerfile 会完成 Maven 测试 / 打包和两个前端构建：
+完成服务器配置后，将代码提交到 GitHub `main`，在 **Actions → Submit build or deployment to CNB → Run workflow** 选择 `service=all`、`mode=build_deploy`。首次尚无成功镜像基线，必须全量构建。也可先用 `mode=build`，确认 CNB 镜像推送成功后，再用 `mode=deploy` 并粘贴完整清单发布，详见 [CNB 发布入口](#cnb-发布入口)。
 
-```bash
-bash deploy/scripts/build-images.sh \
-  --registry registry.example.com/trade \
-  --tag 20261016-a1b2c3d --push
-```
-
-将仓库命名空间和版本号换成实际值。默认生成 `linux/amd64`，ARM 服务器用 `--platform linux/arm64`。每次发布用新版本号，不复用 tag，不使用 `latest`。不指定服务时构建 backend、cockpit、x-console、egress 四个镜像；指定服务时只构建选中的镜像。两种方式都生成包含四项镜像引用的完整清单，默认输出到 `deploy/release.env`；后者可传给服务器，不包含业务密钥。
+CNB 构建 `linux/amd64` 镜像；不需要在电脑或生产服务器手工生成 JAR、dist。GitHub 任务成功只表示提交成功，构建与生产发布结果以 CNB 任务日志为准。
 
 后端构建上下文是仓库根，由 `backend/Dockerfile.dockerignore` 白名单限制；两个前端和隧道各有独立上下文。实际 `.env`、密钥、数据目录和历史构建产物不进入镜像。前端有独立 Docker Vite 配置，原本地 / Cloudflare 开发流程保持不变。
 
@@ -175,17 +169,11 @@ bash deploy/scripts/build-images.sh \
 
 集市图片上传改为后端签发短期 OSS V4 PostObject policy，前端用表单直接上传，不再接收 AccessKey Secret。开启集市时需同时更新后端和集市前端，并在 OSS Bucket CORS 中允许该前端来源的 POST；policy 绑定对象 key、文件字节数、类型、ACL 和过期时间。它限制 HTTP 元数据及文件大小，不进行图片内容识别。真实 STS/OSS 权限与上传仍需部署后独立验收。
 
-把对应版本代码和生成的 `deploy/release.env` 放到服务器。服务器上的 `.env`、`backend.env`、`secrets/` 和数据卷保持原地，再执行：
+CNB 将完整镜像清单及发布脚本上传服务器，然后校验、拉取镜像并等待容器健康。服务器上的 `deploy/.env`、`backend.env`、`secrets/` 和数据卷须提前准备；Compose、网关等配置变更仍需单独同步到服务器。
 
-```bash
-cd /opt/trade
-bash deploy/scripts/release.sh validate
-bash deploy/scripts/release.sh deploy
-```
+发布脚本先确保 MySQL / Redis 健康，再停止旧应用、重建选中的应用。全量发布包括网关；正常更新不升级数据库版本、不执行手工迁移、不删除数据卷，首次部署会创建基础服务。
 
-脚本先校验并拉取全部所需镜像，然后确保 MySQL / Redis 健康，再停止旧应用、重建选中的应用并等待健康检查。默认更新五个应用服务；基础服务保持已有容器，正常发布不更新数据库版本、不运行手工迁移、不删除数据卷。首次部署会创建它们。
-
-发布采用单实例短暂停机。失败返回非零；如果失败发生在停止之后，部分应用可能尚未启动，应查看日志并显式重试或回滚，不会自动继续真实发布。健康检查只证明进程就绪：隧道监听成功不能证明德国 Squid、OKX、Telegram 或 X 已联通。
+发布采用单实例短暂停机。失败返回非零；若已停止旧容器，应查看日志并显式重试或回滚。健康检查只证明进程就绪，外部代理、行情和内容发布还需业务验收。
 
 ## 4. 建立电脑访问隧道
 
@@ -239,174 +227,50 @@ curl -fsS -u operator http://127.0.0.1:18080/api/automation/tasks
 
 ## 后续更新和回滚
 
-### 托管 CI：GitHub → CNB → TCR → 生产服务器
+### CNB 发布入口
 
-[GitHub 触发入口](../.github/workflows/cnb-build-deploy.yml)只向私有控制仓库 `tiancia/trade-ci` 提交构建请求；GitHub 任务成功表示请求被接受，最终构建、推送与部署结果以 CNB 任务为准。控制仓库使用 [CNB 流水线](ci/cnb.yml)，从固定的 GitHub 仓库检出指定提交，并验证该提交属于 `main` 历史，再调用 [CNB 适配器](scripts/cnb-ci.sh)和 [managed-ci.sh](scripts/managed-ci.sh)。
+发布链路为 **GitHub → CNB → TCR → 生产服务器**。[GitHub 工作流](../.github/workflows/cnb-build-deploy.yml)只接受本仓库 `main` 的手动请求，向私有控制仓库 `tiancia/trade-ci` 提交任务；[CNB 流水线](ci/cnb.yml)验证并检出 GitHub `main` 历史内的指定提交，再调用 [cnb-ci.sh](scripts/cnb-ci.sh)、[managed-ci.sh](scripts/managed-ci.sh) 和 [build-images.sh](scripts/build-images.sh)。
 
-GitHub 入口仅允许手动触发，支持只构建、构建并部署、仅部署及回滚四种模式，并按服务选择范围。回滚读取生产服务器的上一成功镜像清单，检查本地镜像齐全后再切换，保留发布锁和健康检查。TCR 和生产 SSH 凭据只在 CNB 注入；不进入 GitHub 请求、构建上下文或镜像。BuildKit 按服务保存本地 OCI 缓存，CNB 节点数据卷提供复用；节点变化或缓存淘汰后可能需要重新填充。实际节点与缓存命中以运行详情为准。
+GitHub Repository Secret 仅需 `CNB_TOKEN`，用于向控制仓库提交任务。将 `deploy/ci/cnb.yml` 安装为控制仓库的 `.cnb.yml`；流水线从私有 secrets 仓库导入环境配置，注入 `TCR_USERNAME`、`TCR_PASSWORD` 及部署所需的 `DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_PORT`、`DEPLOY_SSH_PRIVATE_KEY`、`DEPLOY_KNOWN_HOSTS`。SSH 主机记录须预先核验，非默认端口使用 `[主机]:端口` 格式。部署账号需使用 Bash，能读成功清单、写 `/opt/trade/deploy` 并使用 Docker / Compose。
 
-镜像版本包含实际 GitHub SHA、数值运行号和随机后缀。所有选定镜像推送成功后生成非秘密清单 `release.env`，后续部署失败仍保留该清单用于重试。清单只表示镜像已发布，生产切换结果须另看 `DEPLOYMENT_OK` 与成功版本记录。服务端发布锁、健康检查及回滚入口复用现有脚本。
+TCR 和 SSH 凭据只在 CNB 注入，不放进 GitHub 请求、构建上下文或镜像。GitHub 入口固定部署到 `/opt/trade`，使用 `private` 访问模式；公共模式按后文手工运维流程处理。
 
-### GitHub Actions 手动构建和按服务部署
+在 **Actions → Submit build or deployment to CNB → Run workflow** 选择 `main` 和参数：
 
-使用 [build-deploy.yml](../.github/workflows/build-deploy.yml)，仅配置 `workflow_dispatch`；push 不会触发构建或部署。将工作流提交到默认分支后，在 **Actions → Build and deploy selected services → Run workflow** 中选择分支和参数：
-
-| 参数 | 含义 |
+| 参数 | 可选值与用途 |
 | --- | --- |
-| `service=backend` | 只构建后端；勾选部署时只更新后端 |
-| `service=cockpit` | 只构建、按需部署交易驾驶舱 |
-| `service=x-console` | 只构建、按需部署 X 控制台 |
-| `service=frontends` | 一起构建、按需部署两个前端 |
-| `service=egress` | 只构建、按需部署业务出站隧道 |
-| `service=all` | 构建四个镜像；勾选部署时执行全量发布，包含网关与 MySQL/Redis 前置检查 |
-| `build` | 默认勾选，构建并推送新镜像；取消勾选可直接复用已有构建 |
-| `deploy` | 默认不勾选；勾选后通过 SSH 发布并等待健康检查。仅部署时必须勾选 |
-| `source_run_id` | 仅部署时可填原构建的 Actions 运行 ID；留空自动选择所选分支上匹配服务的最新可用构建 |
-| `server_path` | 已准备好的服务器仓库绝对路径，默认 `/opt/trade` |
-| `access` | 沿用服务器现有的 `private` 或 `public` 模式；此参数不用于切换模式 |
+| `service` | `backend`、`cockpit`、`x-console`、`egress`：单服务；`frontends`：两个前端；`all`：四个镜像及全量发布 |
+| `mode=build` | 默认模式，只构建并推送镜像 |
+| `mode=build_deploy` | 构建、推送并部署选定服务 |
+| `mode=deploy` | 复用已发布镜像，必须在 `existing_release_manifest` 粘贴完整 `release.env` 文本 |
+| `mode=rollback` | 按服务器 `deploy/releases/previous.env` 回滚选定服务，不填写历史清单 |
 
-仓库 **Settings → Secrets and variables → Actions** 需要五项 Repository Secrets：`DEPLOY_HOST`（公网 IP / 域名）、`DEPLOY_PORT`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`（独立部署私钥完整内容）、`DEPLOY_KNOWN_HOSTS`（经可信渠道核验的 SSH 主机记录，非默认端口使用 `[主机]:端口` 格式）。部署账号需使用 Bash，能读当前成功清单、写入 `deploy/` 并使用 Docker / Compose。沿用前述密钥登录验证方式，保持主机指纹校验开启。
+单服务或 `frontends` 构建会通过 SSH 下载服务器的 `deploy/releases/current.env`，只替换选定镜像，因此即使仅构建也需要部署 SSH 凭据和成功基线。没有基线时先选 `all`。只改后端选 `backend`，只改驾驶舱选 `cockpit`；`all` 部署包含网关与基础设施前置检查。
 
-镜像发布到腾讯云 TCR 个人版，固定地址为 `ccr.ccs.tencentyun.com/tiancia-trade/<服务>:sha-<提交SHA>-<运行ID>-<尝试次数>`，默认构建 `linux/amd64`。在已创建的 `tiancia-trade` 命名空间下准备四个私有仓库：`backend`、`cockpit`、`x-console`、`egress`。个人版不支持多级仓库路径，地址中只有一层命名空间，不再使用 GHCR 的仓库所有者/仓库名路径。命名与登录方式见 [TCR 个人版快速入门](https://cloud.tencent.com/document/product/1141/63910)。
+镜像固定推送到 `ccr.ccs.tencentyun.com/tiancia-trade/<服务>`，版本含实际 GitHub SHA、运行号和随机后缀，不使用 `latest`。所有选定镜像推送成功后才生成完整清单，包含 `RELEASE_VERSION` 及四项 `BACKEND_IMAGE`、`COCKPIT_IMAGE`、`X_CONSOLE_IMAGE`、`EGRESS_IMAGE`。CNB 日志在 `IMAGE_MANIFEST_BEGIN` / `IMAGE_MANIFEST_END` 间打印清单，并尝试保留 `release-*.env` 附件 30 天；后续部署失败仍可复制清单重试 `mode=deploy`。该模式校验选定服务确实属于清单版本，不自动搜索历史任务。
 
-除上述五项 SSH Secrets 外，再配置两项 Repository Secrets：`TCR_USERNAME`（复制个人版控制台登录指令中 `--username` 的值）和 `TCR_PASSWORD`（个人版初始化或重置的镜像仓库登录密码）。工作流在 runner 上明确检查两项都存在，再通过 `docker login --password-stdin` 登录。`GITHUB_TOKEN` 仅用于读取本仓库 Actions artifact 和代码，不需要 `packages: write` 权限。
+GitHub 成功只表示 CNB 接受了请求。打开提交结果中的 CNB 任务链接核对构建和推送；生产发布成功日志包含 `DEPLOYMENT_OK`，回滚成功包含 `ROLLBACK_OK`，并应核对服务器成功版本记录和业务状态。
 
-Actions 上传镜像时通过伪终端保留 Docker 的逐层字节进度，同一层最多每 10 秒打印一次上传进度，完成和错误即时输出。该进度是 Docker 报告的未压缩字节量，不能直接当作公网传输速率。整次任务沿用工作流的 90 分钟上限，不另设更短的单镜像上传上限，以免中断仍在推进的首次上传。上传失败时不生成成功镜像清单或进入部署；本地运行仍沿用普通 `docker push`。
+### 发布行为与回滚
 
-Actions 使用独立 Buildx builder，并通过 GitHub Actions cache 按服务恢复和保存本地 OCI 构建缓存；`all` 和单服务构建复用相同服务的缓存。缓存导出成功后，即使后续镜像推送失败也会保存，便于重跑。每次成功构建以新的导出目录替换对应服务缓存，避免累积不再引用的层。首次填充、依赖变更或缓存被淘汰时仍需要下载和生成缺失层。
+CNB 上传本次发布脚本和清单到服务器独立的 incoming 目录，通过 SSH 标准输入传递 TCR 凭据，服务器使用临时 Docker 登录配置拉取镜像。成功后更新 `deploy/release.env`、`deploy/releases/current.env`，保留 `previous.env` 和历史记录。服务端锁串行化发布，健康检查失败不会自动回滚。
 
-后端在复制源码前预热 Maven 依赖到普通构建层，保留完整测试；运行镜像将依赖、Boot loader 和应用分层。驾驶舱将 standalone 的 `node_modules` 与应用文件分层。源码小改动只需重新生成和传输应用所在层，未变的依赖层可复用。单独使用 Dockerfile 的 cache mount 不会自动跨 runner 保存 Maven 依赖。
-
-本地 `build-images.sh` 默认仍使用普通 Docker 构建；需要导入/导出同样的 Buildx 本地缓存时，显式添加 `--cache-dir /绝对路径/trade-build-cache`，并准备支持本地缓存导出的 Buildx builder。缓存目录只用于该脚本，不放源码或业务数据。镜像 tag 仍使用不可变版本，缓存不替代发布清单。
-
-勾选部署后，工作流经 SSH 上传完整镜像清单和本次 `release.sh`、清理脚本，由服务器登录 TCR，并以 `release.sh --root <服务器仓库>` 拉取选中服务镜像、重建并等待健康检查。本次发布使用 incoming 目录内的脚本，无需先覆盖服务器旧脚本。TCR 用户名和密码通过 SSH 标准输入传入；服务器的 Docker 凭据写入独立临时目录，成功或失败退出都会清理，不覆盖服务器已有的 Docker 登录配置。`all` 仍使用 `release.sh` 的完整部署流程，拉取基础设施镜像并完成全部镜像检查后才切换容器。
-
-服务器 Docker daemon 的代理例外需覆盖 `ccr.ccs.tencentyun.com` 及实际镜像层重定向域名，并验证这些请求经腾讯云内网访问。仅在 shell 中设置代理、或仅看到仓库入口返回 `401`，不能证明 daemon 的镜像层路径和下载速度正常；实际域名、解析与链路应在服务器核验。
-
-调整 Docker daemon 的代理例外前，先核对 `docker info` 中现有 `No Proxy` 与 `live-restore` 状态，保留已有例外，再追加实际 registry 与镜像层重定向域名；不要照抄其他主机的 COS 域名或覆盖已有配置。未启用 `live-restore` 时，重启 Docker 会中断运行中的容器，应在维护窗口生效并核对容器状态。
-
-配置生效后以首次私有 TCR 镜像的真实 `docker pull` 和健康检查作为验收；公开层测速不等于私有仓库鉴权、推送和完整发布已经通过。
-
-部分构建会先从服务器下载真实的 `deploy/releases/current.env`，仅替换选中服务的镜像，下载失败即中止；即使只构建不部署，部分构建也需要这五项 SSH Secrets 和成功基线。已有部署可以逐个服务迁移到 TCR，未选中的现有镜像仍保留。没有成功基线的新服务器，先选 `all` 构建，并完成前述服务器初始化，再执行全量部署。
-
-每次构建成功后，运行摘要列出完整镜像清单，并提供 `image-manifest-<版本>` artifact 下载 `release.env`。迁移到 TCR 的首轮必须勾选 `build`，先生成 TCR 镜像和新清单；可先不勾选 `deploy`，确认推送成功及实际镜像层下载正常后再部署。部署成功日志包含 `DEPLOYMENT_OK`。工作流按同一并发组串行运行，不取消正在执行的发布；服务端仍由 `release.sh` 加锁，并在部分部署时重新读取当前版本，保留未选服务的新版本。
-
-仅部署已有镜像时，在同一个 **Run workflow** 中选择分支和 `service`，**取消勾选 `build`、勾选 `deploy`**，`source_run_id` 留空即可。工作流下载已有 `release.env`、上传清单，再由服务器从 TCR 拉取镜像、重建选中服务并等待健康检查，跳过 Maven/npm/Docker 构建及镜像推送。新代码尚未构建时，需要先构建一次，才能用这个入口部署。
-
-这里的“最新”按清单 artifact 的生成时间选择，限定为所选分支、同仓库和本工作流已结束的运行，并要求所有选中服务确实在该次运行中构建、地址严格匹配 `ccr.ccs.tencentyun.com/tiancia-trade/<服务>:<版本>`；不会使用旧 GHCR 清单或从旧基线继承的选中镜像。因此，`backend` 可以复用后端单独构建或全量构建，`frontends` 要求两个前端曾一起构建，`all` 要求一次全量构建。构建并上传清单后，即使随后部署失败，也可复用该清单重试部署。摘要会列出实际版本和源运行链接；`source_run_id` 可固定某次构建，仍须满足分支和服务匹配要求。
-
-清单 artifact 保留 30 天；自动选择只考虑尚未过期的清单，没有匹配项即报错。镜像使用明确版本号，不使用可变的 `latest` tag；若对应 TCR 镜像已被删除，拉取失败会在停止容器之前中止。每次部署使用独立的 incoming 目录，可以重复部署同一版本。
-
-勾选 `deploy` 后，只有发布成功才会自动清理更早的本地 Trade 应用镜像：保留 `current.env`、`previous.env` 引用的全部镜像，以及任何运行中或已停止容器引用的镜像及同一镜像 ID 的别名。候选仅限 `ccr.ccs.tencentyun.com/tiancia-trade/`、`trade/`、`trade-local/` 下的 `backend`、`cockpit`、`x-console`、`egress`，不会删除基础设施、第三方镜像、容器、数据卷或远端仓库中的历史版本，也不使用强制删除或全局 prune。这里的“上一代”指整套发布的上一成功清单，不保证每个服务各有两个不同版本。
-
-工作流会将本次 [cleanup-images.sh](scripts/cleanup-images.sh) 一同上传到独立的 incoming 版本目录，无需另行更新服务器的清理脚本。清理重新获取发布锁、读取最新清单，并在完成所有校验和 Docker 查询后才删除；缺少上一成功清单（如首次发布）、清单损坏、Docker 查询失败或发布锁被占用时均不执行删除。清理失败只产生 warning，不把已经成功的部署改判为失败；成功日志包含 `IMAGE_CLEANUP_OK`。
-
-需要手动预览时，在服务器运行本次 incoming 目录下的脚本（替换版本目录和仓库命名空间）；默认不删除，加 `--apply` 才执行：
+`mode=rollback` 先检查上一成功版本的本地镜像齐全，再切换选定服务；首次发布没有 `previous.env`，不能回滚。人工运维也可在服务器执行：
 
 ```bash
-bash /opt/trade/deploy/incoming/<版本>/cleanup-images.sh \
-  --root /opt/trade --registry ccr.ccs.tencentyun.com/tiancia-trade
+cd /opt/trade
+bash deploy/scripts/release.sh rollback --no-pull
 ```
 
-服务器须事先具备匹配的 Compose、Nginx、运行配置和密钥文件；工作流只传完整镜像清单及本次发布、清理脚本，不同步其他部署配置文件。前后端接口存在联动变更时，应安排兼容的发布顺序或全量更新。发布会短暂停止并重建选中服务；失败返回非零，不自动回滚，沿用下文的显式回滚方式。数据库补丁、运行配置变更和访问模式切换仍按各自流程处理。
+仅更新业务配置、继续使用原镜像时，可用 `bash deploy/scripts/release.sh deploy backend --no-pull` 重建后端。单纯 `docker compose restart` 不加载新的 env 文件。镜像回滚不恢复数据库、业务配置、密钥或网关文件；数据库补丁和访问模式切换单独处理。
 
-### 定位构建、上传和发布耗时
+发布成功后清理更早的本地应用镜像，保留当前、上一成功清单及容器引用的镜像。清理失败仅告警，不改变已成功发布的结果。CNB 不会自动同步 Compose、Nginx 或业务配置文件；这些文件变更需先同步服务器，再安排相应服务更新。
 
-构建脚本逐服务记录构建与推送的开始、结束、失败及 `elapsed_seconds`，Actions 摘要同时保留耗时。发布脚本用 `DEPLOY_STAGE` 分开记录配置校验、镜像拉取（或本地检查）、容器停止、重建与健康等待、版本记录；全量部署另有基础设施启动阶段。
+### 构建缓存与耗时定位
 
-看到 `Downloading` / `Extracting` 时先看所在阶段：构建中的依赖下载发生在 runner；`Pushing` 是 runner 向仓库上传；服务器 `image_pull` 才是从仓库下载。`container_stop` 和 `container_start_and_health` 耗时属于服务切换，不能算作下载。健康检查的 `start-period` 是失败宽限，不代表固定等待相同时长。
+BuildKit 按服务保存本地 OCI 缓存，CNB 节点数据卷提供复用；节点变化或缓存淘汰后可能重新填充。构建脚本逐服务记录构建、推送和 `elapsed_seconds`；发布脚本通过 `DEPLOY_STAGE` 区分配置校验、镜像拉取、容器停止、重建与健康等待。依赖下载和推送发生在 CNB，`image_pull` 才是生产服务器下载。
 
-只修改后端时选择 `backend`，只修改驾驶舱时选择 `cockpit`；`all` 会构建四个应用镜像并走全量部署。代码没有变化且仅重试部署时取消 `build`，复用已有清单。手工 `docker save → gzip → scp → load` 方案传输完整归档，不能像 registry pull 一样只传服务器缺失的层，通常不作为频繁更新的首选。
-
-### 一个命令构建并上传
-
-在电脑的 Git Bash / WSL 中使用 [build-upload.sh](scripts/build-upload.sh)。首次把 SSH 目标保存到 Git 忽略的本地文件，替换示例中的账号和服务器地址：
-
-```bash
-printf '%s\n' 'deploy-user@国内服务器IP' > deploy/upload-server.local
-```
-
-以后在仓库根目录按服务执行：
-
-```bash
-bash deploy/scripts/build-upload.sh backend
-bash deploy/scripts/build-upload.sh cockpit
-bash deploy/scripts/build-upload.sh x-console
-bash deploy/scripts/build-upload.sh backend cockpit
-bash deploy/scripts/build-upload.sh all
-```
-
-脚本自动生成 UTC 时间加进程号组成的版本号。部分构建会先下载目标服务器的 `deploy/releases/current.env`，随后调用已有构建脚本、只导出选中的镜像，并将 `images.tar.gz`、完整 `release.env` 和 `SHA256SUMS` 上传到 `/opt/trade/deploy/incoming/<版本号>/`，远端校验成功后才报告完成。基线下载失败、构建或传输失败时会中止，本地产物保留用于排查；不会回退到本地旧清单。
-
-默认本地产物放在仓库同级的 `trade-deployments/<版本号>/`；仓库位于 `A:\trade` 时，即 `A:\trade-deployments\<版本号>\`。可通过 `--output-dir` 修改版本目录的父目录，通过 `--tag` 指定版本号。Git Bash 默认优先使用 Windows 自带的 OpenSSH，沿用 Windows 中已有的配置和 agent；WSL/Linux 使用 PATH 中的 SSH。主机指纹校验保持开启，首次连接先通过正常 SSH 核对主机指纹。可选 `--server 用户@主机`、`--port 端口`、`--identity 私钥路径`、`--remote-root /服务器仓库路径` 和 `--platform linux/arm64`。`--server` 优先于 `TRADE_DEPLOY_SERVER`，后者优先于本地目标文件；`--port` 未传时沿用 SSH 配置。需要自定义 SSH/SCP 程序时，可分别设置 `TRADE_SSH_COMMAND`、`TRADE_SCP_COMMAND` 为程序路径。
-
-默认只构建、上传和校验，结束时打印服务器加载、校验和发布的命令，容器重建由你在服务器单独执行。加 `--deploy` 后，SHA256 校验成功即通过 SSH 依次加载镜像、执行 `release.sh validate` 和 `release.sh deploy --no-pull`，重新创建本次选中的服务并等待健康检查；`all --deploy` 执行全量发布。Windows CMD 可直接使用本机 Git Bash：
-
-```cmd
-"C:\git\Git\bin\bash.exe" deploy/scripts/build-upload.sh backend --deploy
-"C:\git\Git\bin\bash.exe" deploy/scripts/build-upload.sh backend cockpit --deploy
-"C:\git\Git\bin\bash.exe" deploy/scripts/build-upload.sh all --deploy
-```
-
-访问模式通过 `--access private|public` 指定，默认读取本地 `DEPLOY_ACCESS_MODE`，未设置时使用 `private`。公共 HTTPS 部署示例：
-
-```cmd
-"C:\git\Git\bin\bash.exe" deploy/scripts/build-upload.sh backend cockpit --deploy --access public
-```
-
-自动部署默认等待健康检查 300 秒，可通过本地环境变量 `DEPLOY_WAIT_TIMEOUT` 调整。任一步失败即返回非零，不自动重试或回滚。服务器须事先具备 `release.sh`、Compose 文件和所需配置；脚本不会自动同步代码或配置，若本次更改了 Compose、Nginx 或部署脚本，先同步对应部署文件再发布。全量离线发布仍要求服务器已有 MySQL、Redis、Nginx 镜像。仅上传后手工发布时也要使用相同访问模式。`--help` 可查看完整参数。
-
-### 分步构建和发布
-
-每次修改代码后，在构建机生成新版本镜像和清单，传输对应代码 / 部署文件与新清单到服务器。可以用 `--output` 保留旧清单：
-
-```bash
-# 构建机：下载服务器当前成功清单，作为未更新服务的版本基线
-scp deploy-user@国内服务器IP:/opt/trade/deploy/releases/current.env deploy/base-release.env
-
-# 只构建并推送后端
-bash deploy/scripts/build-images.sh --registry registry.example.com/trade \
-  --tag 20261019-b2c3d4e --base deploy/base-release.env \
-  --output deploy/new-release.env --push backend
-
-# 服务器：只更新后端；其他镜像记录保持现有版本
-bash deploy/scripts/release.sh deploy backend --release deploy/new-release.env
-
-# 回到上一次成功版本；首次成功部署还没有 previous，不能用此命令
-bash deploy/scripts/release.sh rollback
-
-# 明确恢复某份历史镜像清单
-bash deploy/scripts/release.sh rollback --release deploy/releases/某份历史清单.env
-```
-
-构建命令末尾可选 `backend`（后端）、`cockpit`（交易驾驶舱）、`x-console`（X 控制台）、`egress`（代理隧道），也可组合，例如 `backend cockpit`。只构建前端时将示例末尾的 `backend` 换为对应前端服务名；发布时也指定相同服务。`--push` 只推送本次构建的镜像。不写服务名仍按原方式全量构建；全量发布同样省略发布命令的服务名。
-
-部分构建的 `--base` 默认读取本地 `deploy/release.env`；没有完整基线时会在构建前报错。建议每次从目标服务器下载当前成功清单，并用 `--base` 显式指定，保留其他服务实际部署的镜像引用。基线只接受镜像清单字段，不要传入基础设施 `.env` 或业务 `backend.env`。基线与输出可以是同一文件，但建议用 `--output deploy/new-release.env` 保留原清单。
-
-单独更新前端用 `cockpit` 或 `x-console`；只更换网关配置可执行 `deploy gateway`，更换操作者密码须 `deploy backend gateway`，更换隧道 key / VPS 地址可执行 `deploy egress`。选中的应用始终重建，单独发布不会启动或重建其依赖，首次必须先完成全量部署。
-
-`deploy/releases/current.env` 保存当前成功镜像，`previous.env` 保存前一成功版本，还有时间戳快照。失败保持 `current.env`；失败的回滚目标保存在 `target-*.env`，可以显式传入重试。成功回滚后再次回滚会切回刚才版本。一次只允许一个发布进程运行。
-
-镜像回滚不会撤销数据库变化、已经发生的发帖、当前 `backend.env` 或仓库内网关配置。更新代码同时更改部署配置时，也要自行保留并恢复相应配置版本；保留历史镜像仓库 tag，不要清理掉回滚需要的镜像。
-
-以上命令默认私有模式。访问模式不存入镜像清单；使用后文公共模式时，每次校验、发布、单服务更新和回滚均显式添加 `--access public`。
-
-### 没有镜像仓库时
-
-构建不加 `--push`，然后只导出本次构建的镜像。下面接续前面的后端部分构建示例：
-
-```bash
-# 构建机：只打包后端；上传 tar、新清单和本次改动的部署文件
-docker save -o trade-images.tar registry.example.com/trade/backend:20261019-b2c3d4e
-
-# 服务器
-docker load -i trade-images.tar
-bash deploy/scripts/release.sh deploy backend --release deploy/new-release.env --no-pull
-```
-
-单独构建其他服务时，替换镜像引用和发布服务名；组合构建就显式列出选中的所有镜像及服务。全量构建时导出四个镜像，全量发布时省略服务名。完整清单中未更新的镜像引用继续沿用基线版本，不需要为单服务更新重复打包、上传它们。
-
-`--no-pull` 会在停止任何应用前确认所有所需镜像已在本地；首次全量还需要 mysql、redis、nginx 镜像（可先 `dc pull mysql redis gateway` 或一起 save/load）。离线回滚同样加 `--no-pull`。只有应用镜像离线不代表 npm / Maven 首次构建也能离线。
+服务器 Docker daemon 的代理例外需覆盖 TCR 及实际镜像层重定向域名，保留已有例外并通过真实私有镜像拉取验收。仅仓库入口返回 `401` 不能证明完整下载正常；调整 daemon 配置可能需要在维护窗口重启 Docker 并核对容器状态。
 
 ## 数据、备份和监控
 
