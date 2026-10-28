@@ -1,6 +1,6 @@
 package com.trade.marketplace.application.service;
 
-import com.trade.marketplace.application.port.MarketplaceOssStsClient;
+import com.trade.marketplace.port.MarketplaceOssStsClient;
 import com.trade.marketplace.domain.model.MarketplaceApi;
 import com.trade.marketplace.domain.model.MarketplacePrincipal;
 import com.trade.marketplace.infrastructure.config.MarketplaceProperties;

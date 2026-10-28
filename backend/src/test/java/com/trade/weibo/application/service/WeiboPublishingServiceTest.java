@@ -6,7 +6,7 @@ import com.trade.client.weibo.WeiboPublishResult;
 import com.trade.client.weibo.WeiboClientProperties;
 import com.trade.weibo.infrastructure.config.WeiboWorkflowProperties;
 import com.trade.weibo.domain.model.*;
-import com.trade.weibo.application.port.WeiboAccountTokenRepository;
+import com.trade.weibo.port.WeiboAccountTokenRepository;
 import com.trade.weibo.domain.exception.WeiboPublishingException;
 import com.trade.weibo.domain.model.WeiboAccountToken;
 import org.junit.jupiter.api.Test;

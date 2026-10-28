@@ -3,7 +3,7 @@ package com.trade.marketplace.infrastructure.oss;
 import java.util.List;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trade.marketplace.application.port.MarketplaceOssStsClient;
+import com.trade.marketplace.port.MarketplaceOssStsClient;
 import com.trade.marketplace.domain.exception.MarketplaceUnavailableException;
 import com.trade.marketplace.domain.rule.MarketplaceImageRules;
 import com.trade.marketplace.infrastructure.config.MarketplaceProperties;

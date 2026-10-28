@@ -8,7 +8,7 @@ import com.trade.client.telegram.dto.TelegramInlineKeyboardMarkup;
 import com.trade.client.telegram.dto.TelegramMessage;
 import com.trade.client.telegram.dto.TelegramUpdate;
 import com.trade.client.telegram.dto.TelegramUser;
-import com.trade.x.application.port.XReviewDeliveryStore;
+import com.trade.x.port.XReviewDeliveryStore;
 import com.trade.x.domain.model.XReviewDecision;
 import com.trade.x.domain.model.XReviewRequest;
 import com.trade.x.domain.model.XReviewDelivery;

@@ -1,6 +1,6 @@
 package com.trade.weibo.infrastructure.persistence;
 
-import com.trade.weibo.application.port.WeiboAccountTokenRepository;
+import com.trade.weibo.port.WeiboAccountTokenRepository;
 import com.trade.weibo.domain.model.WeiboAccountToken;
 import org.springframework.stereotype.Repository;
 

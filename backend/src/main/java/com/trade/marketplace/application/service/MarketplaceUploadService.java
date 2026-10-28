@@ -1,7 +1,7 @@
 package com.trade.marketplace.application.service;
 
 import com.trade.marketplace.domain.rule.MarketplaceImageRules;
-import com.trade.marketplace.application.port.MarketplaceOssStsClient;
+import com.trade.marketplace.port.MarketplaceOssStsClient;
 import com.trade.marketplace.domain.exception.MarketplaceUnauthorizedException;
 import com.trade.marketplace.domain.exception.MarketplaceUnavailableException;
 import com.trade.marketplace.domain.model.MarketplaceApi;

@@ -1203,7 +1203,14 @@ function ConfigurationEditor({ strategyId, connected, onSaved }: { strategyId: s
   </section>;
 }
 
-type AiAdvisorStatus = { enabled: boolean; autoApplyEligible: boolean; telegramEnabled: boolean; reviewIntervalMs: number };
+type AiDailyMetrics = { closedTrades: number; fillCount: number; realizedNetPnl: number; feesQuote: number };
+type AiDailyPeriod = { date: string; sessionCoverage: string; metrics: AiDailyMetrics };
+type AiAdvisorStatus = {
+  enabled: boolean; autoApplyEligible: boolean; telegramEnabled: boolean; reviewIntervalMs: number;
+  daily?: { objective: string; tradingDate: string; zone: string; targetMinClosedTrades: number;
+    targetMaxClosedTrades: number; performanceAvailable: boolean; unavailableReason?: string; quoteCcy?: string;
+    today?: AiDailyPeriod; previousDay?: AiDailyPeriod };
+};
 type AiAdvisorReview = { reviewId: string; startedAt: ApiTimestamp; outcome: string; detail: string; proposalJson?: string; notificationStatus: string };
 
 function TradingAiPanel({ dataMode }: { dataMode: "live" | "demo" }) {
@@ -1257,12 +1264,22 @@ function TradingAiPanel({ dataMode }: { dataMode: "live" | "demo" }) {
   };
   const notifications: Record<string, string> = { NOT_REQUIRED: "无需通知", DISABLED: "通知未启用", THROTTLED: "通知冷却中",
     SENDING: "投递中／中断后需核对", SENT: "已通知", UNKNOWN: "投递结果未知", CONFIG_ERROR: "通知配置错误" };
+  const daily = dataMode === "live" ? status?.daily : undefined;
   return <section className="panel ai-advisor-panel">
     <div className="panel-heading">
-      <div><h2>AI 策略顾问</h2><p className="panel-note">{dataMode === "demo" ? "演示模式不调用 AI" : !status ? "正在读取配置" : !status.enabled ? "未启用 · 配置环境变量后可开始评估" : `${task?.running ? "运行中" : "已暂停"} · ${status.autoApplyEligible ? "模拟空仓时自动调整" : "仅生成建议"} · 评估间隔 ${Math.round(status.reviewIntervalMs / 60000)} 分钟 · 独立 TG ${status.telegramEnabled ? "已启用" : "未启用"}`}</p></div>
+      <div><h2>AI 策略顾问</h2><p className="panel-note">{dataMode === "demo" ? "演示模式不调用 AI" : !status ? "正在读取配置" : !status.enabled ? "未启用 · 配置环境变量后可开始评估" : `${task?.running ? "运行中" : "已暂停"} · ${status.autoApplyEligible ? "模拟空仓时自动调整" : "仅生成建议"} · ${status.reviewIntervalMs >= 86400000 ? "每日评估" : `日内复评间隔 ${Math.round(status.reviewIntervalMs / 60000)} 分钟`} · 独立 TG ${status.telegramEnabled ? "已启用" : "未启用"}`}</p></div>
       {dataMode === "live" && <button className="secondary-button" disabled={!task || !status?.enabled || pending} onClick={() => void toggle()}>{pending ? "处理中…" : task?.running ? "暂停 AI" : "启动 AI"}</button>}
     </div>
     {error && <p className="ai-advisor-error" role="alert">{error}（保留上次读取结果）</p>}
+    {daily && <div className="ai-advisor-goal">
+      <p><strong>每日目标：{daily.targetMinClosedTrades}–{daily.targetMaxClosedTrades} 笔完整交易</strong> · {daily.tradingDate}（{daily.zone}）</p>
+      <p>{daily.objective}。买入后卖出至空仓算一笔，次数可随行情调整，不为凑数放宽风控。</p>
+      {daily.performanceAvailable && daily.today ? <>
+        <p>今日模拟：完成 {daily.today.metrics.closedTrades} 笔 · 成交动作 {daily.today.metrics.fillCount} 次 · 已实现净收益 {Number(daily.today.metrics.realizedNetPnl).toFixed(4)} {daily.quoteCcy} · 当日手续费 {Number(daily.today.metrics.feesQuote).toFixed(4)} {daily.quoteCcy}</p>
+        {daily.previousDay && daily.previousDay.sessionCoverage !== "NO_SESSION_DATA" && <p>昨日模拟：完成 {daily.previousDay.metrics.closedTrades} 笔 · 已实现净收益 {Number(daily.previousDay.metrics.realizedNetPnl).toFixed(4)} {daily.quoteCcy}{daily.previousDay.sessionCoverage === "PARTIAL_DAY" ? "（会话仅覆盖部分时段）" : ""}</p>}
+        <p className="panel-note">仅统计当前模拟会话{daily.today.sessionCoverage === "PARTIAL_DAY" ? "，今天为部分时段" : ""}。净收益已含分摊的买卖费用，不含未平仓浮动盈亏；跨日持仓计入平仓日。</p>
+      </> : <p className="panel-note">{daily.unavailableReason || "当前无可用的日度成交统计"}</p>}
+    </div>}
     {reviews.length === 0 && <p className="panel-note ai-advisor-empty">暂无评估记录。AI 不会修改策略代码；需要补充逻辑时会发送建议。</p>}
     {reviews.map(review => {
       let proposal: { marketRegime?: string; strategyId?: string; parameters?: Record<string, unknown>; logicSuggestion?: string } = {};

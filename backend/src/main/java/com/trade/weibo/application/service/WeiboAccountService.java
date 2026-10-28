@@ -1,6 +1,6 @@
 package com.trade.weibo.application.service;
 
-import com.trade.weibo.application.port.WeiboAccountTokenRepository;
+import com.trade.weibo.port.WeiboAccountTokenRepository;
 import com.trade.weibo.domain.model.WeiboAccount;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;

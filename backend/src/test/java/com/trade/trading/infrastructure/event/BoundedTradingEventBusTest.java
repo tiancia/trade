@@ -6,7 +6,7 @@ import com.trade.trading.application.event.TradingEvent;
 import com.trade.trading.application.event.TradingEventHandlingResult;
 import com.trade.trading.application.event.TradingEventPublishResult;
 import com.trade.trading.application.event.TradingEventSource;
-import com.trade.trading.application.port.TradingEventHandler;
+import com.trade.trading.port.TradingEventHandler;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;

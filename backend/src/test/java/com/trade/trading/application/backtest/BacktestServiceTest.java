@@ -14,7 +14,7 @@ import com.trade.trading.domain.backtest.FillPriceSource;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.infrastructure.config.TradingProperties;
-import com.trade.trading.application.port.HistoricalCandleSource;
+import com.trade.trading.port.HistoricalCandleSource;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

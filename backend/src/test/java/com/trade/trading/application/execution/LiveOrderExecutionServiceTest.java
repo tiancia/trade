@@ -172,7 +172,7 @@ class LiveOrderExecutionServiceTest {
         when(okx.placeOrder(any())).thenReturn(OkxResponse.fail("51008", "insufficient balance"));
         TradingDecisionRecord record = new TradingDecisionRecord().setDecisionId("rejected-submit");
 
-        assertThrows(com.trade.trading.application.port.ExchangeOrderGateway.OrderRejectedException.class,
+        assertThrows(com.trade.trading.port.ExchangeOrderGateway.OrderRejectedException.class,
                 () -> broker(liveProperties(), okx).execute(buyDecision(), context("0", "1000"), record));
 
         assertEquals(OrderStatus.REJECTED.name(), record.getOrderStatus());

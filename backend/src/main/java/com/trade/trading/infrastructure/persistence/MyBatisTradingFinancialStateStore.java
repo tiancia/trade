@@ -1,7 +1,7 @@
 package com.trade.trading.infrastructure.persistence;
 
 import com.trade.trading.domain.order.PositionAccounting;
-import com.trade.trading.application.port.TradingFinancialStateStore;
+import com.trade.trading.port.TradingFinancialStateStore;
 import com.trade.trading.domain.model.TradingPositionState;
 import com.trade.trading.domain.model.TradingRiskState;
 import com.trade.trading.domain.order.SpotFillApplication;

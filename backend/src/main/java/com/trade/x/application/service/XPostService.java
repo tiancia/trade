@@ -2,10 +2,10 @@ package com.trade.x.application.service;
 
 import com.trade.client.x.XApiException;
 import com.trade.x.application.decision.XPostTextValidator;
-import com.trade.x.application.port.XDraftGenerator;
-import com.trade.x.application.port.XHumanReviewGateway;
-import com.trade.x.application.port.XPostPublisher;
-import com.trade.x.application.port.XPostRepository;
+import com.trade.x.port.XDraftGenerator;
+import com.trade.x.port.XHumanReviewGateway;
+import com.trade.x.port.XPostPublisher;
+import com.trade.x.port.XPostRepository;
 import com.trade.x.domain.exception.XPublishingException;
 import com.trade.x.domain.model.GeneratedXPost;
 import com.trade.x.domain.model.XContentPolicy;

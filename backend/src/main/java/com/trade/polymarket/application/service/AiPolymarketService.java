@@ -1,14 +1,14 @@
 package com.trade.polymarket.application.service;
 
-import com.trade.ai.application.port.AiResponseParseErrorSink;
+import com.trade.ai.port.AiResponseParseErrorSink;
 import com.trade.ai.domain.model.AiResponseParseErrorRecord;
 import com.trade.client.ai.AiResponseParseException;
 import com.trade.client.ai.AiTextClient;
 import com.trade.polymarket.application.decision.AiPolymarketDecisionParser;
 import com.trade.polymarket.application.decision.AiPolymarketPromptBuilder;
 import com.trade.polymarket.application.execution.PolymarketOrderExecutor;
-import com.trade.polymarket.application.port.PolymarketDecisionAuditSink;
-import com.trade.polymarket.application.port.PolymarketExecutionGuard;
+import com.trade.polymarket.port.PolymarketDecisionAuditSink;
+import com.trade.polymarket.port.PolymarketExecutionGuard;
 import com.trade.polymarket.domain.model.AiPolymarketDecision;
 import com.trade.polymarket.domain.model.PolymarketAction;
 import com.trade.polymarket.domain.model.PolymarketDecisionAuditRecord;

@@ -1,6 +1,6 @@
 package com.trade.x.infrastructure.persistence;
 
-import com.trade.x.application.port.XReviewDeliveryStore;
+import com.trade.x.port.XReviewDeliveryStore;
 import com.trade.x.domain.model.XReviewDelivery;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;

@@ -1,6 +1,6 @@
 package com.trade.weibo.infrastructure.persistence;
 
-import com.trade.weibo.application.port.WeiboReviewDeliveryStore;
+import com.trade.weibo.port.WeiboReviewDeliveryStore;
 import com.trade.weibo.domain.model.WeiboReviewDelivery;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;

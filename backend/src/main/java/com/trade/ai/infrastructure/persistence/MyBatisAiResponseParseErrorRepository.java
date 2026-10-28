@@ -1,6 +1,6 @@
 package com.trade.ai.infrastructure.persistence;
 
-import com.trade.ai.application.port.AiResponseParseErrorSink;
+import com.trade.ai.port.AiResponseParseErrorSink;
 import com.trade.ai.domain.model.AiResponseParseErrorRecord;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;

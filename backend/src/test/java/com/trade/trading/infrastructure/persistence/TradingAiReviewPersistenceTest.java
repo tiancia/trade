@@ -1,6 +1,6 @@
 package com.trade.trading.infrastructure.persistence;
 
-import com.trade.trading.application.port.TradingAiReviewStore;
+import com.trade.trading.port.TradingAiReviewStore;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;

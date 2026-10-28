@@ -1,6 +1,6 @@
 package com.trade.story.application;
 
-import com.trade.ai.application.port.AiResponseParseErrorSink;
+import com.trade.ai.port.AiResponseParseErrorSink;
 import com.trade.ai.domain.model.AiResponseParseErrorRecord;
 import com.trade.client.ai.AiTextClient;
 import com.trade.story.application.decision.AiStoryPromptBuilder;

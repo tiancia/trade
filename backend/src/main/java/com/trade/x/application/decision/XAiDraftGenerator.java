@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.client.ai.AiTextClient;
-import com.trade.x.application.port.XDraftGenerator;
+import com.trade.x.port.XDraftGenerator;
 import com.trade.x.domain.model.GeneratedXPost;
 import com.trade.x.domain.model.XContentPolicy;
 import org.springframework.beans.factory.annotation.Autowired;

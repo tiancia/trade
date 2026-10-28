@@ -17,7 +17,7 @@ import com.trade.trading.application.event.TradingEvent;
 import com.trade.trading.application.event.TradingEventPublishResult;
 import com.trade.trading.application.event.TradingEventSource;
 import com.trade.trading.application.market.CandleFreshness;
-import com.trade.trading.application.port.TradingEventPublisher;
+import com.trade.trading.port.TradingEventPublisher;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import org.junit.jupiter.api.Test;
 

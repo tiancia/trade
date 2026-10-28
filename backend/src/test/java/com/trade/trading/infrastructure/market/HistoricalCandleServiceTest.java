@@ -4,7 +4,7 @@ import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.CandlesReq;
 import com.trade.client.okx.dto.OkxResponse;
-import com.trade.trading.application.port.TradingEventPublisher;
+import com.trade.trading.port.TradingEventPublisher;
 import com.trade.trading.infrastructure.persistence.OkxCandleCacheMapper;
 import com.trade.trading.infrastructure.persistence.OkxCandleCacheRow;
 import org.junit.jupiter.api.Test;

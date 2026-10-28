@@ -4,7 +4,7 @@ import com.trade.client.x.XApi;
 import com.trade.client.x.XApiException;
 import com.trade.client.x.XClientProperties;
 import com.trade.x.application.decision.XPostTextValidator;
-import com.trade.x.application.port.XPostPublisher;
+import com.trade.x.port.XPostPublisher;
 import com.trade.x.domain.exception.XPublishingException;
 import com.trade.x.domain.model.XPost;
 import com.trade.x.domain.model.XPostStatus;

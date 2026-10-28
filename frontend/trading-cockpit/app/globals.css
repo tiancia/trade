@@ -160,6 +160,7 @@ kbd { align-items: center; background: #171d24; border: 1px solid #27313b; borde
 .ai-advisor-review summary { cursor: pointer; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .ai-advisor-review p { line-height: 1.7; white-space: pre-wrap; }
 .ai-advisor-review pre { overflow: auto; }
+.ai-advisor-goal { border-top: 1px solid var(--line); padding: 8px 16px 14px; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
 .market-heading { border-bottom: 1px solid var(--line-soft); }
 .instrument-title { align-items: center; display: flex; gap: 10px; }
 .coin-mark { align-items: center; background: #f59b39; border-radius: 50%; color: #201005; display: flex; font-family: serif; font-size: 17px; font-weight: 800; height: 34px; justify-content: center; width: 34px; }

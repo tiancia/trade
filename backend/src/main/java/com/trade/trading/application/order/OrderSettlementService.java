@@ -11,7 +11,7 @@ import com.trade.trading.domain.order.OrderTransitionResult;
 import com.trade.trading.domain.order.SpotFillApplication;
 import com.trade.trading.domain.order.TradingOrder;
 import com.trade.trading.infrastructure.config.TradingProperties;
-import com.trade.trading.application.port.TradingStateStore;
+import com.trade.trading.port.TradingStateStore;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 

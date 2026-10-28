@@ -3,7 +3,7 @@ package com.trade.trading.infrastructure.persistence;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.trade.trading.application.port.StrategyConfigurationStore;
+import com.trade.trading.port.StrategyConfigurationStore;
 import com.trade.trading.domain.model.StrategyConfigurationVersion;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;

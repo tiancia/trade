@@ -1,6 +1,6 @@
 package com.trade.weibo.infrastructure.trend;
 
-import com.trade.weibo.application.port.HotEventSource;
+import com.trade.weibo.port.HotEventSource;
 import com.trade.weibo.domain.model.HotEvent;
 import com.trade.weibo.infrastructure.config.WeiboWorkflowProperties;
 import org.springframework.stereotype.Component;

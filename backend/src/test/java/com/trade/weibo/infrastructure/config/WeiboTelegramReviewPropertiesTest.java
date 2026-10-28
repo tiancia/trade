@@ -2,8 +2,8 @@ package com.trade.weibo.infrastructure.config;
 
 import com.trade.client.telegram.TelegramClientProperties;
 import com.trade.client.telegram.config.TelegramClientConfiguration;
-import com.trade.weibo.application.port.HumanReviewGateway;
-import com.trade.weibo.application.port.WeiboReviewDeliveryStore;
+import com.trade.weibo.port.HumanReviewGateway;
+import com.trade.weibo.port.WeiboReviewDeliveryStore;
 import com.trade.weibo.infrastructure.review.TelegramHumanReviewGateway;
 import com.trade.weibo.infrastructure.review.UnavailableHumanReviewGateway;
 import org.junit.jupiter.api.Test;

@@ -3,7 +3,7 @@ package com.trade.textgame.infrastructure.persistence;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trade.textgame.application.port.TextGameSessionStore;
+import com.trade.textgame.port.TextGameSessionStore;
 import com.trade.textgame.domain.exception.TextGameConflictException;
 import com.trade.textgame.domain.model.GameSession;
 import com.trade.textgame.domain.model.GameState;

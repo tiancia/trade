@@ -2,6 +2,7 @@ package com.trade.trading.infrastructure.persistence;
 
 import com.trade.trading.domain.paper.PaperEquityPoint;
 import com.trade.trading.domain.paper.PaperFill;
+import com.trade.trading.domain.paper.PaperDailyPerformance;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import java.time.Instant;
@@ -29,6 +30,9 @@ public interface PaperAccountMapper {
     List<PaperAccountRow> sessions(@Param("instId") String instId, @Param("beforeId") Long beforeId, @Param("limit") int limit);
     List<PaperFill> fills(@Param("instId") String instId, @Param("sessionId") String sessionId,
                           @Param("beforeId") Long beforeId, @Param("limit") int limit);
+    PaperDailyPerformance dailyPerformance(@Param("instId") String instId, @Param("sessionId") String sessionId,
+                                            @Param("throughVersion") long throughVersion,
+                                            @Param("from") Instant fromInclusive, @Param("to") Instant toExclusive);
     List<PaperEquityPoint> equity(@Param("instId") String instId, @Param("sessionId") String sessionId,
                                  @Param("beforeId") Long beforeId, @Param("limit") int limit);
 }

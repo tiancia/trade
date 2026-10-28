@@ -1,8 +1,8 @@
 package com.trade.x.infrastructure.persistence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trade.x.application.port.XPostRepository;
-import com.trade.x.application.port.XReviewDeliveryStore;
+import com.trade.x.port.XPostRepository;
+import com.trade.x.port.XReviewDeliveryStore;
 import com.trade.x.domain.model.GeneratedXPost;
 import com.trade.x.domain.model.XContentPolicy;
 import com.trade.x.domain.model.XPost;

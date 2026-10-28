@@ -1,6 +1,6 @@
 package com.trade.x.infrastructure.review;
 
-import com.trade.x.application.port.XHumanReviewGateway;
+import com.trade.x.port.XHumanReviewGateway;
 import com.trade.x.domain.model.XReviewRequest;
 
 public class UnavailableXReviewGateway implements XHumanReviewGateway {

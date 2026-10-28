@@ -1,6 +1,6 @@
 package com.trade.trading.infrastructure.persistence;
 
-import com.trade.trading.application.port.TradingAiReviewStore;
+import com.trade.trading.port.TradingAiReviewStore;
 import com.trade.trading.domain.model.TradingAiReview;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;

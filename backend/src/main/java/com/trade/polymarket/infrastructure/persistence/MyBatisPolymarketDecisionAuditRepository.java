@@ -1,6 +1,6 @@
 package com.trade.polymarket.infrastructure.persistence;
 
-import com.trade.polymarket.application.port.PolymarketDecisionAuditSink;
+import com.trade.polymarket.port.PolymarketDecisionAuditSink;
 import com.trade.polymarket.domain.model.AiPolymarketDecision;
 import com.trade.polymarket.domain.model.PolymarketDecisionAuditRecord;
 import com.trade.polymarket.domain.model.PolymarketDecisionContext;

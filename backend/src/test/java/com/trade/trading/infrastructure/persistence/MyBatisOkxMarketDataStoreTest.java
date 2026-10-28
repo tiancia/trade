@@ -3,7 +3,7 @@ package com.trade.trading.infrastructure.persistence;
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.OrderBookResp;
 import com.trade.client.okx.dto.TickerResp;
-import com.trade.trading.application.port.OkxMarketDataStore;
+import com.trade.trading.port.OkxMarketDataStore;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import org.junit.jupiter.api.Test;
 

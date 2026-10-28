@@ -5,8 +5,8 @@ import com.trade.trading.application.event.MarketSnapshotPayload;
 import com.trade.trading.application.event.TradingEvent;
 import com.trade.trading.application.event.TradingEventHandlingResult;
 import com.trade.trading.application.event.TradingEventSource;
-import com.trade.trading.application.port.HotMarketDataCache;
-import com.trade.trading.application.port.TradingEventHandler;
+import com.trade.trading.port.HotMarketDataCache;
+import com.trade.trading.port.TradingEventHandler;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 

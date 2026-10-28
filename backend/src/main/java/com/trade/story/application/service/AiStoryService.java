@@ -9,7 +9,7 @@ import static com.trade.story.domain.rule.StoryDraftPolicy.continuityNotes;
 import static com.trade.story.domain.rule.StoryDraftPolicy.storySoFar;
 import static com.trade.story.domain.rule.StoryDraftPolicy.joinContents;
 import com.trade.story.domain.rule.StoryDraftPolicy;
-import com.trade.ai.application.port.AiResponseParseErrorSink;
+import com.trade.ai.port.AiResponseParseErrorSink;
 import com.trade.ai.domain.model.AiResponseParseErrorRecord;
 import com.trade.client.ai.AiResponseParseException;
 import com.trade.client.ai.AiTextClient;

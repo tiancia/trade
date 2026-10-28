@@ -2,7 +2,7 @@ package com.trade.trading.application.strategy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
-import com.trade.trading.application.port.StrategyConfigurationStore;
+import com.trade.trading.port.StrategyConfigurationStore;
 import com.trade.trading.domain.model.StrategyConfigurationVersion;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import org.springframework.beans.factory.annotation.Autowired;

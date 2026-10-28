@@ -2,7 +2,7 @@ package com.trade.trading.application.strategy;
 
 import com.trade.trading.domain.model.ActiveStrategySelection;
 import com.trade.trading.domain.model.TradingState;
-import com.trade.trading.application.port.TradingStateStore;
+import com.trade.trading.port.TradingStateStore;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;

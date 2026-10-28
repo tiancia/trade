@@ -5,7 +5,7 @@
 ## 项目事实
 
 - 技术栈：Java 21、Spring Boot 4、Maven Wrapper、MyBatis、MySQL；Redis 只承担可关闭的热行情缓存。
-- 架构形态：按业务域组织的模块化单体，域内统一先分 `interfaces`、`application`、`domain`、`infrastructure`，再按能力细分。
+- 架构形态：按业务域组织的模块化单体，域内统一先分 `interfaces`、`application`、`domain`、`infrastructure`，再按能力细分；出站契约放在模块根目录的 `port`，与四层目录并列。
 - 应用入口：`src/main/java/com/trade/TradeApplication.java`。
 - 后台任务入口：`automation/application/task/AutomationTaskRegistrar.java`；`register()` 只登记任务，真正启动由 `ApplicationReadyEvent + auto-start` 或任务管理 API 触发。
 - 不得为通过测试或方便调试而打开自动任务、真实下单或真实发布开关。配置类默认值与当前运行模板不同，启动前核对 [运维手册](../docs/backend/OPERATIONS.md)。

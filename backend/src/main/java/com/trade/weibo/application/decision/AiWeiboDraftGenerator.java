@@ -3,7 +3,7 @@ package com.trade.weibo.application.decision;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.client.ai.AiTextClient;
-import com.trade.weibo.application.port.WeiboDraftGenerator;
+import com.trade.weibo.port.WeiboDraftGenerator;
 import com.trade.weibo.domain.model.GeneratedComment;
 import com.trade.weibo.domain.model.HotEvent;
 import org.springframework.stereotype.Component;

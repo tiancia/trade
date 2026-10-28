@@ -6,7 +6,7 @@
 AI 复用 `client.ai.AiTextClient` 和 `trade.ai.client`，不新增 SDK 或读取 `.env`。
 新闻源提供评论资料，不证明事实已被独立核实，也不等于微博热搜排名采集。
 
-审核契约、请求与决策属于微博域，分别位于 `weibo/application/port` 和 `weibo/domain/model`。
+审核契约、请求与决策属于微博域，分别位于 `weibo/port` 和 `weibo/domain/model`。
 启用后，`weibo/infrastructure/review/TelegramHumanReviewGateway` 通过
 [Telegram Bot API](TELEGRAM_API.md) 发送完整草稿及“通过并发布 / 拒绝”按钮，轮询获取认证回调。
 批准触发原有发布用例；拒绝保持 `REJECTED`，不会发布。HTTP 没有批准端点。
@@ -20,12 +20,12 @@ AI 复用 `client.ai.AiTextClient` 和 `trade.ai.client`，不新增 SDK 或读�
 ```text
 automation -> weibo/interfaces/scheduler -> application/service/WeiboPostService
   -> domain/model/WeiboPost                 # 不可变聚合、正文版本与状态规则
-  -> application/port/HotEventSource        # infrastructure/trend 的 RSS/Atom 实现
-  -> application/port/WeiboDraftGenerator   # application/decision 的 Prompt/解析
-  -> application/port/WeiboPostRepository   # infrastructure/persistence 的 MyBatis 实现
-  -> application/port/HumanReviewGateway    # infrastructure/review 的 Telegram 适配器
-  -> application/port/WeiboReviewDeliveryStore # 投递去重、决定、轮询 cursor/租约
-  -> application/port/WeiboPostPublisher    # 复用微博发布服务和 client/weibo
+  -> port/HotEventSource        # infrastructure/trend 的 RSS/Atom 实现
+  -> port/WeiboDraftGenerator   # application/decision 的 Prompt/解析
+  -> port/WeiboPostRepository   # infrastructure/persistence 的 MyBatis 实现
+  -> port/HumanReviewGateway    # infrastructure/review 的 Telegram 适配器
+  -> port/WeiboReviewDeliveryStore # 投递去重、决定、轮询 cursor/租约
+  -> port/WeiboPostPublisher    # 复用微博发布服务和 client/weibo
 ```
 
 微博域内的审核请求携带模块、业务引用、正文版本、正文、上下文和有效期。

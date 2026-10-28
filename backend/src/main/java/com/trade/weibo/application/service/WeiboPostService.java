@@ -1,13 +1,13 @@
 package com.trade.weibo.application.service;
 
 import com.trade.client.weibo.WeiboHttpException;
-import com.trade.weibo.application.port.HumanReviewGateway;
+import com.trade.weibo.port.HumanReviewGateway;
 import com.trade.weibo.domain.model.ReviewDecision;
 import com.trade.weibo.domain.model.ReviewRequest;
-import com.trade.weibo.application.port.HotEventSource;
-import com.trade.weibo.application.port.WeiboDraftGenerator;
-import com.trade.weibo.application.port.WeiboPostPublisher;
-import com.trade.weibo.application.port.WeiboPostRepository;
+import com.trade.weibo.port.HotEventSource;
+import com.trade.weibo.port.WeiboDraftGenerator;
+import com.trade.weibo.port.WeiboPostPublisher;
+import com.trade.weibo.port.WeiboPostRepository;
 import com.trade.weibo.domain.exception.WeiboPublishingException;
 import com.trade.weibo.domain.model.HotEvent;
 import com.trade.weibo.domain.model.WeiboPost;

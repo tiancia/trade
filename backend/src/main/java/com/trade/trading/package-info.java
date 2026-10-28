@@ -21,6 +21,6 @@
  * {@code application} for use cases grouped by capability, {@code domain} for
  * data and pure rules, and {@code infrastructure} for persistence, brokers,
  * market feeds, event delivery, and configuration. Outbound contracts live in
- * {@code application.port}; backtest fills are independent domain values.</p>
+ * {@code port}; backtest fills are independent domain values.</p>
  */
 package com.trade.trading;

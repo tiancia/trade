@@ -2,17 +2,21 @@ package com.trade.trading.application.strategy;
 
 import com.trade.client.ai.AiTextClient;
 import com.trade.client.okx.dto.CandleResp;
-import com.trade.trading.application.port.*;
+import com.trade.trading.port.*;
 import com.trade.trading.application.runtime.TradingLeadershipService;
 import com.trade.trading.domain.model.*;
 import com.trade.trading.domain.paper.PaperAccount;
+import com.trade.trading.domain.paper.PaperDailyPerformance;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.trading.infrastructure.config.TradingAiProperties;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.ConcurrentModificationException;
 import java.util.HashMap;
@@ -26,6 +30,8 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class TradingAiAdvisorTest {
+    private static final Instant NOW = Instant.parse("2026-10-28T06:00:00Z");
+    private final Clock clock = mock(Clock.class);
     private final TradingAiProperties ai = new TradingAiProperties();
     private final TradingProperties trading = new TradingProperties();
     private final TradingMarketSource market = mock(TradingMarketSource.class);
@@ -42,6 +48,7 @@ class TradingAiAdvisorTest {
     private static final String STRATEGY = "threshold-event-default";
 
     @BeforeEach void setup() {
+        when(clock.instant()).thenReturn(NOW);
         ai.setEnabled(true); ai.setAutoApply(true); ai.setCandleCount(32);
         trading.getLeadership().setEnabled(false);
         StrategyConfigurationStore configs = mock(StrategyConfigurationStore.class);
@@ -58,8 +65,10 @@ class TradingAiAdvisorTest {
         when(configs.withUnchangedVersions(anyMap(), any())).thenAnswer(inv -> ((Supplier<?>) inv.getArgument(1)).get());
         registry = new TradingStrategyRegistry(List.of(new ThresholdEventStrategy()), trading, configs);
         when(selection.current()).thenReturn(new ActiveStrategySelection(STRATEGY, 1, null));
-        when(market.getFifteenMinuteCandles()).thenReturn(candles(Instant.now(), 32));
-        when(paper.active(anyString())).thenReturn(PaperAccount.start("session", "BTC-USDT", "USDT", new BigDecimal("1000"), Instant.now()));
+        when(market.getFifteenMinuteCandles()).thenReturn(candles(NOW, 32));
+        when(paper.active(anyString())).thenReturn(PaperAccount.start("session", "BTC-USDT", "USDT", new BigDecimal("1000"), NOW));
+        when(paper.dailyPerformance(anyString(), anyString(), anyLong(), any(), any()))
+                .thenReturn(new PaperDailyPerformance(0, 0, 0, 0, BigDecimal.ZERO, BigDecimal.ZERO));
         when(paper.changeStrategyWhileFlat(anyString(), anyString(), anyLong(), any())).thenAnswer(inv -> ((java.util.function.BooleanSupplier) inv.getArgument(3)).getAsBoolean());
         when(engine.withStrategyMaintenance(any())).thenAnswer(inv -> ((Supplier<?>) inv.getArgument(0)).get());
         when(reviews.claim(anyString(), anyString(), any(), any(), any())).thenReturn(true);
@@ -67,7 +76,75 @@ class TradingAiAdvisorTest {
         when(reviews.claimNotification(anyString(), any(), any())).thenReturn(true);
         when(leadership.runIfLeader(anyString(), any())).thenAnswer(inv -> { ((Runnable) inv.getArgument(1)).run(); return true; });
         when(client.generateJson(anyString())).thenReturn(proposal("TUNE", STRATEGY, "{\"price-move-window-candles\":6}", "0.9", ""));
-        advisor = new TradingAiAdvisor(ai, trading, market, registry, selection, paper, reviews, client, notifier, engine, leadership);
+        advisor = new TradingAiAdvisor(ai, trading, market, registry, selection, paper, reviews, client, notifier, engine, leadership, clock);
+    }
+
+    @Test void dailyGoalAndVersionBoundPerformanceReachAiAndAuditWithoutDoubleChargingFees() throws Exception {
+        Instant now = NOW;
+        var day = TradingDay.at(now, ZoneId.of("Asia/Shanghai"));
+        var account = PaperAccount.start("session", "BTC-USDT", "USDT", new BigDecimal("1000"), day.start().minusSeconds(86400));
+        when(paper.active(anyString())).thenReturn(account);
+        when(paper.dailyPerformance(eq("BTC-USDT"), eq("session"), eq(0L), eq(day.start()), any()))
+                .thenReturn(new PaperDailyPerformance(12, 6, 6, 6, new BigDecimal("3.25"), new BigDecimal("1.50")));
+        var prior = new TradingAiReview("previous", "scope", now.minusSeconds(60), now, "{}",
+                proposal("HOLD", STRATEGY, "{}", "0.9", ""), "HELD", "evidence", "NOT_REQUIRED", now);
+        when(reviews.recent(anyString(), eq(4))).thenReturn(List.of(prior));
+        advisor.review();
+        var snapshot = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(reviews).capture(anyString(), snapshot.capture());
+        var tree = new ObjectMapper().readTree(snapshot.getValue());
+        var goal = tree.path("dailyObjective");
+        assertEquals(day.date().toString(), goal.path("tradingDate").asText());
+        assertEquals(5, goal.path("targetMinClosedTrades").asInt());
+        assertEquals(8, goal.path("targetMaxClosedTrades").asInt());
+        assertEquals("ROUND_TRIP_CLOSED", goal.path("countUnit").asText());
+        assertEquals("SOFT", goal.path("targetPolicy").asText());
+        assertEquals(6, goal.path("today").path("metrics").path("closedTrades").asInt());
+        assertEquals("3.25", goal.path("today").path("metrics").path("realizedNetPnl").asText());
+        assertEquals("FROM_DAY_START", goal.path("previousDay").path("sessionCoverage").asText());
+        assertEquals("previous", tree.path("previousReviewsNewestFirst").get(0).path("reviewId").asText());
+        assertEquals(0, trading.getTakerFeeRate().compareTo(tree.path("executionConstraints").path("takerFeeRate").decimalValue()));
+        verify(client).generateJson(argThat(p -> p.contains("never force entries") && p.contains("do not subtract feesQuote")));
+        verify(reviews).claim(anyString(), anyString(), any(), eq(day.end()), argThat(expiry -> !expiry.isAfter(day.end())));
+        // Reaching the frequency target never disables strategy maintenance or risk management.
+        verify(reviews).complete(anyString(), eq("APPLIED"), anyString(), any());
+    }
+
+    @Test void missingSessionOrLivePerformanceIsUnknownRatherThanFabricatedZeroTrades() {
+        when(paper.active(anyString())).thenReturn(null);
+        trading.getRisk().setDailyZone(" "); // Same fallback as the existing risk-day calculation.
+        var daily = advisor.dailyStatus();
+        assertEquals("Asia/Shanghai", daily.get("zone"));
+        assertEquals(false, daily.get("performanceAvailable"));
+        assertFalse(daily.containsKey("today"));
+        trading.setExecutionMode(ExecutionMode.LIVE);
+        clearInvocations(paper);
+        assertEquals(false, advisor.dailyStatus().get("performanceAvailable"));
+        verifyNoInteractions(paper);
+    }
+
+    @Test void newSessionDoesNotPretendToHaveYesterdaysHistory() {
+        when(paper.active(anyString())).thenReturn(PaperAccount.start("session", "BTC-USDT", "USDT",
+                new BigDecimal("1000"), NOW.minusSeconds(60)));
+        var daily = advisor.dailyStatus();
+        assertEquals("NO_SESSION_DATA", ((Map<?, ?>) daily.get("previousDay")).get("sessionCoverage"));
+        assertEquals("PARTIAL_DAY", ((Map<?, ?>) daily.get("today")).get("sessionCoverage"));
+    }
+
+    @Test void reviewCrossingMidnightCannotApplyOrNotifyOnTheNewDay() {
+        Instant justBeforeMidnight = Instant.parse("2026-10-28T15:59:50Z");
+        Instant midnight = justBeforeMidnight.plusSeconds(10);
+        when(clock.instant()).thenReturn(justBeforeMidnight);
+        when(market.getFifteenMinuteCandles()).thenReturn(candles(justBeforeMidnight, 32));
+        when(client.generateJson(anyString())).thenAnswer(inv -> {
+            when(clock.instant()).thenReturn(midnight);
+            return proposal("TUNE", STRATEGY, "{\"price-move-window-candles\":6}", "0.9", "day-specific advice");
+        });
+        advisor.review();
+        verify(reviews).claim(anyString(), anyString(), eq(justBeforeMidnight), eq(midnight), eq(midnight));
+        verify(reviews).complete(anyString(), eq("STALE"), anyString(), eq(midnight));
+        verifyNoInteractions(engine, notifier);
+        assertEquals(1, registry.configuration(STRATEGY).version());
     }
 
     @Test void validTuneUsesVersionHistoryAndDurableIntentWithoutPlacingOrders() {
@@ -118,8 +195,8 @@ class TradingAiAdvisorTest {
         advisor.review();
         verify(reviews).complete(anyString(), eq("LOW_CONFIDENCE"), anyString(), any());
         when(client.generateJson(anyString())).thenReturn(proposal("TUNE", STRATEGY, "{\"price-move-window-candles\":6}", "0.9", ""));
-        var open = PaperAccount.start("session", "BTC-USDT", "USDT", new BigDecimal("1000"), Instant.now())
-                .fill("BUY", BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO, Instant.now()).account();
+        var open = PaperAccount.start("session", "BTC-USDT", "USDT", new BigDecimal("1000"), NOW)
+                .fill("BUY", BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO, NOW).account();
         when(paper.active(anyString())).thenReturn(open);
         advisor.review();
         verify(reviews).complete(anyString(), eq("POSITION_NOT_FLAT"), anyString(), any());
@@ -181,11 +258,11 @@ class TradingAiAdvisorTest {
     }
 
     @Test void malformedOrStaleMarketNeverCallsAi() {
-        when(market.getFifteenMinuteCandles()).thenReturn(candles(Instant.now().minusSeconds(3600), 32));
+        when(market.getFifteenMinuteCandles()).thenReturn(candles(NOW.minusSeconds(3600), 32));
         assertThrows(IllegalStateException.class, advisor::review);
         verifyNoInteractions(client);
-        var broken = candles(Instant.now(), 33); broken.remove(10);
-        assertThrows(IllegalArgumentException.class, () -> TradingAiAdvisor.confirmedCandles(broken, 32, Instant.now()));
+        var broken = candles(NOW, 33); broken.remove(10);
+        assertThrows(IllegalArgumentException.class, () -> TradingAiAdvisor.confirmedCandles(broken, 32, NOW));
     }
 
     @Test void logicSuggestionUsesOneShotIndependentNotification() {

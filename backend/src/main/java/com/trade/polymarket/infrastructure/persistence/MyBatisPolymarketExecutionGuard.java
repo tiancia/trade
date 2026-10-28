@@ -1,6 +1,6 @@
 package com.trade.polymarket.infrastructure.persistence;
 
-import com.trade.polymarket.application.port.PolymarketExecutionGuard;
+import com.trade.polymarket.port.PolymarketExecutionGuard;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;

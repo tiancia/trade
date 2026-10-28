@@ -11,7 +11,9 @@ import java.math.BigDecimal;
 public class TradingAiProperties {
     private boolean enabled = false;
     private boolean autoApply = false;
-    private long reviewIntervalMs = 3600000;
+    private long reviewIntervalMs = 86400000;
+    private int targetMinClosedTradesPerDay = 5;
+    private int targetMaxClosedTradesPerDay = 8;
     private int maxReviewAgeSeconds = 300;
     private int candleCount = 96;
     private BigDecimal minimumConfidence = new BigDecimal("0.80");
@@ -21,9 +23,11 @@ public class TradingAiProperties {
         if (reviewIntervalMs < 900000 || reviewIntervalMs > 86400000
                 || maxReviewAgeSeconds < 30 || maxReviewAgeSeconds > 600
                 || candleCount < 32 || candleCount > 199
+                || targetMinClosedTradesPerDay < 1 || targetMaxClosedTradesPerDay > 100
+                || targetMaxClosedTradesPerDay < targetMinClosedTradesPerDay
                 || minimumConfidence == null || minimumConfidence.compareTo(new BigDecimal("0.5")) < 0
                 || minimumConfidence.compareTo(BigDecimal.ONE) > 0) {
-            throw new IllegalArgumentException("Invalid trading AI interval, freshness, candle count or confidence");
+            throw new IllegalArgumentException("Invalid trading AI interval, freshness, candle count, daily target or confidence");
         }
     }
 

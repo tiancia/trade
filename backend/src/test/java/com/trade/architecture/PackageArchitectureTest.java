@@ -175,8 +175,8 @@ class PackageArchitectureTest {
     }
 
     @Test
-    void modulesExposeOnlyFourLayerDirectories() throws IOException {
-        Set<String> layers = Set.of("interfaces", "application", "domain", "infrastructure");
+    void modulesExposeOnlyLayersAndPorts() throws IOException {
+        Set<String> layers = Set.of("interfaces", "application", "domain", "infrastructure", "port");
         for (String module : Stream.concat(LAYERED_TOP_LEVEL_PACKAGES.stream(), Stream.of("ai")).toList()) {
             Path moduleRoot = mainJava.resolve("com/trade").resolve(module);
             for (Path source : javaSources(moduleRoot)) {
@@ -185,18 +185,20 @@ class PackageArchitectureTest {
                     assertEquals("package-info.java", relative.toString());
                 } else {
                     assertTrue(layers.contains(relative.getName(0).toString()),
-                            () -> "module must group capabilities under the four layers: " + source);
+                            () -> "module must group capabilities under the four layers or module ports: " + source);
                 }
             }
         }
     }
 
     @Test
-    void applicationPortsDoNotDependOnImplementations() throws IOException {
+    void modulePortsDoNotDependOnImplementations() throws IOException {
         for (Path source : javaSources(mainJava.resolve("com/trade"))) {
-            if (!source.toString().replace('\\', '/').contains("/application/port/")) {
+            if (!source.toString().replace('\\', '/').contains("/port/")) {
                 continue;
             }
+            assertEquals("port", mainJava.relativize(source).getName(3).toString(),
+                    () -> "outbound contracts must live at the module root: " + source);
             for (String importedType : imports(source)) {
                 assertFalse(importedType.contains(".infrastructure.") || importedType.contains(".interfaces."),
                         () -> "outbound contracts must not depend on adapters: " + source + " -> " + importedType);
@@ -246,6 +248,7 @@ class PackageArchitectureTest {
                                 || importedType.contains(".infrastructure.")
                                 || importedType.contains(".persistence.")
                                 || importedType.contains(".application.")
+                                || importedType.contains(".port.")
                                 || importedType.contains(".config.")
                                 || importedType.startsWith("com.trade.client."),
                         () -> "domain model must stay adapter-neutral: " + source + " -> " + importedType

@@ -54,8 +54,8 @@ trading/
 │  ├─ runtime/            # 行情生命周期、领导租约、触发用例
 │  ├─ market/             # 行情查询、采集上下文、领域输入转换与信号检测
 │  ├─ decision/           # Prompt、解析与审计信封
-│  ├─ event/              # 技术事件信封、载荷与状态
-│  └─ port/               # Broker、存储、缓存、事件与审计契约
+│  └─ event/              # 技术事件信封、载荷与状态
+├─ port/                  # Broker、存储、缓存、事件与审计契约
 ├─ domain/
 │  ├─ model/              # 决策、策略记忆、运行快照、业务枚举
 │  ├─ order/              # 幂等身份、状态演进、结算、数量与成本规则
@@ -97,7 +97,7 @@ REST / WebSocket market data
 
 订单对象不暴露 setter，状态推进经由 `OrderChange`；MyBatis 使用 `TradingOrderRow` 恢复不可变订单。持仓快照通过领域买入、卖出和对账方法演进。回测线程池由 `BacktestExecutorConfiguration` 装配并关闭，应用用例只提交任务。
 
-回测经 `application/port/HistoricalCandleSource` 加载历史数据，默认适配为 `HistoricalCandleService`。实时引擎与 Broker 只执行 PAPER/LIVE；BACKTEST 配置不会启动历史回放或降级成实时模拟成交。活动策略切换与资金操作由部署网关及网络隔离限制访问，无需单独的应用令牌。
+回测经 `port/HistoricalCandleSource` 加载历史数据，默认适配为 `HistoricalCandleService`。实时引擎与 Broker 只执行 PAPER/LIVE；BACKTEST 配置不会启动历史回放或降级成实时模拟成交。活动策略切换与资金操作由部署网关及网络隔离限制访问，无需单独的应用令牌。
 
 真实订单可靠性依赖持久化幂等键、确定性 `clOrdId`、状态机、乐观锁、状态历史和累计成交账本。仓位、成本、风险状态与资金级停止状态以 MySQL 为权威；`data/trading-state.json` 只保存策略选择、策略画像和有界决策记忆。事件管道依赖固定容量、显式队满策略、handler 异常隔离、指标与优雅排空。修改这些路径前应先读对应测试。
 
@@ -125,11 +125,11 @@ Polymarket Python 桥接使用请求冻结的订单类型，不允许 SDK 兼容
 
 Polymarket LIVE 决策在开始采集和 AI 调用前必须创建持久化审计记录；BUY 在执行前还须以独立事务预留 `polymarket_execution_guard` 的单账户门禁。超时、确认不完整、进程退出或执行审计失败都会保留未决预留，阻断同数据库下所有实例的后续真实下单，重启和等待均不自动释放。正常结果及审计均提交后才释放，未决恢复按[运维手册](OPERATIONS.md)人工核实。子进程正常退出后仍校验 CLOB 的接受标志、错误、订单 ID 和状态；`PLACED` 表示接受，不代表成交。采集、AI 或执行异常在保存审计后传播到任务管理器，计为失败；禁用、互斥锁忙和没有候选市场仍属于正常跳过。
 
-共享 AI 审计接口在 `ai/application/port`，记录在 `ai/domain/model`，MyBatis 实现在 `ai/infrastructure/persistence`。
+共享 AI 审计接口在 `ai/port`，记录在 `ai/domain/model`，MyBatis 实现在 `ai/infrastructure/persistence`。
 
 ### textgame 与 marketplace
 
-这两个 HTTP 业务域使用 `interfaces/web`、`application/service`、`domain/model`、`domain/exception`、`infrastructure/persistence` 和 `infrastructure/config`。文字游戏的纯规则额外放在 `domain/rule`；集市的 OSS 实现放在 `infrastructure/oss`，契约放在 `application/port`。文字游戏会话用例通过 `application/port/TextGameSessionStore` 访问持久化；管理用例和集市部分 application service 仍直接依赖 Mapper 或 Row，后续随具体需求渐进收敛。
+这两个 HTTP 业务域使用 `interfaces/web`、`application/service`、`domain/model`、`domain/exception`、`infrastructure/persistence` 和 `infrastructure/config`。文字游戏的纯规则额外放在 `domain/rule`；集市的 OSS 实现放在 `infrastructure/oss`，契约放在 `port`。文字游戏会话用例通过 `port/TextGameSessionStore` 访问持久化；管理用例和集市部分 application service 仍直接依赖 Mapper 或 Row，后续随具体需求渐进收敛。
 
 文字游戏和集市的共享业务异常均位于各自的 `domain/exception`。集市商品和会话规则在 `domain/rule`，应用服务仍负责查询与事务；`MarketplaceViews` 保留为 `application/service` 内部的 Row 转换助手。文字游戏规则的 Spring 装配位于 `TextGameConfiguration`，规则类不依赖 Spring。
 
@@ -137,13 +137,13 @@ Polymarket LIVE 决策在开始采集和 AI 调用前必须创建持久化审计
 
 ### weibo
 
-Weibo 是 application port 模式的参考实现：`application/service` 依赖 `application/port`，MyBatis adapter 位于 `infrastructure/persistence`，供应商 HTTP 协议位于 `client/weibo`。新增相似 OAuth 或发布模块时优先参考这一依赖方向。
+Weibo 是 application port 模式的参考实现：`application/service` 依赖 `port`，MyBatis adapter 位于 `infrastructure/persistence`，供应商 HTTP 协议位于 `client/weibo`。新增相似 OAuth 或发布模块时优先参考这一依赖方向。
 
 授权和发布用例异常位于 `weibo/domain/exception`；仅用于 HTTP 管理员鉴权的 `WeiboUnauthorizedException` 留在 `interfaces/web`。
 
 热点评论由 `WeiboPostService` 编排；`domain/model/WeiboPost` 管理正文版本、审核和发布状态。
 RSS/Atom 源在 `infrastructure/trend`，AI Prompt 在 `application/decision`，存储经 application port。
-审核契约位于 `weibo/application/port/HumanReviewGateway`，请求与决策位于 `weibo/domain/model`。
+审核契约位于 `weibo/port/HumanReviewGateway`，请求与决策位于 `weibo/domain/model`。
 `infrastructure/review/TelegramHumanReviewGateway` 发送按钮并认证轮询回调，投递去重、决定、游标和租约由 MyBatis 持久化；
 未启用时使用 `UnavailableHumanReviewGateway`，不会批准。任务包含生成、审核与发布循环；配置默认关闭。
 详见 [微博工作流](WEIBO_WORKFLOW.md)。

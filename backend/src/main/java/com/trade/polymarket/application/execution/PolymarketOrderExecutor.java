@@ -1,7 +1,7 @@
 package com.trade.polymarket.application.execution;
 
 import com.trade.polymarket.domain.rule.PolymarketOrderPolicy;
-import com.trade.polymarket.application.port.PolymarketOrderRunner;
+import com.trade.polymarket.port.PolymarketOrderRunner;
 import com.trade.polymarket.domain.model.AiPolymarketDecision;
 import com.trade.polymarket.domain.model.PolymarketDecisionContext;
 import com.trade.polymarket.domain.model.PolymarketOrderRequest;

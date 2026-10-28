@@ -1,7 +1,7 @@
 package com.trade.textgame.application.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.trade.textgame.application.port.TextGameSessionStore;
+import com.trade.textgame.port.TextGameSessionStore;
 import com.trade.textgame.domain.model.GameSession;
 import com.trade.textgame.domain.model.GameState;
 import com.trade.textgame.domain.model.StoryDocument;

@@ -30,7 +30,8 @@ public class TradingAiController {
                 "autoApplyEligible", ai.isEnabled() && ai.isAutoApply() && trading.isEnabled()
                         && trading.getExecutionMode() == ExecutionMode.PAPER && "SPOT".equalsIgnoreCase(trading.getInstType()),
                 "executionMode", trading.getExecutionMode().name(), "reviewIntervalMs", ai.getReviewIntervalMs(),
-                "minimumConfidence", ai.getMinimumConfidence(), "telegramEnabled", ai.getTelegram().isEnabled());
+                "minimumConfidence", ai.getMinimumConfidence(), "telegramEnabled", ai.getTelegram().isEnabled(),
+                "daily", advisor.dailyStatus());
     }
     @GetMapping("/reviews")
     public List<TradingAiReview> reviews(@RequestParam(defaultValue = "20") int limit) {

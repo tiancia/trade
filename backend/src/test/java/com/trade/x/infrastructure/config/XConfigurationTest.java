@@ -4,7 +4,7 @@ import com.trade.automation.infrastructure.config.AutomationConfiguration;
 import com.trade.client.telegram.TelegramClientProperties;
 import com.trade.client.telegram.config.TelegramClientConfiguration;
 import com.trade.weibo.infrastructure.config.WeiboTelegramReviewProperties;
-import com.trade.x.application.port.*;
+import com.trade.x.port.*;
 import com.trade.x.application.service.XPostService;
 import com.trade.x.domain.model.XContentPolicy;
 import com.trade.x.domain.model.XWorkflowPolicy;

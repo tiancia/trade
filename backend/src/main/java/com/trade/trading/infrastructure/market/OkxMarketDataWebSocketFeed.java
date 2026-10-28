@@ -1,6 +1,6 @@
 package com.trade.trading.infrastructure.market;
 
-import com.trade.trading.application.port.TradingMarketFeed;
+import com.trade.trading.port.TradingMarketFeed;
 import com.trade.trading.application.market.CandleFreshness;
 import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.dto.CandleResp;
@@ -12,7 +12,7 @@ import com.trade.client.okx.ws.OkxWsSubscription;
 import com.trade.client.okx.ws.TickerChannelReq;
 import com.trade.trading.application.event.TradingEvent;
 import com.trade.trading.application.event.TradingEventSource;
-import com.trade.trading.application.port.TradingEventPublisher;
+import com.trade.trading.port.TradingEventPublisher;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

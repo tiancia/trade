@@ -1,7 +1,7 @@
 package com.trade.weibo.infrastructure.persistence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trade.weibo.application.port.WeiboPostRepository;
+import com.trade.weibo.port.WeiboPostRepository;
 import com.trade.weibo.domain.model.HotEvent;
 import com.trade.weibo.domain.model.WeiboPost;
 import com.trade.weibo.domain.model.WeiboPostHistory;

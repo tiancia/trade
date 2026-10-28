@@ -1,6 +1,6 @@
 package com.trade.trading.application.runtime;
 
-import com.trade.trading.application.port.TradingLeaderLeaseRepository;
+import com.trade.trading.port.TradingLeaderLeaseRepository;
 import com.trade.trading.domain.model.TradingLeaderLease;
 import com.trade.trading.domain.model.TradingLeadershipStatus;
 import com.trade.trading.infrastructure.config.TradingProperties;

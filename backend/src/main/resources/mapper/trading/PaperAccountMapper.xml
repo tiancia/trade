@@ -51,4 +51,15 @@
         SELECT <include refid="equityColumns"/> FROM okx_paper_equity e JOIN okx_paper_sessions s ON s.session_id=e.session_id WHERE s.inst_id=#{instId} AND e.session_id=#{sessionId}
         <if test="beforeId != null">AND e.id &lt; #{beforeId}</if> ORDER BY e.id DESC LIMIT #{limit}
     </select>
+    <select id="dailyPerformance" resultType="com.trade.trading.domain.paper.PaperDailyPerformance">
+        SELECT COUNT(*) AS fill_count,
+               COALESCE(SUM(CASE WHEN f.side='BUY' THEN 1 ELSE 0 END), 0) AS buy_count,
+               COALESCE(SUM(CASE WHEN f.side='SELL' THEN 1 ELSE 0 END), 0) AS sell_count,
+               COALESCE(SUM(CASE WHEN f.side='SELL' AND f.position_after=0 THEN 1 ELSE 0 END), 0) AS closed_trades,
+               COALESCE(SUM(f.realized_pnl), 0) AS realized_net_pnl,
+               COALESCE(SUM(f.fee_quote), 0) AS fees_quote
+        FROM okx_paper_fills f JOIN okx_paper_sessions s ON s.session_id=f.session_id
+        WHERE s.inst_id=#{instId} AND f.session_id=#{sessionId} AND f.account_version &lt;= #{throughVersion}
+          AND f.created_at &gt;= #{from} AND f.created_at &lt; #{to}
+    </select>
 </mapper>

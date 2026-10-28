@@ -2,8 +2,8 @@ package com.trade.weibo.application.service;
 
 import com.trade.client.weibo.WeiboAccessToken;
 import com.trade.client.weibo.WeiboApi;
-import com.trade.weibo.application.port.WeiboAccountTokenRepository;
-import com.trade.weibo.application.port.WeiboOAuthStateRepository;
+import com.trade.weibo.port.WeiboAccountTokenRepository;
+import com.trade.weibo.port.WeiboOAuthStateRepository;
 import com.trade.weibo.domain.exception.WeiboOAuthException;
 import com.trade.weibo.domain.model.WeiboAuthorization;
 import com.trade.weibo.domain.model.WeiboAuthorizeUrl;

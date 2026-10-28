@@ -1,7 +1,7 @@
 package com.trade.textgame.infrastructure.persistence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trade.textgame.application.port.TextGameSessionStore;
+import com.trade.textgame.port.TextGameSessionStore;
 import com.trade.textgame.application.service.TextGameSessionService;
 import com.trade.textgame.domain.exception.TextGameConflictException;
 import com.trade.textgame.domain.model.TextGameApi;

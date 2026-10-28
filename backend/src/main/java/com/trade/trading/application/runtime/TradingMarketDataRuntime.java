@@ -1,6 +1,6 @@
 package com.trade.trading.application.runtime;
 
-import com.trade.trading.application.port.TradingMarketFeed;
+import com.trade.trading.port.TradingMarketFeed;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 

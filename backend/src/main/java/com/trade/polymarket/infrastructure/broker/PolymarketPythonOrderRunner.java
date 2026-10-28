@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.client.polymarket.PolymarketClientProperties;
 import com.trade.common.support.TradingMath;
-import com.trade.polymarket.application.port.PolymarketOrderRunner;
+import com.trade.polymarket.port.PolymarketOrderRunner;
 import com.trade.polymarket.domain.model.PolymarketOrderRequest;
 import com.trade.polymarket.infrastructure.config.AiPolymarketProperties;
 import org.slf4j.Logger;

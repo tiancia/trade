@@ -1,6 +1,6 @@
 package com.trade.polymarket.infrastructure.persistence;
 
-import com.trade.polymarket.application.port.PolymarketExecutionGuard;
+import com.trade.polymarket.port.PolymarketExecutionGuard;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.Test;

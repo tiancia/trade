@@ -1,7 +1,7 @@
 package com.trade.weibo.infrastructure.persistence;
 
-import com.trade.weibo.application.port.WeiboPostRepository;
-import com.trade.weibo.application.port.WeiboAccountTokenRepository;
+import com.trade.weibo.port.WeiboPostRepository;
+import com.trade.weibo.port.WeiboAccountTokenRepository;
 import com.trade.weibo.domain.model.*;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.h2.jdbcx.JdbcDataSource;

@@ -6,7 +6,7 @@ import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.application.event.TradingEvent;
 import com.trade.trading.application.event.TradingEventHandlingResult;
 import com.trade.trading.application.event.TradingEventSource;
-import com.trade.trading.application.port.OkxMarketDataStore;
+import com.trade.trading.port.OkxMarketDataStore;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

@@ -6,7 +6,7 @@
 
 业务域包括 `trading`、`polymarket`、`story`、`textgame`、`marketplace`、`weibo`、`x`。它们保留同一个 Spring Boot 进程、Maven 构建和数据库连接；没有拆成微服务或多个 Maven module。
 
-业务域、`automation` 和共享能力模块 `ai` 只使用以下四种一级目录，按需创建：
+业务域、`automation` 和共享能力模块 `ai` 按以下四层组织，出站契约独立放在模块根目录的 `port`，各目录按需创建：
 
 ```text
 <module>/
@@ -15,8 +15,8 @@
 │  └─ scheduler/           # 定时触发，薄入口
 ├─ application/            # 一个用例如何执行
 │  ├─ service/             # 小模块的用例服务及包内辅助转换
-│  ├─ strategy/order/.../  # 大模块按用例能力细分
-│  └─ port/                # 用例需要的出站接口
+│  └─ strategy/order/.../  # 大模块按用例能力细分
+├─ port/                   # 模块需要的出站接口
 ├─ domain/                 # 业务数据和纯规则
 │  ├─ model/               # 稳定值、状态快照、业务枚举
 │  ├─ exception/           # 跨层共享的业务异常
@@ -36,7 +36,7 @@
 interfaces -> application -> domain
                     |
                     v
-             application.port <- infrastructure implementation
+             port <- infrastructure implementation
 
 automation -> 各业务域的 scheduler / lifecycle 入口
 业务域 -> client / ai / common
@@ -44,8 +44,8 @@ automation -> 各业务域的 scheduler / lifecycle 入口
 
 - 业务域之间不得直接 import，跨域生命周期由 `automation` 编排。
 - `client`、`ai`、`common` 不得反向依赖业务域或 `automation`。
-- `domain` 不依赖 `application`、`interfaces`、`infrastructure`。不依赖供应商 client；架构测试不再保留 provider DTO 豁免。
-- `application/port` 不依赖接口入口或基础设施实现。Broker、订单存储、资金状态、行情缓存和审计等现有接口放在这里。
+- `domain` 不依赖 `application`、`port`、`interfaces`、`infrastructure`。不依赖供应商 client；架构测试不再保留 provider DTO 豁免。
+- `port` 不依赖接口入口或基础设施实现。Broker、订单存储、资金状态、行情缓存和审计等现有接口放在这里。
 - 非接口层不得反向依赖本域 HTTP 或定时入口。`automation` 登记各域 scheduler 是跨域编排的明确职责。
 - Web 不直接访问 Mapper 或暴露持久化 Row。请求路径、返回 JSON、配置键和表结构不因目录调整而变化。
 
@@ -95,7 +95,7 @@ automation -> 各业务域的 scheduler / lifecycle 入口
 | 定时触发 | `interfaces/scheduler` | `TradingScheduler` |
 | 用例服务、事务编排 | `application/<能力>` | `application/order/OrderSettlementService` |
 | 策略注册、输入转换及风控编排 | `application/strategy`、`application/risk` | `TradingStrategyEngine`、`RiskControlService` |
-| 出站契约 | `application/port` | `TradingBroker`、`TradingFinancialStateStore` |
+| 出站契约 | `port` | `TradingBroker`、`TradingFinancialStateStore` |
 | 状态、业务枚举 | `domain/model` 或领域能力包 | `ExecutionMode`、`domain/order/OrderStatus` |
 | 纯规则 | `domain/order`、`domain/risk`、`domain/strategy`、`domain/rule` | `OrderSizingRules`、`RiskStateTransitions`、`ThresholdDecisionPolicy`、`TextGameRuleEngine` |
 | 业务异常 | `domain/exception` | `TextGameConflictException` |
@@ -103,7 +103,7 @@ automation -> 各业务域的 scheduler / lifecycle 入口
 | Broker 实现 | `infrastructure/broker` | `OkxLiveBroker`、`PaperBroker`、`BacktestBroker` |
 | 数据库、文件与缓存实现 | `infrastructure/persistence` | `MyBatisTradingOrderRepository`、`RedisHotMarketDataCache` |
 | 外部行情获取 | `infrastructure/market` | `OkxMarketDataWebSocketFeed`、`HistoricalCandleService` |
-| 技术事件契约与信封 | `application/event`、`application/port` | `TradingEvent`、`TradingEventPublisher` |
+| 技术事件契约与信封 | `application/event`、`port` | `TradingEvent`、`TradingEventPublisher` |
 | 队列与事件处理器 | `infrastructure/event` | `BoundedTradingEventBus` |
 | Prompt、协议解析与格式校验 | `application/decision` | `AiStoryResponseParser` |
 | 供应商 HTTP/WS、签名、协议 DTO | `client/<provider>`，AI 实现归 `client/ai` | `client/okx`、`client/ai/gemini` |
@@ -120,7 +120,7 @@ automation/application/task/AutomationTaskManager
     -> trading/application/runtime/TradingTriggerService
       -> trading/application/strategy/TradingStrategyEngine
         -> 当前激活策略 -> domain 策略规则
-        -> application/port/TradingBroker
+        -> port/TradingBroker
           <- infrastructure/broker/TradingBrokerRouter
             -> PaperBroker / OkxLiveBroker
               -> PaperOrderExecutionService / LiveOrderExecutionService
@@ -159,7 +159,7 @@ MySQL 是资金状态的权威来源。旧 JSON 的仓位、成本和风险仅�
 
 ```text
 REST / WebSocket producers
-  -> application/port/TradingEventPublisher
+  -> port/TradingEventPublisher
     <- infrastructure/event/BoundedTradingEventBus
       -> 有界队列 -> 隔离的 handlers -> MySQL / Redis
 ```
@@ -176,7 +176,7 @@ REST / WebSocket producers
 
 热点审核工作流沿用相同四层：不可变 `WeiboPost` 聚合管理规则，应用服务通过 port 编排
 RSS/Atom、AI、MyBatis 和发布。审核请求与决策归 `weibo/domain/model`，投递契约归
-`weibo/application/port`，Telegram 审核及关闭时的占位实现在 `weibo/infrastructure/review`。
+`weibo/port`，Telegram 审核及关闭时的占位实现在 `weibo/infrastructure/review`。
 当前工作流见 [微博工作流](WEIBO_WORKFLOW.md)。
 
 ```text
@@ -213,4 +213,4 @@ X 的 `application/service/XPostService` 编排配置驱动的 AI 草稿、Teleg
 - `PackageArchitectureTest` 检查包与路径、四层入口、业务域隔离、共享模块依赖方向、Web 不引用持久化、内层不依赖接口入口、port 不依赖实现、领域类型不依赖外层，以及 Mapper XML 中类名可解析。
 - domain 不允许引用 provider DTO；应用层采集与执行契约可以保留供应商协议，在调用纯规则前转换。结构规则不得通过放宽限制来掩盖错误归层。
 - 新增边界检查禁止 domain 引入 Spring/MyBatis/SQL 框架，禁止 Trading 的 application/interfaces 直接依赖已抽象的四类状态/行情/事件实现。
-- 历史行情也通过 `application/port/HistoricalCandleSource` 注入回测用例，由 `HistoricalCandleService` 实现；架构测试禁止用例与 HTTP 层直接依赖该实现。实时 Broker 仅路由 PAPER/LIVE，BACKTEST 必须走独立回测 API。
+- 历史行情也通过 `port/HistoricalCandleSource` 注入回测用例，由 `HistoricalCandleService` 实现；架构测试禁止用例与 HTTP 层直接依赖该实现。实时 Broker 仅路由 PAPER/LIVE，BACKTEST 必须走独立回测 API。

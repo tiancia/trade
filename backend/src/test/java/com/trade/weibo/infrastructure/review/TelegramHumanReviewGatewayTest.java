@@ -8,7 +8,7 @@ import com.trade.client.telegram.dto.TelegramInlineKeyboardMarkup;
 import com.trade.client.telegram.dto.TelegramMessage;
 import com.trade.client.telegram.dto.TelegramUpdate;
 import com.trade.client.telegram.dto.TelegramUser;
-import com.trade.weibo.application.port.WeiboReviewDeliveryStore;
+import com.trade.weibo.port.WeiboReviewDeliveryStore;
 import com.trade.weibo.domain.model.ReviewDecision;
 import com.trade.weibo.domain.model.ReviewRequest;
 import com.trade.weibo.domain.model.WeiboReviewDelivery;

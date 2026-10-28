@@ -1,6 +1,6 @@
 package com.trade.trading.infrastructure.persistence;
 
-import com.trade.trading.application.port.TradingOrderRepository;
+import com.trade.trading.port.TradingOrderRepository;
 import com.trade.trading.domain.order.OrderSubmission;
 import com.trade.trading.domain.order.TradingOrder;
 import org.springframework.stereotype.Component;

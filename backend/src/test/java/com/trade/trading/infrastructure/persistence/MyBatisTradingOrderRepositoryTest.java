@@ -1,7 +1,7 @@
 package com.trade.trading.infrastructure.persistence;
 
 import com.trade.trading.application.order.OrderLifecycleService;
-import com.trade.trading.application.port.TradingOrderRepository;
+import com.trade.trading.port.TradingOrderRepository;
 import com.trade.trading.domain.order.OrderFill;
 import com.trade.trading.domain.order.OrderReservation;
 import com.trade.trading.domain.order.OrderStatus;

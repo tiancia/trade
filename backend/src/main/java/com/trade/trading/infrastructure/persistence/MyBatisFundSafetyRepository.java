@@ -1,6 +1,6 @@
 package com.trade.trading.infrastructure.persistence;
 
-import com.trade.trading.application.port.FundSafetyRepository;
+import com.trade.trading.port.FundSafetyRepository;
 import com.trade.trading.domain.risk.FundSafetyState;
 import com.trade.trading.domain.risk.FundSafetyStatus;
 import org.springframework.stereotype.Component;

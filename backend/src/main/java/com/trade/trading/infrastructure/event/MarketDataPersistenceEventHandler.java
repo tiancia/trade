@@ -4,8 +4,8 @@ import com.trade.trading.application.event.CandleBatchPayload;
 import com.trade.trading.application.event.MarketSnapshotPayload;
 import com.trade.trading.application.event.TradingEvent;
 import com.trade.trading.application.event.TradingEventHandlingResult;
-import com.trade.trading.application.port.OkxMarketDataStore;
-import com.trade.trading.application.port.TradingEventHandler;
+import com.trade.trading.port.OkxMarketDataStore;
+import com.trade.trading.port.TradingEventHandler;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 

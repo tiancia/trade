@@ -5,13 +5,13 @@ import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.application.market.TradingEventDetector;
 import com.trade.trading.application.paper.PaperAccountService;
 import com.trade.trading.application.order.OrderReconciliationService;
-import com.trade.trading.application.port.HotMarketDataCache;
+import com.trade.trading.port.HotMarketDataCache;
 import com.trade.trading.application.strategy.TradingStrategyEngine;
 import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.infrastructure.config.TradingProperties;
-import com.trade.trading.application.port.TradingMarketSource;
-import com.trade.trading.application.port.TradingMarketFeed;
-import com.trade.trading.application.port.TradingStateStore;
+import com.trade.trading.port.TradingMarketSource;
+import com.trade.trading.port.TradingMarketFeed;
+import com.trade.trading.port.TradingStateStore;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

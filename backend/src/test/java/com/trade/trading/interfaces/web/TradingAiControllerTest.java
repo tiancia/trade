@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
+import java.util.Map;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -18,15 +19,22 @@ class TradingAiControllerTest {
         ai.getTelegram().getClient().setBotToken("222:private-test-value");
         var trading = new TradingProperties(); trading.setExecutionMode(ExecutionMode.LIVE);
         var advisor = mock(TradingAiAdvisor.class);
+        when(advisor.dailyStatus()).thenReturn(Map.of("targetMinClosedTrades", 5, "targetMaxClosedTrades", 8,
+                "countUnit", "ROUND_TRIP_CLOSED", "performanceAvailable", false));
         var mvc = MockMvcBuilders.standaloneSetup(new TradingAiController(advisor, ai, trading)).build();
         mvc.perform(get("/api/trading/ai/status")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.autoApplyEligible").value(false))
                 .andExpect(jsonPath("$.enabled").value(true))
+                .andExpect(jsonPath("$.daily.targetMinClosedTrades").value(5))
+                .andExpect(jsonPath("$.daily.targetMaxClosedTrades").value(8))
+                .andExpect(jsonPath("$.daily.countUnit").value("ROUND_TRIP_CLOSED"))
+                .andExpect(jsonPath("$.daily.performanceAvailable").value(false))
                 .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("private-test-value"))));
         when(advisor.recent(20)).thenReturn(List.of());
         mvc.perform(get("/api/trading/ai/reviews")).andExpect(status().isOk()).andExpect(content().json("[]"));
         mvc.perform(get("/api/trading/ai/reviews?limit=101")).andExpect(status().isBadRequest());
         verify(advisor, times(1)).recent(20);
+        verify(advisor).dailyStatus();
         verifyNoMoreInteractions(advisor);
     }
 }

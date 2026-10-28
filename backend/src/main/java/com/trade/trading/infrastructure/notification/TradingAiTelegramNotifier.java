@@ -3,7 +3,7 @@ package com.trade.trading.infrastructure.notification;
 import com.trade.client.telegram.TelegramApi;
 import com.trade.client.telegram.TelegramClientProperties;
 import com.trade.client.telegram.TelegramHttpClient;
-import com.trade.trading.application.port.TradingAiNotifier;
+import com.trade.trading.port.TradingAiNotifier;
 import com.trade.trading.infrastructure.config.TradingAiProperties;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Value;

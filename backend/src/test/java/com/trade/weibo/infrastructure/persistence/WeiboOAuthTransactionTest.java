@@ -2,8 +2,8 @@ package com.trade.weibo.infrastructure.persistence;
 
 import com.trade.client.weibo.WeiboAccessToken;
 import com.trade.client.weibo.WeiboApi;
-import com.trade.weibo.application.port.WeiboAccountTokenRepository;
-import com.trade.weibo.application.port.WeiboOAuthStateRepository;
+import com.trade.weibo.port.WeiboAccountTokenRepository;
+import com.trade.weibo.port.WeiboOAuthStateRepository;
 import com.trade.weibo.application.service.WeiboOAuthService;
 import com.trade.weibo.domain.exception.WeiboOAuthException;
 import org.apache.ibatis.session.SqlSessionFactory;

@@ -1,7 +1,7 @@
 package com.trade.trading.application.runtime;
 
 import com.trade.trading.application.event.TradingEventBusStatus;
-import com.trade.trading.application.port.TradingEventPipeline;
+import com.trade.trading.port.TradingEventPipeline;
 import org.springframework.stereotype.Service;
 
 /** Operational query independent of the queue implementation. */

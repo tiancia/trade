@@ -6,7 +6,7 @@
 
 ## 运行依赖
 
-Trading AI 顾问默认关闭。环境变量、独立 Telegram Bot、数据库新增表及启停验收见 [Trading AI 策略顾问](TRADING_AI.md)。它使用独立的 `trading-ai` 自动任务，不阻塞交易决策和对账任务。
+Trading AI 顾问的配置类及 env 示例默认关闭；当前 `application.yml` 运行模板开启了顾问和模拟自动应用，启动前须核对实际环境覆盖。环境变量、独立 Telegram Bot、数据库新增表及启停验收见 [Trading AI 策略顾问](TRADING_AI.md)。它使用独立的 `trading-ai` 自动任务，不阻塞交易决策和对账任务。默认按风控的交易日每天评估一次，以日内净收益和每天 5–8 笔完整交易为规划目标；`TRADE_TRADING_AI_TARGET_MIN_CLOSED_TRADES_PER_DAY` / `TRADE_TRADING_AI_TARGET_MAX_CLOSED_TRADES_PER_DAY` 可调整范围，`TRADE_TRADING_AI_REVIEW_INTERVAL_MS` 可缩短以日内复评。修改后重启后端；已有数据库冷却窗口不会被重启清除，下一轮按新值预留。次数不足不会强制下单。
 
 - JDK 21；
 - MySQL，连接信息通过 `SPRING_DATASOURCE_*` 提供；

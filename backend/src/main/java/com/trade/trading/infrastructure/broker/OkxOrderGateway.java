@@ -3,7 +3,7 @@ package com.trade.trading.infrastructure.broker;
 import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.OkxResponses;
 import com.trade.client.okx.dto.*;
-import com.trade.trading.application.port.ExchangeOrderGateway;
+import com.trade.trading.port.ExchangeOrderGateway;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import org.springframework.stereotype.Component;
 import org.slf4j.Logger;

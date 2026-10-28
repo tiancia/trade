@@ -22,7 +22,7 @@ import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.domain.backtest.SimulatedPortfolio;
 import com.trade.trading.infrastructure.config.TradingProperties;
-import com.trade.trading.application.port.HistoricalCandleSource;
+import com.trade.trading.port.HistoricalCandleSource;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 

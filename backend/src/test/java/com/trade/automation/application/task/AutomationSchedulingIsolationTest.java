@@ -3,7 +3,7 @@ package com.trade.automation.application.task;
 import com.trade.automation.domain.model.AutomationLoopDefinition;
 import com.trade.automation.domain.model.AutomationTaskDefinition;
 import com.trade.automation.infrastructure.config.AutomationConfiguration;
-import com.trade.trading.application.port.TradingLeaderLeaseRepository;
+import com.trade.trading.port.TradingLeaderLeaseRepository;
 import com.trade.trading.application.runtime.TradingLeadershipService;
 import com.trade.trading.domain.model.TradingLeaderLease;
 import com.trade.trading.infrastructure.config.TradingProperties;

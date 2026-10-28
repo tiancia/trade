@@ -1,7 +1,7 @@
 package com.trade.x.application.service;
 
 import com.trade.client.x.XApiException;
-import com.trade.x.application.port.*;
+import com.trade.x.port.*;
 import com.trade.x.domain.exception.XPublishingException;
 import com.trade.x.domain.model.*;
 import org.junit.jupiter.api.BeforeEach;

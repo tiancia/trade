@@ -5,7 +5,7 @@ import com.trade.trading.application.event.TradingEvent;
 import com.trade.trading.application.event.TradingEventHandlingResult;
 import com.trade.trading.application.event.TradingEventType;
 import com.trade.trading.application.market.CandleSeries;
-import com.trade.trading.application.port.TradingEventHandler;
+import com.trade.trading.port.TradingEventHandler;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;

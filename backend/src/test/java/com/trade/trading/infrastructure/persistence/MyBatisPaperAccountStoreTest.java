@@ -9,8 +9,8 @@ import com.trade.trading.application.execution.PaperOrderExecutionService;
 import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.application.market.TradingMarketInputs;
 import com.trade.trading.application.paper.PaperAccountService;
-import com.trade.trading.application.port.PaperAccountStore;
-import com.trade.trading.application.port.TradingStateStore;
+import com.trade.trading.port.PaperAccountStore;
+import com.trade.trading.port.TradingStateStore;
 import com.trade.trading.application.risk.RiskControlService;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
@@ -99,6 +99,41 @@ class MyBatisPaperAccountStoreTest {
         assertEquals(1L, fills.getFirst().strategyConfigVersion());
         assertEquals("{\"params\":{\"lookback\":5}}", fills.getFirst().strategyConfigSnapshotJson());
         assertEquals(4, store.equity("BTC-USDT", a.sessionId(), null, 100).size());
+    }
+
+    @Test void dailyStatisticsCountCompleteRoundTripsAcrossMidnightAndFenceSessionVersion() {
+        Instant midnight = Instant.parse("2026-10-19T16:00:00Z"); // Asia/Shanghai next-day boundary.
+        PaperAccount initial = store.start("BTC-USDT", "USDT", new BigDecimal("1000"), null, null, midnight.minusSeconds(60));
+        var buy = store.fill(timedCommand(initial, "overnight-buy", "BUY", "100", midnight.minusSeconds(30)));
+        var partial = store.fill(timedCommand(buy.account(), "partial-sell", "SELL", "4.9", midnight));
+        var closeCommand = timedCommand(partial.account(), "close-sell", "SELL", "5", midnight.plusSeconds(30));
+        var close = store.fill(closeCommand);
+        assertTrue(store.fill(closeCommand).replay());
+        // A next-day trade and another simulation must not enter this day's totals.
+        var nextDay = store.fill(timedCommand(close.account(), "next-day-buy", "BUY", "10", midnight.plusSeconds(86400)));
+        var metrics = store.dailyPerformance("BTC-USDT", initial.sessionId(), nextDay.account().version(), midnight, midnight.plusSeconds(86400));
+        assertEquals(2, metrics.fillCount());
+        assertEquals(0, metrics.buyCount());
+        assertEquals(2, metrics.sellCount());
+        assertEquals(1, metrics.closedTrades());
+        decimal("17.612", metrics.realizedNetPnl()); // Includes allocated entry fees; do not deduct them again.
+        decimal("1.188", metrics.feesQuote()); // Only fees actually incurred on this day.
+        var beforeClose = store.dailyPerformance("BTC-USDT", initial.sessionId(), partial.account().version(), midnight, midnight.plusSeconds(86400));
+        assertEquals(1, beforeClose.fillCount());
+        assertEquals(0, beforeClose.closedTrades());
+        var yesterday = store.dailyPerformance("BTC-USDT", initial.sessionId(), nextDay.account().version(), midnight.minusSeconds(86400), midnight);
+        assertEquals(1, yesterday.buyCount());
+        assertEquals(0, yesterday.closedTrades());
+        decimal("0", yesterday.realizedNetPnl());
+        decimal("1", yesterday.feesQuote());
+        var replacement = store.start("BTC-USDT", "USDT", BigDecimal.TEN, initial.sessionId(), nextDay.account().version(), midnight.plusSeconds(86401));
+        assertEquals(0, store.dailyPerformance("BTC-USDT", replacement.sessionId(), replacement.version(), midnight, midnight.plusSeconds(86400)).fillCount());
+        assertEquals(0, store.dailyPerformance("ETH-USDT", initial.sessionId(), nextDay.account().version(), midnight, midnight.plusSeconds(86400)).fillCount());
+    }
+
+    private PaperAccountStore.FillCommand timedCommand(PaperAccount account, String id, String side, String size, Instant time) {
+        return new PaperAccountStore.FillCommand("BTC-USDT", account.sessionId(), account.version(), id, "intraday", 1,
+                "{}", side, new BigDecimal(size), new BigDecimal("BUY".equals(side) ? "10" : "12"), new BigDecimal("0.01"), time, time);
     }
 
     @Test void deletionRemovesOnlyTheSelectedTrialAndItsLedger() {

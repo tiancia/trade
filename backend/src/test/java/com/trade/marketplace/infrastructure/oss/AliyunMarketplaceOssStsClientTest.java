@@ -10,7 +10,7 @@ import java.util.Base64;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import com.trade.marketplace.application.port.MarketplaceOssStsClient.UploadRequest;
+import com.trade.marketplace.port.MarketplaceOssStsClient.UploadRequest;
 import com.trade.marketplace.domain.exception.MarketplaceUnavailableException;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;

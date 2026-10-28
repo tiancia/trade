@@ -15,6 +15,9 @@ class TradingAiPropertiesTest {
         var defaults = new TradingAiProperties(); defaults.validate();
         assertFalse(defaults.isEnabled()); assertFalse(defaults.isAutoApply());
         assertFalse(defaults.getTelegram().isEnabled());
+        assertEquals(86400000, defaults.getReviewIntervalMs());
+        assertEquals(5, defaults.getTargetMinClosedTradesPerDay());
+        assertEquals(8, defaults.getTargetMaxClosedTradesPerDay());
         var bound = new Binder(new MapConfigurationPropertySource(Map.of(
                 "trade.trading.ai.enabled", "true", "trade.trading.ai.auto-apply", "true",
                 "trade.trading.ai.telegram.chat-id", "12345",
@@ -25,6 +28,22 @@ class TradingAiPropertiesTest {
         assertEquals("222:test", bound.getTelegram().getClient().getBotToken());
         assertTrue(bound.getTelegram().getClient().getProxy().isEnabled());
         defaults.setReviewIntervalMs(1000); assertThrows(IllegalArgumentException.class, defaults::validate);
+    }
+
+    @Test void bindsDailyTargetsAndRejectsInvertedOrUnboundedRanges() {
+        var bound = new Binder(new MapConfigurationPropertySource(Map.of(
+                "trade.trading.ai.target-min-closed-trades-per-day", "6",
+                "trade.trading.ai.target-max-closed-trades-per-day", "9")))
+                .bind("trade.trading.ai", Bindable.of(TradingAiProperties.class)).get();
+        bound.validate();
+        assertEquals(6, bound.getTargetMinClosedTradesPerDay());
+        assertEquals(9, bound.getTargetMaxClosedTradesPerDay());
+        bound.setTargetMinClosedTradesPerDay(10);
+        assertThrows(IllegalArgumentException.class, bound::validate);
+        bound.setTargetMinClosedTradesPerDay(0);
+        assertThrows(IllegalArgumentException.class, bound::validate);
+        bound.setTargetMinClosedTradesPerDay(5); bound.setTargetMaxClosedTradesPerDay(101);
+        assertThrows(IllegalArgumentException.class, bound::validate);
     }
 
     @Test void newPrivateBotMayUseSameUserIdButCannotReuseSharedBotOrXGroup() {

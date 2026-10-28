@@ -1,6 +1,6 @@
 package com.trade.weibo.infrastructure.persistence;
 
-import com.trade.weibo.application.port.WeiboOAuthStateRepository;
+import com.trade.weibo.port.WeiboOAuthStateRepository;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;

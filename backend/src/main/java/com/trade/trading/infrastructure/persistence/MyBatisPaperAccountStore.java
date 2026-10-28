@@ -2,11 +2,12 @@ package com.trade.trading.infrastructure.persistence;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trade.trading.application.port.PaperAccountStore;
+import com.trade.trading.port.PaperAccountStore;
 import com.trade.trading.domain.model.TradingRiskState;
 import com.trade.trading.domain.paper.PaperAccount;
 import com.trade.trading.domain.paper.PaperEquityPoint;
 import com.trade.trading.domain.paper.PaperFill;
+import com.trade.trading.domain.paper.PaperDailyPerformance;
 import com.trade.trading.domain.risk.RiskStateTransitions;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -151,6 +152,10 @@ public class MyBatisPaperAccountStore implements PaperAccountStore {
     }
     @Override public List<PaperFill> fills(String instId, String sessionId, Long beforeId, int limit) {
         return mapper.fills(instId, sessionId, beforeId, limit);
+    }
+    @Override public PaperDailyPerformance dailyPerformance(String instId, String sessionId, long throughVersion,
+                                                             Instant fromInclusive, Instant toExclusive) {
+        return mapper.dailyPerformance(instId, sessionId, throughVersion, fromInclusive, toExclusive);
     }
     @Override public List<PaperEquityPoint> equity(String instId, String sessionId, Long beforeId, int limit) {
         return mapper.equity(instId, sessionId, beforeId, limit);
