@@ -16,6 +16,7 @@ import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.domain.model.TradingDecisionRecord;
 import com.trade.trading.domain.model.TradingState;
+import com.trade.trading.domain.model.ExecutionMode;
 import com.trade.trading.domain.paper.PaperAccount;
 import com.trade.trading.domain.risk.RiskAssessment;
 import com.trade.trading.domain.risk.RiskStateTransitions;
@@ -47,6 +48,7 @@ import java.time.ZoneOffset;
 import java.util.ConcurrentModificationException;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -97,6 +99,78 @@ class MyBatisPaperAccountStoreTest {
         assertEquals(1L, fills.getFirst().strategyConfigVersion());
         assertEquals("{\"params\":{\"lookback\":5}}", fills.getFirst().strategyConfigSnapshotJson());
         assertEquals(4, store.equity("BTC-USDT", a.sessionId(), null, 100).size());
+    }
+
+    @Test void deletionRemovesOnlyTheSelectedTrialAndItsLedger() {
+        PaperAccount first = start("100");
+        var filled = store.fill(command(first, "old-buy", "BUY", "10", "10", "0"));
+        PaperAccount current = store.start("BTC-USDT", "USDT", new BigDecimal("200"), first.sessionId(), filled.account().version(), NOW);
+        assertThrows(NoSuchElementException.class, () -> store.delete("ETH-USDT", first.sessionId(), filled.account().version()));
+        assertThrows(ConcurrentModificationException.class, () -> store.delete("BTC-USDT", first.sessionId(), first.version()));
+        assertEquals(1, store.fills("BTC-USDT", first.sessionId(), null, 100).size());
+        store.delete("BTC-USDT", first.sessionId(), filled.account().version());
+        assertNull(store.session("BTC-USDT", first.sessionId()));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM okx_paper_fills WHERE session_id=?", Integer.class, first.sessionId()));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM okx_paper_equity WHERE session_id=?", Integer.class, first.sessionId()));
+        assertEquals(current.sessionId(), store.active("BTC-USDT").sessionId());
+        assertEquals(1, store.equity("BTC-USDT", current.sessionId(), null, 100).size());
+        store.delete("BTC-USDT", current.sessionId(), current.version());
+        assertNull(store.active("BTC-USDT"));
+        assertTrue(store.sessions("BTC-USDT", null, 100).isEmpty());
+        assertThrows(IllegalStateException.class, () -> store.fill(command(current, "late-buy", "BUY", "10", "10", "0")));
+        PaperAccount next = start("300");
+        assertNotEquals(current.sessionId(), next.sessionId());
+        assertThrows(ConcurrentModificationException.class, () -> store.fill(command(current, "late-buy", "BUY", "10", "10", "0")));
+        decimal("300", store.active("BTC-USDT").cash());
+    }
+
+    @Test void deletionAndConcurrentFillCannotBothCommit() throws Exception {
+        PaperAccount account = start("100");
+        CountDownLatch gate = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var deletion = pool.submit(() -> { gate.await(); try {
+                store.delete("BTC-USDT", account.sessionId(), account.version()); return true;
+            } catch (ConcurrentModificationException conflict) { return false; } });
+            var fill = pool.submit(() -> { gate.await(); try {
+                store.fill(command(account, "racing-buy", "BUY", "10", "10", "0")); return true;
+            } catch (IllegalStateException conflict) { return false; } });
+            gate.countDown();
+            assertNotEquals(deletion.get(), fill.get());
+        }
+        if (store.active("BTC-USDT") == null) {
+            assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM okx_paper_fills", Integer.class));
+            assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM okx_paper_equity", Integer.class));
+        } else {
+            decimal("90", store.active("BTC-USDT").cash());
+            assertEquals(1, store.fills("BTC-USDT", account.sessionId(), null, 100).size());
+        }
+    }
+
+    @Test void failedDeletionRollsBackHeadAndChildRecords() {
+        PaperAccount account = store.fill(command(start("100"), "buy", "BUY", "10", "10", "0")).account();
+        jdbc.execute("CREATE TABLE paper_delete_blocker(session_id VARCHAR(64) REFERENCES okx_paper_sessions(session_id))");
+        try {
+            jdbc.update("INSERT INTO paper_delete_blocker VALUES(?)", account.sessionId());
+            assertThrows(org.springframework.dao.DataIntegrityViolationException.class,
+                    () -> store.delete("BTC-USDT", account.sessionId(), account.version()));
+            assertEquals(account.sessionId(), store.active("BTC-USDT").sessionId());
+            assertEquals(1, store.fills("BTC-USDT", account.sessionId(), null, 100).size());
+            assertEquals(2, store.equity("BTC-USDT", account.sessionId(), null, 100).size());
+        } finally { jdbc.execute("DROP TABLE paper_delete_blocker"); }
+    }
+
+    @Test void serviceRejectsDeletionOutsidePaperOrWithoutAValidRevision() {
+        PaperAccount account = start("100");
+        TradingProperties properties = new TradingProperties();
+        PaperAccountService service = new PaperAccountService(store, properties);
+        assertThrows(IllegalArgumentException.class, () -> service.delete(account.sessionId(), null));
+        assertThrows(IllegalArgumentException.class, () -> service.delete(account.sessionId(), -1L));
+        properties.setExecutionMode(ExecutionMode.LIVE);
+        assertThrows(IllegalStateException.class, () -> service.delete(account.sessionId(), account.version()));
+        assertNotNull(store.active("BTC-USDT"));
+        properties.setExecutionMode(ExecutionMode.PAPER);
+        service.delete(account.sessionId(), account.version());
+        assertNull(service.current());
     }
 
     @Test void insufficientFundsOversellAndMissingOrStalePriceRollbackEverything() {

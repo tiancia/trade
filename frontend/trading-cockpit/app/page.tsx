@@ -25,6 +25,7 @@ import {
   SquareActivity,
   TestTube2,
   TrendingUp,
+  Trash2,
   WalletCards,
   X,
   Zap,
@@ -410,7 +411,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const detail = problem?.detail ?? problem?.message ?? problem?.error;
     throw new ApiRequestError(response.status, `${response.status} ${typeof detail === "string" ? detail : response.statusText}`);
   }
-  return response.json() as Promise<T>;
+  return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }
 
 function number(value?: string | number | null, digits = 1) {
@@ -1218,6 +1219,9 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
   const [notice, setNotice] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const [initialCash, setInitialCash] = useState("10000");
+  const [deleteTarget, setDeleteTarget] = useState<PaperAccount | null>(null);
+  const loadAbort = useRef<AbortController | null>(null);
+  const mutationPending = useRef(false);
   const visibleSession = useRef<string | null>(null);
   const loadGeneration = useRef(0);
   const loadedSelection = useRef<string | null>(null);
@@ -1225,8 +1229,11 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
   const available = dataMode === "live" && executionMode === "PAPER";
 
   useEffect(() => {
+    if (mutationPending.current) return;
     const abort = new AbortController();
+    loadAbort.current = abort;
     const timer = window.setTimeout(() => {
+      if (abort.signal.aborted || mutationPending.current) return;
       loadGeneration.current += 1;
       if (!available) {
         loadedSelection.current = null;
@@ -1276,7 +1283,8 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
     let payload;
     try { payload = buildPaperSessionPayload({ initialCash, expectedSessionId: current?.sessionId ?? null, expectedVersion: current?.version ?? null }); }
     catch (failure) { setError(errorMessage(failure)); return; }
-    setPending(true); setError(null); setNotice(null);
+    mutationPending.current = true; loadAbort.current?.abort(); loadGeneration.current += 1;
+    setPending(true); setError(null); setNotice(null); setDeleteTarget(null);
     try {
       const created = await request<PaperAccount>("/api/trading/paper/sessions", { method: "POST", body: JSON.stringify(payload) });
       setCurrent(created); onCurrentChange(created); setAccount(created); setFills([]); setEquity([]); setVersionFilter(""); setSelection("");
@@ -1284,11 +1292,31 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
       setReload((value) => value + 1);
     } catch (failure) {
       setError(failure instanceof ApiRequestError && failure.status === 409 ? "模拟账户或运行状态已变化。新会话未创建；请重新加载后再试。" : `新会话创建失败：${errorMessage(failure)}`);
-    } finally { setPending(false); }
+    } finally { mutationPending.current = false; setPending(false); }
+  };
+
+  const deleteSession = async () => {
+    if (!available || !deleteTarget || loading || pending || morePending || error) return;
+    const target = deleteTarget;
+    mutationPending.current = true; loadAbort.current?.abort(); loadGeneration.current += 1;
+    setPending(true); setError(null); setNotice(null);
+    try {
+      await request<void>(`/api/trading/paper/sessions/${encodeURIComponent(target.sessionId)}?expectedVersion=${target.version}`, { method: "DELETE" });
+      if (current?.sessionId === target.sessionId) { setCurrent(null); onCurrentChange(null); }
+      setAccount(null); setEquity([]); setFills([]); setSelection(""); setVersionFilter("");
+      setSessions((items) => items.filter((item) => item.sessionId !== target.sessionId));
+      historyCache.current = null; loadedSelection.current = null; visibleSession.current = null;
+      setNotice(`模拟会话 ${target.sessionId} 及其成交、资金记录已删除。`);
+      setReload((value) => value + 1);
+    } catch (failure) {
+      setError(failure instanceof ApiRequestError && failure.status === 409
+        ? "模拟会话已变化或运行模式不允许删除。请重新加载；若仍有模拟成交，可先停止交易自动化后重试。"
+        : `删除结果未确认：${errorMessage(failure)}。请重新加载核对会话，勿重复提交。`);
+    } finally { mutationPending.current = false; setPending(false); setDeleteTarget(null); }
   };
 
   const loadMore = async (kind: "equity" | "fills" | "sessions") => {
-    if (!account || morePending || loading) return;
+    if (!account || morePending || loading || pending) return;
     const capturedSession = account.sessionId;
     const capturedGeneration = loadGeneration.current;
     const list = kind === "equity" ? equity : kind === "fills" ? fills : sessions;
@@ -1332,9 +1360,14 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
         <form onSubmit={startSession}><label><span>初始资金（计价币）</span><input name="paperInitialCash" type="number" min="0.00000001" max="1000000000000" step="0.00000001" required value={initialCash} onChange={(event) => { setInitialCash(event.target.value); if (error?.startsWith("初始资金")) setError(null); }} disabled={pending || loading} /></label><button className="primary-button" type="submit" disabled={pending || loading || Boolean(error)}>{pending ? <LoaderCircle size={15} className="spin" /> : <Play size={15} />}创建新模拟会话</button></form>
         <p>新会话从零持仓开始。旧会话的资金、持仓与历史会保留为归档，不再继续模拟；当前资金不会被直接改写。</p>
       </details>
-      {sessions.length > 0 && <div className="simulation-toolbar"><label><span>查看模拟会话</span><select aria-label="查看模拟会话" value={selection} disabled={loading || pending || Boolean(morePending)} onChange={(event) => { setSelection(event.target.value); setVersionFilter(""); setError(null); setNotice(null); }}><option value="">当前会话{current ? ` · ${current.sessionId}` : ""}</option>{sessions.filter((item) => item.sessionId !== current?.sessionId).map((item) => <option key={item.sessionId} value={item.sessionId}>{displayTimestamp(item.createdAt)} · {number(item.initialCash, 2)} {item.quoteCcy} · {item.sessionId}</option>)}</select></label>{hasMore.sessions && <button className="secondary-button" disabled={loading || Boolean(morePending)} onClick={() => void loadMore("sessions")}>更早会话</button>}</div>}
+      {sessions.length > 0 && <div className="simulation-toolbar"><label><span>查看模拟会话</span><select aria-label="查看模拟会话" value={selection} disabled={loading || pending || Boolean(morePending)} onChange={(event) => { setSelection(event.target.value); setVersionFilter(""); setError(null); setNotice(null); setDeleteTarget(null); }}><option value="">当前会话{current ? ` · ${current.sessionId}` : ""}</option>{sessions.filter((item) => item.sessionId !== current?.sessionId).map((item) => <option key={item.sessionId} value={item.sessionId}>{displayTimestamp(item.createdAt)} · {number(item.initialCash, 2)} {item.quoteCcy} · {item.sessionId}</option>)}</select></label>{hasMore.sessions && <button className="secondary-button" disabled={loading || Boolean(morePending)} onClick={() => void loadMore("sessions")}>更早会话</button>}</div>}
       {account && !blockingLoad && <>
-        <div className="session-identity"><span className={`status-badge ${account.status === "ACTIVE" ? "healthy" : "idle"}`}>{account.status === "ACTIVE" ? "当前模拟" : "历史归档"}</span><strong>{account.sessionId}</strong><span>{account.instId} · {account.quoteCcy}</span><span>{displayTimestamp(account.createdAt)} 开始</span></div>
+        <div className="session-identity"><span className={`status-badge ${account.status === "ACTIVE" ? "healthy" : "idle"}`}>{account.status === "ACTIVE" ? "当前模拟" : "历史归档"}</span><strong>{account.sessionId}</strong><span>{account.instId} · {account.quoteCcy}</span><span>{displayTimestamp(account.createdAt)} 开始</span><button className="secondary-button session-delete-button" disabled={loading || pending || Boolean(morePending) || Boolean(error)} onClick={() => setDeleteTarget(account)}><Trash2 size={13} />删除此会话</button></div>
+        {deleteTarget && <div className="session-delete-confirm" role="group" aria-label="确认删除模拟会话">
+          <strong>删除模拟会话 {deleteTarget.sessionId}？</strong>
+          <p>会话的模拟资金、持仓、成交和资金曲线将永久删除，无法恢复。{deleteTarget.status === "ACTIVE" && "删除当前会话后需重新设置初始资金，才能继续产生模拟成交。"}</p>
+          <div><button className="secondary-button session-delete-button" disabled={loading || pending || Boolean(error)} onClick={deleteSession}>{pending ? <LoaderCircle size={13} className="spin" /> : <Trash2 size={13} />}确认删除</button><button className="secondary-button" disabled={pending} onClick={() => setDeleteTarget(null)}>取消</button></div>
+        </div>}
         <dl className="capital-summary">
           <div><dt>资产净值</dt><dd>{number(account.equity, 2)}<small>{account.quoteCcy}</small></dd></div>
           <div><dt>初始资金</dt><dd>{number(account.initialCash, 2)}</dd></div>

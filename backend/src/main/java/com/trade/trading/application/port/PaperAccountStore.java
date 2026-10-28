@@ -15,6 +15,7 @@ public interface PaperAccountStore {
     PaperAccount session(String instId, String sessionId);
     PaperAccount start(String instId, String quoteCcy, BigDecimal initialCash,
                        String expectedSessionId, Long expectedVersion, Instant now);
+    void delete(String instId, String sessionId, long expectedVersion);
     PaperAccount mark(String instId, String expectedSessionId, BigDecimal price, Instant marketTime, String strategyId, Long strategyConfigVersion, Instant now);
     AppliedFill fill(FillCommand command);
     List<PaperAccount> sessions(String instId, Long beforeId, int limit);

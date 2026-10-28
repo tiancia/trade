@@ -39,6 +39,13 @@ public class PaperAccountController {
     @GetMapping("/sessions/{sessionId}") public PaperAccountView session(@PathVariable String sessionId) {
         return api(() -> service.session(sessionId));
     }
+    @DeleteMapping("/sessions/{sessionId}") public ResponseEntity<Void> delete(@PathVariable String sessionId,
+            @RequestParam Long expectedVersion) {
+        return api(() -> {
+            service.delete(sessionId, expectedVersion);
+            return ResponseEntity.noContent().build();
+        });
+    }
     @GetMapping("/sessions/{sessionId}/fills") public List<PaperFill> fills(@PathVariable String sessionId,
             @RequestParam(required = false) Long beforeId, @RequestParam(defaultValue = "100") int limit) {
         return api(() -> service.fills(sessionId, beforeId, limit));

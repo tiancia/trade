@@ -55,6 +55,13 @@ public class PaperAccountService {
     public List<PaperAccountView> sessions(Long beforeId, int limit) {
         return store.sessions(properties.getInstId(), beforeId, bounded(limit)).stream().map(this::view).toList();
     }
+    public void delete(String sessionId, Long expectedVersion) {
+        requirePaperSpot();
+        if (sessionId == null || sessionId.isBlank() || expectedVersion == null || expectedVersion < 0) {
+            throw new IllegalArgumentException("Simulation session and non-negative expectedVersion are required");
+        }
+        store.delete(properties.getInstId(), sessionId, expectedVersion);
+    }
     public List<PaperFill> fills(String sessionId, Long beforeId, int limit) {
         requiredSession(sessionId);
         return store.fills(properties.getInstId(), sessionId, beforeId, bounded(limit));

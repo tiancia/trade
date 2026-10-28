@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ConcurrentModificationException;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.UnaryOperator;
@@ -52,6 +53,21 @@ public class MyBatisPaperAccountStore implements PaperAccountStore {
         PaperAccount created = account(row);
         sample(created, null, null, "INITIAL", now);
         return created;
+    }
+
+    @Override
+    @Transactional
+    public void delete(String instId, String sessionId, long expectedVersion) {
+        // Use the same head lock as fills, marks and session replacement, even for archived trials.
+        PaperAccount current = lock(instId);
+        PaperAccount target = session(instId, sessionId);
+        if (target == null) throw new NoSuchElementException("Simulation session not found");
+        if (target.version() != expectedVersion) conflict();
+        if (current != null && Objects.equals(current.sessionId(), sessionId)
+                && mapper.updateHead(instId, null) != 1) conflict();
+        mapper.deleteEquity(sessionId);
+        mapper.deleteFills(sessionId);
+        if (mapper.deleteSession(instId, sessionId, expectedVersion) != 1) conflict();
     }
 
     @Override

@@ -21,6 +21,9 @@
         UPDATE okx_paper_sessions SET cash=#{cash},position_quantity=#{positionQuantity},position_cost=#{positionCost},realized_pnl=#{realizedPnl},total_fees_quote=#{totalFeesQuote},last_price=#{lastPrice},valuation_at=#{valuationAt},version=#{version},updated_at=#{updatedAt} WHERE session_id=#{sessionId} AND status='ACTIVE'
     </update>
     <update id="archive">UPDATE okx_paper_sessions SET status='ARCHIVED' WHERE session_id=#{sessionId} AND status='ACTIVE'</update>
+    <delete id="deleteEquity">DELETE FROM okx_paper_equity WHERE session_id=#{sessionId}</delete>
+    <delete id="deleteFills">DELETE FROM okx_paper_fills WHERE session_id=#{sessionId}</delete>
+    <delete id="deleteSession">DELETE FROM okx_paper_sessions WHERE inst_id=#{instId} AND session_id=#{sessionId} AND version=#{expectedVersion}</delete>
     <update id="updateRisk">UPDATE okx_paper_sessions SET risk_state_json=#{json} WHERE session_id=#{sessionId} AND status='ACTIVE'</update>
     <select id="findFill" resultType="com.trade.trading.domain.paper.PaperFill">SELECT <include refid="fillColumns"/> FROM okx_paper_fills f WHERE f.decision_id=#{decisionId}</select>
     <insert id="insertFill">

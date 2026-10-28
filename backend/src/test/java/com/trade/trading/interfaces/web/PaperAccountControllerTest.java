@@ -12,6 +12,21 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class PaperAccountControllerTest {
+    @Test void deletesVersionedSessionsAndMapsDeletionFailures() throws Exception {
+        var service = mock(PaperAccountService.class);
+        var mvc = MockMvcBuilders.standaloneSetup(new PaperAccountController(service)).build();
+        mvc.perform(delete("/api/trading/paper/sessions/trial?expectedVersion=2"))
+                .andExpect(status().isNoContent()).andExpect(content().string(""));
+        verify(service).delete("trial", 2L);
+        mvc.perform(delete("/api/trading/paper/sessions/trial")).andExpect(status().isBadRequest());
+        doThrow(new IllegalArgumentException("Invalid version")).when(service).delete("trial", -1L);
+        mvc.perform(delete("/api/trading/paper/sessions/trial?expectedVersion=-1")).andExpect(status().isBadRequest());
+        doThrow(new ConcurrentModificationException("changed")).when(service).delete("trial", 1L);
+        mvc.perform(delete("/api/trading/paper/sessions/trial?expectedVersion=1")).andExpect(status().isConflict());
+        doThrow(new NoSuchElementException("not found")).when(service).delete("missing", 0L);
+        mvc.perform(delete("/api/trading/paper/sessions/missing?expectedVersion=0")).andExpect(status().isNotFound());
+    }
+
     @Test void missingAccountReturnsJsonNullAndSessionHistoryIsBounded() throws Exception {
         var service = mock(PaperAccountService.class);
         var mvc = MockMvcBuilders.standaloneSetup(new PaperAccountController(service)).build();

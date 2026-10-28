@@ -17,6 +17,9 @@ public interface PaperAccountMapper {
     int insertSession(PaperAccountRow row);
     int updateSession(PaperAccountRow row);
     int archive(String sessionId);
+    int deleteSession(@Param("instId") String instId, @Param("sessionId") String sessionId, @Param("expectedVersion") long expectedVersion);
+    int deleteFills(String sessionId);
+    int deleteEquity(String sessionId);
     int updateRisk(@Param("sessionId") String sessionId, @Param("json") String json);
     PaperFill findFill(String decisionId);
     int insertFill(PaperFill fill);

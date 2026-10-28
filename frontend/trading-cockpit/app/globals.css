@@ -396,6 +396,12 @@ i.neutral { background: var(--dim); }
 .simulation-toolbar button { flex-shrink: 0; height: 38px; }
 .session-identity { align-items: center; color: var(--muted); display: flex; flex-wrap: wrap; font-size: 10px; gap: 9px; padding: 17px 18px 0; }
 .session-identity strong { color: var(--text); font-family: var(--font-mono-ui); font-size: 10px; font-weight: 500; overflow-wrap: anywhere; }
+.session-identity .session-delete-button { margin-left: auto; }
+.session-delete-button { color: var(--red); }
+.session-delete-confirm { background: rgba(255, 113, 133, .04); border: 1px solid rgba(255, 113, 133, .24); border-radius: 6px; margin: 16px 18px 0; padding: 14px; }
+.session-delete-confirm strong { font-size: 12px; overflow-wrap: anywhere; }
+.session-delete-confirm p { color: var(--muted); font-size: 11px; line-height: 1.7; margin: 9px 0 12px; }
+.session-delete-confirm > div { display: flex; flex-wrap: wrap; gap: 9px; }
 .capital-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 17px 18px 0; }
 .capital-summary > div { border-left: 1px solid var(--line); padding: 7px 14px 15px; }
 .capital-summary > div:nth-child(3n + 1) { border-left: 0; padding-left: 0; }

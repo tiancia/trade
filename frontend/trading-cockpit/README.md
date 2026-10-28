@@ -45,6 +45,8 @@ Worker 保留请求的 Origin、CSRF 标记及认证头，先清除调用方的 
 
 PAPER 总览支持设置初始资金、创建独立模拟会话，查看现金、持仓、净值、已实现与未实现盈亏、累计收益率、手续费、资金曲线与成交明细。新会话从零持仓开始，旧会话归档保留；不能直接覆盖已有会话的初始资金。初始资金最多 8 位小数，上限 1 万亿。创建请求使用当前会话 ID 和版本号检查并发变化，失败时不会显示为创建成功。运行模式未确认或处于 LIVE 时，不开放模拟资金操作。
 
+所选当前或历史会话可通过“删除此会话”并确认后永久删除，连同该会话的模拟成交、资金曲线及风险状态一起清理。删除当前会话后需重新创建模拟资金，不会激活旧会话。请求携带所选会话版本，遇到新成交或其他并发变化时须重新加载确认；超时和失败不会被显示为删除成功。相关数据和并发语义见 [模拟资金说明](../../docs/backend/TRADING_SIMULATION.md#删除模拟会话)。
+
 成交和资金记录可按策略及配置版本筛选。曲线始终展示整段会话净值，并高亮选中版本的记录；版本筛选不把延续持仓产生的累计盈亏当作独立策略收益。需要控制初始资金独立比较时，应分别创建模拟会话。会话列表默认读取最近 20 个，成交与资金记录分别读取最近 100 条，可加载更早记录。估值超过有效期会明确标记为过期。风险利用率仍未接入汇总，连接后端时保持“暂无数据”。WebSocket 未就绪不等于 REST 行情不可用。
 
 ## 可用命令
@@ -70,6 +72,7 @@ PAPER 总览支持设置初始资金、创建独立模拟会话，查看现金�
 - `GET /api/trading/paper/account`
 - `GET|POST /api/trading/paper/sessions`
 - `GET /api/trading/paper/sessions/{sessionId}`
+- `DELETE /api/trading/paper/sessions/{sessionId}?expectedVersion={version}`
 - `GET /api/trading/paper/sessions/{sessionId}/equity`
 - `GET /api/trading/paper/sessions/{sessionId}/fills`
 - `GET /api/trading/market/candles`

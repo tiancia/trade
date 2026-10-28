@@ -53,6 +53,12 @@ PAPER 的持仓、现金和风险状态属于模拟批次，行情仍来自公�
 
 估值依赖最新公开价格，过期数据会标记为过期。模拟成交使用报价和设定手续费，不代表交易所实际成交、滑点、深度或未来实盘收益。
 
+## 删除模拟会话
+
+在总览中选择当前或历史模拟会话，点击“删除此会话”，核对会话 ID 后确认。删除会永久清除该会话及其模拟成交、资金曲线和风险状态；策略配置、回测和独立决策审计保留。当前会话被删除后不再有已初始化的模拟资金，需要新建会话才能继续模拟成交；历史会话不会自动恢复为当前会话。
+
+删除仅允许在 PAPER 现货模式下操作，并携带所选会话的 `expectedVersion`。后端在同一事务内锁定标的的当前会话指针，与成交、估值和会话替换串行处理；已有新成交时返回 409，需重新加载后核对。旧会话的在途决策不能写入删除后新建的会话。页面超时或断网时不宣称删除成功，需重新加载确认。
+
 ## 接口和部署
 
 - `GET|PUT /api/trading/strategies/{strategyId}/configuration`
@@ -60,6 +66,7 @@ PAPER 的持仓、现金和风险状态属于模拟批次，行情仍来自公�
 - `GET /api/trading/paper/account`
 - `POST|GET /api/trading/paper/sessions`
 - `GET /api/trading/paper/sessions/{sessionId}`
+- `DELETE /api/trading/paper/sessions/{sessionId}?expectedVersion=3`：成功返回 204；版本或运行模式冲突返回 409，所选标的下不存在会话返回 404。
 - `GET /api/trading/paper/sessions/{sessionId}/equity`
 - `GET /api/trading/paper/sessions/{sessionId}/fills`
 

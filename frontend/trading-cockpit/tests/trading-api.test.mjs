@@ -128,7 +128,7 @@ function findElement(tree, predicate) {
   }
 }
 
-test("paper refresh keeps the displayed session until the new data arrives", async () => {
+async function mountPaperPanel() {
   const state = [];
   const refs = [];
   const timers = [];
@@ -156,7 +156,7 @@ test("paper refresh keeps the displayed session until the new data arrives", asy
   vm.runInNewContext(compiled, {
     exports, process: { env: {} }, URL, Headers, AbortController, AbortSignal,
     window: { setTimeout: (callback) => timers.push(callback), clearTimeout() {} },
-    fetch(url) { return new Promise((resolve, reject) => pending.push({ url, resolve, reject })); },
+    fetch(url, init) { return new Promise((resolve, reject) => pending.push({ url, init, resolve, reject })); },
     require(name) {
       if (name === "react") return hooks;
       if (name === "react/jsx-runtime") return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
@@ -167,10 +167,15 @@ test("paper refresh keeps the displayed session until the new data arrives", asy
   });
   const render = () => { stateIndex = 0; refIndex = 0; return exports.testPaperPanel({ dataMode: "live", executionMode: "PAPER", refreshToken: 0, onCurrentChange() {} }); };
   const flush = () => new Promise((resolve) => setImmediate(resolve));
+  return { render, flush, pending, load() { const cleanup = effect(); timers.shift()?.(); return cleanup; } };
+}
+
+test("paper refresh keeps the displayed session until the new data arrives", async () => {
+  const { render, flush, pending, load } = await mountPaperPanel();
   const account = { id: 1, sessionId: "session-1", status: "ACTIVE", instId: "BTC-USDT", quoteCcy: "USDT", initialCash: 100, cash: 100, equity: 100, realizedPnl: 0, positionQuantity: 0, totalFeesQuote: 0 };
   const archived = { ...account, id: 2, sessionId: "session-2", status: "ARCHIVED" };
   render();
-  effect(); timers.shift()();
+  load();
   pending.shift().resolve(Response.json(account));
   pending.shift().resolve(Response.json([account, archived]));
   await flush();
@@ -180,7 +185,7 @@ test("paper refresh keeps the displayed session until the new data arrives", asy
   let tree = render();
   assert.ok(findElement(tree, (node) => node.props?.className === "session-identity"));
 
-  effect(); timers.shift()();
+  load();
   tree = render();
   assert.ok(findElement(tree, (node) => node.props?.className === "session-identity"), "refresh must not remove the session");
   assert.ok(!findElement(tree, (node) => node.props?.children?.includes?.("正在读取模拟资金与历史…")), "refresh must not show the blocking placeholder");
@@ -194,10 +199,62 @@ test("paper refresh keeps the displayed session until the new data arrives", asy
 
   findElement(tree, (node) => node.props?.["aria-label"] === "查看模拟会话").props.onChange({ target: { value: "session-2" } });
   render();
-  effect(); timers.shift()();
+  load();
   tree = render();
   assert.ok(!findElement(tree, (node) => node.props?.className === "session-identity"), "the old session must not be shown under a new selection");
   assert.ok(findElement(tree, (node) => node.props?.children?.includes?.("正在读取模拟资金与历史…")));
+});
+
+test("paper deletion requires confirmation, sends the selected revision, and clears its cached history", async () => {
+  const { render, flush, pending, load } = await mountPaperPanel();
+  const account = { id: 1, sessionId: "session/1", status: "ACTIVE", instId: "BTC-USDT", quoteCcy: "USDT", initialCash: 100, cash: 100, equity: 100, realizedPnl: 0, positionQuantity: 0, totalFeesQuote: 0, version: 3 };
+  render(); load();
+  pending.shift().resolve(Response.json(account));
+  pending.shift().resolve(Response.json([account]));
+  await flush();
+  pending.shift().resolve(Response.json([])); pending.shift().resolve(Response.json([]));
+  await flush();
+  let tree = render();
+  const button = findElement(tree, (node) => node.type === "button" && node.props?.children?.includes?.("删除此会话"));
+  assert.equal(button.props.disabled, false);
+  button.props.onClick();
+  assert.equal(pending.length, 0, "opening confirmation must not delete");
+  tree = render();
+  findElement(tree, (node) => node.type === "button" && node.props.children === "取消").props.onClick();
+  tree = render();
+  assert.ok(!findElement(tree, (node) => node.props?.["aria-label"] === "确认删除模拟会话"));
+  button.props.onClick(); tree = render();
+  const deleting = findElement(tree, (node) => node.type === "button" && node.props?.children?.includes?.("确认删除")).props.onClick();
+  assert.equal(pending[0].url, "/api/trading/paper/sessions/session%2F1?expectedVersion=3");
+  assert.equal(pending[0].init.method, "DELETE");
+  assert.equal(pending[0].init.headers.get("X-Trade-CSRF"), "1");
+  render(); load();
+  assert.equal(pending.length, 1, "background refresh must not race the deletion");
+  pending.shift().resolve(new Response(null, { status: 204 }));
+  await deleting;
+  tree = render();
+  assert.ok(!findElement(tree, (node) => node.props?.className === "session-identity"));
+  assert.ok(findElement(tree, (node) => node.props?.role === "status" && typeof node.props.children === "string" && node.props.children.includes("已删除")));
+});
+
+test("a rejected paper deletion retains the session and reports a conflict", async () => {
+  const { render, flush, pending, load } = await mountPaperPanel();
+  const account = { sessionId: "archived", status: "ARCHIVED", instId: "BTC-USDT", quoteCcy: "USDT", initialCash: 100, cash: 100, equity: 100, realizedPnl: 0, positionQuantity: 0, totalFeesQuote: 0, version: 2 };
+  render(); load();
+  pending.shift().resolve(Response.json(account)); pending.shift().resolve(Response.json([account]));
+  await flush();
+  pending.shift().resolve(Response.json([])); pending.shift().resolve(Response.json([]));
+  await flush();
+  let tree = render();
+  findElement(tree, (node) => node.type === "button" && node.props?.children?.includes?.("删除此会话")).props.onClick();
+  tree = render();
+  const deleting = findElement(tree, (node) => node.type === "button" && node.props?.children?.includes?.("确认删除")).props.onClick();
+  pending.shift().resolve(Response.json({ error: "changed" }, { status: 409 }));
+  await deleting;
+  tree = render();
+  assert.ok(findElement(tree, (node) => node.props?.className === "session-identity"));
+  assert.ok(findElement(tree, (node) => node.props?.role === "alert" && node.props.children.includes("模拟会话已变化")));
+  assert.ok(!findElement(tree, (node) => node.props?.["aria-label"] === "确认删除模拟会话"));
 });
 
 function resolveSnapshot(pending, marker) {
