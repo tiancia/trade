@@ -39,7 +39,7 @@
           <button class="nav-item" data-filter="ATTENTION"><svg><use href="#i-alert"/></svg><span>需要关注</span><em id="nav-attention">—</em></button>
         </nav>
         <div class="sidebar-note"><svg><use href="#i-shield"/></svg><p><strong>审核记录可追溯</strong>从生成、审核到发布，查看每一条内容的完整过程。</p></div>
-        <div class="sidebar-footer"><span class="dot"></span><span>X 模块 · 内容监控</span><small>READ ONLY</small></div>
+        <div class="sidebar-footer"><span class="dot"></span><span>X 模块 · 内容工作台</span></div>
       </aside>
       <main class="workspace">
         <header class="topbar">
@@ -51,6 +51,10 @@
         <section class="page-heading">
           <div><div class="eyebrow">X PUBLISHING · OVERVIEW</div><h1>内容工作台<span class="heading-dot">.</span></h1><p>最近产生的内容、审核反馈与发布结果，尽在一处。</p></div>
           <div class="heading-actions"><button class="button secondary" id="refresh-button" disabled><svg id="refresh-icon"><use href="#i-refresh"/></svg>刷新记录</button></div>
+        </section>
+        <section class="task-control" aria-labelledby="task-title">
+          <div><h2 id="task-title">X 自动工作流 <span id="task-status" class="task-status" role="status">读取中</span></h2><p>控制自动生成、Telegram 审核和发布循环；启动仍受后端业务与发布开关限制。停止后已开始的操作可能继续完成，服务重启后按自动启动配置恢复。</p><p id="task-notice" class="task-notice" role="alert" hidden></p></div>
+          <button class="button secondary" id="task-toggle" disabled>读取状态中</button>
         </section>
         <section class="stats-grid" aria-label="最近记录统计">
           <button class="stat-card indigo active" data-filter="ALL"><span class="stat-top"><span class="stat-label">最近内容</span><span class="stat-icon"><svg><use href="#i-file"/></svg></span></span><span class="stat-value" id="stat-total">—</span><span class="stat-caption">当前读取的内容记录</span></button>

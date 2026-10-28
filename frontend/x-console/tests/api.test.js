@@ -1,9 +1,37 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchRecent, fetchPost, fetchHistory } from '../src/api.js';
+import { fetchRecent, fetchPost, fetchHistory, fetchXTask, setXTaskRunning } from '../src/api.js';
 
 const postFixture = { id: 'a', status: 'PENDING_REVIEW', contentVersion: 1, revision: 0 };
 const historyFixture = { status: 'GENERATING', contentVersion: 1, revision: 0 };
+
+test('X task control reads status and sends protected start and stop requests', async () => {
+  const calls = [];
+  await withFetch(async (url, options) => {
+    calls.push({ url, options });
+    return Response.json({ id: 'x', running: url.endsWith('/start'), autoStart: false });
+  }, async () => {
+    assert.equal((await fetchXTask()).running, false);
+    assert.equal((await setXTaskRunning(true)).running, true);
+    assert.equal((await setXTaskRunning(false)).running, false);
+    await assert.rejects(setXTaskRunning('true'), { code: 'STATE_INVALID' });
+  });
+  assert.deepEqual(calls.map(call => [call.url, call.options.method]), [
+    ['/api/automation/tasks/x', 'GET'], ['/api/automation/tasks/x/start', 'POST'], ['/api/automation/tasks/x/stop', 'POST'],
+  ]);
+  for (const call of calls.slice(1)) {
+    assert.equal(call.options.headers['X-Trade-CSRF'], '1');
+    assert.equal(call.options.credentials, 'same-origin');
+  }
+});
+
+test('X task status must identify the task and contain boolean state', async () => {
+  for (const data of [null, {}, { id: 'weibo', running: true, autoStart: false }, { id: 'x', running: 'true', autoStart: false }]) {
+    await withFetch(async () => Response.json(data), async () => {
+      await assert.rejects(fetchXTask(), { code: 'INVALID_RESPONSE' });
+    });
+  }
+});
 
 function withFetch(mock, action) {
   const original = globalThis.fetch;

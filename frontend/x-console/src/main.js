@@ -1,5 +1,5 @@
 import './styles.css';
-import { fetchRecent, fetchPost, fetchHistory } from './api.js';
+import { fetchRecent, fetchPost, fetchHistory, fetchXTask, setXTaskRunning } from './api.js';
 import { STATUS_META, formatTime, reviewSummary, publishSummary, filterPosts, getStats, publishedUrl } from './model.js';
 
 const $ = (id) => document.getElementById(id);
@@ -7,9 +7,11 @@ const state = {
   posts: [], selected: null, history: [], filter: 'ALL', query: '',
   limit: 30, loaded: false, busy: false, connected: false, updatedAt: null,
   listError: '', detailError: '', historyError: '', detailBusy: false, detailTab: 'details',
+  task: null, taskBusy: false, taskError: '',
 };
 let listController;
 let detailController;
+let taskController;
 const tones = { info: 'blue', warning: 'amber', success: 'green', danger: 'red' };
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -119,7 +121,55 @@ function renderDetail() {
   if (focusKey) panel.querySelector(`[data-${focusKey[0]}="${focusKey[1]}"]`)?.focus({ preventScroll: true });
 }
 
-function render() { renderHeader(); renderList(); renderDetail(); }
+function renderTask() {
+  const status = $('task-status');
+  status.textContent = state.taskBusy ? '处理中' : state.task ? (state.task.running ? '运行中' : '已停止') : '状态未知';
+  status.className = `task-status ${state.task ? (state.task.running ? 'running' : 'stopped') : ''}`;
+  const button = $('task-toggle');
+  button.disabled = state.taskBusy || !state.task;
+  button.textContent = state.taskBusy ? '处理中…' : state.task ? (state.task.running ? '停止自动工作流' : '启动自动工作流') : '状态不可用';
+  const notice = $('task-notice');
+  notice.hidden = !state.taskError;
+  notice.textContent = state.taskError;
+}
+
+function render() { renderHeader(); renderList(); renderDetail(); renderTask(); }
+
+async function refreshTask() {
+  if (state.taskBusy) return;
+  taskController?.abort();
+  const controller = new AbortController();
+  taskController = controller;
+  state.taskBusy = true;
+  state.taskError = '';
+  renderTask();
+  try {
+    state.task = await fetchXTask({ signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    state.task = null;
+    state.taskError = `${error.message} 请刷新后确认任务状态。`;
+  } finally {
+    if (taskController === controller && !controller.signal.aborted) { state.taskBusy = false; renderTask(); }
+  }
+}
+
+async function toggleTask() {
+  if (state.taskBusy || !state.task) return;
+  const running = !state.task.running;
+  state.taskBusy = true;
+  state.taskError = '';
+  renderTask();
+  try {
+    state.task = await setXTaskRunning(running);
+  } catch (error) {
+    state.task = null;
+    state.taskError = `${error.message} 操作结果可能已生效，请刷新后确认任务状态。`;
+  } finally {
+    state.taskBusy = false;
+    renderTask();
+  }
+}
 
 function selectFilter(filter) {
   state.filter = filter;
@@ -195,7 +245,8 @@ async function refresh() {
   }
 }
 
-$('refresh-button').addEventListener('click', () => void refresh());
+$('refresh-button').addEventListener('click', () => { void refresh(); void refreshTask(); });
+$('task-toggle').addEventListener('click', () => void toggleTask());
 $('limit-select').addEventListener('change', (event) => { state.limit = Number(event.target.value); void refresh(); });
 $('status-select').addEventListener('change', (event) => selectFilter(event.target.value));
 $('search-input').addEventListener('input', (event) => { state.query = event.target.value; renderList(); });
@@ -220,6 +271,7 @@ document.addEventListener('click', (event) => {
     if (post) { state.detailTab = 'details'; void loadDetail(post, { scroll: true }); }
   }
 });
-window.addEventListener('pagehide', () => { listController?.abort(); detailController?.abort(); });
+window.addEventListener('pagehide', () => { listController?.abort(); detailController?.abort(); taskController?.abort(); });
 render();
 void refresh();
+void refreshTask();

@@ -1,6 +1,6 @@
 # X 内容工作台
 
-`frontend/x-console` 是 X 模块的独立展示前端，使用 Vite + 原生 HTML/CSS/JavaScript。展示最近生成内容、当前版本审核结果、发布结果和历史状态快照。
+`frontend/x-console` 是 X 模块的独立前端，使用 Vite + 原生 HTML/CSS/JavaScript。展示最近生成内容、当前版本审核结果、发布结果和历史状态快照，并控制 X 自动工作流。
 
 [项目文档总导航](../../docs/README.md) · [系统通信与接手指南](../../docs/PROJECT_GUIDE.md) · [生产 Docker 部署](../../deploy/README.md)
 
@@ -24,15 +24,18 @@ npm run build
 npm run preview
 ```
 
-`preview` 在 `http://127.0.0.1:4175` 预览构建，并沿用代理设置。部署 `dist/` 时，需要服务器将同源 `/api/x/` 转发到后端；静态构建本身不包含 Vite 代理。管理页面和 API 应通过 HTTPS 或本机访问。
+`preview` 在 `http://127.0.0.1:4175` 预览构建，并沿用代理设置。部署 `dist/` 时，需要服务器将同源 `/api/x/` 和 `/api/automation/` 转发到后端；静态构建本身不包含 Vite 代理。管理页面和 API 应通过 HTTPS 或本机访问。
 
 ## 接口与展示
 
-所有请求均为同源 GET：
+页面使用同源接口：
 
 - `/api/x/posts?limit=30`：最近内容，可以选择 30、50、100 条。
 - `/api/x/posts/{id}`：完整正文、审核人、审核原因、发布 ID、错误与时间。
 - `/api/x/posts/{id}/history`：最近 100 条状态快照，按 revision 倒序。
+- `GET /api/automation/tasks/x` 和 `POST /api/automation/tasks/x/start|stop`：读取和控制 X 自动循环，写请求附带 `X-Trade-CSRF: 1`。
+
+开关只控制当前后端实例的生成、审核和发布自动循环，已开始的工作可能继续完成；手动生成 API 仍可独立调用。启动仍受业务、审核和发布配置限制，恢复后符合条件的已审核草稿可能继续发布。状态不跨重启持久化，服务重启后按 `TRADE_AUTOMATION_X_AUTO_START` 配置决定；多实例须分别控制。操作超时或失败时请刷新确认状态。
 
 统计和筛选只针对本次读取的最近记录，不能代表全量历史。筛选、搜索不会请求生成、审核或发布。页面不提供草稿修改、人工审批、发布或重试按钮；审核继续由后端的 Telegram 回调处理。
 
@@ -44,7 +47,7 @@ npm run preview
 
 - `index.html`：工作台与筛选控件。
 - `src/main.js`：列表和详情交互、内存中的连接状态、请求取消。
-- `src/api.js`：三个只读接口、超时与响应错误处理。
+- `src/api.js`：内容与任务接口、超时与响应错误处理。
 - `src/model.js`：状态语义、统计、筛选、时间与平台链接。
 - `src/styles.css`：桌面和移动端布局。
 - `tests/`：离线 API 与状态语义测试；不调用真实后端。

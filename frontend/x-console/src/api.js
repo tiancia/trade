@@ -26,7 +26,7 @@ function validPost(value) {
   return validRevision(value) && typeof value.id === 'string' && Boolean(value.id.trim());
 }
 
-async function request(path, { signal }, shape) {
+async function request(path, { signal, method = 'GET' }, shape) {
   const controller = new AbortController();
   let timedOut = false;
   const abort = () => controller.abort(signal?.reason);
@@ -39,8 +39,8 @@ async function request(path, { signal }, shape) {
 
   try {
     const response = await fetch(path, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
+      method,
+      headers: method === 'GET' ? { Accept: 'application/json' } : { Accept: 'application/json', 'X-Trade-CSRF': '1' },
       credentials: 'same-origin',
       cache: 'no-store',
       signal: controller.signal,
@@ -62,7 +62,7 @@ async function request(path, { signal }, shape) {
       if (response.status === 400 && detail?.error === 'X post not found') {
         throw apiError('该内容不存在或已被移除，请刷新列表。', 'POST_NOT_FOUND');
       }
-      throw apiError(`读取 X 内容失败（HTTP ${response.status}），请检查后端服务。`, 'HTTP_ERROR');
+      throw apiError(`请求失败（HTTP ${response.status}），请检查后端服务。`, 'HTTP_ERROR');
     }
 
     const contentType = response.headers.get('content-type') || '';
@@ -75,7 +75,9 @@ async function request(path, { signal }, shape) {
       if (controller.signal.aborted) throw error;
       throw apiError('后端返回的 JSON 无法解析，请稍后重试。', 'INVALID_RESPONSE');
     }
-    const valid = shape === 'post'
+    const valid = shape === 'task'
+      ? data !== null && typeof data === 'object' && data.id === 'x' && typeof data.running === 'boolean' && typeof data.autoStart === 'boolean'
+      : shape === 'post'
       ? validPost(data)
       : Array.isArray(data) && data.every(shape === 'history' ? validRevision : validPost);
     if (!valid) {
@@ -110,4 +112,13 @@ export async function fetchPost({ id, signal } = {}) {
 
 export async function fetchHistory({ id, signal } = {}) {
   return request(`${postPath(id)}/history`, { signal }, 'history');
+}
+
+export async function fetchXTask({ signal } = {}) {
+  return request('/api/automation/tasks/x', { signal }, 'task');
+}
+
+export async function setXTaskRunning(running, { signal } = {}) {
+  if (typeof running !== 'boolean') throw apiError('任务状态无效。', 'STATE_INVALID');
+  return request(`/api/automation/tasks/x/${running ? 'start' : 'stop'}`, { signal, method: 'POST' }, 'task');
 }
