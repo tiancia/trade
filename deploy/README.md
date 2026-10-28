@@ -266,40 +266,33 @@ bash deploy/scripts/release.sh rollback --no-pull
 
 发布成功后清理更早的本地应用镜像，保留当前、上一成功清单及容器引用的镜像。清理失败仅告警，不改变已成功发布的结果。CNB 不会自动同步 Compose、Nginx 或业务配置文件；这些文件变更需先同步服务器，再安排相应服务更新。
 
-### Docker Hub 基础镜像限流（429）时使用 TCR
+### Docker Hub 基础镜像限流（429）：纯云端镜像源切换
 
-构建后端需要 Maven 和 Eclipse Temurin，其他服务还会使用 Node、Nginx、Alpine。
-CNB 托管 Docker/BuildKit 可能通过公共镜像站拉取这些基础镜像；公共镜像站返回
-`429 Too Many Requests` 时，即使 TCR 登录成功，构建仍会在 `FROM` 阶段失败。
+CNB 使用的公共 Docker Hub 加速地址 `mirror.ccs.tencentyun.com` 可能返回
+HTTP 429。CNB 托管平台的默认 Builder 和 Docker daemon 配置未必可修改，
+因此构建脚本通过 Dockerfile `ARG` 直接引用备用镜像地址。
 
-可把下列 **Linux amd64** 基础镜像事先同步到已有 TCR 命名空间
-`ccr.ccs.tencentyun.com/tiancia-trade`，再开启显式开关。此操作只改构建阶段的
-基础镜像来源，不修改最终业务镜像名称、发布/回滚清单或部署地址。
+**CNB 云端构建默认启用 `BASE_IMAGE_SOURCE=daocloud`**：对应镜像为
+`m.daocloud.io/docker.io/library/{maven,eclipse-temurin,node,nginx,alpine}` 的固定版本。
+无需通过 Windows 下载/上传镜像，也不必创建嵌套 Buildx Builder。
+本地调用 `build-images.sh` 的默认来源仍然是 Docker Hub。
 
-1. 在腾讯云 TCR 命名空间 `tiancia-trade` 下确认有推送权限，并准备五个镜像仓库：
-   `base-maven`、`base-eclipse-temurin`、`base-node`、`base-nginx`、`base-alpine`。
-   如实例要求提前创建仓库，请先在控制台创建；镜像可设置私有访问。
-2. 在一台**能够正常访问 Docker Hub** 的机器上登录 TCR（不要把密码写进脚本或命令参数）。
-   例如在 Windows PowerShell 中先运行 `docker login ccr.ccs.tencentyun.com`，
-   按提示输入用户名和密码，然后从仓库根目录执行：
+在 CNB 导入的受控环境变量中，可以显式覆盖以下值：
+- `BASE_IMAGE_SOURCE=daocloud`（CNB 默认），DaoCloud 公共镜像代理；
+- `BASE_IMAGE_SOURCE=dockerhub`，原有 Docker Hub 引用（可能仍经 CNB 默认加速站）；
+- `BASE_IMAGE_SOURCE=tcr`，可选，仅在 TCR 的五个 `base-*` 镜像仓库
+  已存在对应版本时使用，**不要求手工 Windows 上传作为正常部署步骤**。
 
-   ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy\scripts\sync-base-images.ps1
-   ```
+DaoCloud 公共服务同样可能限流和出现缓存问题；参见
+[DaoCloud 镜像站官方项目](https://github.com/DaoCloud/public-image-mirror)。
+如果备用源不可用，可切换到原始镜像源测试；频繁发生时应在 CNB 中
+引入自动云端同步/私有镜像缓存机制，而无需本地机器介入。
 
-   脚本依次 `docker pull --platform linux/amd64`、`docker tag`、`docker push`，
-   同步五个固定版本的基础镜像。若本地 Docker 也被限流，需先修好本机拉取网络，
-   或改用另一台能访问 Docker Hub 的机器完成一次同步。
-3. 仅在五个镜像都推送成功后，在 CNB 所导入的私有配置
-   `tiancia/trade-ci-secrets` 的 `env.yml` 中设置环境变量
-   `USE_PRIVATE_BASE_IMAGES=true`，再触发原来的 CNB 构建任务。
-   具体键值写法需遵循该私有配置仓库现有格式；无需把 TCR 口令提交到 GitHub。
-   这一设置会让 `build-images.sh` 把四个服务的基础镜像切换到同一 TCR 命名空间。
-
-默认 `USE_PRIVATE_BASE_IMAGES=false`，未开启时仍然使用 Dockerfile 中的
-Docker Hub 镜像。若 TCR 基础镜像不存在，开启后构建会在基础镜像读取阶段失败；
-重新同步镜像或关闭开关即可恢复默认来源。后续应定期检查并同步基础镜像的安全更新，
-尤其在 Dockerfile 升级基础镜像版本之后，必须先同步对应的新标签。
+日志应包含 `Build base image source: daocloud`，以及对应
+`m.daocloud.io/docker.io/library/...` 镜像元数据下载记录。
+Dockerfile 最顶部的 `# syntax=docker/dockerfile:1` 是独立的
+BuildKit 前端镜像依赖，可能仍经平台默认镜像站拉取。业务镜像推送目标、
+发布版本、生产服务器镜像拉取与回滚逻辑都维持原样。
 
 ### 构建缓存与耗时定位
 
