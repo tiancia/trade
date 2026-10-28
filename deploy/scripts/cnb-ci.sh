@@ -41,6 +41,8 @@ case "$CI_ACTION" in
 esac
 export CI_RUN_ID=${CI_RUN_ID:-$(date +%s)}
 export BUILD_CACHE_DIR=${BUILD_CACHE_DIR:-/root/.cache/trade-build-cache}
+# CNB cloud builds use a public alternative to the platform Docker Hub mirror by default.
+export BASE_IMAGE_SOURCE=${BASE_IMAGE_SOURCE:-daocloud}
 # The hosted service owns BuildKit; nested docker-container builders cannot run.
 export CI_BUILDER_MODE=platform
 case "$SERVICE" in all|backend|cockpit|x-console|frontends|egress) ;; *) fail 'Unsupported SERVICE selection' ;; esac
