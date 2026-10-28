@@ -324,6 +324,35 @@ class MyBatisPaperAccountStoreTest {
         assertEquals(0, store.active("BTC-USDT").version());
     }
 
+    @Test void strategyMaintenanceFencesOldDecisionsAndRequiresSameFlatSession() {
+        PaperAccount original = start("100");
+        assertTrue(store.changeStrategyWhileFlat("BTC-USDT", original.sessionId(), original.version(), () -> true));
+        assertEquals(1, store.active("BTC-USDT").version());
+        assertThrows(ConcurrentModificationException.class,
+                () -> store.fill(command(original, "old-strategy", "BUY", "20", "10", "0.001")));
+        assertFalse(store.changeStrategyWhileFlat("BTC-USDT", original.sessionId(), 1, () -> false));
+        assertEquals(1, store.active("BTC-USDT").version());
+        var bought = store.fill(command(store.active("BTC-USDT"), "new-strategy", "BUY", "20", "10", "0.001"));
+        assertThrows(ConcurrentModificationException.class,
+                () -> store.changeStrategyWhileFlat("BTC-USDT", original.sessionId(), bought.account().version(), () -> fail("Cannot change strategy with a position")));
+    }
+
+    @Test void concurrentStrategyMaintenanceAndSpendHaveOnlyOneWinner() throws Exception {
+        PaperAccount original = start("100");
+        CountDownLatch gate = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var change = pool.submit(() -> { gate.await(); try {
+                return store.changeStrategyWhileFlat("BTC-USDT", original.sessionId(), 0, () -> true);
+            } catch (ConcurrentModificationException ignored) { return false; } });
+            var spend = pool.submit(() -> { gate.await(); try {
+                store.fill(command(original, "race-ai", "BUY", "20", "10", "0.001")); return true;
+            } catch (ConcurrentModificationException ignored) { return false; } });
+            gate.countDown();
+            assertNotEquals(change.get(5, java.util.concurrent.TimeUnit.SECONDS), spend.get(5, java.util.concurrent.TimeUnit.SECONDS));
+        }
+        assertEquals(1, store.active("BTC-USDT").version());
+    }
+
     @Test void concurrentSpendAndResetCannotOverwriteEachOther() throws Exception {
         PaperAccount a = start("100");
         CountDownLatch gate = new CountDownLatch(1);

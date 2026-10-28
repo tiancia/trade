@@ -42,7 +42,7 @@ class DatabaseSchemaInitializationTest {
             initializer.setResourceLoader(new H2SchemaResourceLoader());
             assertTrue(initializer.initializeDatabase());
             var jdbc = new JdbcTemplate(dataSource);
-            assertEquals(53, jdbc.queryForObject("""
+            assertEquals(55, jdbc.queryForObject("""
                     SELECT COUNT(*) FROM information_schema.tables
                     WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
                     """, Integer.class));

@@ -17,6 +17,10 @@
         INSERT INTO okx_paper_sessions(session_id,inst_id,quote_ccy,status,initial_cash,cash,position_quantity,position_cost,realized_pnl,total_fees_quote,last_price,valuation_at,version,risk_state_json,created_at,updated_at)
         VALUES(#{sessionId},#{instId},#{quoteCcy},#{status},#{initialCash},#{cash},#{positionQuantity},#{positionCost},#{realizedPnl},#{totalFeesQuote},#{lastPrice},#{valuationAt},#{version},#{riskStateJson},#{createdAt},#{updatedAt})
     </insert>
+    <update id="advanceVersion">
+        UPDATE okx_paper_sessions SET version = version + 1
+        WHERE session_id = #{sessionId} AND version = #{expectedVersion}
+    </update>
     <update id="updateSession">
         UPDATE okx_paper_sessions SET cash=#{cash},position_quantity=#{positionQuantity},position_cost=#{positionCost},realized_pnl=#{realizedPnl},total_fees_quote=#{totalFeesQuote},last_price=#{lastPrice},valuation_at=#{valuationAt},version=#{version},updated_at=#{updatedAt} WHERE session_id=#{sessionId} AND status='ACTIVE'
     </update>

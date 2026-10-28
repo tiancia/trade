@@ -31,6 +31,19 @@ public class MyBatisPaperAccountStore implements PaperAccountStore {
     @Override public PaperAccount active(String instId) { return account(mapper.active(instId)); }
     @Override public PaperAccount session(String instId, String sessionId) { return account(mapper.session(instId, sessionId)); }
 
+    /** Fence AI maintenance against fills, session deletion and replacement across instances. */
+    @Override @Transactional
+    public boolean changeStrategyWhileFlat(String instId, String sessionId, long expectedVersion,
+                                           java.util.function.BooleanSupplier action) {
+        PaperAccount current = lock(instId);
+        if (current == null || !Objects.equals(current.sessionId(), sessionId)
+                || current.version() != expectedVersion || current.positionQuantity().signum() != 0) conflict();
+        boolean changed = action.getAsBoolean();
+        // Invalidate decisions collected before maintenance, including on another instance.
+        if (changed && mapper.advanceVersion(sessionId, expectedVersion) != 1) conflict();
+        return changed;
+    }
+
     @Override
     @Transactional
     public PaperAccount start(String instId, String quoteCcy, BigDecimal initialCash,

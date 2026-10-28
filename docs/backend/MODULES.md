@@ -26,7 +26,7 @@
 
 ### automation
 
-`AutomationTaskRegistrar` 把 trading、polymarket、story、weibo、x 的循环定义登记到 `AutomationTaskManager`。登记不等于运行：只有应用就绪后的 `auto-start` 或 `/api/automation/tasks/{taskId}/start` 才会调用 `start()`。
+`AutomationTaskRegistrar` 把 trading、trading-ai、polymarket、story、weibo、x 的循环定义登记到 `AutomationTaskManager`。登记不等于运行：只有应用就绪后的 `auto-start` 或 `/api/automation/tasks/{taskId}/start` 才会调用 `start()`。
 
 两者位于 `automation/application/task`；HTTP 入口在 `interfaces/web`，任务定义和快照在 `domain/model`，调度器装配在 `infrastructure/config`。
 
@@ -104,6 +104,8 @@ REST / WebSocket market data
 含糊的下单确认保持 `SUBMIT_UNKNOWN` 并阻断后续新单。结算校验累计成交量、均价及单调性；累计成交量相等或增加但净数量或成本倒退时，结算事务失败并保留旧账本，订单继续待对账。有未决订单时暂缓账户余额核对，现货账户余额不替代成交账本记仓；余额响应必须有账户和明细，缺失数据不当作零余额。LIVE 恢复必须收到明确的挂单列表，缺失列表不当作没有挂单。紧急停止的定时器与各笔撤单独立尽力执行，错误保留供人工处理。
 
 页面参数编辑经 `StrategyConfigurationController → TradingStrategyRegistry` 保存 MySQL 当前配置及不可变版本历史；新决策冻结所用配置版本。`application/paper` 编排独立的 PAPER 初始资金、批次、成交与估值账本，`domain/paper` 负责现金、成本和盈亏演进。具体口径与接口见 [策略参数版本与模拟资金](TRADING_SIMULATION.md)。
+
+`TradingAiScheduler → TradingAiAdvisor` 由独立的 `trading-ai` 任务评估公开行情，复用共享 AI 客户端，结果存入 MySQL 审计表。PAPER 空仓时可受限切换已有策略或调整信号参数；完整校验、配置行锁及模拟会话版本保护人工修改和在途成交。逻辑修改建议使用独立 Telegram Bot，无 X 审核轮询。配置、通知状态与回退步骤见 [Trading AI 策略顾问](TRADING_AI.md)。
 
 策略输入显式区分1m、5m、15m。`intraday-technical` 提供趋势回踩、放量突破和震荡回归三种15m现货多头候选，复用纯领域指标；每分钟事件扫描独立评估确认收盘信号，订单及PAPER账本保存每个方向的稳定信号身份。新增实例不自动切换当前策略，不改变LIVE门禁；收益与频率需要独立回测、样本外及PAPER验证。
 

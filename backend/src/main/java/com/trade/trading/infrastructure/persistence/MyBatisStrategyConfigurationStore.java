@@ -62,6 +62,17 @@ public class MyBatisStrategyConfigurationStore implements StrategyConfigurationS
         return mapper.findHistory(strategyId, offset, limit).stream().map(this::snapshot).toList();
     }
 
+    @Override @Transactional
+    public <T> T withUnchangedVersions(Map<String, Long> versions, java.util.function.Supplier<T> action) {
+        // Lock in deterministic order; hold through the surrounding PAPER maintenance transaction.
+        for (String id : versions.keySet().stream().sorted().toList()) {
+            if (required(mapper.lockCurrent(id)).getConfigVersion() != versions.get(id)) {
+                throw new ConcurrentModificationException("Strategy configuration changed during AI assessment");
+            }
+        }
+        return action.get();
+    }
+
     private StrategyConfigurationRow row(StrategyConfigurationVersion snapshot) {
         try {
             StrategyConfigurationRow row = new StrategyConfigurationRow();

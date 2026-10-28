@@ -10,6 +10,8 @@ import com.trade.story.interfaces.scheduler.AiStoryScheduler;
 import com.trade.trading.application.runtime.TradingMarketDataRuntime;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.interfaces.scheduler.TradingScheduler;
+import com.trade.trading.interfaces.scheduler.TradingAiScheduler;
+import com.trade.trading.infrastructure.config.TradingAiProperties;
 import com.trade.weibo.interfaces.scheduler.WeiboScheduler;
 import com.trade.weibo.infrastructure.config.WeiboWorkflowProperties;
 import com.trade.weibo.infrastructure.config.WeiboTelegramReviewProperties;
@@ -37,6 +39,8 @@ public class AutomationTaskRegistrar {
             TradingScheduler tradingScheduler,
             TradingProperties tradingProperties,
             TradingMarketDataRuntime tradingMarketDataRuntime,
+            TradingAiScheduler tradingAiScheduler,
+            TradingAiProperties tradingAiProperties,
             AiPolymarketScheduler polymarketScheduler,
             AiPolymarketProperties polymarketProperties,
             AiStoryScheduler storyScheduler,
@@ -74,6 +78,12 @@ public class AutomationTaskRegistrar {
                                 tradingScheduler::reconcileOrders
                         )
                 )
+        ));
+
+        manager.register(new AutomationTaskDefinition(
+                "trading-ai", "Trading AI strategy advisor", automationProperties.getTradingAi().isAutoStart(),
+                tradingAiScheduler::start, tradingAiScheduler::stop, List.of(new AutomationLoopDefinition("review", Duration.ofSeconds(60),
+                        millis(tradingAiProperties.getReviewIntervalMs()), tradingAiScheduler::review))
         ));
 
         manager.register(new AutomationTaskDefinition(

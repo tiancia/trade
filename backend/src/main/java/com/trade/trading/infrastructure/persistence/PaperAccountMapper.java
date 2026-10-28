@@ -16,6 +16,7 @@ public interface PaperAccountMapper {
     PaperAccountRow session(@Param("instId") String instId, @Param("sessionId") String sessionId);
     int insertSession(PaperAccountRow row);
     int updateSession(PaperAccountRow row);
+    int advanceVersion(@Param("sessionId") String sessionId, @Param("expectedVersion") long expectedVersion);
     int archive(String sessionId);
     int deleteSession(@Param("instId") String instId, @Param("sessionId") String sessionId, @Param("expectedVersion") long expectedVersion);
     int deleteFills(String sessionId);

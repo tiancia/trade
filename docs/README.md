@@ -30,6 +30,7 @@ Maven 命令从 `backend/` 执行，生产 Compose 命令从仓库根目录执�
 | --- | --- |
 | [Trading 回测](backend/TRADING_BACKTEST.md) | 回测参数、成交、手续费、滑点和指标 |
 | [Trading 模拟资金与策略配置](backend/TRADING_SIMULATION.md) | 策略参数版本、独立模拟资金、成交与估值账本及 API |
+| [Trading AI 策略顾问](backend/TRADING_AI.md) | 行情评估、自动调整边界、独立 Telegram 通知与环境变量 |
 | [X 工作流](backend/X_WORKFLOW.md) | AI 草稿、内容配置、Telegram 审核、发布与 UNKNOWN |
 | [X API](backend/X_API.md) | X 客户端方法、OAuth 凭据和协议边界 |
 | [Telegram API](backend/TELEGRAM_API.md) | Bot 客户端、消息、更新轮询和审核接入 |

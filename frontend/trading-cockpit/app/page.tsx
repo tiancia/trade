@@ -888,6 +888,7 @@ export default function Home() {
             </section>
 
             <PaperSimulationPanel dataMode={dataMode} executionMode={dataMode === "live" && !runtimeConnected ? "运行模式未确认" : snapshot.runtime.executionMode} refreshToken={paperRefreshToken} onCurrentChange={setPaperCurrent} />
+            <TradingAiPanel key={dataMode} dataMode={dataMode} />
 
             <div className="overview-grid">
               <section className="panel market-panel">
@@ -1199,6 +1200,83 @@ function ConfigurationEditor({ strategyId, connected, onSaved }: { strategyId: s
         {historyHasMore && <button className="secondary-button" disabled={historyPending || pending} onClick={() => void loadOlderVersions()}>{historyPending ? <LoaderCircle size={14} className="spin" /> : <Layers3 size={14} />}{historyPending ? "正在加载…" : "加载更早版本"}</button>}
       </div>
     </>}
+  </section>;
+}
+
+type AiAdvisorStatus = { enabled: boolean; autoApplyEligible: boolean; telegramEnabled: boolean; reviewIntervalMs: number };
+type AiAdvisorReview = { reviewId: string; startedAt: ApiTimestamp; outcome: string; detail: string; proposalJson?: string; notificationStatus: string };
+
+function TradingAiPanel({ dataMode }: { dataMode: "live" | "demo" }) {
+  const [status, setStatus] = useState<AiAdvisorStatus | null>(null);
+  const [reviews, setReviews] = useState<AiAdvisorReview[]>([]);
+  const [task, setTask] = useState<AutomationTask | null>(null);
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const changing = useRef(false);
+  const loadGeneration = useRef(0);
+  useEffect(() => {
+    if (dataMode !== "live") return;
+    const controller = new AbortController();
+    let busy = false;
+    const load = async () => {
+      if (busy || changing.current) return;
+      busy = true;
+      const generation = loadGeneration.current;
+      try {
+        const [next, history, currentTask] = await Promise.all([
+          request<AiAdvisorStatus>("/api/trading/ai/status", { signal: controller.signal }),
+          request<AiAdvisorReview[]>("/api/trading/ai/reviews?limit=5", { signal: controller.signal }),
+          request<AutomationTask>("/api/automation/tasks/trading-ai", { signal: controller.signal }),
+        ]);
+        if (!controller.signal.aborted && !changing.current && generation === loadGeneration.current) {
+          setStatus(next); setReviews(history); setTask(currentTask); setError("");
+        }
+      } catch (e) { if (!controller.signal.aborted && generation === loadGeneration.current) setError(errorMessage(e)); }
+      finally { busy = false; }
+    };
+    void load();
+    const timer = window.setInterval(() => { void load(); }, 30_000);
+    return () => { controller.abort(); window.clearInterval(timer); };
+  }, [dataMode, refresh]);
+
+  const toggle = async () => {
+    if (!task || changing.current) return;
+    changing.current = true; loadGeneration.current += 1; setPending(true); setError("");
+    try {
+      const updated = await request<AutomationTask>(`/api/automation/tasks/trading-ai/${task.running ? "stop" : "start"}`, { method: "POST" });
+      setTask(updated);
+    } catch (e) { setError(errorMessage(e)); }
+    finally { changing.current = false; setPending(false); setRefresh(value => value + 1); }
+  };
+  const outcomes: Record<string, string> = {
+    ANALYZING: "评估中", READY: "建议已生成", APPLYING: "应用中／中断后需核对", APPLIED: "已自动调整",
+    HELD: "保持策略", UNCHANGED: "无需变化", RECOMMENDED: "仅建议", LOW_CONFIDENCE: "信心不足，未调整",
+    POSITION_NOT_FLAT: "等待空仓模拟会话", CONFLICT: "状态已变化，未调整", STALE: "评估过期，未调整",
+    REJECTED: "校验未通过", FAILED: "评估失败", APPLY_UNKNOWN: "调整结果待核对", LEADERSHIP_LOST: "已失去执行租约", CANCELLED: "任务已暂停，未调整",
+  };
+  const notifications: Record<string, string> = { NOT_REQUIRED: "无需通知", DISABLED: "通知未启用", THROTTLED: "通知冷却中",
+    SENDING: "投递中／中断后需核对", SENT: "已通知", UNKNOWN: "投递结果未知", CONFIG_ERROR: "通知配置错误" };
+  return <section className="panel ai-advisor-panel">
+    <div className="panel-heading">
+      <div><h2>AI 策略顾问</h2><p className="panel-note">{dataMode === "demo" ? "演示模式不调用 AI" : !status ? "正在读取配置" : !status.enabled ? "未启用 · 配置环境变量后可开始评估" : `${task?.running ? "运行中" : "已暂停"} · ${status.autoApplyEligible ? "模拟空仓时自动调整" : "仅生成建议"} · 评估间隔 ${Math.round(status.reviewIntervalMs / 60000)} 分钟 · 独立 TG ${status.telegramEnabled ? "已启用" : "未启用"}`}</p></div>
+      {dataMode === "live" && <button className="secondary-button" disabled={!task || !status?.enabled || pending} onClick={() => void toggle()}>{pending ? "处理中…" : task?.running ? "暂停 AI" : "启动 AI"}</button>}
+    </div>
+    {error && <p className="ai-advisor-error" role="alert">{error}（保留上次读取结果）</p>}
+    {reviews.length === 0 && <p className="panel-note ai-advisor-empty">暂无评估记录。AI 不会修改策略代码；需要补充逻辑时会发送建议。</p>}
+    {reviews.map(review => {
+      let proposal: { marketRegime?: string; strategyId?: string; parameters?: Record<string, unknown>; logicSuggestion?: string } = {};
+      try { proposal = JSON.parse(review.proposalJson || "{}") ?? {}; } catch { /* Keep the durable outcome visible. */ }
+      return <details key={review.reviewId} className="ai-advisor-review">
+        <summary><span>{outcomes[review.outcome] ?? review.outcome}</span><span>{displayTimestamp(review.startedAt)} · {notifications[review.notificationStatus] ?? review.notificationStatus}</span></summary>
+        {proposal.marketRegime && <p>行情：{proposal.marketRegime}</p>}
+        <p>{review.detail || "评估尚未完成；长时间无变化时请核对任务状态。"}</p>
+        {proposal.strategyId && <p>目标策略：{proposal.strategyId}</p>}
+        {proposal.parameters && Object.keys(proposal.parameters).length > 0 && <pre>{JSON.stringify(proposal.parameters, null, 2)}</pre>}
+        {proposal.logicSuggestion && <p>逻辑建议：{proposal.logicSuggestion}</p>}
+        <small>评估编号：{review.reviewId}</small>
+      </details>;
+    })}
   </section>;
 }
 

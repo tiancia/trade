@@ -129,6 +129,11 @@ public class TradingStrategyRegistry {
         return configuredStrategy(strategyId).configuration();
     }
 
+    public <T> T withUnchangedVersions(Map<String, Long> versions, java.util.function.Supplier<T> action) {
+        if (configurationStore == null) throw new IllegalStateException("Shared configuration storage is required");
+        return configurationStore.withUnchangedVersions(versions, action);
+    }
+
     public List<StrategyConfigurationVersion> configurationHistory(String strategyId) {
         return configurationHistory(strategyId, 0, 100);
     }

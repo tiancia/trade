@@ -61,6 +61,13 @@ public class TradingStrategyEngine {
     private volatile Instant lastRunStartedAt;
     private volatile Instant lastRunCompletedAt;
 
+    /** Only the short application phase shares the decision lock; network AI work never does. */
+    public <T> T withStrategyMaintenance(java.util.function.Supplier<T> action) {
+        if (!decisionLock.tryLock()) throw new java.util.ConcurrentModificationException("Trading decision is running");
+        try { return action.get(); }
+        finally { decisionLock.unlock(); }
+    }
+
     /** Intraday signals must be inspected even when legacy one-minute event thresholds are quiet. */
     public boolean isIntradayStrategyActive() {
         return strategySelectionService.activeStrategies().stream()

@@ -128,7 +128,7 @@ function findElement(tree, predicate) {
   }
 }
 
-async function mountPaperPanel() {
+async function mountPaperPanel(panelName = "PaperSimulationPanel", dataMode = "live") {
   const state = [];
   const refs = [];
   const timers = [];
@@ -150,12 +150,12 @@ async function mountPaperPanel() {
   };
   const exports = {};
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  const compiled = ts.transpileModule(`${source}\nexport { PaperSimulationPanel as testPaperPanel };`, {
+  const compiled = ts.transpileModule(`${source}\nexport { ${panelName} as testPaperPanel };`, {
     fileName: "page.tsx", compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   vm.runInNewContext(compiled, {
     exports, process: { env: {} }, URL, Headers, AbortController, AbortSignal,
-    window: { setTimeout: (callback) => timers.push(callback), clearTimeout() {} },
+    window: { setTimeout: (callback) => timers.push(callback), clearTimeout() {}, setInterval: (callback) => timers.push(callback), clearInterval() {} },
     fetch(url, init) { return new Promise((resolve, reject) => pending.push({ url, init, resolve, reject })); },
     require(name) {
       if (name === "react") return hooks;
@@ -165,10 +165,51 @@ async function mountPaperPanel() {
       throw new Error(`Unexpected import: ${name}`);
     },
   });
-  const render = () => { stateIndex = 0; refIndex = 0; return exports.testPaperPanel({ dataMode: "live", executionMode: "PAPER", refreshToken: 0, onCurrentChange() {} }); };
+  const render = () => { stateIndex = 0; refIndex = 0; return exports.testPaperPanel({ dataMode, executionMode: "PAPER", refreshToken: 0, onCurrentChange() {} }); };
   const flush = () => new Promise((resolve) => setImmediate(resolve));
   return { render, flush, pending, load() { const cleanup = effect(); timers.shift()?.(); return cleanup; } };
 }
+
+test("AI advisor preserves assessments during refresh and ignores reads overtaken by a task mutation", async () => {
+  const { render, load, pending, flush } = await mountPaperPanel("TradingAiPanel");
+  const status = { enabled: true, autoApplyEligible: true, telegramEnabled: true, reviewIntervalMs: 3600000 };
+  const review = { reviewId: "r1", startedAt: "2026-10-28T00:00:00Z", outcome: "APPLIED", detail: "市场趋势变化", notificationStatus: "NOT_REQUIRED", proposalJson: '{"strategyId":"trend","parameters":{"ema-fast-period":12}}' };
+  const task = { id: "trading-ai", running: true, loops: [] };
+  render(); load();
+  assert.deepEqual(pending.map(item => item.url), ["/api/trading/ai/status", "/api/trading/ai/reviews?limit=5", "/api/automation/tasks/trading-ai"]);
+  pending.shift().resolve(Response.json(status)); pending.shift().resolve(Response.json([review])); pending.shift().resolve(Response.json(task));
+  await flush();
+  let tree = render();
+  assert.ok(findElement(tree, node => node.type === "details"));
+  load();
+  tree = render();
+  assert.ok(findElement(tree, node => node.type === "details"), "periodic refresh keeps the prior assessment visible");
+  const button = findElement(tree, node => node.type === "button");
+  assert.equal(button.props.children, "暂停 AI");
+  button.props.onClick();
+  const mutation = pending.pop();
+  assert.equal(mutation.url, "/api/automation/tasks/trading-ai/stop");
+  assert.equal(mutation.init.method, "POST");
+  assert.equal(new Headers(mutation.init.headers).get("X-Trade-CSRF"), "1");
+  mutation.resolve(Response.json({ ...task, running: false }));
+  await flush();
+  pending.shift().resolve(Response.json(status)); pending.shift().resolve(Response.json([review])); pending.shift().resolve(Response.json(task));
+  await flush();
+  tree = render();
+  assert.equal(findElement(tree, node => node.type === "button").props.children, "启动 AI", "late read cannot undo the stop result");
+  load(); pending.shift().reject(new Error("offline")); pending.shift().resolve(Response.json([])); pending.shift().resolve(Response.json(task));
+  await flush();
+  tree = render();
+  assert.ok(findElement(tree, node => node.type === "details"));
+  assert.ok(findElement(tree, node => node.props?.role === "alert"));
+});
+
+test("AI advisor demo mode makes no provider or management requests", async () => {
+  const { render, load, pending } = await mountPaperPanel("TradingAiPanel", "demo");
+  render(); load();
+  assert.equal(pending.length, 0);
+  assert.equal(findElement(render(), node => node.type === "button"), undefined);
+});
 
 test("paper refresh keeps the displayed session until the new data arrives", async () => {
   const { render, flush, pending, load } = await mountPaperPanel();

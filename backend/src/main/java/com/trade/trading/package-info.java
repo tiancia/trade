@@ -1,5 +1,7 @@
 /**
  * OKX strategy-trading domain.
+ * The independent AI advisor assesses public candles and records proposals;
+ * bounded PAPER adjustments reuse strategy versions and independent Telegram notifications.
  *
  * <p>The runtime flow is: REST and WebSocket market data enters the bounded
  * {@code infrastructure.event} pipeline for isolated asynchronous persistence; a

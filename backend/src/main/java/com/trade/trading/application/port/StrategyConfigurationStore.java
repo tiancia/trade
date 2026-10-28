@@ -10,5 +10,7 @@ public interface StrategyConfigurationStore {
 
     StrategyConfigurationVersion update(long expectedVersion, StrategyConfigurationVersion next);
 
+    <T> T withUnchangedVersions(java.util.Map<String, Long> versions, java.util.function.Supplier<T> action);
+
     List<StrategyConfigurationVersion> history(String strategyId, int offset, int limit);
 }

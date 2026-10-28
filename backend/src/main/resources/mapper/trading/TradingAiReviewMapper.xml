@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.trading.infrastructure.persistence.TradingAiReviewMapper">
+    <resultMap id="review" type="com.trade.trading.infrastructure.persistence.TradingAiReviewRow">
+        <id property="id" column="id"/>
+        <result property="reviewId" column="review_id"/>
+        <result property="scope" column="scope_key"/>
+        <result property="startedAt" column="started_at"/>
+        <result property="expiresAt" column="expires_at"/>
+        <result property="snapshotJson" column="snapshot_json"/>
+        <result property="proposalJson" column="proposal_json"/>
+        <result property="outcome" column="outcome"/>
+        <result property="detail" column="detail"/>
+        <result property="notificationStatus" column="notification_status"/>
+        <result property="completedAt" column="completed_at"/>
+    </resultMap>
+    <insert id="insertGuard">
+        INSERT IGNORE INTO okx_ai_strategy_guard (scope_key, next_review_at, notification_after)
+        VALUES (#{scope}, '2000-01-01 00:00:00', '2000-01-01 00:00:00')
+    </insert>
+    <select id="lockGuard" resultType="java.time.Instant">
+        SELECT next_review_at FROM okx_ai_strategy_guard WHERE scope_key = #{scope} FOR UPDATE
+    </select>
+    <update id="advanceReview">
+        UPDATE okx_ai_strategy_guard SET next_review_at = #{next} WHERE scope_key = #{scope}
+    </update>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO okx_ai_strategy_review
+            (review_id, scope_key, started_at, expires_at, outcome, notification_status)
+        VALUES (#{reviewId}, #{scope}, #{startedAt}, #{expiresAt}, 'ANALYZING', 'NOT_REQUIRED')
+    </insert>
+    <update id="capture">
+        UPDATE okx_ai_strategy_review SET snapshot_json = #{snapshot}
+        WHERE review_id = #{id} AND outcome = 'ANALYZING'
+    </update>
+    <update id="proposed">
+        UPDATE okx_ai_strategy_review SET snapshot_json = #{snapshot}, proposal_json = #{proposal}, outcome = 'READY'
+        WHERE review_id = #{id} AND outcome = 'ANALYZING'
+    </update>
+    <update id="beginApplying">
+        UPDATE okx_ai_strategy_review SET outcome = 'APPLYING'
+        WHERE review_id = #{id} AND outcome = 'READY' AND expires_at &gt; #{now}
+    </update>
+    <update id="complete">
+        UPDATE okx_ai_strategy_review SET outcome = #{outcome}, detail = #{detail}, completed_at = #{now}
+        WHERE review_id = #{id} AND outcome IN ('ANALYZING', 'READY', 'APPLYING')
+    </update>
+    <select id="find" resultMap="review">
+        SELECT * FROM okx_ai_strategy_review WHERE review_id = #{id}
+    </select>
+    <update id="reserveNotification">
+        UPDATE okx_ai_strategy_review SET notification_status = 'SENDING'
+        WHERE review_id = #{id} AND notification_status = 'NOT_REQUIRED' AND completed_at IS NOT NULL
+    </update>
+    <update id="advanceNotification">
+        UPDATE okx_ai_strategy_guard SET notification_after = #{next}
+        WHERE scope_key = #{scope} AND notification_after &lt;= #{now}
+    </update>
+    <update id="notification">
+        UPDATE okx_ai_strategy_review SET notification_status = #{status}
+        WHERE review_id = #{id} AND notification_status IN ('NOT_REQUIRED', 'SENDING')
+    </update>
+    <select id="recent" resultMap="review">
+        SELECT * FROM okx_ai_strategy_review WHERE scope_key = #{scope} ORDER BY id DESC LIMIT #{limit}
+    </select>
+</mapper>

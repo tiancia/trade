@@ -6,6 +6,8 @@
 
 ## 运行依赖
 
+Trading AI 顾问默认关闭。环境变量、独立 Telegram Bot、数据库新增表及启停验收见 [Trading AI 策略顾问](TRADING_AI.md)。它使用独立的 `trading-ai` 自动任务，不阻塞交易决策和对账任务。
+
 - JDK 21；
 - MySQL，连接信息通过 `SPRING_DATASOURCE_*` 提供；
 - Redis 仅用于 trading 热行情缓存。环境没有 Redis 时设置 `TRADE_TRADING_HOT_MARKET_CACHE_ENABLED=false`；

@@ -7,6 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "trade.automation")
 public class AutomationProperties {
     private ModuleProperties trading = new ModuleProperties();
+    private ModuleProperties tradingAi = new ModuleProperties();
     private ModuleProperties polymarket = new ModuleProperties();
     private ModuleProperties story = new ModuleProperties();
     private ModuleProperties weibo = new ModuleProperties();

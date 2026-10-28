@@ -67,6 +67,20 @@ class StrategyConfigurationPersistenceTest {
     @Autowired StrategyConfigurationStore store;
     @TempDir Path temporary;
 
+    @Test void aiConfigurationFenceRejectsConcurrentEditAndRollsBackPartialWork() {
+        TradingStrategyRegistry registry = registry(new TradingProperties());
+        var initial = registry.configuration("threshold-event-default");
+        assertThrows(IllegalStateException.class, () -> store.withUnchangedVersions(Map.of(initial.strategyId(), 1L), () -> {
+            registry.updateConfiguration(initial.strategyId(), 1L, "AI pending", initial.params());
+            throw new IllegalStateException("maintenance failed");
+        }));
+        assertEquals(1, registry.configuration(initial.strategyId()).version());
+        assertEquals(1, registry.configurationHistory(initial.strategyId()).size());
+        registry.updateConfiguration(initial.strategyId(), 1L, "operator edit", initial.params());
+        assertThrows(ConcurrentModificationException.class, () -> store.withUnchangedVersions(Map.of(initial.strategyId(), 1L),
+                () -> fail("The AI cannot apply against a changed target strategy")));
+    }
+
     @Test
     void intradayConfigurationPersistsFullParametersAndRejectsInvalidCandidates() {
         TradingProperties properties = new TradingProperties();

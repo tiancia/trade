@@ -13,6 +13,8 @@ import java.util.function.UnaryOperator;
 public interface PaperAccountStore {
     PaperAccount active(String instId);
     PaperAccount session(String instId, String sessionId);
+    boolean changeStrategyWhileFlat(String instId, String sessionId, long expectedVersion,
+                                    java.util.function.BooleanSupplier action);
     PaperAccount start(String instId, String quoteCcy, BigDecimal initialCash,
                        String expectedSessionId, Long expectedVersion, Instant now);
     void delete(String instId, String sessionId, long expectedVersion);

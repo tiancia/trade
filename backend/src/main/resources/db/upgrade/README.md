@@ -60,6 +60,7 @@ MySQL DDL 会隐式提交，无法用事务回滚；脚本不能重复执行。�
 
 | 模块 / 脚本 | 作用 |
 | --- | --- |
+| [trading/2026-10-28-ai-strategy-advisor.sql](trading/2026-10-28-ai-strategy-advisor.sql) | 新增 AI 策略评估审计与跨实例评估/通知频率限制表；不保存凭据、不修改旧交易记录 |
 | [trading/2026-10-19-strategy-configuration.sql](trading/2026-10-19-strategy-configuration.sql) | 新增策略有效参数当前版本和不可变配置历史；独立新增表，不改写原策略选择及交易历史 |
 | [trading/migration_add_okx_paper_accounts.sql](trading/migration_add_okx_paper_accounts.sql) | 新增独立模拟批次、现金持仓、风险状态、幂等成交和估值曲线四张表；不迁入旧 PAPER 或交易所余额 |
 | [trading/migration_add_okx_order_idempotency_state_machine.sql](trading/migration_add_okx_order_idempotency_state_machine.sql) | OKX 订单幂等、乐观锁状态机与转换历史 |

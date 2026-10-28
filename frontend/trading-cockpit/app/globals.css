@@ -151,6 +151,15 @@ kbd { align-items: center; background: #171d24; border: 1px solid #27313b; borde
 .market-panel { min-width: 0; overflow: hidden; }
 .panel-heading { align-items: center; display: flex; justify-content: space-between; padding: 15px 16px; }
 .panel-heading h2 { font-size: 13px; font-weight: 600; margin: 5px 0 0; }
+.ai-advisor-panel { margin-bottom: 18px; }
+.ai-advisor-panel .panel-heading { gap: 16px; }
+.ai-advisor-panel .panel-note { color: var(--muted); font-size: 12px; line-height: 1.7; margin-bottom: 0; }
+.ai-advisor-empty, .ai-advisor-error { padding: 0 16px 14px; }
+.ai-advisor-error { color: #ef8b87; font-size: 12px; }
+.ai-advisor-review { border-top: 1px solid var(--line); padding: 12px 16px; font-size: 12px; overflow-wrap: anywhere; }
+.ai-advisor-review summary { cursor: pointer; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ai-advisor-review p { line-height: 1.7; white-space: pre-wrap; }
+.ai-advisor-review pre { overflow: auto; }
 .market-heading { border-bottom: 1px solid var(--line-soft); }
 .instrument-title { align-items: center; display: flex; gap: 10px; }
 .coin-mark { align-items: center; background: #f59b39; border-radius: 50%; color: #201005; display: flex; font-family: serif; font-size: 17px; font-weight: 800; height: 34px; justify-content: center; width: 34px; }
