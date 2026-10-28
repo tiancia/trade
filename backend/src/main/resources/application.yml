@@ -117,7 +117,7 @@ trade:
       # 应用就绪后是否启动交易决策、事件扫描、对账循环和行情运行时。
       auto-start: ${TRADE_AUTOMATION_TRADING_AUTO_START:true}
     trading-ai:
-      auto-start: ${TRADE_AUTOMATION_TRADING_AI_AUTO_START:false}
+      auto-start: ${TRADE_AUTOMATION_TRADING_AI_AUTO_START:true}
     polymarket:
       # 应用就绪后是否启动 Polymarket AI 决策循环。
       auto-start: ${TRADE_AUTOMATION_POLYMARKET_AUTO_START:false}
@@ -511,26 +511,26 @@ trade:
   # OKX 自动交易模块配置。
   trading:
     ai:
-      enabled: ${TRADE_TRADING_AI_ENABLED:false}
-      auto-apply: ${TRADE_TRADING_AI_AUTO_APPLY:false}
+      enabled: ${TRADE_TRADING_AI_ENABLED:true}
+      auto-apply: ${TRADE_TRADING_AI_AUTO_APPLY:true}
       review-interval-ms: ${TRADE_TRADING_AI_REVIEW_INTERVAL_MS:3600000}
       max-review-age-seconds: ${TRADE_TRADING_AI_MAX_REVIEW_AGE_SECONDS:300}
       candle-count: ${TRADE_TRADING_AI_CANDLE_COUNT:96}
       minimum-confidence: ${TRADE_TRADING_AI_MINIMUM_CONFIDENCE:0.80}
       telegram:
-        enabled: ${TRADE_TRADING_AI_TELEGRAM_ENABLED:false}
+        enabled: ${TRADE_TRADING_AI_TELEGRAM_ENABLED:true}
         chat-id: ${TRADE_TRADING_AI_TELEGRAM_CHAT_ID:}
         cooldown-ms: ${TRADE_TRADING_AI_TELEGRAM_COOLDOWN_MS:86400000}
         client:
-          enabled: ${TRADE_TRADING_AI_TELEGRAM_ENABLED:false}
+          enabled: ${TRADE_TRADING_AI_TELEGRAM_ENABLED:true}
           bot-token: ${TRADE_TRADING_AI_TELEGRAM_BOT_TOKEN:}
           base-url: ${TRADE_TRADING_AI_TELEGRAM_BASE_URL:https://api.telegram.org}
           connect-timeout-seconds: ${TRADE_TRADING_AI_TELEGRAM_CONNECT_TIMEOUT_SECONDS:10}
           request-timeout-seconds: ${TRADE_TRADING_AI_TELEGRAM_REQUEST_TIMEOUT_SECONDS:30}
           proxy:
-            enabled: ${TRADE_TRADING_AI_TELEGRAM_PROXY_ENABLED:false}
+            enabled: ${TRADE_TRADING_AI_TELEGRAM_PROXY_ENABLED:true}
             host: ${TRADE_TRADING_AI_TELEGRAM_PROXY_HOST:127.0.0.1}
-            port: ${TRADE_TRADING_AI_TELEGRAM_PROXY_PORT:7897}
+            port: ${TRADE_TRADING_AI_TELEGRAM_PROXY_PORT:13128}
     # 是否启用 OKX 策略交易；false 时调度任务会跳过策略评估和下单。
     enabled: ${TRADE_TRADING_ENABLED:true}
     # 交易标的 ID，例如 BTC-USDT。
