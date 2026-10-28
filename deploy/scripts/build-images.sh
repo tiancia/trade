@@ -8,7 +8,7 @@ PLATFORM=${BUILD_PLATFORM:-linux/amd64}
 OUTPUT_FILE="$ROOT_DIR/deploy/release.env"
 BASE_FILE="$ROOT_DIR/deploy/release.env"
 PUSH=false
-USE_PRIVATE_BASE_IMAGES=${USE_PRIVATE_BASE_IMAGES:-false}
+BASE_IMAGE_SOURCE=${BASE_IMAGE_SOURCE:-dockerhub}
 CACHE_DIR=''
 cache_temporary=''
 cache_backup=''
@@ -29,7 +29,7 @@ Usage: bash deploy/scripts/build-images.sh --registry NAMESPACE --tag VERSION [o
   --base FILE           Previous complete image manifest for partial builds;
                         defaults to deploy/release.env
   --push                Push selected images after every selected build succeeds
-  USE_PRIVATE_BASE_IMAGES=true  Pull pinned-version base image tags from --registry (must be seeded first)
+  BASE_IMAGE_SOURCE        dockerhub (default), daocloud (public mirror), or tcr (pre-seeded private mirror)
   --cache-dir DIR       Optional per-service local BuildKit cache (requires buildx);
                         disabled by default. Intended for restored runner caches.
   --help                Show this help
@@ -196,7 +196,7 @@ REGISTRY=${REGISTRY%/}
 [[ $VERSION =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || fail 'Supply a valid image tag of at most 128 characters'
 [[ $VERSION != latest ]] || fail 'Use an explicit version instead of latest so releases can be rolled back'
 [[ $PLATFORM =~ ^linux/(amd64|arm64)(/v[0-9]+)?$ ]] || fail 'Supported target platforms: linux/amd64 or linux/arm64'
-case "$USE_PRIVATE_BASE_IMAGES" in true|false) ;; *) fail 'USE_PRIVATE_BASE_IMAGES must be true or false' ;; esac
+case "$BASE_IMAGE_SOURCE" in dockerhub|daocloud|tcr) ;; *) fail 'BASE_IMAGE_SOURCE must be dockerhub, daocloud, or tcr' ;; esac
 command -v docker >/dev/null || fail 'docker is required'
 
 names=(backend cockpit x-console egress)
@@ -242,6 +242,7 @@ if ((${#TARGETS[@]} < ${#names[@]})); then
   done
 fi
 
+printf 'Build base image source: %s\n' "$BASE_IMAGE_SOURCE"
 images=()
 image_services=()
 for index in "${!names[@]}"; do
@@ -250,24 +251,39 @@ for index in "${!names[@]}"; do
   images+=("$image")
   image_services+=("${names[$index]}")
   references[${keys[$index]}]=$image
-  # Opt in only after the five base images have been mirrored into this registry.
-  # Keep the normal Docker Hub defaults for local builds and unseeded registries.
+  # Explicit registry references avoid the CNB runner's default Docker Hub mirror.
   base_args=()
-  if [[ $USE_PRIVATE_BASE_IMAGES == true ]]; then
+  if [[ $BASE_IMAGE_SOURCE != dockerhub ]]; then
+    if [[ $BASE_IMAGE_SOURCE == daocloud ]]; then
+      base_registry='m.daocloud.io/docker.io/library'
+      maven_image="$base_registry/maven:3.9.14-eclipse-temurin-21"
+      java_image="$base_registry/eclipse-temurin:21-jre-jammy"
+      node_image="$base_registry/node:22.23.3-bookworm-slim"
+      nginx_image="$base_registry/nginx:1.30.6-alpine"
+      alpine_image="$base_registry/alpine:3.22"
+    else
+      # TCR requires pre-seeded base image repositories, but CNB does not.
+      base_registry="$REGISTRY"
+      maven_image="$base_registry/base-maven:3.9.14-eclipse-temurin-21"
+      java_image="$base_registry/base-eclipse-temurin:21-jre-jammy"
+      node_image="$base_registry/base-node:22.23.3-bookworm-slim"
+      nginx_image="$base_registry/base-nginx:1.30.6-alpine"
+      alpine_image="$base_registry/base-alpine:3.22"
+    fi
     case "${names[$index]}" in
       backend)
-        base_args=(--build-arg "BUILD_JAVA_IMAGE=$REGISTRY/base-maven:3.9.14-eclipse-temurin-21"
-          --build-arg "RUNTIME_JAVA_IMAGE=$REGISTRY/base-eclipse-temurin:21-jre-jammy")
+        base_args=(--build-arg "BUILD_JAVA_IMAGE=$maven_image"
+          --build-arg "RUNTIME_JAVA_IMAGE=$java_image")
         ;;
       cockpit)
-        base_args=(--build-arg "NODE_IMAGE=$REGISTRY/base-node:22.23.3-bookworm-slim")
+        base_args=(--build-arg "NODE_IMAGE=$node_image")
         ;;
       x-console)
-        base_args=(--build-arg "NODE_IMAGE=$REGISTRY/base-node:22.23.3-bookworm-slim"
-          --build-arg "NGINX_IMAGE=$REGISTRY/base-nginx:1.30.6-alpine")
+        base_args=(--build-arg "NODE_IMAGE=$node_image"
+          --build-arg "NGINX_IMAGE=$nginx_image")
         ;;
       egress)
-        base_args=(--build-arg "ALPINE_IMAGE=$REGISTRY/base-alpine:3.22")
+        base_args=(--build-arg "ALPINE_IMAGE=$alpine_image")
         ;;
     esac
   fi
