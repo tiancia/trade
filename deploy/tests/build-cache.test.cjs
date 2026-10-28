@@ -116,7 +116,7 @@ function run(current, options = {}) {
   const result = cp.spawnSync(bash, ['-c',
     'export PATH="$TEST_CACHE_BIN:/usr/bin:/bin"\nexec bash "$TEST_BUILD_SCRIPT" "$@"', '--', ...args,
   ], {
-    env: { ...process.env, TEST_NODE: node, TEST_BUILD_SCRIPT: script,
+    env: { ...process.env, USE_PRIVATE_BASE_IMAGES: options.privateBases ?? "false", TEST_NODE: node, TEST_BUILD_SCRIPT: script,
       TEST_CACHE_BIN: current.posix('bin'), TEST_CACHE_MOCK: current.local('mock.cjs'),
       TEST_CACHE_STATE: current.local('state.json'), TEST_CACHE_AUDIT: current.local('audit.jsonl'),
     },
@@ -140,6 +140,39 @@ test('without cache-dir the original Docker commands and build-before-push order
   assert.match(result.stdout, /phase=build service=cockpit elapsed_seconds=\d+ status=success exit_code=0/);
   assert.match(result.stdout, /phase=push service=x-console elapsed_seconds=\d+ status=success exit_code=0/);
   assert.ok(!fs.existsSync(current.local('cache')));
+});
+
+test('private base mirror overrides all four services without changing output image tags', () => {
+  const current = fixture();
+  const result = run(current, {
+    cache: false, privateBases: 'true', services: ['backend', 'cockpit', 'x-console', 'egress'],
+  });
+  assert.equal(result.status, 0, result.diagnostic);
+  const expected = {
+    backend: ['BUILD_JAVA_IMAGE=' + registry + '/base-maven:3.9.14-eclipse-temurin-21',
+      'RUNTIME_JAVA_IMAGE=' + registry + '/base-eclipse-temurin:21-jre-jammy'],
+    cockpit: ['NODE_IMAGE=' + registry + '/base-node:22.23.3-bookworm-slim'],
+    'x-console': ['NODE_IMAGE=' + registry + '/base-node:22.23.3-bookworm-slim',
+      'NGINX_IMAGE=' + registry + '/base-nginx:1.30.6-alpine'],
+    egress: ['ALPINE_IMAGE=' + registry + '/base-alpine:3.22'],
+  };
+  for (const call of result.calls) {
+    const service = call[call.indexOf('--tag') + 1].split('/').at(-1).split(':')[0];
+    const args = [];
+    for (let i = 0; i < call.length; i++) if (call[i] === '--build-arg') args.push(call[i + 1]);
+    assert.deepEqual(args, expected[service]);
+  }
+  const invalid = run(fixture(), { cache: false, privateBases: 'sometimes' });
+  assert.notEqual(invalid.status, 0);
+  assert.deepEqual(invalid.calls, []);
+});
+
+test('private base image overrides also work with Buildx local cache', () => {
+  const result = run(fixture(), { privateBases: 'true', services: ['backend'] });
+  assert.equal(result.status, 0, result.diagnostic);
+  const call = result.calls[0];
+  assert.ok(call.includes('BUILD_JAVA_IMAGE=' + registry + '/base-maven:3.9.14-eclipse-temurin-21'));
+  assert.ok(call.includes('RUNTIME_JAVA_IMAGE=' + registry + '/base-eclipse-temurin:21-jre-jammy'));
 });
 
 test('first cached build exports fresh isolated caches for each selected service without importing absent caches', () => {
