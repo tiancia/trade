@@ -8,6 +8,7 @@ PLATFORM=${BUILD_PLATFORM:-linux/amd64}
 OUTPUT_FILE="$ROOT_DIR/deploy/release.env"
 BASE_FILE="$ROOT_DIR/deploy/release.env"
 PUSH=false
+USE_PRIVATE_BASE_IMAGES=${USE_PRIVATE_BASE_IMAGES:-false}
 CACHE_DIR=''
 cache_temporary=''
 cache_backup=''
@@ -28,6 +29,7 @@ Usage: bash deploy/scripts/build-images.sh --registry NAMESPACE --tag VERSION [o
   --base FILE           Previous complete image manifest for partial builds;
                         defaults to deploy/release.env
   --push                Push selected images after every selected build succeeds
+  USE_PRIVATE_BASE_IMAGES=true  Pull pinned-version base image tags from --registry (must be seeded first)
   --cache-dir DIR       Optional per-service local BuildKit cache (requires buildx);
                         disabled by default. Intended for restored runner caches.
   --help                Show this help
@@ -194,6 +196,7 @@ REGISTRY=${REGISTRY%/}
 [[ $VERSION =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || fail 'Supply a valid image tag of at most 128 characters'
 [[ $VERSION != latest ]] || fail 'Use an explicit version instead of latest so releases can be rolled back'
 [[ $PLATFORM =~ ^linux/(amd64|arm64)(/v[0-9]+)?$ ]] || fail 'Supported target platforms: linux/amd64 or linux/arm64'
+case "$USE_PRIVATE_BASE_IMAGES" in true|false) ;; *) fail 'USE_PRIVATE_BASE_IMAGES must be true or false' ;; esac
 command -v docker >/dev/null || fail 'docker is required'
 
 names=(backend cockpit x-console egress)
@@ -247,16 +250,37 @@ for index in "${!names[@]}"; do
   images+=("$image")
   image_services+=("${names[$index]}")
   references[${keys[$index]}]=$image
+  # Opt in only after the five base images have been mirrored into this registry.
+  # Keep the normal Docker Hub defaults for local builds and unseeded registries.
+  base_args=()
+  if [[ $USE_PRIVATE_BASE_IMAGES == true ]]; then
+    case "${names[$index]}" in
+      backend)
+        base_args=(--build-arg "BUILD_JAVA_IMAGE=$REGISTRY/base-maven:3.9.14-eclipse-temurin-21"
+          --build-arg "RUNTIME_JAVA_IMAGE=$REGISTRY/base-eclipse-temurin:21-jre-jammy")
+        ;;
+      cockpit)
+        base_args=(--build-arg "NODE_IMAGE=$REGISTRY/base-node:22.23.3-bookworm-slim")
+        ;;
+      x-console)
+        base_args=(--build-arg "NODE_IMAGE=$REGISTRY/base-node:22.23.3-bookworm-slim"
+          --build-arg "NGINX_IMAGE=$REGISTRY/base-nginx:1.30.6-alpine")
+        ;;
+      egress)
+        base_args=(--build-arg "ALPINE_IMAGE=$REGISTRY/base-alpine:3.22")
+        ;;
+    esac
+  fi
   if [[ -n $CACHE_DIR ]]; then
     if [[ ${names[$index]} == backend ]]; then
-      run_phase build "${names[$index]}" build_with_cache "${names[$index]}" "$image" "$ROOT_DIR" --file "$ROOT_DIR/backend/Dockerfile"
+      run_phase build "${names[$index]}" build_with_cache "${names[$index]}" "$image" "$ROOT_DIR" --file "$ROOT_DIR/backend/Dockerfile" "${base_args[@]}"
     else
-      run_phase build "${names[$index]}" build_with_cache "${names[$index]}" "$image" "$ROOT_DIR/${contexts[$index]}"
+      run_phase build "${names[$index]}" build_with_cache "${names[$index]}" "$image" "$ROOT_DIR/${contexts[$index]}" "${base_args[@]}"
     fi
   elif [[ ${names[$index]} == backend ]]; then
-    run_phase build "${names[$index]}" docker build --platform "$PLATFORM" --tag "$image" --file "$ROOT_DIR/backend/Dockerfile" "$ROOT_DIR"
+    run_phase build "${names[$index]}" docker build --platform "$PLATFORM" --tag "$image" --file "$ROOT_DIR/backend/Dockerfile" "${base_args[@]}" "$ROOT_DIR"
   else
-    run_phase build "${names[$index]}" docker build --platform "$PLATFORM" --tag "$image" "$ROOT_DIR/${contexts[$index]}"
+    run_phase build "${names[$index]}" docker build --platform "$PLATFORM" --tag "$image" "${base_args[@]}" "$ROOT_DIR/${contexts[$index]}"
   fi
 done
 
