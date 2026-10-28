@@ -266,6 +266,41 @@ bash deploy/scripts/release.sh rollback --no-pull
 
 发布成功后清理更早的本地应用镜像，保留当前、上一成功清单及容器引用的镜像。清理失败仅告警，不改变已成功发布的结果。CNB 不会自动同步 Compose、Nginx 或业务配置文件；这些文件变更需先同步服务器，再安排相应服务更新。
 
+### Docker Hub 基础镜像限流（429）时使用 TCR
+
+构建后端需要 Maven 和 Eclipse Temurin，其他服务还会使用 Node、Nginx、Alpine。
+CNB 托管 Docker/BuildKit 可能通过公共镜像站拉取这些基础镜像；公共镜像站返回
+`429 Too Many Requests` 时，即使 TCR 登录成功，构建仍会在 `FROM` 阶段失败。
+
+可把下列 **Linux amd64** 基础镜像事先同步到已有 TCR 命名空间
+`ccr.ccs.tencentyun.com/tiancia-trade`，再开启显式开关。此操作只改构建阶段的
+基础镜像来源，不修改最终业务镜像名称、发布/回滚清单或部署地址。
+
+1. 在腾讯云 TCR 命名空间 `tiancia-trade` 下确认有推送权限，并准备五个镜像仓库：
+   `base-maven`、`base-eclipse-temurin`、`base-node`、`base-nginx`、`base-alpine`。
+   如实例要求提前创建仓库，请先在控制台创建；镜像可设置私有访问。
+2. 在一台**能够正常访问 Docker Hub** 的机器上登录 TCR（不要把密码写进脚本或命令参数）。
+   例如在 Windows PowerShell 中先运行 `docker login ccr.ccs.tencentyun.com`，
+   按提示输入用户名和密码，然后从仓库根目录执行：
+
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy\scripts\sync-base-images.ps1
+   ```
+
+   脚本依次 `docker pull --platform linux/amd64`、`docker tag`、`docker push`，
+   同步五个固定版本的基础镜像。若本地 Docker 也被限流，需先修好本机拉取网络，
+   或改用另一台能访问 Docker Hub 的机器完成一次同步。
+3. 仅在五个镜像都推送成功后，在 CNB 所导入的私有配置
+   `tiancia/trade-ci-secrets` 的 `env.yml` 中设置环境变量
+   `USE_PRIVATE_BASE_IMAGES=true`，再触发原来的 CNB 构建任务。
+   具体键值写法需遵循该私有配置仓库现有格式；无需把 TCR 口令提交到 GitHub。
+   这一设置会让 `build-images.sh` 把四个服务的基础镜像切换到同一 TCR 命名空间。
+
+默认 `USE_PRIVATE_BASE_IMAGES=false`，未开启时仍然使用 Dockerfile 中的
+Docker Hub 镜像。若 TCR 基础镜像不存在，开启后构建会在基础镜像读取阶段失败；
+重新同步镜像或关闭开关即可恢复默认来源。后续应定期检查并同步基础镜像的安全更新，
+尤其在 Dockerfile 升级基础镜像版本之后，必须先同步对应的新标签。
+
 ### 构建缓存与耗时定位
 
 BuildKit 按服务保存本地 OCI 缓存，CNB 节点数据卷提供复用；节点变化或缓存淘汰后可能重新填充。构建脚本逐服务记录构建、推送和 `elapsed_seconds`；发布脚本通过 `DEPLOY_STAGE` 区分配置校验、镜像拉取、容器停止、重建与健康等待。依赖下载和推送发生在 CNB，`image_pull` 才是生产服务器下载。
