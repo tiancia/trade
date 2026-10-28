@@ -1210,6 +1210,7 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
   const [fills, setFills] = useState<PaperFill[]>([]);
   const [versionFilter, setVersionFilter] = useState("");
   const [loading, setLoading] = useState(true);
+  const [blockingLoad, setBlockingLoad] = useState(true);
   const [pending, setPending] = useState(false);
   const [morePending, setMorePending] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState({ equity: false, fills: false, sessions: false });
@@ -1219,6 +1220,7 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
   const [initialCash, setInitialCash] = useState("10000");
   const visibleSession = useRef<string | null>(null);
   const loadGeneration = useRef(0);
+  const loadedSelection = useRef<string | null>(null);
   const historyCache = useRef<{ sessionId: string; equity: PaperEquityPoint[]; fills: PaperFill[] } | null>(null);
   const available = dataMode === "live" && executionMode === "PAPER";
 
@@ -1227,10 +1229,15 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
     const timer = window.setTimeout(() => {
       loadGeneration.current += 1;
       if (!available) {
-        setCurrent(null); setAccount(null); setSessions([]); setEquity([]); setFills([]); setLoading(false); onCurrentChange(null);
+        loadedSelection.current = null;
+        setCurrent(null); setAccount(null); setSessions([]); setEquity([]); setFills([]); setLoading(false); setBlockingLoad(false); onCurrentChange(null);
         return;
       }
-      setLoading(true); setError(null); setAccount(null); setEquity([]); setFills([]); visibleSession.current = null;
+      // A refresh of the same selection keeps the existing panel in place.
+      // Switching sessions must not present the previous session as the new one.
+      const keepVisible = loadedSelection.current === selection;
+      setLoading(true); setBlockingLoad(!keepVisible); setError(null);
+      if (!keepVisible) { loadedSelection.current = null; setAccount(null); setEquity([]); setFills([]); visibleSession.current = null; }
       const load = async () => {
         const [active, list] = await Promise.all([
           request<PaperAccount | null>("/api/trading/paper/account", { signal: abort.signal }),
@@ -1250,10 +1257,15 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
         setEquity(mergedEquity); setFills(mergedFills); visibleSession.current = selected?.sessionId ?? null;
         historyCache.current = selected ? { sessionId: selected.sessionId, equity: mergedEquity, fills: mergedFills } : null;
         setHasMore({ equity: points.length === 100, fills: trades.length === 100, sessions: list.length === 20 });
+        loadedSelection.current = selection;
       };
       load().catch((failure) => {
-        if (!abort.signal.aborted) { setCurrent(null); onCurrentChange(null); setError(`模拟数据读取失败：${errorMessage(failure)}。请重新加载后操作。`); }
-      }).finally(() => { if (!abort.signal.aborted) setLoading(false); });
+        if (!abort.signal.aborted) {
+          if (!keepVisible) setCurrent(null);
+          onCurrentChange(null);
+          setError(`模拟数据读取失败：${errorMessage(failure)}。${keepVisible ? "当前显示上次读取的数据。" : ""}请重新加载后操作。`);
+        }
+      }).finally(() => { if (!abort.signal.aborted) { setLoading(false); setBlockingLoad(false); } });
     }, 0);
     return () => { window.clearTimeout(timer); abort.abort(); };
   }, [available, refreshToken, selection, reload, onCurrentChange]);
@@ -1313,7 +1325,7 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
     {executionMode !== "PAPER" ? <p className="empty-message">当前为 {executionMode} 模式。模拟资金操作仅在 PAPER 模式开放。</p> : !available ? <p className="empty-message">连接后端后，在这里设置初始资金并开始模拟。演示快照不会创建资金会话。</p> : <>
       {error && <p className="inline-error" role="alert">{error}</p>}
       {notice && <p className="inline-success" role="status">{notice}</p>}
-      {loading && <p className="empty-message" role="status"><LoaderCircle size={15} className="spin" />正在读取模拟资金与历史…</p>}
+      {blockingLoad && <p className="empty-message" role="status"><LoaderCircle size={15} className="spin" />正在读取模拟资金与历史…</p>}
       {!loading && !current && !error && <p className="empty-message">尚未设置模拟资金。创建第一个会话后，后续模拟成交会计入这笔资金。</p>}
       <details className="session-create" open={!current}>
         <summary>{current ? "设置新初始资金，开始独立模拟" : "设置初始资金"}</summary>
@@ -1321,7 +1333,7 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
         <p>新会话从零持仓开始。旧会话的资金、持仓与历史会保留为归档，不再继续模拟；当前资金不会被直接改写。</p>
       </details>
       {sessions.length > 0 && <div className="simulation-toolbar"><label><span>查看模拟会话</span><select aria-label="查看模拟会话" value={selection} disabled={loading || pending || Boolean(morePending)} onChange={(event) => { setSelection(event.target.value); setVersionFilter(""); setError(null); setNotice(null); }}><option value="">当前会话{current ? ` · ${current.sessionId}` : ""}</option>{sessions.filter((item) => item.sessionId !== current?.sessionId).map((item) => <option key={item.sessionId} value={item.sessionId}>{displayTimestamp(item.createdAt)} · {number(item.initialCash, 2)} {item.quoteCcy} · {item.sessionId}</option>)}</select></label>{hasMore.sessions && <button className="secondary-button" disabled={loading || Boolean(morePending)} onClick={() => void loadMore("sessions")}>更早会话</button>}</div>}
-      {account && !loading && <>
+      {account && !blockingLoad && <>
         <div className="session-identity"><span className={`status-badge ${account.status === "ACTIVE" ? "healthy" : "idle"}`}>{account.status === "ACTIVE" ? "当前模拟" : "历史归档"}</span><strong>{account.sessionId}</strong><span>{account.instId} · {account.quoteCcy}</span><span>{displayTimestamp(account.createdAt)} 开始</span></div>
         <dl className="capital-summary">
           <div><dt>资产净值</dt><dd>{number(account.equity, 2)}<small>{account.quoteCcy}</small></dd></div>

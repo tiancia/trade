@@ -128,6 +128,78 @@ function findElement(tree, predicate) {
   }
 }
 
+test("paper refresh keeps the displayed session until the new data arrives", async () => {
+  const state = [];
+  const refs = [];
+  const timers = [];
+  const pending = [];
+  let stateIndex = 0;
+  let refIndex = 0;
+  let effect;
+  const hooks = {
+    useState(initial) {
+      const index = stateIndex++;
+      if (!(index in state)) state[index] = typeof initial === "function" ? initial() : initial;
+      return [state[index], (value) => { state[index] = typeof value === "function" ? value(state[index]) : value; }];
+    },
+    useRef(initial) {
+      const index = refIndex++;
+      return refs[index] ??= { current: initial };
+    },
+    useEffect(callback) { effect = callback; },
+  };
+  const exports = {};
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const compiled = ts.transpileModule(`${source}\nexport { PaperSimulationPanel as testPaperPanel };`, {
+    fileName: "page.tsx", compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText;
+  vm.runInNewContext(compiled, {
+    exports, process: { env: {} }, URL, Headers, AbortController, AbortSignal,
+    window: { setTimeout: (callback) => timers.push(callback), clearTimeout() {} },
+    fetch(url) { return new Promise((resolve, reject) => pending.push({ url, resolve, reject })); },
+    require(name) {
+      if (name === "react") return hooks;
+      if (name === "react/jsx-runtime") return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
+      if (name === "lucide-react") return {};
+      if (name === "./lib/trading-api.mjs") return tradingApi;
+      throw new Error(`Unexpected import: ${name}`);
+    },
+  });
+  const render = () => { stateIndex = 0; refIndex = 0; return exports.testPaperPanel({ dataMode: "live", executionMode: "PAPER", refreshToken: 0, onCurrentChange() {} }); };
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const account = { id: 1, sessionId: "session-1", status: "ACTIVE", instId: "BTC-USDT", quoteCcy: "USDT", initialCash: 100, cash: 100, equity: 100, realizedPnl: 0, positionQuantity: 0, totalFeesQuote: 0 };
+  const archived = { ...account, id: 2, sessionId: "session-2", status: "ARCHIVED" };
+  render();
+  effect(); timers.shift()();
+  pending.shift().resolve(Response.json(account));
+  pending.shift().resolve(Response.json([account, archived]));
+  await flush();
+  pending.shift().resolve(Response.json([]));
+  pending.shift().resolve(Response.json([]));
+  await flush();
+  let tree = render();
+  assert.ok(findElement(tree, (node) => node.props?.className === "session-identity"));
+
+  effect(); timers.shift()();
+  tree = render();
+  assert.ok(findElement(tree, (node) => node.props?.className === "session-identity"), "refresh must not remove the session");
+  assert.ok(!findElement(tree, (node) => node.props?.children?.includes?.("正在读取模拟资金与历史…")), "refresh must not show the blocking placeholder");
+  pending.shift().reject(new Error("offline"));
+  pending.shift().resolve(Response.json([account]));
+  await flush();
+  tree = render();
+  assert.ok(findElement(tree, (node) => node.props?.className === "session-identity"), "failed refresh retains the last session");
+  assert.ok(findElement(tree, (node) => node.props?.role === "alert" && node.props.children.includes("当前显示上次读取的数据。")));
+  assert.equal(findElement(tree, (node) => node.type === "button" && node.props?.type === "submit").props.disabled, true);
+
+  findElement(tree, (node) => node.props?.["aria-label"] === "查看模拟会话").props.onChange({ target: { value: "session-2" } });
+  render();
+  effect(); timers.shift()();
+  tree = render();
+  assert.ok(!findElement(tree, (node) => node.props?.className === "session-identity"), "the old session must not be shown under a new selection");
+  assert.ok(findElement(tree, (node) => node.props?.children?.includes?.("正在读取模拟资金与历史…")));
+});
+
 function resolveSnapshot(pending, marker) {
   const values = [
     { executionMode: "LIVE", marker }, { accepted: marker }, [{ id: `strategy-${marker}` }],
