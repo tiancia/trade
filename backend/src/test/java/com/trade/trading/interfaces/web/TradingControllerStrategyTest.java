@@ -79,7 +79,7 @@ class TradingControllerStrategyTest {
         new TradingWebConfiguration(properties).addCorsMappings(cors);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.setCorsConfigurations(cors.configurations());
-        return MockMvcBuilders.standaloneSetup(controller).addFilters(new CorsFilter(source)).build();
+        return MockMvcBuilders.standaloneSetup(controller).addFilters(new CorsFilter(source)).setControllerAdvice(new TradingExceptionHandler()).build();
     }
 
     private static class ExposedCorsRegistry extends CorsRegistry {

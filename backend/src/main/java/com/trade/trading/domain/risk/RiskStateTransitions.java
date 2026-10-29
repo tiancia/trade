@@ -1,5 +1,7 @@
 package com.trade.trading.domain.risk;
 
+import static com.trade.trading.domain.model.TradingStateTimestamps.parseOrNull;
+
 import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.domain.model.TradingRiskState;
 import java.math.BigDecimal;
@@ -18,7 +20,7 @@ public final class RiskStateTransitions {
     public TradingRiskState refresh(TradingRiskState source, BigDecimal equity, Instant now) {
         TradingRiskState state = copyRiskState(source);
         initializeClosedTradeAccounting(state);
-        Instant cooldown = parseInstant(state.getLossCooldownUntil());
+        Instant cooldown = parseOrNull(state.getLossCooldownUntil());
         if (cooldown != null && !now.isBefore(cooldown)) {
             state.setLossCooldownUntil(null).setConsecutiveLosses(0);
         }
@@ -45,7 +47,7 @@ public final class RiskStateTransitions {
 
     /** A late fill or secondary risk update cannot move a committed trade time backwards. */
     public static String latestTradeTime(String previous, Instant occurredAt) {
-        Instant previousTime = parseInstant(previous);
+        Instant previousTime = parseOrNull(previous);
         return occurredAt == null || (previousTime != null && previousTime.isAfter(occurredAt))
                 ? previous : occurredAt.toString();
     }
@@ -88,7 +90,7 @@ public final class RiskStateTransitions {
                 if (policy.isEnabled()) {
                     boolean loss = state.getOpenTradeRealizedPnl().signum() < 0;
                     state.setConsecutiveLosses(loss ? state.getConsecutiveLosses() + 1 : 0);
-                    Instant until = parseInstant(state.getLossCooldownUntil());
+                    Instant until = parseOrNull(state.getLossCooldownUntil());
                     if (loss && policy.getMaxConsecutiveLosses() > 0
                             && state.getConsecutiveLosses() >= policy.getMaxConsecutiveLosses()
                             && (until == null || !now.isBefore(until))) {
@@ -137,17 +139,6 @@ public final class RiskStateTransitions {
                 .setConsecutiveReconciliationFailures(source.getConsecutiveReconciliationFailures())
                 .setLastReconciliationAt(source.getLastReconciliationAt())
                 .setLastReconciliationError(source.getLastReconciliationError());
-    }
-
-    private static Instant parseInstant(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        try {
-            return Instant.parse(value);
-        } catch (RuntimeException e) {
-            return null;
-        }
     }
 
     private static BigDecimal zeroIfNull(BigDecimal value) {

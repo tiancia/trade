@@ -39,7 +39,7 @@ class TradingControllerFundSafetyTest {
                 .setReason("incident");
         when(fundSafetyService.halt("operator-api", "incident")).thenReturn(halted);
 
-        MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new TradingExceptionHandler()).build();
         mvc.perform(post("/api/trading/safety/stop").contentType("application/json")
                         .content("{\"reason\":\"incident\"}"))
                 .andExpect(status().isOk())
@@ -63,7 +63,7 @@ class TradingControllerFundSafetyTest {
         TradingController controller = controller(fundSafetyService, mock(OrderReconciliationService.class));
         when(fundSafetyService.resume(3L, "reconciled", "RESUME_LIVE_TRADING"))
                 .thenReturn(new FundSafetyState().setStatus(FundSafetyStatus.ACTIVE));
-        MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new TradingExceptionHandler()).build();
         mvc.perform(post("/api/trading/safety/resume").contentType("application/json")
                         .content("{\"expectedVersion\":3,\"reason\":\"reconciled\",\"confirmation\":\"RESUME_LIVE_TRADING\"}"))
                 .andExpect(status().isOk())

@@ -30,7 +30,6 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.ConcurrentModificationException;
 import java.util.List;
 
 /**
@@ -81,16 +80,7 @@ public class TradingController {
     public ActiveStrategySelection activateStrategy(
             @RequestBody ActivateStrategyRequest request
     ) {
-        try {
-            if (request == null) {
-                throw new IllegalArgumentException("request body is required");
-            }
-            return strategySelectionService.activate(request.strategyId(), request.expectedRevision());
-        } catch (ConcurrentModificationException e) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage(), e);
-        } catch (IllegalArgumentException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage(), e);
-        }
+        return strategySelectionService.activate(request.strategyId(), request.expectedRevision());
     }
 
     @GetMapping("/runtime/status")
@@ -113,7 +103,7 @@ public class TradingController {
     public FundSafetyState stopFunds(
             @RequestBody FundStopRequest request
     ) {
-        if (request == null || request.reason() == null || request.reason().isBlank()) {
+        if (request.reason() == null || request.reason().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Fund stop reason is required");
         }
         return fundSafetyService.halt("operator-api", request.reason());
@@ -123,19 +113,12 @@ public class TradingController {
     public FundSafetyState resumeFunds(
             @RequestBody FundResumeRequest request
     ) {
-        if (request == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Request body is required");
-        }
         try {
             return fundSafetyService.resume(
                     request.expectedVersion(),
                     request.reason(),
                     request.confirmation()
             );
-        } catch (ConcurrentModificationException e) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage(), e);
-        } catch (IllegalArgumentException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage(), e);
         } catch (IllegalStateException e) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage(), e);
         }
@@ -169,11 +152,7 @@ public class TradingController {
     @PostMapping("/backtests")
     @ResponseStatus(HttpStatus.ACCEPTED)
     public BacktestRun startBacktest(@RequestBody BacktestRequest request) {
-        try {
-            return backtestService.start(request);
-        } catch (IllegalArgumentException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage(), e);
-        }
+        return backtestService.start(request);
     }
 
     @GetMapping("/backtests/{runId}")

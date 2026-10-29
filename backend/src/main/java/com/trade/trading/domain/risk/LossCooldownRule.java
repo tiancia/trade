@@ -1,5 +1,7 @@
 package com.trade.trading.domain.risk;
 
+import static com.trade.trading.domain.model.TradingStateTimestamps.parseOrNull;
+
 import java.time.Instant;
 import java.util.Optional;
 
@@ -10,7 +12,7 @@ public class LossCooldownRule implements RiskRule {
             return Optional.empty();
         }
 
-        Instant cooldownUntil = parseInstant(context.getRiskState().getLossCooldownUntil());
+        Instant cooldownUntil = parseOrNull(context.getRiskState().getLossCooldownUntil());
         Instant now = context.getNow();
         if (cooldownUntil == null || now == null || !now.isBefore(cooldownUntil)) {
             return Optional.empty();
@@ -23,16 +25,5 @@ public class LossCooldownRule implements RiskRule {
                         + ", cooldown until "
                         + cooldownUntil
         ));
-    }
-
-    private static Instant parseInstant(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        try {
-            return Instant.parse(value);
-        } catch (RuntimeException e) {
-            return null;
-        }
     }
 }

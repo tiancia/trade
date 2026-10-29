@@ -1,13 +1,13 @@
 package com.trade.trading.application.strategy;
 
+import static com.trade.trading.domain.model.TradingStateTimestamps.parseOrNull;
+
 import com.trade.trading.domain.model.ActiveStrategySelection;
 import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.port.TradingStateStore;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Autowired;
 
-import java.time.Instant;
-import java.time.format.DateTimeParseException;
 import java.util.List;
 
 /**
@@ -83,18 +83,7 @@ public class TradingStrategySelectionService {
         return new ActiveStrategySelection(
                 state.getActiveStrategyId(),
                 state.getActiveStrategyRevision(),
-                parseInstant(state.getActiveStrategyChangedAt())
+                parseOrNull(state.getActiveStrategyChangedAt())
         );
-    }
-
-    private static Instant parseInstant(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        try {
-            return Instant.parse(value);
-        } catch (DateTimeParseException ignored) {
-            return null;
-        }
     }
 }

@@ -1,5 +1,7 @@
 package com.trade.trading.domain.risk;
 
+import static com.trade.trading.domain.model.TradingStateTimestamps.parseOrNull;
+
 import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.domain.model.TradingRiskState;
 import java.time.Instant;
@@ -19,8 +21,8 @@ public final class FundSafetyPolicy {
     }
     public static void requireFreshSuccessfulReconciliation(FundSafetyState safetyState, TradingState tradingState) {
         TradingRiskState riskState = tradingState.getRiskState();
-        Instant positionAt = parseInstant(tradingState.getPositionLastReconciledAt());
-        Instant riskAt = parseInstant(riskState == null ? null : riskState.getLastReconciliationAt());
+        Instant positionAt = parseOrNull(tradingState.getPositionLastReconciledAt());
+        Instant riskAt = parseOrNull(riskState == null ? null : riskState.getLastReconciliationAt());
         Instant haltedAt = safetyState.getHaltedAt();
         boolean stalePosition = positionAt == null || (haltedAt != null && positionAt.isBefore(haltedAt));
         boolean staleRisk = riskAt == null || (haltedAt != null && riskAt.isBefore(haltedAt));
@@ -31,16 +33,6 @@ public final class FundSafetyPolicy {
             throw new IllegalStateException(
                     "Cannot resume before a successful order and position reconciliation after the fund stop"
             );
-        }
-    }
-    private static Instant parseInstant(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        try {
-            return Instant.parse(value);
-        } catch (RuntimeException e) {
-            return null;
         }
     }
     public static void requireNoPendingOrders(boolean exchangePending, boolean localPending) {

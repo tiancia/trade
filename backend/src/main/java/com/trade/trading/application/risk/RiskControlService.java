@@ -26,6 +26,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.UnaryOperator;
 
 /**
  * Coordinates risk-state persistence, domain evaluation, and assessment metrics.
@@ -116,11 +117,10 @@ public class RiskControlService {
                 .setCurrentEquity(currentEquity);
 
         List<RiskViolation> violations = new ArrayList<>();
-        for (RiskRule rule : rules) {
-            if (!riskProperties.isEnabled()) {
-                continue;
+        if (riskProperties.isEnabled()) {
+            for (RiskRule rule : rules) {
+                rule.evaluate(context).ifPresent(violations::add);
             }
-            rule.evaluate(context).ifPresent(violations::add);
         }
         if (violations.isEmpty()) {
             recordAssessment("allowed", "none", violations);
@@ -128,12 +128,8 @@ public class RiskControlService {
         }
 
         String reason = violations.getFirst().getReason();
-        if (paperRisk()) {
-            riskState = paperAccounts.updateRiskState(decisionContext,
-                    current -> RiskStateTransitions.copyRiskState(current).setLastRiskReason(reason));
-        } else {
-            riskState = stateRepository.updateRiskState(current -> RiskStateTransitions.copyRiskState(current).setLastRiskReason(reason));
-        }
+        riskState = updateRiskState(decisionContext,
+                current -> RiskStateTransitions.copyRiskState(current).setLastRiskReason(reason));
         recordAssessment("blocked", metricValue(violations.getFirst().getCode()), violations);
         return RiskAssessment.blocked(riskState, currentEquity, violations);
     }
@@ -145,12 +141,7 @@ public class RiskControlService {
 
         BigDecimal equity = TradingMarketInputs.estimatedEquity(decisionContext);
         Instant now = Instant.now(clock);
-        if (paperRisk()) {
-            paperAccounts.updateRiskState(decisionContext,
-                    current -> transitions().executed(current, decision.getAction(), equity, now));
-        } else {
-            stateRepository.updateRiskState(current -> transitions().executed(current, decision.getAction(), equity, now));
-        }
+        updateRiskState(decisionContext, current -> transitions().executed(current, decision.getAction(), equity, now));
     }
 
     /**
@@ -179,14 +170,13 @@ public class RiskControlService {
     private TradingRiskState refreshRiskState(TradingDecisionContext decisionContext) {
         BigDecimal equity = TradingMarketInputs.estimatedEquity(decisionContext);
         Instant now = Instant.now(clock);
-        if (paperRisk()) {
-            return paperAccounts.updateRiskState(decisionContext, current -> transitions().refresh(current, equity, now));
-        }
-        return stateRepository.updateRiskState(current -> transitions().refresh(current, equity, now));
+        return updateRiskState(decisionContext, current -> transitions().refresh(current, equity, now));
     }
 
-    private boolean paperRisk() {
-        return paperAccounts != null && properties.getExecutionMode() == ExecutionMode.PAPER;
+    private TradingRiskState updateRiskState(TradingDecisionContext context, UnaryOperator<TradingRiskState> transition) {
+        return paperAccounts != null && properties.getExecutionMode() == ExecutionMode.PAPER
+                ? paperAccounts.updateRiskState(context, transition)
+                : stateRepository.updateRiskState(transition);
     }
 
     private RiskStateTransitions transitions() {
@@ -213,7 +203,7 @@ public class RiskControlService {
         for (RiskViolation violation : violations) {
             Counter.builder("trade.trading.risk.violations")
                     .description("Trading risk rule violations")
-                    .tag("rule", metricValue(violation == null ? null : violation.getCode()))
+                    .tag("rule", metricValue(violation.getCode()))
                     .register(meterRegistry)
                     .increment();
         }

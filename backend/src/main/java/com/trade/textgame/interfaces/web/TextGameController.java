@@ -1,21 +1,15 @@
 package com.trade.textgame.interfaces.web;
 
 import com.trade.textgame.application.service.TextGameSessionService;
-import com.trade.textgame.domain.exception.TextGameConflictException;
-import com.trade.textgame.domain.exception.TextGameNotFoundException;
 import com.trade.textgame.domain.model.TextGameApi;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.Map;
 
 /**
  * Player-facing HTTP API for the text game.
@@ -68,24 +62,5 @@ public class TextGameController {
     public ResponseEntity<Void> delete(@PathVariable String sessionId) {
         service.deleteSession(sessionId);
         return ResponseEntity.noContent().build();
-    }
-
-    @ExceptionHandler(TextGameNotFoundException.class)
-    public ResponseEntity<Map<String, String>> notFound(TextGameNotFoundException e) {
-        return error(HttpStatus.NOT_FOUND, e.getMessage());
-    }
-
-    @ExceptionHandler(TextGameConflictException.class)
-    public ResponseEntity<Map<String, String>> conflict(TextGameConflictException e) {
-        return error(HttpStatus.CONFLICT, e.getMessage());
-    }
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<Map<String, String>> badRequest(IllegalArgumentException e) {
-        return error(HttpStatus.BAD_REQUEST, e.getMessage());
-    }
-
-    private static ResponseEntity<Map<String, String>> error(HttpStatus status, String message) {
-        return ResponseEntity.status(status).body(Map.of("error", message));
     }
 }

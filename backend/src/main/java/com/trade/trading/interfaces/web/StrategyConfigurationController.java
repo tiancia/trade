@@ -2,7 +2,6 @@ package com.trade.trading.interfaces.web;
 
 import com.trade.trading.application.strategy.TradingStrategyRegistry;
 import com.trade.trading.domain.model.StrategyConfigurationVersion;
-import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -10,9 +9,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.server.ResponseStatusException;
 
-import java.util.ConcurrentModificationException;
 import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashMap;
@@ -30,34 +27,19 @@ public class StrategyConfigurationController {
 
     @GetMapping
     public StrategyConfigurationVersion configuration(@PathVariable String strategyId) {
-        try {
-            return response(registry.configuration(strategyId));
-        } catch (IllegalArgumentException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage(), e);
-        }
+        return response(registry.configuration(strategyId));
     }
 
     @GetMapping("/history")
     public List<StrategyConfigurationVersion> history(@PathVariable String strategyId,
             @RequestParam(defaultValue = "0") int offset, @RequestParam(defaultValue = "100") int limit) {
-        try {
-            return registry.configurationHistory(strategyId, offset, limit).stream()
-                    .map(StrategyConfigurationController::response).toList();
-        } catch (IllegalArgumentException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage(), e);
-        }
+        return registry.configurationHistory(strategyId, offset, limit).stream()
+                .map(StrategyConfigurationController::response).toList();
     }
 
     @PutMapping
     public StrategyConfigurationVersion update(@PathVariable String strategyId, @RequestBody UpdateRequest request) {
-        try {
-            if (request == null) { throw new IllegalArgumentException("request body is required"); }
-            return response(registry.updateConfiguration(strategyId, request.expectedVersion(), request.reason(), request.params()));
-        } catch (ConcurrentModificationException e) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage(), e);
-        } catch (IllegalArgumentException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage(), e);
-        }
+        return response(registry.updateConfiguration(strategyId, request.expectedVersion(), request.reason(), request.params()));
     }
 
     public record UpdateRequest(Long expectedVersion, String reason, Map<String, Object> params) {}

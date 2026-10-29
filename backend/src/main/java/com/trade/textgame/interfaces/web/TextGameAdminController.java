@@ -2,8 +2,6 @@ package com.trade.textgame.interfaces.web;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.trade.textgame.application.service.TextGameAdminService;
-import com.trade.textgame.domain.exception.TextGameConflictException;
-import com.trade.textgame.domain.exception.TextGameNotFoundException;
 import com.trade.textgame.domain.model.StoryValidation;
 import com.trade.textgame.domain.model.TextGameAdminApi;
 import com.trade.textgame.infrastructure.config.TextGameProperties;
@@ -104,21 +102,6 @@ public class TextGameAdminController {
     @ExceptionHandler(UnauthorizedException.class)
     public ResponseEntity<Map<String, String>> unauthorized(UnauthorizedException e) {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", e.getMessage()));
-    }
-
-    @ExceptionHandler(TextGameNotFoundException.class)
-    public ResponseEntity<Map<String, String>> notFound(TextGameNotFoundException e) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
-    }
-
-    @ExceptionHandler(TextGameConflictException.class)
-    public ResponseEntity<Map<String, String>> conflict(TextGameConflictException e) {
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
-    }
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<Map<String, String>> badRequest(IllegalArgumentException e) {
-        return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
     }
 
     private void authorize(String supplied) {

@@ -14,7 +14,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class PaperAccountControllerTest {
     @Test void deletesVersionedSessionsAndMapsDeletionFailures() throws Exception {
         var service = mock(PaperAccountService.class);
-        var mvc = MockMvcBuilders.standaloneSetup(new PaperAccountController(service)).build();
+        var mvc = MockMvcBuilders.standaloneSetup(new PaperAccountController(service)).setControllerAdvice(new TradingExceptionHandler()).build();
         mvc.perform(delete("/api/trading/paper/sessions/trial?expectedVersion=2"))
                 .andExpect(status().isNoContent()).andExpect(content().string(""));
         verify(service).delete("trial", 2L);
@@ -29,7 +29,7 @@ class PaperAccountControllerTest {
 
     @Test void missingAccountReturnsJsonNullAndSessionHistoryIsBounded() throws Exception {
         var service = mock(PaperAccountService.class);
-        var mvc = MockMvcBuilders.standaloneSetup(new PaperAccountController(service)).build();
+        var mvc = MockMvcBuilders.standaloneSetup(new PaperAccountController(service)).setControllerAdvice(new TradingExceptionHandler()).build();
         mvc.perform(get("/api/trading/paper/account")).andExpect(status().isOk()).andExpect(content().string("null"));
         when(service.sessions(null, 20)).thenReturn(List.of());
         mvc.perform(get("/api/trading/paper/sessions")).andExpect(status().isOk()).andExpect(content().json("[]"));
@@ -42,7 +42,7 @@ class PaperAccountControllerTest {
 
     @Test void mapsInvalidInitializationRevisionConflictAndMissingHistory() throws Exception {
         var service = mock(PaperAccountService.class);
-        var mvc = MockMvcBuilders.standaloneSetup(new PaperAccountController(service)).build();
+        var mvc = MockMvcBuilders.standaloneSetup(new PaperAccountController(service)).setControllerAdvice(new TradingExceptionHandler()).build();
         when(service.start(new BigDecimal("-1"), null, null)).thenThrow(new IllegalArgumentException("Initial funds must be positive"));
         mvc.perform(post("/api/trading/paper/sessions").contentType("application/json").content("{\"initialCash\":-1}"))
                 .andExpect(status().isBadRequest());

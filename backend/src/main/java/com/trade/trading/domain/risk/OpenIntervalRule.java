@@ -1,5 +1,7 @@
 package com.trade.trading.domain.risk;
 
+import static com.trade.trading.domain.model.TradingStateTimestamps.parseOrNull;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
@@ -13,7 +15,7 @@ public class OpenIntervalRule implements RiskRule {
 
         RiskPolicy riskProperties = context.getPolicy();
         long minOpenIntervalMs = riskProperties.getMinOpenIntervalMs();
-        Instant lastTradeTime = parseInstant(context.getRiskState().getLastTradeTime());
+        Instant lastTradeTime = parseOrNull(context.getRiskState().getLastTradeTime());
         Instant now = context.getNow();
         if (minOpenIntervalMs <= 0 || lastTradeTime == null || now == null) {
             return Optional.empty();
@@ -32,16 +34,5 @@ public class OpenIntervalRule implements RiskRule {
                         + minOpenIntervalMs
                         + "ms"
         ));
-    }
-
-    private static Instant parseInstant(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        try {
-            return Instant.parse(value);
-        } catch (RuntimeException e) {
-            return null;
-        }
     }
 }

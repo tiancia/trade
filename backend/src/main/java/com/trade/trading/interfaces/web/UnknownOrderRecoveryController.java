@@ -11,7 +11,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.ConcurrentModificationException;
 import java.util.List;
 
 @RestController
@@ -30,16 +29,11 @@ public class UnknownOrderRecoveryController {
 
     @PostMapping("/{idempotencyKey}/abandon")
     public TradingOrder abandon(@PathVariable String idempotencyKey, @RequestBody AbandonRequest request) {
-        if (request == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Request body is required");
-        }
         try {
             return recovery.abandon(idempotencyKey, request.expectedVersion(), request.expectedSafetyVersion(),
                     request.clientOrderId(), request.operatorReference(), request.reason(), request.evidence(),
                     request.confirmation());
-        } catch (IllegalArgumentException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage(), e);
-        } catch (ConcurrentModificationException | IllegalStateException e) {
+        } catch (IllegalStateException e) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage(), e);
         }
     }

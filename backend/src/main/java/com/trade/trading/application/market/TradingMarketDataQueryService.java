@@ -108,7 +108,7 @@ public class TradingMarketDataQueryService {
     }
 
     private void publish(String instId, String bar, List<CandleResp> candles) {
-        if (candles == null || candles.isEmpty()) {
+        if (candles.isEmpty()) {
             return;
         }
         try {
@@ -173,9 +173,7 @@ public class TradingMarketDataQueryService {
     private final List<CandleResp> merge(int limit, List<CandleResp>... sources) {
         List<CandleResp> combined = new ArrayList<>();
         for (List<CandleResp> source : sources) {
-            if (source != null) {
-                combined.addAll(source);
-            }
+            combined.addAll(source);
         }
         return chronological(combined, limit);
     }
@@ -201,10 +199,9 @@ public class TradingMarketDataQueryService {
     }
 
     private Instant latestTimestamp(List<CandleResp> candles) {
-        if (candles == null || candles.isEmpty()) {
+        if (candles.isEmpty()) {
             return clock.instant();
         }
-        long timestamp = timestamp(candles.getLast());
-        return timestamp > 0L ? Instant.ofEpochMilli(timestamp) : clock.instant();
+        return Instant.ofEpochMilli(timestamp(candles.getLast()));
     }
 }

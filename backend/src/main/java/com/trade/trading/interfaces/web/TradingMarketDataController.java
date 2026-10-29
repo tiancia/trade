@@ -2,13 +2,11 @@ package com.trade.trading.interfaces.web;
 
 import com.trade.trading.application.market.CandleSeries;
 import com.trade.trading.application.market.TradingMarketDataQueryService;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import jakarta.servlet.http.HttpServletResponse;
 
@@ -35,11 +33,7 @@ public class TradingMarketDataController {
             HttpServletResponse response
     ) {
         response.setHeader("Cache-Control", "no-store");
-        try {
-            return marketDataQueryService.recentCandles(instId, bar, limit);
-        } catch (IllegalArgumentException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage(), e);
-        }
+        return marketDataQueryService.recentCandles(instId, bar, limit);
     }
 
     @GetMapping(path = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -49,11 +43,6 @@ public class TradingMarketDataController {
             @RequestParam(defaultValue = "80") int limit,
             HttpServletResponse response
     ) {
-        response.setHeader("Cache-Control", "no-store");
-        try {
-            return candleStream.subscribe(marketDataQueryService.recentCandles(instId, bar, limit));
-        } catch (IllegalArgumentException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage(), e);
-        }
+        return candleStream.subscribe(candles(instId, bar, limit, response));
     }
 }

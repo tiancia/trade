@@ -28,7 +28,7 @@ class StrategyConfigurationControllerTest {
                 .thenReturn(snapshot)
                 .thenThrow(new ConcurrentModificationException("Version changed"))
                 .thenThrow(new IllegalArgumentException("Invalid parameter"));
-        MockMvc mvc = MockMvcBuilders.standaloneSetup(new StrategyConfigurationController(registry)).build();
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new StrategyConfigurationController(registry)).setControllerAdvice(new TradingExceptionHandler()).build();
         String body = """
                 {"expectedVersion":2,"reason":"trigger adjustment","params":{"price-move-trigger-percent":0.02}}
                 """;
@@ -44,7 +44,7 @@ class StrategyConfigurationControllerTest {
     @Test
     void historyPassesBoundedPaginationToRegistry() throws Exception {
         when(registry.configurationHistory("threshold", 2, 10)).thenReturn(List.of());
-        MockMvc mvc = MockMvcBuilders.standaloneSetup(new StrategyConfigurationController(registry)).build();
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new StrategyConfigurationController(registry)).setControllerAdvice(new TradingExceptionHandler()).build();
         mvc.perform(get(ENDPOINT + "/history?offset=2&limit=10"))
                 .andExpect(status().isOk()).andExpect(content().json("[]"));
         verify(registry).configurationHistory("threshold", 2, 10);
@@ -58,7 +58,7 @@ class StrategyConfigurationControllerTest {
                 "price-move-window-candles", 5, "require-confirmed-candle", true));
         when(registry.configuration("threshold")).thenReturn(snapshot);
         when(registry.configurationHistory("threshold", 0, 100)).thenReturn(List.of(snapshot));
-        MockMvc mvc = MockMvcBuilders.standaloneSetup(new StrategyConfigurationController(registry)).build();
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new StrategyConfigurationController(registry)).setControllerAdvice(new TradingExceptionHandler()).build();
         mvc.perform(get(ENDPOINT)).andExpect(status().isOk())
                 .andExpect(jsonPath("$.params.price-move-trigger-percent").value("0.123456789012345678"))
                 .andExpect(jsonPath("$.params.price-move-window-candles").value(5))
