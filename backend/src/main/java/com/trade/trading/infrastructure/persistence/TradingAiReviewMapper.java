@@ -9,6 +9,7 @@ import java.util.List;
 public interface TradingAiReviewMapper {
     int insertGuard(@Param("scope") String scope);
     Instant lockGuard(@Param("scope") String scope);
+    Instant nextReviewAt(@Param("scope") String scope);
     int advanceReview(@Param("scope") String scope, @Param("next") Instant next);
     int insert(TradingAiReviewRow row);
     int capture(@Param("id") String id, @Param("snapshot") String snapshot);

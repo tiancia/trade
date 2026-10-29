@@ -1,5 +1,25 @@
 const EPOCH_MILLISECONDS_THRESHOLD = 100_000_000_000;
 
+/** The persisted eligibility window is distinct from the scheduler's one-minute polling tick. */
+export function aiReviewScheduleLabel(enabled, running, nextReviewAt, now = Date.now(), zone = "Asia/Shanghai") {
+  if (!enabled) return "AI 未启用";
+  if (running == null) return "任务状态待读取";
+  if (!running) return "AI 已暂停";
+  const next = apiTimestampMillis(nextReviewAt);
+  if (next == null) return "等待首次评估";
+  if (now >= next + 120_000) return "评估窗口已到，请检查任务运行状态与执行租约";
+  if (now >= next) return "已到评估窗口，等待任务调度";
+  return `下次评估窗口：${formatTradingTimestamp(next, zone)}`;
+}
+
+/** AI plans and their timestamps use the trading-day zone, regardless of browser/SSR timezone. */
+export function formatTradingTimestamp(value, zone = "Asia/Shanghai") {
+  const milliseconds = apiTimestampMillis(value);
+  if (milliseconds == null) return "暂无记录";
+  try { return new Date(milliseconds).toLocaleString("zh-CN", { timeZone: zone, hour12: false }); }
+  catch { return "时间或时区无效"; }
+}
+
 /**
  * A partial refresh must never promote demo funds, tasks or strategies to live data.
  * Once connected, an outage preserves the last real snapshot and its live controls.

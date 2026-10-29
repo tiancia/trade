@@ -46,6 +46,7 @@ class TradingAiReviewPersistenceTest {
     }
 
     @Test void concurrentWorkersClaimOnlyOnePaidAssessmentAndPersistCooldownAfterFailure() throws Exception {
+        assertNull(store.nextReviewAt("paper:BTC-USDT"));
         CountDownLatch start = new CountDownLatch(1);
         try (var executor = Executors.newFixedThreadPool(2)) {
             var first = executor.submit(() -> { start.await(); return claim("first", NOW); });
@@ -54,6 +55,7 @@ class TradingAiReviewPersistenceTest {
             assertNotEquals(first.get(5, TimeUnit.SECONDS), second.get(5, TimeUnit.SECONDS));
         }
         var only = store.recent("paper:BTC-USDT", 10).getFirst();
+        assertEquals(NOW.plusSeconds(3600), store.nextReviewAt("paper:BTC-USDT"));
         store.complete(only.reviewId(), "FAILED", "no response", NOW.plusSeconds(1));
         assertFalse(claim("third", NOW.plusSeconds(60)));
         assertTrue(claim("next", NOW.plusSeconds(3600)));

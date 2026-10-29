@@ -7,6 +7,8 @@ import com.trade.trading.port.PaperAccountStore;
 import com.trade.trading.port.TradingAiNotifier;
 import com.trade.trading.port.TradingAiReviewStore;
 import com.trade.trading.port.TradingMarketSource;
+import com.trade.trading.port.TradingStateStore;
+import com.trade.trading.domain.model.TradingDecisionRecord;
 import com.trade.trading.application.runtime.TradingLeadershipService;
 import com.trade.trading.domain.model.ActiveStrategySelection;
 import com.trade.trading.domain.model.ExecutionMode;
@@ -21,6 +23,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -46,6 +49,7 @@ public class TradingAiAdvisor {
     private final TradingAiNotifier notifier;
     private final TradingStrategyEngine engine;
     private final TradingLeadershipService leadership;
+    private final TradingStateStore state;
     private final Clock clock;
     private final ObjectMapper json = new ObjectMapper();
 
@@ -53,17 +57,20 @@ public class TradingAiAdvisor {
     public TradingAiAdvisor(TradingAiProperties ai, TradingProperties trading, TradingMarketSource market,
                             TradingStrategyRegistry registry, TradingStrategySelectionService selection,
                             PaperAccountStore paper, TradingAiReviewStore reviews, AiTextClient client,
-                            TradingAiNotifier notifier, TradingStrategyEngine engine, TradingLeadershipService leadership) {
-        this(ai, trading, market, registry, selection, paper, reviews, client, notifier, engine, leadership, Clock.systemUTC());
+                            TradingAiNotifier notifier, TradingStrategyEngine engine, TradingLeadershipService leadership,
+                            TradingStateStore state) {
+        this(ai, trading, market, registry, selection, paper, reviews, client, notifier, engine, leadership, state, Clock.systemUTC());
     }
 
     TradingAiAdvisor(TradingAiProperties ai, TradingProperties trading, TradingMarketSource market,
                      TradingStrategyRegistry registry, TradingStrategySelectionService selection,
                      PaperAccountStore paper, TradingAiReviewStore reviews, AiTextClient client,
-                     TradingAiNotifier notifier, TradingStrategyEngine engine, TradingLeadershipService leadership, Clock clock) {
+                     TradingAiNotifier notifier, TradingStrategyEngine engine, TradingLeadershipService leadership,
+                     TradingStateStore state, Clock clock) {
         this.ai = ai; this.trading = trading; this.market = market; this.registry = registry;
         this.selection = selection; this.paper = paper; this.reviews = reviews; this.client = client;
         this.notifier = notifier; this.engine = engine; this.leadership = leadership;
+        this.state = state;
         this.clock = clock;
     }
 
@@ -231,6 +238,20 @@ public class TradingAiAdvisor {
         return dailyContext(now, account);
     }
 
+    public Map<String, Object> assessmentStatus() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("observedAt", clock.instant().toString());
+        // Read the actual durable reservation: restarts/config changes do not erase paid-call cooldowns.
+        Instant next = reviews.nextReviewAt(scope());
+        result.put("nextReviewAt", next == null ? null : next.toString());
+        ActiveStrategySelection current = selection.current();
+        result.put("activeStrategyId", current.strategyId());
+        result.put("activeStrategyRevision", current.revision());
+        result.put("activeStrategyConfigVersion", current.strategyId() == null
+                ? null : registry.configuration(current.strategyId()).version());
+        return result;
+    }
+
     private TradingDay tradingDay(Instant now) {
         String zone = trading.getRisk().getDailyZone();
         return TradingDay.at(now, ZoneId.of(zone == null || zone.isBlank() ? "Asia/Shanghai" : zone));
@@ -242,6 +263,8 @@ public class TradingAiAdvisor {
         result.put("objective", "通过日内短线交易争取扣除交易成本后的净收益，按交易日选择策略、调整参数并复盘");
         result.put("tradingDate", day.date().toString());
         result.put("zone", day.zone().getId());
+        result.put("observedAtLocal", now.atZone(day.zone()).toOffsetDateTime().toString());
+        result.put("remainingMinutes", Duration.between(now, day.end()).toMinutes());
         result.put("validUntil", day.end().toString());
         result.put("targetMinClosedTrades", ai.getTargetMinClosedTradesPerDay());
         result.put("targetMaxClosedTrades", ai.getTargetMaxClosedTradesPerDay());
@@ -256,8 +279,37 @@ public class TradingAiAdvisor {
             result.put("sessionStartedAt", account.createdAt().toString());
             result.put("today", dailyPerformance(day, now, account));
             result.put("previousDay", dailyPerformance(day.previous(), now, account));
+            result.put("recentDecisionsNewestFirst", recentDecisions(day, now, account));
         }
         return result;
+    }
+
+    private List<Map<String, Object>> recentDecisions(TradingDay day, Instant now, PaperAccount account) {
+        // Local memory is a bounded diagnostic sample, never a substitute for ledger-based daily statistics.
+        return state.getState().getRecentDecisions().stream()
+                .filter(Objects::nonNull)
+                .filter(r -> r.getMetadata() != null
+                        && account.sessionId().equals(r.getMetadata().get("paperSessionId")))
+                .filter(r -> {
+                    try {
+                        Instant at = Instant.parse(r.getTimestamp());
+                        return !at.isBefore(day.start()) && !at.isBefore(account.createdAt()) && !at.isAfter(now);
+                    } catch (RuntimeException e) { return false; }
+                })
+                .sorted(Comparator.comparing((TradingDecisionRecord r) -> Instant.parse(r.getTimestamp())).reversed())
+                .limit(12)
+                .map(r -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("timestamp", r.getTimestamp());
+                    item.put("strategyId", r.getStrategyId());
+                    item.put("strategyConfigVersion", r.getStrategyConfigVersion());
+                    item.put("action", r.getAction());
+                    item.put("reason", r.getReason());
+                    item.put("executionStatus", r.getExecutionStatus());
+                    item.put("skipReason", r.getSkipReason());
+                    // Deliberately exclude raw errors, orders, balances and arbitrary metadata.
+                    return item;
+                }).toList();
     }
 
     private Map<String, Object> dailyPerformance(TradingDay day, Instant now, PaperAccount account) {
@@ -303,12 +355,20 @@ public class TradingAiAdvisor {
                 Your primary objective is positive intraday net P&L after entry/exit fees, spread and slippage,
                 subject to existing capital/risk controls. Plan and assess strategy changes by the calendar trading day
                 in dailyObjective, using current confirmed market evidence and the previous day's observed performance.
+                Use dailyObjective.observedAtLocal and remainingMinutes for local time and the time left today.
+                Timestamps ending in Z are UTC, not the trading-day local time; do not relabel them or reuse an old
+                review's remaining-time estimate. In the Chinese reason state local time with its UTC offset.
                 Aim for dailyObjective.targetMinClosedTrades to targetMaxClosedTrades completed round trips per day.
                 One round trip ends only when a SELL returns the position to zero; buys, partial exits and retries do not
                 count as additional completed trades. Attribute an overnight position's completion to its closing day.
                 This frequency is a flexible planning target, not a quota or an execution command. Risk controls and
                 net edge take priority; never force entries, churn positions, increase size or weaken gates to catch up.
                 Below target: explain whether market evidence supports a bounded signal adjustment or requires waiting.
+                Inspect dailyObjective.recentDecisionsNewestFirst to explain inactivity: no entry setup, cost/risk
+                rejection, missing/stale market data, or no recent decision evidence. These are at most 12 local
+                PAPER decisions from today's current session, not all-day counts; an empty sample is unknown.
+                Repeated HOLDs are not fills. Identify the concrete blocking reason and a permitted next step;
+                never try to repair runtime/data failures or bypass execution gates by relaxing signal parameters.
                 At/above target: protect net results and avoid churn; do not suppress protective exits to stay in range.
                 Prefer existing intraday strategies suited to today's trend/range/volatility. Do not optimize lifetime
                 returns in place of today's goal, promise profits, or infer achievable frequency from indicators alone.

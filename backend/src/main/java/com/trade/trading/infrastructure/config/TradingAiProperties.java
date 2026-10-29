@@ -11,7 +11,7 @@ import java.math.BigDecimal;
 public class TradingAiProperties {
     private boolean enabled = false;
     private boolean autoApply = false;
-    private long reviewIntervalMs = 86400000;
+    private long reviewIntervalMs = 1800000;
     private int targetMinClosedTradesPerDay = 5;
     private int targetMaxClosedTradesPerDay = 8;
     private int maxReviewAgeSeconds = 300;

@@ -31,7 +31,7 @@ public class TradingAiController {
                         && trading.getExecutionMode() == ExecutionMode.PAPER && "SPOT".equalsIgnoreCase(trading.getInstType()),
                 "executionMode", trading.getExecutionMode().name(), "reviewIntervalMs", ai.getReviewIntervalMs(),
                 "minimumConfidence", ai.getMinimumConfidence(), "telegramEnabled", ai.getTelegram().isEnabled(),
-                "daily", advisor.dailyStatus());
+                "daily", advisor.dailyStatus(), "assessment", advisor.assessmentStatus());
     }
     @GetMapping("/reviews")
     public List<TradingAiReview> reviews(@RequestParam(defaultValue = "20") int limit) {

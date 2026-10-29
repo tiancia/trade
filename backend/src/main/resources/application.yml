@@ -522,8 +522,8 @@ trade:
     ai:
       enabled: ${TRADE_TRADING_AI_ENABLED:true}
       auto-apply: ${TRADE_TRADING_AI_AUTO_APPLY:true}
-      # 默认每个交易日评估一次；可缩短为日内复评，沿用风控 daily-zone 的日界线。
-      review-interval-ms: ${TRADE_TRADING_AI_REVIEW_INTERVAL_MS:86400000}
+      # 按日统计目标，每 30 分钟复评；沿用风控 daily-zone 的日界线。
+      review-interval-ms: ${TRADE_TRADING_AI_REVIEW_INTERVAL_MS:1800000}
       target-min-closed-trades-per-day: ${TRADE_TRADING_AI_TARGET_MIN_CLOSED_TRADES_PER_DAY:5}
       target-max-closed-trades-per-day: ${TRADE_TRADING_AI_TARGET_MAX_CLOSED_TRADES_PER_DAY:8}
       max-review-age-seconds: ${TRADE_TRADING_AI_MAX_REVIEW_AGE_SECONDS:300}

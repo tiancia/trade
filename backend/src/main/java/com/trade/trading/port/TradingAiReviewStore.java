@@ -13,4 +13,5 @@ public interface TradingAiReviewStore {
     boolean claimNotification(String reviewId, Instant now, Instant nextNotificationAt);
     void notification(String reviewId, String status);
     List<TradingAiReview> recent(String scope, int limit);
+    Instant nextReviewAt(String scope);
 }

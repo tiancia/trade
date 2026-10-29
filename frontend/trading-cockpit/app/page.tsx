@@ -31,7 +31,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiTimestampMillis, backtestSelectionForStrategy, buildBacktestPayload, buildPaperSessionPayload, buildStrategyParametersPayload, createJsonRequestHeaders, decisionIndicatorEntries, filterConfigurationEvents, formatDateTimeLocal, formatReturnFraction, intradayModes, marketDataIsFresh, mergeContiguousHistory, parameterFieldsForStrategy, reconcileCockpitRefresh } from "./lib/trading-api.mjs";
+import { aiReviewScheduleLabel, apiTimestampMillis, backtestSelectionForStrategy, buildBacktestPayload, buildPaperSessionPayload, buildStrategyParametersPayload, createJsonRequestHeaders, decisionIndicatorEntries, filterConfigurationEvents, formatDateTimeLocal, formatReturnFraction, formatTradingTimestamp, intradayModes, marketDataIsFresh, mergeContiguousHistory, parameterFieldsForStrategy, reconcileCockpitRefresh } from "./lib/trading-api.mjs";
 
 type View = "overview" | "strategies" | "events" | "backtests";
 type ApiTimestamp = string | number;
@@ -888,7 +888,7 @@ export default function Home() {
             </section>
 
             <PaperSimulationPanel dataMode={dataMode} executionMode={dataMode === "live" && !runtimeConnected ? "运行模式未确认" : snapshot.runtime.executionMode} refreshToken={paperRefreshToken} onCurrentChange={setPaperCurrent} />
-            <TradingAiPanel key={dataMode} dataMode={dataMode} />
+            <TradingAiPanel key={dataMode} dataMode={dataMode} refreshToken={paperRefreshToken} clock={clock} />
 
             <div className="overview-grid">
               <section className="panel market-panel">
@@ -1207,13 +1207,17 @@ type AiDailyMetrics = { closedTrades: number; fillCount: number; realizedNetPnl:
 type AiDailyPeriod = { date: string; sessionCoverage: string; metrics: AiDailyMetrics };
 type AiAdvisorStatus = {
   enabled: boolean; autoApplyEligible: boolean; telegramEnabled: boolean; reviewIntervalMs: number;
+  assessment?: { observedAt: ApiTimestamp; nextReviewAt?: ApiTimestamp | null; activeStrategyId?: string;
+    activeStrategyRevision: number; activeStrategyConfigVersion?: number };
   daily?: { objective: string; tradingDate: string; zone: string; targetMinClosedTrades: number;
     targetMaxClosedTrades: number; performanceAvailable: boolean; unavailableReason?: string; quoteCcy?: string;
-    today?: AiDailyPeriod; previousDay?: AiDailyPeriod };
+    today?: AiDailyPeriod; previousDay?: AiDailyPeriod;
+    recentDecisionsNewestFirst?: { timestamp: ApiTimestamp; strategyId: string; strategyConfigVersion: number;
+      action: string; executionStatus: string; reason?: string; skipReason?: string }[] };
 };
 type AiAdvisorReview = { reviewId: string; startedAt: ApiTimestamp; outcome: string; detail: string; proposalJson?: string; notificationStatus: string };
 
-function TradingAiPanel({ dataMode }: { dataMode: "live" | "demo" }) {
+function TradingAiPanel({ dataMode, refreshToken, clock }: { dataMode: "live" | "demo"; refreshToken: number; clock: Date | null }) {
   const [status, setStatus] = useState<AiAdvisorStatus | null>(null);
   const [reviews, setReviews] = useState<AiAdvisorReview[]>([]);
   const [task, setTask] = useState<AutomationTask | null>(null);
@@ -1243,9 +1247,12 @@ function TradingAiPanel({ dataMode }: { dataMode: "live" | "demo" }) {
       finally { busy = false; }
     };
     void load();
-    const timer = window.setInterval(() => { void load(); }, 30_000);
-    return () => { controller.abort(); window.clearInterval(timer); };
-  }, [dataMode, refresh]);
+    // The global 30-second poll and manual sync share this refresh token.
+    // Refocusing a background tab also refreshes the panel immediately.
+    const focus = () => { void load(); };
+    window.addEventListener("focus", focus);
+    return () => { controller.abort(); window.removeEventListener("focus", focus); };
+  }, [dataMode, refresh, refreshToken]);
 
   const toggle = async () => {
     if (!task || changing.current) return;
@@ -1265,12 +1272,25 @@ function TradingAiPanel({ dataMode }: { dataMode: "live" | "demo" }) {
   const notifications: Record<string, string> = { NOT_REQUIRED: "无需通知", DISABLED: "通知未启用", THROTTLED: "通知冷却中",
     SENDING: "投递中／中断后需核对", SENT: "已通知", UNKNOWN: "投递结果未知", CONFIG_ERROR: "通知配置错误" };
   const daily = dataMode === "live" ? status?.daily : undefined;
+  const tradingZone = daily?.zone ?? "Asia/Shanghai";
+  const assessment = status?.assessment;
+  const lastDecision = daily?.recentDecisionsNewestFirst?.[0];
+  const reviewLoop = task?.loops.find(loop => loop.id === "review");
   return <section className="panel ai-advisor-panel">
     <div className="panel-heading">
       <div><h2>AI 策略顾问</h2><p className="panel-note">{dataMode === "demo" ? "演示模式不调用 AI" : !status ? "正在读取配置" : !status.enabled ? "未启用 · 配置环境变量后可开始评估" : `${task?.running ? "运行中" : "已暂停"} · ${status.autoApplyEligible ? "模拟空仓时自动调整" : "仅生成建议"} · ${status.reviewIntervalMs >= 86400000 ? "每日评估" : `日内复评间隔 ${Math.round(status.reviewIntervalMs / 60000)} 分钟`} · 独立 TG ${status.telegramEnabled ? "已启用" : "未启用"}`}</p></div>
-      {dataMode === "live" && <button className="secondary-button" disabled={!task || !status?.enabled || pending} onClick={() => void toggle()}>{pending ? "处理中…" : task?.running ? "暂停 AI" : "启动 AI"}</button>}
+      {dataMode === "live" && <div className="ai-advisor-actions">
+        <button className="secondary-button" onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} />同步 AI</button>
+        <button className="secondary-button" disabled={!task || !status?.enabled || pending || Boolean(error && !task.running)} onClick={() => void toggle()}>{pending ? "处理中…" : task?.running ? "暂停 AI" : "启动 AI"}</button>
+      </div>}
     </div>
     {error && <p className="ai-advisor-error" role="alert">{error}（保留上次读取结果）</p>}
+    {status && <div className="ai-advisor-goal">
+      <p>当前生效策略：{assessment?.activeStrategyId || "待读取"}{assessment?.activeStrategyConfigVersion != null ? ` · 参数 v${assessment.activeStrategyConfigVersion}` : ""}</p>
+      <p>最近评估：{reviews[0] ? formatTradingTimestamp(reviews[0].startedAt, tradingZone) : "暂无"} · {aiReviewScheduleLabel(status.enabled, task?.running, assessment?.nextReviewAt, clock?.getTime(), tradingZone)}</p>
+      <p className="panel-note">状态同步：{formatTradingTimestamp(assessment?.observedAt, tradingZone)}（{tradingZone}）。评估记录仅在 AI 实际运行后新增；同步页面不会触发付费评估。</p>
+      {reviewLoop?.lastRunSuccessful === false && <p className="ai-advisor-error">最近评估任务失败：{reviewLoop.lastError || "请检查后端任务状态"}</p>}
+    </div>}
     {daily && <div className="ai-advisor-goal">
       <p><strong>每日目标：{daily.targetMinClosedTrades}–{daily.targetMaxClosedTrades} 笔完整交易</strong> · {daily.tradingDate}（{daily.zone}）</p>
       <p>{daily.objective}。买入后卖出至空仓算一笔，次数可随行情调整，不为凑数放宽风控。</p>
@@ -1278,6 +1298,8 @@ function TradingAiPanel({ dataMode }: { dataMode: "live" | "demo" }) {
         <p>今日模拟：完成 {daily.today.metrics.closedTrades} 笔 · 成交动作 {daily.today.metrics.fillCount} 次 · 已实现净收益 {Number(daily.today.metrics.realizedNetPnl).toFixed(4)} {daily.quoteCcy} · 当日手续费 {Number(daily.today.metrics.feesQuote).toFixed(4)} {daily.quoteCcy}</p>
         {daily.previousDay && daily.previousDay.sessionCoverage !== "NO_SESSION_DATA" && <p>昨日模拟：完成 {daily.previousDay.metrics.closedTrades} 笔 · 已实现净收益 {Number(daily.previousDay.metrics.realizedNetPnl).toFixed(4)} {daily.quoteCcy}{daily.previousDay.sessionCoverage === "PARTIAL_DAY" ? "（会话仅覆盖部分时段）" : ""}</p>}
         <p className="panel-note">仅统计当前模拟会话{daily.today.sessionCoverage === "PARTIAL_DAY" ? "，今天为部分时段" : ""}。净收益已含分摊的买卖费用，不含未平仓浮动盈亏；跨日持仓计入平仓日。</p>
+        {lastDecision ? <p>最近执行检查：{formatTradingTimestamp(lastDecision.timestamp, tradingZone)} · {lastDecision.strategyId} v{lastDecision.strategyConfigVersion} · {lastDecision.action} / {lastDecision.executionStatus}<br />{lastDecision.skipReason || lastDecision.reason || "未记录原因"}</p>
+          : <p className="panel-note">当前会话今天暂无可用的近期决策记录，请核对交易自动化是否运行；AI 顾问与交易任务独立。</p>}
       </> : <p className="panel-note">{daily.unavailableReason || "当前无可用的日度成交统计"}</p>}
     </div>}
     {reviews.length === 0 && <p className="panel-note ai-advisor-empty">暂无评估记录。AI 不会修改策略代码；需要补充逻辑时会发送建议。</p>}
@@ -1285,7 +1307,7 @@ function TradingAiPanel({ dataMode }: { dataMode: "live" | "demo" }) {
       let proposal: { marketRegime?: string; strategyId?: string; parameters?: Record<string, unknown>; logicSuggestion?: string } = {};
       try { proposal = JSON.parse(review.proposalJson || "{}") ?? {}; } catch { /* Keep the durable outcome visible. */ }
       return <details key={review.reviewId} className="ai-advisor-review">
-        <summary><span>{outcomes[review.outcome] ?? review.outcome}</span><span>{displayTimestamp(review.startedAt)} · {notifications[review.notificationStatus] ?? review.notificationStatus}</span></summary>
+        <summary><span>{outcomes[review.outcome] ?? review.outcome}</span><span>{formatTradingTimestamp(review.startedAt, tradingZone)} · {notifications[review.notificationStatus] ?? review.notificationStatus}</span></summary>
         {proposal.marketRegime && <p>行情：{proposal.marketRegime}</p>}
         <p>{review.detail || "评估尚未完成；长时间无变化时请核对任务状态。"}</p>
         {proposal.strategyId && <p>目标策略：{proposal.strategyId}</p>}

@@ -10,6 +10,10 @@ import com.trade.trading.domain.paper.PaperDailyPerformance;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.trading.infrastructure.config.TradingAiProperties;
 import com.trade.trading.infrastructure.config.TradingProperties;
+import com.trade.trading.port.TradingStateStore;
+import com.trade.trading.domain.model.TradingState;
+import com.trade.trading.domain.model.TradingDecisionRecord;
+import com.trade.trading.domain.model.TradingAction;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -42,6 +46,7 @@ class TradingAiAdvisorTest {
     private final TradingStrategySelectionService selection = mock(TradingStrategySelectionService.class);
     private final TradingStrategyEngine engine = mock(TradingStrategyEngine.class);
     private final TradingLeadershipService leadership = mock(TradingLeadershipService.class);
+    private final TradingStateStore state = mock(TradingStateStore.class);
     private final Map<String, StrategyConfigurationVersion> saved = new HashMap<>();
     private TradingStrategyRegistry registry;
     private TradingAiAdvisor advisor;
@@ -49,6 +54,7 @@ class TradingAiAdvisorTest {
 
     @BeforeEach void setup() {
         when(clock.instant()).thenReturn(NOW);
+        when(state.getState()).thenReturn(new TradingState());
         ai.setEnabled(true); ai.setAutoApply(true); ai.setCandleCount(32);
         trading.getLeadership().setEnabled(false);
         StrategyConfigurationStore configs = mock(StrategyConfigurationStore.class);
@@ -76,7 +82,7 @@ class TradingAiAdvisorTest {
         when(reviews.claimNotification(anyString(), any(), any())).thenReturn(true);
         when(leadership.runIfLeader(anyString(), any())).thenAnswer(inv -> { ((Runnable) inv.getArgument(1)).run(); return true; });
         when(client.generateJson(anyString())).thenReturn(proposal("TUNE", STRATEGY, "{\"price-move-window-candles\":6}", "0.9", ""));
-        advisor = new TradingAiAdvisor(ai, trading, market, registry, selection, paper, reviews, client, notifier, engine, leadership, clock);
+        advisor = new TradingAiAdvisor(ai, trading, market, registry, selection, paper, reviews, client, notifier, engine, leadership, state, clock);
     }
 
     @Test void dailyGoalAndVersionBoundPerformanceReachAiAndAuditWithoutDoubleChargingFees() throws Exception {
@@ -95,6 +101,9 @@ class TradingAiAdvisorTest {
         var tree = new ObjectMapper().readTree(snapshot.getValue());
         var goal = tree.path("dailyObjective");
         assertEquals(day.date().toString(), goal.path("tradingDate").asText());
+        assertEquals(java.time.OffsetDateTime.parse("2026-10-28T14:00:00+08:00"),
+                java.time.OffsetDateTime.parse(goal.path("observedAtLocal").asText()));
+        assertEquals(600, goal.path("remainingMinutes").asLong());
         assertEquals(5, goal.path("targetMinClosedTrades").asInt());
         assertEquals(8, goal.path("targetMaxClosedTrades").asInt());
         assertEquals("ROUND_TRIP_CLOSED", goal.path("countUnit").asText());
@@ -105,7 +114,7 @@ class TradingAiAdvisorTest {
         assertEquals("previous", tree.path("previousReviewsNewestFirst").get(0).path("reviewId").asText());
         assertEquals(0, trading.getTakerFeeRate().compareTo(tree.path("executionConstraints").path("takerFeeRate").decimalValue()));
         verify(client).generateJson(argThat(p -> p.contains("never force entries") && p.contains("do not subtract feesQuote")));
-        verify(reviews).claim(anyString(), anyString(), any(), eq(day.end()), argThat(expiry -> !expiry.isAfter(day.end())));
+        verify(reviews).claim(anyString(), anyString(), any(), eq(now.plusSeconds(1800)), argThat(expiry -> !expiry.isAfter(day.end())));
         // Reaching the frequency target never disables strategy maintenance or risk management.
         verify(reviews).complete(anyString(), eq("APPLIED"), anyString(), any());
     }
@@ -121,6 +130,63 @@ class TradingAiAdvisorTest {
         clearInvocations(paper);
         assertEquals(false, advisor.dailyStatus().get("performanceAvailable"));
         verifyNoInteractions(paper);
+        verifyNoInteractions(state);
+    }
+
+    @Test void inactivityEvidenceIsBoundedToCurrentPaperSessionAndTradingDay() throws Exception {
+        var day = TradingDay.at(NOW, ZoneId.of("Asia/Shanghai"));
+        when(paper.active(anyString())).thenReturn(PaperAccount.start("session", "BTC-USDT", "USDT",
+                new BigDecimal("1000"), day.start().plusSeconds(60)));
+        List<TradingDecisionRecord> records = new ArrayList<>();
+        for (int i = 0; i < 15; i++) records.add(diagnostic(NOW.minusSeconds(i * 60L), "session"));
+        records.add(diagnostic(NOW.plusSeconds(1), "session"));
+        records.add(diagnostic(day.start().minusSeconds(1), "session"));
+        records.add(diagnostic(day.start().plusSeconds(30), "session"));
+        records.add(diagnostic(NOW, "previous-session"));
+        records.add(diagnostic(NOW, "session").setTimestamp("invalid"));
+        records.add(diagnostic(NOW, "session").setMetadata(null));
+        records.add(null);
+        when(state.getState()).thenReturn(new TradingState().setRecentDecisions(records));
+        advisor.review();
+        var snapshot = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(reviews).capture(anyString(), snapshot.capture());
+        var decisions = new ObjectMapper().readTree(snapshot.getValue())
+                .path("dailyObjective").path("recentDecisionsNewestFirst");
+        assertEquals(12, decisions.size());
+        assertEquals(NOW.toString(), decisions.get(0).path("timestamp").asText());
+        assertEquals("Entry gate blocked", decisions.get(0).path("skipReason").asText());
+        assertEquals(NOW.minusSeconds(660).toString(), decisions.get(11).path("timestamp").asText());
+        assertFalse(snapshot.getValue().contains("private-provider-error"));
+        assertFalse(snapshot.getValue().contains("private-order-id"));
+        verify(client).generateJson(argThat(p -> p.contains("Repeated HOLDs are not fills")
+                && p.contains("an empty sample is unknown")));
+    }
+
+    @Test void assessmentStatusReadsReservedWindowAndCurrentAppliedVersionWithoutRequestingAi() {
+        Instant reserved = NOW.plusSeconds(36000);
+        when(reviews.nextReviewAt(anyString())).thenReturn(reserved);
+        var status = advisor.assessmentStatus();
+        assertEquals(reserved.toString(), status.get("nextReviewAt"));
+        assertEquals(STRATEGY, status.get("activeStrategyId"));
+        assertEquals(1L, status.get("activeStrategyConfigVersion"));
+        verifyNoInteractions(client, market, paper);
+        when(reviews.nextReviewAt(anyString())).thenReturn(null);
+        assertNull(advisor.assessmentStatus().get("nextReviewAt"));
+    }
+
+    @Test void explicitlyConfiguredDailyIntervalStillEndsAtMidnight() {
+        ai.setReviewIntervalMs(86400000);
+        advisor.review();
+        verify(reviews).claim(anyString(), anyString(), eq(NOW),
+                eq(TradingDay.at(NOW, ZoneId.of("Asia/Shanghai")).end()), any());
+    }
+
+    private TradingDecisionRecord diagnostic(Instant at, String session) {
+        return new TradingDecisionRecord().setTimestamp(at.toString()).setStrategyId(STRATEGY)
+                .setStrategyConfigVersion(2).setAction(TradingAction.BUY).setExecutionStatus("SKIPPED")
+                .setSkipReason("Entry gate blocked").setReason("Signal present")
+                .setError("private-provider-error").setOrderId("private-order-id")
+                .setMetadata(Map.of("paperSessionId", session, "arbitraryData", "private-provider-error"));
     }
 
     @Test void newSessionDoesNotPretendToHaveYesterdaysHistory() {

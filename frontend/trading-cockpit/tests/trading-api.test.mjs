@@ -6,6 +6,8 @@ import ts from "typescript";
 import * as tradingApi from "../app/lib/trading-api.mjs";
 import {
   apiTimestampMillis,
+  aiReviewScheduleLabel,
+  formatTradingTimestamp,
   buildBacktestPayload,
   createJsonRequestHeaders,
   formatDateTimeLocal,
@@ -29,6 +31,31 @@ const request = {
   from: "2026-10-16T08:00",
   to: "2026-10-17T08:00",
 };
+
+test("AI schedule distinguishes paused, due, overdue and persisted future windows", () => {
+  const now = Date.parse("2026-10-29T06:00:00Z");
+  assert.equal(aiReviewScheduleLabel(false, true, now, now), "AI 未启用");
+  assert.equal(aiReviewScheduleLabel(true, undefined, now, now), "任务状态待读取");
+  assert.equal(aiReviewScheduleLabel(true, false, now, now), "AI 已暂停");
+  assert.equal(aiReviewScheduleLabel(true, true, null, now), "等待首次评估");
+  assert.match(aiReviewScheduleLabel(true, true, (now + 86400000) / 1000, now), /下次评估窗口/);
+  assert.equal(aiReviewScheduleLabel(true, true, now / 1000, now), "已到评估窗口，等待任务调度");
+  assert.match(aiReviewScheduleLabel(true, true, new Date(now - 120000).toISOString(), now), /检查任务运行状态/);
+});
+
+test("AI timestamps use the trading zone even in a UTC browser and preserve epoch seconds", () => {
+  const original = process.env.TZ;
+  try {
+    process.env.TZ = "UTC";
+    const instant = "2026-10-29T12:03:59Z";
+    assert.match(formatTradingTimestamp(instant, "Asia/Shanghai"), /20:03:59/);
+    assert.equal(formatTradingTimestamp(Date.parse(instant) / 1000, "Asia/Shanghai"), formatTradingTimestamp(instant, "Asia/Shanghai"));
+    assert.match(formatTradingTimestamp(instant, "America/New_York"), /8:03:59|08:03:59/);
+    assert.equal(formatTradingTimestamp(null), "暂无记录");
+  } finally {
+    if (original == null) delete process.env.TZ; else process.env.TZ = original;
+  }
+});
 
 test("market freshness requires a recent observation and the current candle period", () => {
   const now = Date.parse("2026-10-22T08:04:30Z");
@@ -136,6 +163,8 @@ async function mountPaperPanel(panelName = "PaperSimulationPanel", dataMode = "l
   let stateIndex = 0;
   let refIndex = 0;
   let effect;
+  let dependencies;
+  const listeners = {};
   const hooks = {
     useState(initial) {
       const index = stateIndex++;
@@ -146,7 +175,7 @@ async function mountPaperPanel(panelName = "PaperSimulationPanel", dataMode = "l
       const index = refIndex++;
       return refs[index] ??= { current: initial };
     },
-    useEffect(callback) { effect = callback; },
+    useEffect(callback, deps) { effect = callback; dependencies = deps; },
   };
   const exports = {};
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
@@ -155,7 +184,8 @@ async function mountPaperPanel(panelName = "PaperSimulationPanel", dataMode = "l
   }).outputText;
   vm.runInNewContext(compiled, {
     exports, process: { env: {} }, URL, Headers, AbortController, AbortSignal,
-    window: { setTimeout: (callback) => timers.push(callback), clearTimeout() {}, setInterval: (callback) => timers.push(callback), clearInterval() {} },
+    window: { setTimeout: (callback) => timers.push(callback), clearTimeout() {}, setInterval: (callback) => timers.push(callback), clearInterval() {},
+      addEventListener(name, callback) { listeners[name] = callback; }, removeEventListener(name) { delete listeners[name]; } },
     fetch(url, init) { return new Promise((resolve, reject) => pending.push({ url, init, resolve, reject })); },
     require(name) {
       if (name === "react") return hooks;
@@ -165,9 +195,9 @@ async function mountPaperPanel(panelName = "PaperSimulationPanel", dataMode = "l
       throw new Error(`Unexpected import: ${name}`);
     },
   });
-  const render = () => { stateIndex = 0; refIndex = 0; return exports.testPaperPanel({ dataMode, executionMode: "PAPER", refreshToken: 0, onCurrentChange() {} }); };
+  const render = (props = {}) => { stateIndex = 0; refIndex = 0; return exports.testPaperPanel({ dataMode, executionMode: "PAPER", refreshToken: 0, onCurrentChange() {}, ...props }); };
   const flush = () => new Promise((resolve) => setImmediate(resolve));
-  return { render, flush, pending, load() { const cleanup = effect(); timers.shift()?.(); return cleanup; } };
+  return { render, flush, pending, listeners, dependencies: () => dependencies, load() { const cleanup = effect(); timers.shift()?.(); return cleanup; } };
 }
 
 test("AI advisor preserves assessments during refresh and ignores reads overtaken by a task mutation", async () => {
@@ -184,7 +214,7 @@ test("AI advisor preserves assessments during refresh and ignores reads overtake
   load();
   tree = render();
   assert.ok(findElement(tree, node => node.type === "details"), "periodic refresh keeps the prior assessment visible");
-  const button = findElement(tree, node => node.type === "button");
+  const button = findElement(tree, node => node.type === "button" && node.props.children === "暂停 AI");
   assert.equal(button.props.children, "暂停 AI");
   button.props.onClick();
   const mutation = pending.pop();
@@ -196,7 +226,7 @@ test("AI advisor preserves assessments during refresh and ignores reads overtake
   pending.shift().resolve(Response.json(status)); pending.shift().resolve(Response.json([review])); pending.shift().resolve(Response.json(task));
   await flush();
   tree = render();
-  assert.equal(findElement(tree, node => node.type === "button").props.children, "启动 AI", "late read cannot undo the stop result");
+  assert.ok(findElement(tree, node => node.type === "button" && node.props.children === "启动 AI"), "late read cannot undo the stop result");
   load(); pending.shift().reject(new Error("offline")); pending.shift().resolve(Response.json([])); pending.shift().resolve(Response.json(task));
   await flush();
   tree = render();
@@ -209,6 +239,38 @@ test("AI advisor demo mode makes no provider or management requests", async () =
   render(); load();
   assert.equal(pending.length, 0);
   assert.equal(findElement(render(), node => node.type === "button"), undefined);
+});
+
+test("global AI refresh cancels old reads and focus reloads the latest applied strategy", async () => {
+  const panel = await mountPaperPanel("TradingAiPanel");
+  const task = { id: "trading-ai", running: true, loops: [] };
+  const status = { enabled: true, reviewIntervalMs: 1800000,
+    assessment: { activeStrategyId: "intraday-range-15m", activeStrategyConfigVersion: 4,
+      observedAt: "2026-10-29T12:00:00Z", nextReviewAt: "2026-10-29T12:30:00Z" } };
+  panel.render({ refreshToken: 10 });
+  const oldDependencies = [...panel.dependencies()];
+  const cleanup = panel.load();
+  const oldReads = panel.pending.splice(0);
+  cleanup();
+  panel.render({ refreshToken: 11 });
+  assert.notDeepEqual(panel.dependencies(), oldDependencies);
+  panel.load();
+  assert.ok(oldReads.every(item => item.init.signal.aborted));
+  panel.pending.shift().resolve(Response.json(status));
+  panel.pending.shift().resolve(Response.json([]));
+  panel.pending.shift().resolve(Response.json(task));
+  await panel.flush();
+  oldReads[0].resolve(Response.json({ ...status, assessment: { ...status.assessment, activeStrategyId: "old-trend", activeStrategyConfigVersion: 1 } }));
+  oldReads[1].resolve(Response.json([])); oldReads[2].resolve(Response.json(task));
+  await panel.flush();
+  const tree = JSON.stringify(panel.render({ refreshToken: 11 }));
+  assert.match(tree, /intraday-range-15m/);
+  assert.doesNotMatch(tree, /old-trend/);
+  panel.listeners.focus();
+  assert.equal(panel.pending.length, 3);
+  assert.ok(panel.pending.every(item => !item.init.method || item.init.method === "GET"));
+  for (const item of panel.pending.splice(0)) item.reject(new Error("offline"));
+  await panel.flush();
 });
 
 test("paper refresh keeps the displayed session until the new data arrives", async () => {

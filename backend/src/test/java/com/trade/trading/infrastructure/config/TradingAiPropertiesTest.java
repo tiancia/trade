@@ -15,7 +15,7 @@ class TradingAiPropertiesTest {
         var defaults = new TradingAiProperties(); defaults.validate();
         assertFalse(defaults.isEnabled()); assertFalse(defaults.isAutoApply());
         assertFalse(defaults.getTelegram().isEnabled());
-        assertEquals(86400000, defaults.getReviewIntervalMs());
+        assertEquals(1800000, defaults.getReviewIntervalMs());
         assertEquals(5, defaults.getTargetMinClosedTradesPerDay());
         assertEquals(8, defaults.getTargetMaxClosedTradesPerDay());
         var bound = new Binder(new MapConfigurationPropertySource(Map.of(

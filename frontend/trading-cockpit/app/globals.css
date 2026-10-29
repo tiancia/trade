@@ -152,7 +152,8 @@ kbd { align-items: center; background: #171d24; border: 1px solid #27313b; borde
 .panel-heading { align-items: center; display: flex; justify-content: space-between; padding: 15px 16px; }
 .panel-heading h2 { font-size: 13px; font-weight: 600; margin: 5px 0 0; }
 .ai-advisor-panel { margin-bottom: 18px; }
-.ai-advisor-panel .panel-heading { gap: 16px; }
+.ai-advisor-panel .panel-heading { gap: 16px; flex-wrap: wrap; }
+.ai-advisor-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .ai-advisor-panel .panel-note { color: var(--muted); font-size: 12px; line-height: 1.7; margin-bottom: 0; }
 .ai-advisor-empty, .ai-advisor-error { padding: 0 16px 14px; }
 .ai-advisor-error { color: #ef8b87; font-size: 12px; }

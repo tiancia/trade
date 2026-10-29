@@ -24,6 +24,9 @@
     <update id="advanceReview">
         UPDATE okx_ai_strategy_guard SET next_review_at = #{next} WHERE scope_key = #{scope}
     </update>
+    <select id="nextReviewAt" resultType="java.time.Instant" useCache="false">
+        SELECT next_review_at FROM okx_ai_strategy_guard WHERE scope_key = #{scope}
+    </select>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO okx_ai_strategy_review
             (review_id, scope_key, started_at, expires_at, outcome, notification_status)

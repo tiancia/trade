@@ -74,6 +74,9 @@ public class MyBatisTradingAiReviewStore implements TradingAiReviewStore {
     public void notification(String id, String status) { mapper.notification(id, status); }
 
     @Override @Transactional(readOnly = true)
+    public Instant nextReviewAt(String scope) { return mapper.nextReviewAt(scope); }
+
+    @Override @Transactional(readOnly = true)
     public List<TradingAiReview> recent(String scope, int limit) {
         if (limit < 1 || limit > 100) throw new IllegalArgumentException("limit must be from 1 to 100");
         return mapper.recent(scope, limit).stream().map(r -> new TradingAiReview(r.getReviewId(), r.getScope(),
