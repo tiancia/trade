@@ -39,6 +39,9 @@ import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.dao.ConcurrencyFailureException;
 import javax.sql.DataSource;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -62,6 +65,7 @@ class MyBatisPaperAccountStoreTest {
     @Autowired PaperAccountStore store;
     @Autowired DataSource dataSource;
     @Autowired JdbcTemplate jdbc;
+    @Autowired PlatformTransactionManager transactionManager;
 
     @BeforeEach void schema() throws Exception {
         jdbc.execute("DROP TABLE IF EXISTS okx_paper_equity");
@@ -358,6 +362,32 @@ class MyBatisPaperAccountStoreTest {
         }
         assertEquals(2, store.risk("BTC-USDT", account.sessionId()).getConsecutiveOpenActions());
         assertEquals(0, store.active("BTC-USDT").version());
+    }
+
+    @Test void riskTransitionCannotUseAnOlderRepeatableReadSnapshot() {
+        PaperAccount account = start("100");
+        var outer = new TransactionTemplate(transactionManager);
+        outer.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+        var concurrent = new TransactionTemplate(transactionManager);
+        concurrent.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+
+        try {
+            outer.executeWithoutResult(status -> {
+                assertEquals(0, store.risk("BTC-USDT", account.sessionId()).getConsecutiveOpenActions());
+                concurrent.executeWithoutResult(other -> store.updateRisk("BTC-USDT", account.sessionId(), 0,
+                        current -> current.setConsecutiveOpenActions(1)));
+                store.updateRisk("BTC-USDT", account.sessionId(), 0, current -> {
+                    assertEquals(1, current.getConsecutiveOpenActions(), "Transition must see the latest committed risk");
+                    return current.setConsecutiveOpenActions(2);
+                });
+            });
+        } catch (ConcurrencyFailureException retryRequired) {
+            // H2 can abort an old snapshot instead of returning MySQL's current
+            // locking read. Either outcome must preserve the committed risk.
+            assertEquals(1, store.risk("BTC-USDT", account.sessionId()).getConsecutiveOpenActions());
+            return;
+        }
+        assertEquals(2, store.risk("BTC-USDT", account.sessionId()).getConsecutiveOpenActions());
     }
 
     @Test void strategyMaintenanceFencesOldDecisionsAndRequiresSameFlatSession() {

@@ -44,7 +44,6 @@
             updated_at = #{updatedAt},
             version = version + 1
         WHERE account_scope = #{accountScope}
-          AND status &lt;&gt; 'HALTED'
     </update>
 
     <update id="resume">

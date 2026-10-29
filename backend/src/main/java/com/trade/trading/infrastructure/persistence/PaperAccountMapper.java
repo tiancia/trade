@@ -15,7 +15,9 @@ public interface PaperAccountMapper {
     String lockHead(String instId);
     int updateHead(@Param("instId") String instId, @Param("sessionId") String sessionId);
     PaperAccountRow active(String instId);
+    PaperAccountRow lockActive(String instId);
     PaperAccountRow session(@Param("instId") String instId, @Param("sessionId") String sessionId);
+    PaperAccountRow lockSession(@Param("instId") String instId, @Param("sessionId") String sessionId);
     int insertSession(PaperAccountRow row);
     int updateSession(PaperAccountRow row);
     int advanceVersion(@Param("sessionId") String sessionId, @Param("expectedVersion") long expectedVersion);

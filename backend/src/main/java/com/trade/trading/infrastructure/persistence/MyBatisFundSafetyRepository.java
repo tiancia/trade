@@ -46,6 +46,8 @@ public class MyBatisFundSafetyRepository implements FundSafetyRepository {
     @Transactional
     public FundSafetyState halt(String accountScope, String source, String reason, Instant haltedAt) {
         getOrCreate(accountScope);
+        // Every new stop invalidates any resume already checking the exchange,
+        // including when the row was HALTED before this request arrived.
         mapper.halt(accountScope, source, reason, haltedAt, Instant.now());
         return required(accountScope);
     }

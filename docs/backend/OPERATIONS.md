@@ -205,6 +205,8 @@ Invoke-RestMethod http://127.0.0.1:8080/api/trading/safety
 
 停止顺序是：MySQL `okx_fund_safety_state=HALTED` -> 设置 OKX cancel-all-after -> 查询并逐笔撤销挂单。应用启动和后续对账循环都会重申该交换所侧停止；若进程失联，则由已设置的 cancel-all-after 在超时后兜底。即使撤单 API 失败，新单仍被本地持久化门禁阻止；此时 `lastActionError` 非空，需要在 OKX 控制台人工核对。
 
+每次新的资金停止请求都会增加 `version` 并更新停止原因和时间，即使此前已经 HALTED。这样，正在执行交易所检查的旧恢复请求也会因版本冲突被拒绝；必须在最近一次停止后重新完成对账、读取当前版本再恢复。后台 `enforceIfHalted` 仅重申交易所撤单，不产生新的停止版本。
+
 定时器设置失败后仍尝试查询并撤单，单笔撤单失败后仍处理其他订单；`lastActionError` 聚合这些失败。不能把本地停止成功等同于交易所全部撤单成功。
 
 交易所响应必须包含唯一、完整的确认项，不能仅凭顶层 `code=0` 判断成功。cancel-all-after 使用专用响应字段：启用时要求 `triggerTime > ts > 0`，恢复前关闭时要求 `triggerTime=0` 且 `ts>0`；缺失、错误或仍启用的定时器确认会阻止恢复，资金状态保持 HALTED。启用超时必须在 10–120 秒内。逐笔撤单需要 `sCode=0` 和匹配的订单身份；确认仅代表撤单请求被接受，最终成交与撤单状态仍由对账推进。协议依据见 [OKX Cancel All After](https://www.okx.com/docs-v5/en/#order-book-trading-trade-post-cancel-all-after)。

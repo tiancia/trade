@@ -245,6 +245,24 @@ class MyBatisTradingFinancialStateStoreTest {
     }
 
     @Test
+    void anotherStopInvalidatesAResumeThatAlreadyReadTheHaltedRevision() {
+        var firstStop = fundSafetyRepository.halt("live", "operator-api", "first incident", Instant.now());
+        // A resume request has read this version and is checking the exchange.
+        long resumeVersion = firstStop.getVersion();
+        Instant secondStopAt = Instant.now().plusSeconds(1);
+        var secondStop = fundSafetyRepository.halt("live", "operator-api", "new incident", secondStopAt);
+
+        assertThrows(ConcurrentModificationException.class, () -> fundSafetyRepository.resume(
+                "live", resumeVersion, "old checks finished", Instant.now()));
+        assertEquals(resumeVersion + 1, secondStop.getVersion());
+        assertEquals("new incident", secondStop.getReason());
+        assertEquals(secondStopAt.getEpochSecond(), secondStop.getHaltedAt().getEpochSecond());
+        assertEquals(FundSafetyStatus.HALTED, fundSafetyRepository.getOrCreate("live").getStatus());
+        assertEquals(FundSafetyStatus.ACTIVE, fundSafetyRepository.resume(
+                "live", secondStop.getVersion(), "fresh checks finished", Instant.now()).getStatus());
+    }
+
+    @Test
     void rejectedSellRollsBackLedgerAndLeavesManagedPositionUntouched() {
         store.getOrCreatePosition("live", "BTC-USDT", BigDecimal.ONE, BigDecimal.TEN);
         assertThrows(IllegalStateException.class, () -> store.applyCumulativeSpotFill(

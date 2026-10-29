@@ -10,8 +10,16 @@
     <select id="active" resultType="com.trade.trading.infrastructure.persistence.PaperAccountRow">
         SELECT <include refid="accountColumns"/> FROM okx_paper_sessions s JOIN okx_paper_account_heads h ON s.session_id=h.session_id WHERE h.inst_id=#{instId}
     </select>
+    <!-- Writers may join a transaction with an older REPEATABLE READ snapshot.
+         Locking only the head does not refresh subsequent nonlocking reads. -->
+    <select id="lockActive" resultType="com.trade.trading.infrastructure.persistence.PaperAccountRow" flushCache="true" useCache="false">
+        SELECT <include refid="accountColumns"/> FROM okx_paper_sessions s JOIN okx_paper_account_heads h ON s.session_id=h.session_id WHERE h.inst_id=#{instId} FOR UPDATE
+    </select>
     <select id="session" resultType="com.trade.trading.infrastructure.persistence.PaperAccountRow">
         SELECT <include refid="accountColumns"/> FROM okx_paper_sessions s WHERE s.inst_id=#{instId} AND s.session_id=#{sessionId}
+    </select>
+    <select id="lockSession" resultType="com.trade.trading.infrastructure.persistence.PaperAccountRow" flushCache="true" useCache="false">
+        SELECT <include refid="accountColumns"/> FROM okx_paper_sessions s WHERE s.inst_id=#{instId} AND s.session_id=#{sessionId} FOR UPDATE
     </select>
     <insert id="insertSession" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO okx_paper_sessions(session_id,inst_id,quote_ccy,status,initial_cash,cash,position_quantity,position_cost,realized_pnl,total_fees_quote,last_price,valuation_at,version,risk_state_json,created_at,updated_at)

@@ -81,7 +81,7 @@ public class MyBatisPaperAccountStore implements PaperAccountStore {
     public void delete(String instId, String sessionId, long expectedVersion) {
         // Use the same head lock as fills, marks and session replacement, even for archived trials.
         PaperAccount current = lock(instId);
-        PaperAccount target = session(instId, sessionId);
+        PaperAccount target = account(mapper.lockSession(instId, sessionId));
         if (target == null) throw new NoSuchElementException("Simulation session not found");
         if (target.version() != expectedVersion) conflict();
         if (current != null && Objects.equals(current.sessionId(), sessionId)
@@ -147,7 +147,7 @@ public class MyBatisPaperAccountStore implements PaperAccountStore {
         update(next);
         // Last trade time, action counters and round-trip PnL commit with cash,
         // position and the unique fill; replay never repeats this transition.
-        TradingRiskState riskState = risk(command.instId(), next.sessionId());
+        TradingRiskState riskState = lockedRisk(command.instId(), next.sessionId());
         riskState = new RiskStateTransitions(command.riskPolicy()).filled(riskState,
                 com.trade.trading.domain.model.TradingAction.valueOf(command.side()), next.equity(),
                 "BUY".equals(command.side()) && current.positionQuantity().signum() == 0,
@@ -183,7 +183,7 @@ public class MyBatisPaperAccountStore implements PaperAccountStore {
         PaperAccount current = lock(instId);
         if (current == null || !Objects.equals(current.sessionId(), sessionId)
                 || current.version() != expectedAccountVersion) conflict();
-        TradingRiskState stored = risk(instId, sessionId);
+        TradingRiskState stored = lockedRisk(instId, sessionId);
         String committedTradeTime = stored.getLastTradeTime();
         TradingRiskState next = Objects.requireNonNull(transition.apply(stored), "Risk transition result must not be null");
         next.setLastTradeTime(RiskStateTransitions.latestTradeTime(next.getLastTradeTime(),
@@ -191,11 +191,18 @@ public class MyBatisPaperAccountStore implements PaperAccountStore {
         if (mapper.updateRisk(sessionId, write(next)) != 1) conflict();
         return next;
     }
+    private TradingRiskState lockedRisk(String instId, String sessionId) {
+        PaperAccountRow row = mapper.lockSession(instId, sessionId);
+        if (row == null) throw new IllegalStateException("Simulation session not found");
+        return read(row.getRiskStateJson());
+    }
 
     private PaperAccount lock(String instId) {
         initializeOnce(instId, () -> mapper.insertHeadIfAbsent(instId), () -> mapper.lockHead(instId) != null);
         mapper.lockHead(instId);
-        return active(instId);
+        // Use current reads for all monetary facts, not an outer transaction's
+        // earlier snapshot. The head remains the common lock-order entry point.
+        return account(mapper.lockActive(instId));
     }
     private void update(PaperAccount account) {
         if (mapper.updateSession(row(account)) != 1) conflict();
