@@ -13,6 +13,17 @@ class OkxDtoMappingTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
+    void mapsCancelAllAfterTimerConfirmation() throws Exception {
+        String json = """
+                {"code":"0","msg":"","data":[{"triggerTime":"0","ts":"1587971400","tag":""}]}
+                """;
+        CancelAllAfterResp response = read(json, CancelAllAfterResp.class).getData().getFirst();
+        assertEquals("0", response.getTriggerTime());
+        assertEquals("1587971400", response.getTs());
+        assertEquals("", response.getTag());
+    }
+
+    @Test
     void mapsTickerResponse() throws Exception {
         String json = """
                 {

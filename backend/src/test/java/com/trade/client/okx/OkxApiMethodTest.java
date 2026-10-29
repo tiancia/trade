@@ -3,6 +3,8 @@ package com.trade.client.okx;
 import com.trade.client.okx.dto.OkxResponse;
 import com.trade.client.okx.dto.AccountBalanceReq;
 import com.trade.client.okx.dto.CancelOrderReq;
+import com.trade.client.okx.dto.CancelAllAfterReq;
+import com.trade.client.okx.dto.CancelAllAfterResp;
 import com.trade.client.okx.dto.CandlesReq;
 import com.trade.client.okx.dto.FillsReq;
 import com.trade.client.okx.dto.InstrumentInfoReq;
@@ -30,6 +32,17 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 class OkxApiMethodTest {
+
+    @Test
+    void cancelAllAfterDeserializesTheTimerAcknowledgement() {
+        OkxRestClient client = mock(OkxRestClient.class);
+        OkxApi api = new OkxApi(client);
+        CancelAllAfterReq request = new CancelAllAfterReq().setTimeOut("0");
+
+        api.cancelAllAfter(request);
+
+        verify(client).post(eq(OkxEndpoints.TRADE_CANCEL_ALL_AFTER), same(request), eq(true), eq(CancelAllAfterResp.class));
+    }
 
     @Test
     void routesCandlesToBusinessWhileTickersRemainPublic() {

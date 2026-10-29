@@ -200,6 +200,43 @@ class OrderReconciliationServiceTest {
     }
 
     @Test
+    void incompleteCancellationStaysUnresolvedUntilItsPartialFillCanBeSettled() {
+        Fixture fixture = fixture("cancel-missing-total");
+        when(fixture.okx().getOrder(any())).thenReturn(OkxResponse.success(List.of(exchange("canceled", null))));
+
+        assertThrows(IllegalStateException.class, fixture.service()::reconcileOnce);
+
+        assertEquals(OrderStatus.SUBMITTING, fixture.lifecycle().find("cancel-missing-total").orElseThrow().getStatus());
+        assertDecimal("0", fixture.state().getState().getTrackedBaseAmount());
+        verify(fixture.okx(), never()).getAccountBalance(any());
+        verify(fixture.okx(), never()).placeOrder(any());
+
+        when(fixture.okx().getOrder(any())).thenReturn(OkxResponse.success(List.of(exchange("canceled", "0.001"))));
+        fixture.service().reconcileOnce();
+
+        assertEquals(OrderStatus.CANCELED, fixture.lifecycle().find("cancel-missing-total").orElseThrow().getStatus());
+        assertDecimal("0.001", fixture.state().getState().getTrackedBaseAmount());
+        assertEquals(0, fixture.service().status().getConsecutiveFailures());
+        verify(fixture.okx(), never()).placeOrder(any());
+    }
+
+    @Test
+    void unrelatedSnapshotCannotResolveAnUnknownSubmitOrImportItsBalance() {
+        Fixture fixture = fixture("unknown-identity");
+        fixture.lifecycle().markSubmitUnknown("unknown-identity", "timeout");
+        OrderInfoResp unrelated = exchange("filled", "0.001");
+        unrelated.setClOrdId(null);
+        when(fixture.okx().getOrder(any())).thenReturn(OkxResponse.success(List.of(unrelated)));
+
+        assertThrows(IllegalStateException.class, fixture.service()::reconcileOnce);
+
+        assertEquals(OrderStatus.SUBMIT_UNKNOWN, fixture.lifecycle().find("unknown-identity").orElseThrow().getStatus());
+        assertDecimal("0", fixture.state().getState().getTrackedBaseAmount());
+        verify(fixture.okx(), never()).getAccountBalance(any());
+        verify(fixture.okx(), never()).placeOrder(any());
+    }
+
+    @Test
     void missingBalanceDetailsCannotBeRecordedAsSuccessfulPositionReconciliation() {
         Fixture fixture = fixture(null);
         when(fixture.okx().getAccountBalance(any()))

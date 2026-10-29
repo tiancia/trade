@@ -96,6 +96,32 @@ class OrderSettlementPolicyTest {
                 () -> policy.prepare(local("buy"), observed("buy", "filled", "invalid", "USDT")));
     }
 
+    @Test
+    void cancellationMustExplicitlyReportCumulativeFillEvenWithoutAPriorCheckpoint() {
+        for (String cumulative : new String[] {null, "", " "}) {
+            for (String state : new String[] {"canceled", "mmp_canceled"}) {
+                var observation = new ExchangeOrderObservation("exchange", "client", "BTC-USDT", "buy", state,
+                        "0", cumulative, "", "", "", "0", "USDT");
+                assertThrows(IllegalStateException.class, () -> policy.prepare(local("buy"), observation));
+            }
+        }
+    }
+
+    @Test
+    void unknownSubmissionRequiresAnIdentityThatActuallyMatchesTheLocalOrder() {
+        var unknown = TradingOrder.restore(local("buy").snapshot().toBuilder()
+                .exchangeOrderId(null).status(OrderStatus.SUBMIT_UNKNOWN).build());
+        var unrelated = new ExchangeOrderObservation("unrelated", null, "BTC-USDT", "buy", "filled",
+                "0", "1", "1", "100", "100", "0", "USDT");
+        assertThrows(IllegalStateException.class, () -> policy.prepare(unknown, unrelated));
+        // A matching deterministic client ID can recover a lost submit acknowledgement.
+        assertEquals(OrderStatus.FILLED, policy.prepare(unknown, observed("buy", "filled", "0", "USDT")).target());
+        // An already known exchange ID remains sufficient when clOrdId is omitted.
+        var known = new ExchangeOrderObservation("exchange", null, "BTC-USDT", "buy", "filled",
+                "0", "1", "1", "100", "100", "0", "USDT");
+        assertEquals(OrderStatus.FILLED, policy.prepare(local("buy"), known).target());
+    }
+
     private static TradingOrder local(String side) {
         return TradingOrder.restore(TradingOrder.Snapshot.builder().instId("BTC-USDT").side(side).clientOrderId("client")
                 .exchangeOrderId("exchange").status(OrderStatus.ACCEPTED).build());

@@ -74,6 +74,11 @@ public final class OrderSettlementPolicy {
                     "Separate OKX rebate accounting is not supported by the live settlement ledger"
             );
         }
+        // A canceled order may already have partial fills. Missing cumulative
+        // data is not evidence of zero execution, even with no local checkpoint.
+        if (!hasText(order.getAccFillSz())) {
+            throw new IllegalStateException("Exchange order requires an explicit cumulative accFillSz");
+        }
         BigDecimal filledSize = decimal(order.getAccFillSz(), "accFillSz");
         BigDecimal lastFillSize = decimal(order.getFillSz(), "fillSz");
         if (filledSize.signum() < 0 || lastFillSize.signum() < 0
@@ -108,8 +113,12 @@ public final class OrderSettlementPolicy {
     }
 
     private static void verifyIdentity(TradingOrder localOrder, ExchangeOrderObservation exchangeOrder) {
-        if (!hasText(exchangeOrder.getOrdId()) && !hasText(exchangeOrder.getClOrdId())) {
-            throw new IllegalStateException("Exchange order snapshot has no deterministic identity");
+        boolean clientMatches = hasText(exchangeOrder.getClOrdId())
+                && exchangeOrder.getClOrdId().equals(localOrder.getClientOrderId());
+        boolean exchangeMatches = hasText(exchangeOrder.getOrdId())
+                && exchangeOrder.getOrdId().equals(localOrder.getExchangeOrderId());
+        if (!clientMatches && !exchangeMatches) {
+            throw new IllegalStateException("Exchange order snapshot has no identity matching the local order");
         }
         if (hasText(exchangeOrder.getClOrdId())
                 && !exchangeOrder.getClOrdId().equals(localOrder.getClientOrderId())) {

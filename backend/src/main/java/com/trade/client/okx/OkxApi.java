@@ -4,6 +4,7 @@ import com.trade.client.okx.dto.OkxResponse;
 import com.trade.client.okx.dto.AccountBalanceReq;
 import com.trade.client.okx.dto.AccountBalanceResp;
 import com.trade.client.okx.dto.CancelAllAfterReq;
+import com.trade.client.okx.dto.CancelAllAfterResp;
 import com.trade.client.okx.dto.CancelOrderReq;
 import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.CandlesReq;
@@ -231,12 +232,12 @@ public class OkxApi {
     /**
      * Arms or cancels OKX's dead-man switch that cancels all orders after the timeout expires.
      */
-    public OkxResponse<OrderActionResp> cancelAllAfter(CancelAllAfterReq req) {
+    public OkxResponse<CancelAllAfterResp> cancelAllAfter(CancelAllAfterReq req) {
         return okxClient.post(
                 OkxEndpoints.TRADE_CANCEL_ALL_AFTER,
                 req,
                 true,
-                OrderActionResp.class
+                CancelAllAfterResp.class
         );
     }
 

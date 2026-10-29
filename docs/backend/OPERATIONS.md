@@ -207,9 +207,13 @@ Invoke-RestMethod http://127.0.0.1:8080/api/trading/safety
 
 定时器设置失败后仍尝试查询并撤单，单笔撤单失败后仍处理其他订单；`lastActionError` 聚合这些失败。不能把本地停止成功等同于交易所全部撤单成功。
 
+交易所响应必须包含唯一、完整的确认项，不能仅凭顶层 `code=0` 判断成功。cancel-all-after 使用专用响应字段：启用时要求 `triggerTime > ts > 0`，恢复前关闭时要求 `triggerTime=0` 且 `ts>0`；缺失、错误或仍启用的定时器确认会阻止恢复，资金状态保持 HALTED。启用超时必须在 10–120 秒内。逐笔撤单需要 `sCode=0` 和匹配的订单身份；确认仅代表撤单请求被接受，最终成交与撤单状态仍由对账推进。协议依据见 [OKX Cancel All After](https://www.okx.com/docs-v5/en/#order-book-trading-trade-post-cancel-all-after)。
+
 对账期间，任一订单结算失败会使整轮失败；正常未决订单仍存在时暂缓余额核对，也不刷新完整对账成功时间。现货账户的余额快照只用于核对，不能自动导入受管理仓位或重置成本，即使选择 `dedicated-account`。该模式要求交易所与账本一致，差异触发 HALT；人工存入资产或旧账不一致时须先核清成交与资金来源，不能靠切换该模式接管余额。
 
 OKX 的超时、空响应或缺少完整身份确认会使订单保持 `SUBMIT_UNKNOWN`。先按原 `clOrdId` 查询与结算，禁止因未收到确认就创建新订单；50004 的含糊结果语义见 [OKX 官方说明](https://www.okx.com/en-us/help/api-faq)。累计成交快照缺少有效数量或均价、数值错误或数量回退时保留未决并报告失败，等待取得完整快照后再推进账本。
+
+撤单快照也必须显式返回累计成交量 `accFillSz`；缺失或空值不能当作零成交，首次看到的撤单同样可能已有部分成交。快照必须至少匹配本地已知的 `ordId` 或确定性 `clOrdId`；未知提交尚未保存交易所 ID 时，不能仅凭一个陌生 `ordId` 结算。上述异常不清除未决订单、不导入余额、不重发订单。
 
 对于持续返回 51603 的未知单，`GET /api/trading/orders/unresolved` 返回待处理订单及版本。查不到并不能证明从未成交，[OKX 订单查询文档](https://www.okx.com/docs-v5/en/#order-book-trading-trade-get-order-details)规定了历史记录保留范围；系统不会按超时或查询次数自动清除未知单。默认连续三次对账失败仍会 HALT。
 

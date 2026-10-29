@@ -5,6 +5,7 @@ import com.trade.client.okx.dto.OkxResponse;
 import com.trade.client.okx.dto.OrderActionResp;
 import com.trade.client.okx.dto.OrderInfoResp;
 import com.trade.client.okx.dto.CancelOrderReq;
+import com.trade.client.okx.dto.CancelAllAfterResp;
 import com.trade.trading.port.FundSafetyRepository;
 import com.trade.trading.port.TradingOrderRepository;
 import com.trade.trading.domain.model.ExecutionMode;
@@ -37,6 +38,140 @@ import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.argThat;
 
 class FundSafetyServiceTest {
+    @Test
+    void emptyTimerAcknowledgementCannotAuthorizeLiveResume() {
+        var fixture = haltedFixture();
+        when(fixture.okx().cancelAllAfter(any())).thenReturn(OkxResponse.success(List.of()));
+
+        assertThrows(IllegalStateException.class,
+                () -> fixture.service().resume(4, "operator checked", "RESUME_LIVE_TRADING"));
+
+        verify(fixture.repository(), never()).resume(anyString(), anyLong(), anyString(), any());
+    }
+
+    @Test
+    void emptyCancellationAcknowledgementIsRecordedAsUnconfirmed() {
+        var fixture = haltedFixture();
+        OrderInfoResp pending = new OrderInfoResp();
+        pending.setOrdId("pending");
+        when(fixture.okx().getPendingOrders(any())).thenReturn(OkxResponse.success(List.of(pending)));
+        when(fixture.okx().cancelAllAfter(any())).thenReturn(OkxResponse.success(List.of()));
+        when(fixture.okx().cancelOrder(any())).thenReturn(OkxResponse.success(List.of()));
+
+        fixture.service().enforceIfHalted();
+
+        verify(fixture.repository()).recordActionError(eq("live"), argThat(error ->
+                error != null && error.contains("cancel order pending")));
+    }
+
+    @Test
+    void malformedOrStillArmedTimerAcknowledgementsKeepFundsHalted() {
+        List<OkxResponse<CancelAllAfterResp>> responses = List.of(
+                OkxResponse.fail("50000", "failed"),
+                OkxResponse.success(null),
+                OkxResponse.success(java.util.Arrays.asList((CancelAllAfterResp) null)),
+                OkxResponse.success(List.of(timer("0", "100"), timer("0", "100"))),
+                timerResponse(null, "100"), timerResponse("invalid", "100"),
+                timerResponse("0", null), timerResponse("0", "0"), timerResponse("0", "-1"),
+                timerResponse("110", "100"), timerResponse("-1", "100"));
+        for (var response : responses) {
+            var fixture = haltedFixture();
+            when(fixture.okx().cancelAllAfter(any())).thenReturn(response);
+            assertThrows(IllegalStateException.class,
+                    () -> fixture.service().resume(4, "operator checked", "RESUME_LIVE_TRADING"));
+            verify(fixture.repository(), never()).resume(anyString(), anyLong(), anyString(), any());
+        }
+    }
+
+    @Test
+    void timerNotArmedStillAttemptsEveryCancellationAndReportsTheFailure() {
+        for (String trigger : new String[] {"0", "100", "99", null}) {
+            var fixture = haltedFixture();
+            when(fixture.okx().cancelAllAfter(any())).thenReturn(timerResponse(trigger, "100"));
+            OrderInfoResp pending = new OrderInfoResp();
+            pending.setOrdId("pending");
+            when(fixture.okx().getPendingOrders(any())).thenReturn(OkxResponse.success(List.of(pending)));
+            when(fixture.okx().cancelOrder(any())).thenReturn(OkxResponse.success(List.of(cancellation("pending", "0"))));
+
+            assertTrue(fixture.service().enforceIfHalted());
+
+            verify(fixture.okx()).cancelOrder(any());
+            verify(fixture.repository()).recordActionError(eq("live"), argThat(error ->
+                    error != null && error.contains("arm cancel-all-after") && !error.contains("cancel order")));
+        }
+    }
+
+    @Test
+    void cancellationRequiresSuccessCodeAndMatchingIdentity() {
+        for (var acknowledgement : List.of(cancellation("pending", null), cancellation("other", "0"),
+                cancellation(null, "0"))) {
+            var fixture = haltedFixture();
+            when(fixture.okx().cancelAllAfter(any())).thenReturn(timerResponse("110", "100"));
+            OrderInfoResp pending = new OrderInfoResp();
+            pending.setOrdId("pending");
+            when(fixture.okx().getPendingOrders(any())).thenReturn(OkxResponse.success(List.of(pending)));
+            when(fixture.okx().cancelOrder(any())).thenReturn(OkxResponse.success(List.of(acknowledgement)));
+
+            fixture.service().enforceIfHalted();
+
+            verify(fixture.repository()).recordActionError(eq("live"), argThat(error ->
+                    error != null && error.contains("cancel order pending")));
+        }
+    }
+
+    @Test
+    void matchingCancellationAndArmedTimerClearExchangeActionError() {
+        var fixture = haltedFixture();
+        when(fixture.okx().cancelAllAfter(any())).thenReturn(timerResponse("110", "100"));
+        OrderInfoResp pending = new OrderInfoResp();
+        pending.setOrdId("pending");
+        when(fixture.okx().getPendingOrders(any())).thenReturn(OkxResponse.success(List.of(pending)));
+        when(fixture.okx().cancelOrder(any())).thenReturn(OkxResponse.success(List.of(cancellation("pending", "0"))));
+
+        assertTrue(fixture.service().enforceIfHalted());
+
+        verify(fixture.repository()).recordActionError("live", null);
+        assertThrows(FundSafetyService.TradingFundsHaltedException.class, fixture.service()::requireActive);
+    }
+
+    private static OrderActionResp cancellation(String orderId, String code) {
+        OrderActionResp response = new OrderActionResp();
+        response.setOrdId(orderId);
+        response.setSCode(code);
+        return response;
+    }
+
+    private static CancelAllAfterResp timer(String trigger, String receivedAt) {
+        CancelAllAfterResp response = new CancelAllAfterResp();
+        response.setTriggerTime(trigger);
+        response.setTs(receivedAt);
+        return response;
+    }
+
+    private static OkxResponse<CancelAllAfterResp> timerResponse(String trigger, String receivedAt) {
+        return OkxResponse.success(List.of(timer(trigger, receivedAt)));
+    }
+
+    private static HaltedFixture haltedFixture() {
+        TradingProperties properties = new TradingProperties();
+        properties.setExecutionMode(ExecutionMode.LIVE);
+        FundSafetyRepository repository = mock(FundSafetyRepository.class);
+        TradingOrderRepository orders = mock(TradingOrderRepository.class);
+        TradingStateRepository state = mock(TradingStateRepository.class);
+        OkxApi okx = mock(OkxApi.class);
+        Instant now = Instant.now();
+        when(repository.getOrCreate("live")).thenReturn(new FundSafetyState()
+                .setStatus(FundSafetyStatus.HALTED).setVersion(4).setHaltedAt(now.minusSeconds(60)));
+        when(okx.getPendingOrders(any())).thenReturn(OkxResponse.success(List.of()));
+        when(orders.findReconciliationCandidates(anyString(), anyInt())).thenReturn(List.of());
+        when(state.getState()).thenReturn(new TradingState().setPositionLastReconciledAt(now.toString())
+                .setRiskState(new TradingRiskState().setLastReconciliationAt(now.toString())));
+        return new HaltedFixture(new FundSafetyService(repository, orders, state, okx,
+                properties, new SimpleMeterRegistry()), repository, okx);
+    }
+
+    private record HaltedFixture(FundSafetyService service, FundSafetyRepository repository, OkxApi okx) { }
+
     @Test
     void missingPendingOrderDataCannotAuthorizeLiveResume() {
         TradingProperties properties = new TradingProperties();
@@ -119,7 +254,7 @@ class FundSafetyServiceTest {
         when(repository.halt(anyString(), anyString(), anyString(), any())).thenReturn(halted);
         when(repository.getOrCreate("live")).thenReturn(halted);
         when(repository.recordActionError("live", null)).thenReturn(halted);
-        when(okxApi.cancelAllAfter(any())).thenReturn(OkxResponse.success(List.of()));
+        when(okxApi.cancelAllAfter(any())).thenReturn(timerResponse("110", "100"));
         when(okxApi.getPendingOrders(any())).thenReturn(OkxResponse.success(List.of()));
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
         FundSafetyService service = new FundSafetyService(
@@ -165,7 +300,7 @@ class FundSafetyServiceTest {
         when(orderRepository.findReconciliationCandidates(anyString(), anyInt()))
                 .thenReturn(List.of());
         when(okxApi.getPendingOrders(any())).thenReturn(OkxResponse.success(List.of()));
-        when(okxApi.cancelAllAfter(any())).thenReturn(OkxResponse.success(List.of()));
+        when(okxApi.cancelAllAfter(any())).thenReturn(timerResponse("0", "100"));
         when(stateRepository.getState()).thenReturn(new TradingState()
                 .setRiskState(new TradingRiskState()));
         FundSafetyService service = new FundSafetyService(

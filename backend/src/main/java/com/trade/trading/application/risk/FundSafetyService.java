@@ -4,6 +4,7 @@ import com.trade.trading.domain.risk.FundSafetyPolicy;
 import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.OkxResponses;
 import com.trade.client.okx.dto.CancelAllAfterReq;
+import com.trade.client.okx.dto.CancelAllAfterResp;
 import com.trade.client.okx.dto.CancelOrderReq;
 import com.trade.client.okx.dto.OkxResponse;
 import com.trade.client.okx.dto.OrderActionResp;
@@ -149,9 +150,9 @@ public class FundSafetyService {
             FundSafetyPolicy.requireFreshSuccessfulReconciliation(current, stateRepository.getState());
             // Disarm the exchange timer before reopening local submissions. If
             // this call fails, the database row remains HALTED.
-            requireActionOk(
+            requireTimerAcknowledgement(
                     okxApi.cancelAllAfter(new CancelAllAfterReq().setTimeOut("0")),
-                    "disarm cancel-all-after"
+                    false
             );
         }
         FundSafetyState state = repository.resume(
@@ -168,10 +169,13 @@ public class FundSafetyService {
     private void cancelOutstandingOrders() {
         List<String> errors = new ArrayList<>();
         try {
-            int timeout = Math.max(1, properties.getFundSafety().getDeadManTimeoutSeconds());
-            requireActionOk(
+            int timeout = properties.getFundSafety().getDeadManTimeoutSeconds();
+            if (timeout < 10 || timeout > 120) {
+                throw new IllegalStateException("Cancel-all-after timeout must be between 10 and 120 seconds");
+            }
+            requireTimerAcknowledgement(
                     okxApi.cancelAllAfter(new CancelAllAfterReq().setTimeOut(String.valueOf(timeout))),
-                    "arm cancel-all-after"
+                    true
             );
         } catch (RuntimeException e) {
             errors.add("arm cancel-all-after: " + e.getMessage());
@@ -180,11 +184,14 @@ public class FundSafetyService {
         try {
             for (OrderInfoResp order : pendingOrders()) {
                 try {
+                    if (!hasText(order.getOrdId()) && !hasText(order.getClOrdId())) {
+                        throw new IllegalStateException("Pending order has no identity for cancellation");
+                    }
                     OkxResponse<OrderActionResp> response = okxApi.cancelOrder(new CancelOrderReq()
                             .setInstId(properties.getInstId())
                             .setOrdId(order.getOrdId())
                             .setClOrdId(order.getClOrdId()));
-                    requireActionOk(response, "cancel pending order");
+                    requireCancellationAcknowledgement(response, order);
                 } catch (RuntimeException e) {
                     errors.add("cancel order " + order.getOrdId() + ": " + e.getMessage());
                     log.error("Fund stop persisted but pending order cancellation failed: ordId={}",
@@ -230,16 +237,47 @@ public class FundSafetyService {
         return state;
     }
 
-    private static void requireActionOk(OkxResponse<OrderActionResp> response, String action) {
+    private static <T> T requireSingleAcknowledgement(OkxResponse<T> response, String action) {
         OkxResponses.requireOk(response, action);
-        OkxResponses.first(response).ifPresent(item -> {
-            if (item.getSCode() != null && !"0".equals(item.getSCode())) {
-                throw new IllegalStateException(
-                        "OKX " + action + " rejected, sCode=" + item.getSCode()
-                                + ", sMsg=" + item.getSMsg()
-                );
+        if (response.getData() == null || response.getData().size() != 1 || response.getData().getFirst() == null) {
+            throw new IllegalStateException("OKX " + action + " requires exactly one acknowledgement");
+        }
+        return response.getData().getFirst();
+    }
+
+    private static void requireTimerAcknowledgement(OkxResponse<CancelAllAfterResp> response, boolean armed) {
+        String action = armed ? "arm cancel-all-after" : "disarm cancel-all-after";
+        CancelAllAfterResp item = requireSingleAcknowledgement(response, action);
+        try {
+            long receivedAt = Long.parseLong(item.getTs());
+            long triggerTime = Long.parseLong(item.getTriggerTime());
+            if (receivedAt <= 0 || (armed ? triggerTime <= receivedAt : triggerTime != 0)) {
+                throw new IllegalStateException("OKX " + action + " did not confirm the requested timer state");
             }
-        });
+        } catch (NumberFormatException invalid) {
+            throw new IllegalStateException("OKX " + action + " has missing or invalid timer timestamps", invalid);
+        }
+    }
+
+    private static void requireCancellationAcknowledgement(OkxResponse<OrderActionResp> response, OrderInfoResp order) {
+        OrderActionResp item = requireSingleAcknowledgement(response, "cancel pending order");
+        if (!"0".equals(item.getSCode())) {
+            throw new IllegalStateException("OKX cancel pending order unconfirmed, sCode=" + item.getSCode()
+                    + ", sMsg=" + item.getSMsg());
+        }
+        boolean orderMatches = hasText(order.getOrdId()) && order.getOrdId().equals(item.getOrdId());
+        boolean clientMatches = hasText(order.getClOrdId()) && order.getClOrdId().equals(item.getClOrdId());
+        if ((!orderMatches && !clientMatches)
+                || (hasText(item.getOrdId()) && hasText(order.getOrdId()) && !orderMatches)
+                || (hasText(item.getClOrdId()) && hasText(order.getClOrdId()) && !clientMatches)) {
+            throw new IllegalStateException("OKX cancellation acknowledgement does not match the pending order");
+        }
+        // This confirms acceptance of the cancel request, not its final fill.
+        // The unresolved order remains in the reconciliation ledger.
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private static String firstText(String value, String fallback) {
