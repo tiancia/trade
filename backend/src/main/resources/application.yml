@@ -34,10 +34,9 @@ spring:
       timeout: ${SPRING_DATA_REDIS_TIMEOUT:1s}
   sql:
     init:
-      # always：启动时执行下面的完整结构脚本，包括使用外部 MySQL 时。
-      mode: always
-      # 按列表顺序加载七个模块的 schema；db/upgrade/ 下的手工升级脚本不会自动执行。
-      # CREATE TABLE IF NOT EXISTS 会补缺失表，不会给旧表自动补字段或改索引。
+      # 完整结构仅用于结构查阅和离线校验；运行时统一由 Flyway 管理版本。
+      mode: never
+      # 离线结构测试显式加载这七份完整结构；运行时不执行此列表。
       schema-locations:
         - classpath:db/schema/ai/schema.sql
         - classpath:db/schema/trading/schema.sql
@@ -46,6 +45,16 @@ spring:
         - classpath:db/schema/marketplace/schema.sql
         - classpath:db/schema/weibo/schema.sql
         - classpath:db/schema/x/schema.sql
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # 旧库由受控基线核验接入，禁止盲目把任意非空库标记为已升级。
+    baseline-on-migrate: false
+    baseline-version: "0"
+    clean-disabled: true
+    validate-on-migrate: true
+    validate-migration-naming: true
+    out-of-order: false
 
 management:
   endpoint:
@@ -793,7 +802,7 @@ trade:
     risk:
       # 是否启用风险规则。
       enabled: true
-      # 连续亏损达到该次数后进入冷却。
+      # 完整平仓后的净亏损连续达到该次数后进入冷却，部分卖出不单独计数。
       max-consecutive-losses: 3
       # 连续亏损后的冷却时间，单位毫秒。
       loss-cooldown-ms: 3600000
@@ -809,7 +818,7 @@ trade:
       max-consecutive-open-actions: 2
       # 单次增加风险敞口最多占账户权益的比例。
       max-single-open-equity-ratio: "0.10"
-      # 小于该比例的权益变化视为数值噪声。
+      # 兼容旧配置保留；权益采样变化不再参与连续亏损计数。
       equity-noise-ratio: "0.0001"
     # LIVE 账户订单恢复与仓位核对。execution-mode=live 即可运行；
     # live-enabled 仍可保持 false 来阻断新单。该循环绝不重新下单。

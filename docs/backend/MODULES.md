@@ -6,8 +6,8 @@
 
 | 模块 | 类型 | 主要入口 | 配置前缀 / 数据 |
 | --- | --- | --- | --- |
-| `automation` | 跨域编排 | `AutomationTaskController`、`AutomationTaskRegistrar`、`AutomationTaskManager` | `trade.automation.*`；不拥有业务表 |
-| `trading` | 业务域 | `TradingController`、`TradingScheduler`、`TradingStrategyEngine` | `trade.trading.*`、`trade.okx.*`；MySQL 行情、订单与金融状态，本地策略/近期决策记忆，Redis 热缓存；当前回测运行结果保存在进程内存 |
+| `automation` | 跨域编排 | `AutomationTaskController`、`AutomationTaskRegistrar`、`AutomationTaskManager`、`DatabaseMigrationConfiguration` | `trade.automation.*`；启动前编排 Flyway，不拥有业务表 |
+| `trading` | 业务域 | `TradingController`、`TradingScheduler`、`TradingStrategyEngine` | `trade.trading.*`、`trade.okx.*`；MySQL 行情、策略选择、订单与金融状态，本地画像/近期决策记忆，Redis 热缓存；当前回测运行结果保存在进程内存 |
 | `polymarket` | 业务域 | `AiPolymarketScheduler`、`AiPolymarketService` | `trade.polymarket.*`；决策审计表 |
 | `story` | 业务域 | `AiStoryScheduler`、`AiStoryService` | `trade.story.*`；配置目录下的生成文件 |
 | `textgame` | 业务域 | `TextGameController`、`TextGameAdminController` | `trade.text-game.*`；故事、版本、会话和事件表 |
@@ -99,7 +99,7 @@ REST / WebSocket market data
 
 回测经 `port/HistoricalCandleSource` 加载历史数据，默认适配为 `HistoricalCandleService`。实时引擎与 Broker 只执行 PAPER/LIVE；BACKTEST 配置不会启动历史回放或降级成实时模拟成交。活动策略切换与资金操作由部署网关及网络隔离限制访问，无需单独的应用令牌。
 
-真实订单可靠性依赖持久化幂等键、确定性 `clOrdId`、状态机、乐观锁、状态历史和累计成交账本。仓位、成本、风险状态与资金级停止状态以 MySQL 为权威；`data/trading-state.json` 只保存策略选择、策略画像和有界决策记忆。事件管道依赖固定容量、显式队满策略、handler 异常隔离、指标与优雅排空。修改这些路径前应先读对应测试。
+真实订单可靠性依赖持久化幂等键、确定性 `clOrdId`、状态机、乐观锁、状态历史和累计成交账本。活动策略、仓位、成本、风险状态与资金级停止状态以 MySQL 为权威；`data/trading-state.json` 保存策略画像和有界决策记忆，旧活动选择仅在共享表为空时导入一次。策略维护、PAPER 成交及 LIVE 订单预留共用短数据库锁；持仓或未决订单阻止维护，在途旧版本阻止预留，不在锁内调用交易所。事件管道依赖固定容量、显式队满策略、handler 异常隔离、指标与优雅排空。修改这些路径前应先读对应测试。
 
 含糊的下单确认保持 `SUBMIT_UNKNOWN` 并阻断后续新单。结算校验累计成交量、均价及单调性；累计成交量相等或增加但净数量或成本倒退时，结算事务失败并保留旧账本，订单继续待对账。有未决订单时暂缓账户余额核对，现货账户余额不替代成交账本记仓；余额响应必须有账户和明细，缺失数据不当作零余额。LIVE 恢复必须收到明确的挂单列表，缺失列表不当作没有挂单。紧急停止的定时器与各笔撤单独立尽力执行，错误保留供人工处理。
 
@@ -174,8 +174,10 @@ RSS/Atom 源在 `infrastructure/trend`，AI Prompt 在 `application/decision`，
 | 路径 | 所有者 / 用途 |
 | --- | --- |
 | `application.yml` | 全局组合点；配置类仍归各自模块 |
-| `db/schema/<module>/schema.sql` | 所属模块的完整结构；启动按显式配置列表执行 |
-| `db/upgrade/<module>/` | 所属模块的存量数据库手工升级补丁；跨模块历史补丁归 `legacy/` |
+| `db/schema/<module>/schema.sql` | 所属模块的当前完整结构，供查阅和离线校验 |
+| `db/migration/` | Flyway 全库递增版本；后端启动时执行未应用迁移 |
+| `db/migration-support/` | 不可变 Java 迁移的 SQL 支持文件，随迁移校验 |
+| `db/upgrade/<module>/` | 接入 Flyway 前的历史手工补丁；跨模块历史补丁归 `legacy/`，不自动执行 |
 | `mapper/<domain>/` | 对应业务域的 MyBatis XML |
 | `textgame/stories/` | textgame 内置故事定义 |
 | `data/trading-state.example.json` | trading 非资金策略记忆格式示例；仓位/成本/风险不在此保存 |

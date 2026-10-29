@@ -33,6 +33,9 @@ class DatabaseSchemaInitializationTest {
         var sources = new YamlPropertySourceLoader().load("application", new ClassPathResource("application.yml"));
         var properties = new Binder(ConfigurationPropertySources.from(sources))
                 .bind("spring.sql.init", Bindable.of(SqlInitializationProperties.class)).get();
+        // Runtime uses Flyway. Keep checking the complete reference schemas and
+        // every business primary key independently of the immutable migration chain.
+        properties.setMode(org.springframework.boot.sql.init.DatabaseInitializationMode.ALWAYS);
         var dataSource = new JdbcDataSource();
         dataSource.setURL("jdbc:h2:mem:module_schemas_" + UUID.randomUUID()
                 + ";MODE=MySQL;DATABASE_TO_LOWER=TRUE");
@@ -42,7 +45,7 @@ class DatabaseSchemaInitializationTest {
             initializer.setResourceLoader(new H2SchemaResourceLoader());
             assertTrue(initializer.initializeDatabase());
             var jdbc = new JdbcTemplate(dataSource);
-            assertEquals(55, jdbc.queryForObject("""
+            assertEquals(56, jdbc.queryForObject("""
                     SELECT COUNT(*) FROM information_schema.tables
                     WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
                     """, Integer.class));
@@ -55,6 +58,8 @@ class DatabaseSchemaInitializationTest {
                     "Reviewed by operator");
             jdbc.update("INSERT INTO polymarket_execution_guard (guard_name, pending_decision_id) VALUES (?, ?)",
                     "primary", 42L);
+            jdbc.update("INSERT INTO okx_strategy_selection (account_scope, inst_id, strategy_id, revision) VALUES (?, ?, ?, ?)",
+                    "paper", "BTC-USDT", "operator-selected", 5L);
             assertTrue(initializer.initializeDatabase());
             assertEquals("Reviewed by operator", jdbc.queryForObject(
                     "SELECT reason FROM okx_fund_safety_state WHERE account_scope = 'live'", String.class));
@@ -62,6 +67,10 @@ class DatabaseSchemaInitializationTest {
             assertEquals(7, jdbc.queryForObject("SELECT COUNT(*) FROM marketplace_categories", Integer.class));
             assertEquals(42L, jdbc.queryForObject(
                     "SELECT pending_decision_id FROM polymarket_execution_guard WHERE guard_name = 'primary'", Long.class));
+            assertEquals("operator-selected", jdbc.queryForObject(
+                    "SELECT strategy_id FROM okx_strategy_selection WHERE account_scope = 'paper' AND inst_id = 'BTC-USDT'", String.class));
+            assertEquals(5L, jdbc.queryForObject(
+                    "SELECT revision FROM okx_strategy_selection WHERE account_scope = 'paper' AND inst_id = 'BTC-USDT'", Long.class));
         }
     }
 

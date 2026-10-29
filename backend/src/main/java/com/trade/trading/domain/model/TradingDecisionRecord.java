@@ -12,6 +12,7 @@ public class TradingDecisionRecord {
     private String decisionId;
     private String strategyId;
     private long strategyConfigVersion;
+    private long activeStrategyRevision;
     private Map<String, Object> strategyConfigSnapshot;
     private String timestamp;
     private String triggerType;

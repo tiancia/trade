@@ -47,6 +47,7 @@ public interface TradingFinancialStateStore {
     TradingRiskState getOrCreateRiskState(String accountScope, TradingRiskState seed);
 
     TradingRiskState saveRiskState(String accountScope, TradingRiskState riskState);
+    TradingRiskState updateRiskState(String accountScope, java.util.function.UnaryOperator<TradingRiskState> transition);
 
     /**
      * Clears only reconciliation health fields without overwriting concurrent

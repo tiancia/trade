@@ -113,12 +113,19 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
     @Transactional
     public TradingRiskState saveRiskState(String accountScope, TradingRiskState riskState) {
         insertRiskIfAbsent(accountScope, riskState);
+        return updateRiskState(accountScope, ignored -> riskState);
+    }
+
+    @Override
+    @Transactional
+    public TradingRiskState updateRiskState(String accountScope, java.util.function.UnaryOperator<TradingRiskState> transition) {
+        insertRiskIfAbsent(accountScope, null);
         TradingRiskStateRow row = mapper.lockRiskState(accountScope);
         if (row == null) {
             throw new IllegalStateException("Trading risk state cannot be locked: " + accountScope);
         }
         Instant committedTradeTime = row.getLastTradeTime();
-        copyRiskControlState(riskState, row);
+        copyRiskControlState(java.util.Objects.requireNonNull(transition.apply(toRiskState(row))), row);
         if (committedTradeTime != null && (row.getLastTradeTime() == null
                 || committedTradeTime.isAfter(row.getLastTradeTime()))) {
             row.setLastTradeTime(committedTradeTime);
@@ -220,6 +227,9 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
         BigDecimal positionDelta = delta.quantity();
         BigDecimal quoteCostDelta = delta.quoteCost();
         TradingPositionRow position = lockPosition(accountScope, instId);
+        boolean openedPosition = "buy".equals(normalizedSide) && zeroIfNull(position.getQuantity()).signum() == 0;
+        BigDecimal realizedPnlDelta = "sell".equals(normalizedSide)
+                ? quoteCostDelta.subtract(positionDelta.multiply(zeroIfNull(position.getAverageCost()))) : BigDecimal.ZERO;
         boolean firstApplication = appliedPosition.signum() == 0;
         PositionAccounting.requireMonotonicDelta(normalizedSide, positionDelta, quoteCostDelta);
         if ("buy".equals(normalizedSide)) {
@@ -252,7 +262,8 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
         if (mapper.updateFillLedger(ledger) != 1) {
             throw new IllegalStateException("Order fill ledger update lost: " + orderId);
         }
-        return new SpotFillApplication(true, firstApplication, positionDelta);
+        return new SpotFillApplication(true, firstApplication, positionDelta, openedPosition,
+                "sell".equals(normalizedSide) && zeroIfNull(position.getQuantity()).signum() == 0, realizedPnlDelta);
     }
 
     private TradingPositionRow lockPosition(String accountScope, String instId) {
@@ -343,6 +354,8 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
                 .setDayStartEquity(zeroIfNull(safe.getDayStartEquity()))
                 .setDayStartDate(safe.getDayStartDate())
                 .setConsecutiveLosses(safe.getConsecutiveLosses())
+                .setOpenTradeRealizedPnl(safe.getOpenTradeRealizedPnl())
+                .setClosedTradeAccountingVersion(safe.getClosedTradeAccountingVersion())
                 .setLossCooldownUntil(parseInstant(safe.getLossCooldownUntil()))
                 .setLastTradeTime(parseInstant(safe.getLastTradeTime()))
                 .setConsecutiveOpenActions(safe.getConsecutiveOpenActions())
@@ -356,6 +369,8 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
                 .setDayStartEquity(zeroIfNull(row.getDayStartEquity()))
                 .setDayStartDate(row.getDayStartDate())
                 .setConsecutiveLosses(row.getConsecutiveLosses())
+                .setOpenTradeRealizedPnl(row.getOpenTradeRealizedPnl())
+                .setClosedTradeAccountingVersion(row.getClosedTradeAccountingVersion())
                 .setLossCooldownUntil(formatInstant(row.getLossCooldownUntil()))
                 .setLastTradeTime(formatInstant(row.getLastTradeTime()))
                 .setConsecutiveOpenActions(row.getConsecutiveOpenActions())

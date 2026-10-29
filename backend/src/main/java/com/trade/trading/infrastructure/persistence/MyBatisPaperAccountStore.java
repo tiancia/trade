@@ -145,10 +145,14 @@ public class MyBatisPaperAccountStore implements PaperAccountStore {
                 result.realizedPnl(), next.cash(), next.positionQuantity(), next.equity(), next.version(), command.now());
         mapper.insertFill(fill);
         update(next);
-        // Persist the trade fact with the fill, even when risk controls are off
-        // or a later optional risk-counter update fails.
+        // Last trade time, action counters and round-trip PnL commit with cash,
+        // position and the unique fill; replay never repeats this transition.
         TradingRiskState riskState = risk(command.instId(), next.sessionId());
-        riskState.setLastTradeTime(RiskStateTransitions.latestTradeTime(riskState.getLastTradeTime(), command.now()));
+        riskState = new RiskStateTransitions(command.riskPolicy()).filled(riskState,
+                com.trade.trading.domain.model.TradingAction.valueOf(command.side()), next.equity(),
+                "BUY".equals(command.side()) && current.positionQuantity().signum() == 0,
+                "SELL".equals(command.side()) && next.positionQuantity().signum() == 0,
+                result.realizedPnl(), command.now(), true);
         if (mapper.updateRisk(next.sessionId(), write(riskState)) != 1) conflict();
         sample(next, command.strategyId(), command.strategyConfigVersion(), "FILL", command.now());
         return new AppliedFill(fill, next, false);

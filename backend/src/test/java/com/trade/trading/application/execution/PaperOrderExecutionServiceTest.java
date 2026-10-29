@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
 class PaperOrderExecutionServiceTest {
-    @Test void secondaryRiskWriteFailureCannotEraseCommittedFillStatusOrSubmitAgain() {
+    @Test void committedFillDoesNotPerformASecondNonTransactionalRiskWrite() {
         TradingProperties props = new TradingProperties();
         var accounts = mock(PaperAccountService.class);
         var risk = mock(RiskControlService.class);
@@ -37,13 +37,12 @@ class PaperOrderExecutionServiceTest {
                 new BigDecimal("99.99"), 1, Instant.now());
         when(accounts.fill(context, record, "BUY", BigDecimal.TEN))
                 .thenReturn(new PaperAccountStore.AppliedFill(fill, null, false));
-        doThrow(new IllegalStateException("database unavailable after fill commit")).when(risk).recordExecutedAction(decision, context);
         executor.execute(decision, context, record);
         assertEquals("PAPER_FILLED", record.getExecutionStatus());
         assertEquals("10", record.getOrderSize());
-        assertTrue(record.getMetadata().get("paperRiskUpdateWarning").toString().contains("fill committed"));
+        org.junit.jupiter.api.Assertions.assertFalse(record.getMetadata().containsKey("paperRiskUpdateWarning"));
         verify(accounts, times(1)).fill(context, record, "BUY", BigDecimal.TEN);
-        verify(risk, times(1)).recordExecutedAction(decision, context);
+        verify(risk, never()).recordExecutedAction(decision, context);
     }
 
     @Test void noImplicitCashSeedAndNoDerivativeFakeFill() {

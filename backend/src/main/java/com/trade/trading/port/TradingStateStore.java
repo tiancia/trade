@@ -45,6 +45,7 @@ public interface TradingStateStore {
     void recordStrategyState(String decisionId, AiTradingDecision decision);
 
     void recordRiskState(TradingRiskState riskState);
+    TradingRiskState updateRiskState(java.util.function.UnaryOperator<TradingRiskState> transition);
 
     TradingRiskState recordReconciliationSuccess(Instant reconciledAt);
 

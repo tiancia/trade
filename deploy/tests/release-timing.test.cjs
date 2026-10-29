@@ -55,6 +55,13 @@ function mockTool() {
     failIfSelected('image_inspect');
     process.exit(0);
   }
+  if (args[0] === 'image' && args[1] === 'inspect' && args[2] === '--format') {
+    if (args[3] !== '{{ index .Config.Labels "com.trade.database.version" }}') reject('Unknown image label');
+    record({ tool, command: 'image_schema', args: args.slice(2) });
+    failIfSelected('image_schema');
+    process.stdout.write(state.noLabel ? '<no value>\n' : String(state.targetVersion) + '\n');
+    process.exit(0);
+  }
   if (args[0] !== 'compose') reject('Only Compose and local image inspection are allowed');
   const envFiles = [], composeFiles = [];
   let composeRoot, index = 1;
@@ -72,11 +79,35 @@ function mockTool() {
   else if (operation === 'pull') command = 'pull';
   else if (operation === 'stop') command = 'stop';
   else if (operation === 'up') command = operationArgs.includes('--no-recreate') ? 'dependencies' : 'health';
+  else if (operation === 'exec') {
+    if (operationArgs.slice(0, 4).join(' ') !== '-T mysql sh -ec') reject('Only MySQL container commands are allowed');
+    const script = operationArgs[4], sql = operationArgs.at(-1);
+    if (!script.startsWith('MYSQL_PWD="$MYSQL_PASSWORD" exec ')) reject('Container credentials must remain private');
+    if (script.includes('mysqldump')) command = 'database_dump';
+    else if (sql.includes('information_schema.TABLES') && sql.includes('flyway_schema_history')) command = 'schema_history';
+    else if (sql.includes('ENGINE<>')) command = 'schema_engines';
+    else if (sql.includes('success=0')) command = 'schema_invalid';
+    else if (sql.includes('MAX(CAST(version')) command = 'schema_version';
+    else reject('Unexpected SQL operation');
+  }
   else reject('Unexpected or destructive Compose operation');
   const images = Object.fromEntries(['BACKEND_IMAGE', 'COCKPIT_IMAGE', 'X_CONSOLE_IMAGE', 'EGRESS_IMAGE']
     .map((key) => [key, process.env[key]]));
   record({ tool, command, args: operationArgs, composeRoot, envFiles, composeFiles, images });
   failIfSelected(command);
+  if (command === 'health') {
+    state.started = true;
+    fs.writeFileSync(process.env.TEST_STATE, JSON.stringify(state));
+  }
+  const version = state.started ? (state.installedVersion ?? state.targetVersion) : state.currentVersion;
+  if (command === 'schema_history') process.stdout.write(version > 0 || state.failedMigration ? '1\n' : '0\n');
+  if (command === 'schema_invalid') process.stdout.write(state.failedMigration ? '1\n' : '0\n');
+  if (command === 'schema_version') process.stdout.write(String(version) + '\n');
+  if (command === 'schema_engines') process.stdout.write(state.nonInnoDB ? '1\n' : '0\n');
+  if (command === 'database_dump') {
+    if (!operationArgs[4].includes('--single-transaction --quick --no-tablespaces --set-gtid-purged=OFF --triggers')) reject('Unsafe dump flags');
+    process.stdout.write('-- synthetic SQL backup\nCREATE TABLE preserved(id BIGINT);\n');
+  }
   if (command === 'config_images') {
     const byService = { backend: images.BACKEND_IMAGE, cockpit: images.COCKPIT_IMAGE,
       'x-console': images.X_CONSOLE_IMAGE, egress: images.EGRESS_IMAGE,
@@ -116,7 +147,10 @@ function run(options = {}) {
   put(local(server + '/deploy/releases/current.env'), manifest('current'));
   put(local(server + '/deploy/releases/previous.env'), manifest('previous'));
   put(local('state.json'), JSON.stringify({ fail: options.fail, exitCode: options.exitCode || 7,
-    lockBusy: options.lockBusy, delay: options.delay, delayMs: options.delayMs }));
+    lockBusy: options.lockBusy, delay: options.delay, delayMs: options.delayMs,
+    targetVersion: options.targetVersion ?? 2, currentVersion: options.currentVersion ?? 0,
+    installedVersion: options.installedVersion, noLabel: options.noLabel,
+    failedMigration: options.failedMigration, nonInnoDB: options.nonInnoDB }));
   put(local('audit.jsonl'), '');
   put(local('scratch/.keep'), '');
   const incoming = options.incoming !== false;
@@ -139,7 +173,7 @@ function run(options = {}) {
   const flags = options.rootLast ? [...explicit, ...rootOptions] : [...rootOptions, ...explicit];
   if (options.noPull) flags.push('--no-pull');
   if (options.access) flags.push('--access', options.access);
-  const args = [options.action || 'deploy', ...(options.full ? [] : ['backend']), ...flags];
+  const args = [options.action || 'deploy', ...(options.full ? [] : [options.service || 'backend']), ...flags];
   const result = cp.spawnSync(bash, ['-c',
     'export PATH="$TEST_BIN:/usr/bin:/bin"\nexec bash "$TEST_SCRIPT" "$@"', '--', ...args,
   ], {
@@ -165,13 +199,15 @@ function assertSuccessfulStages(result, names) {
     names.flatMap((name) => [[name, 'start'], [name, 'complete']]));
   assert.ok(result.stages.every(({ elapsed, code }) => Number.isInteger(elapsed) && elapsed >= 0 && code === 0));
 }
-const selectedStages = ['validation', 'image_pull', 'container_stop', 'container_start_and_health', 'release_record'];
+const selectedStages = ['validation', 'image_pull', 'database_preflight', 'container_stop', 'database_backup', 'container_start_and_health', 'database_verification', 'release_record'];
+const preflightCalls = ['image_schema', 'schema_history', 'schema_engines'];
+const verifiedCalls = ['schema_history', 'schema_invalid', 'schema_version'];
 
 test('an incoming script uses --root for configuration, Compose paths and successful release records', () => {
   const result = run({ spacedRoot: true });
   assert.equal(result.status, 0, result.diagnostic);
   assertSuccessfulStages(result, selectedStages);
-  for (const call of result.calls.filter((call) => call.tool === 'docker')) {
+  for (const call of result.calls.filter((call) => call.composeRoot)) {
     assert.equal(call.composeRoot, result.rootArgument);
     assert.equal(call.envFiles[0], result.rootArgument + '/deploy/.env');
     assert.deepEqual(call.composeFiles, [result.rootArgument + '/compose.prod.yaml']);
@@ -233,7 +269,7 @@ test('--no-pull reports local image checks and completes every inspection before
   const result = run({ noPull: true });
   assert.equal(result.status, 0, result.diagnostic);
   assertSuccessfulStages(result, ['validation', 'local_image_check', ...selectedStages.slice(2)]);
-  assert.deepEqual(result.calls.map((call) => call.command), ['flock', 'validation', 'config_images', 'image_inspect', 'stop', 'health']);
+  assert.deepEqual(result.calls.map((call) => call.command), ['flock', 'validation', 'config_images', 'image_inspect', ...preflightCalls, 'stop', 'database_dump', 'health', ...verifiedCalls]);
 });
 
 test('a missing local image preserves the inspection error and cannot stop containers', () => {
@@ -248,7 +284,7 @@ test('full deployment pulls everything first and times dependency startup before
   const result = run({ full: true });
   assert.equal(result.status, 0, result.diagnostic);
   assertSuccessfulStages(result, ['validation', 'image_pull', 'dependencies_start', ...selectedStages.slice(2)]);
-  assert.deepEqual(result.calls.map((call) => call.command), ['flock', 'validation', 'pull', 'dependencies', 'stop', 'health']);
+  assert.deepEqual(result.calls.map((call) => call.command), ['flock', 'validation', 'pull', 'dependencies', ...preflightCalls, 'stop', 'database_dump', 'health', ...verifiedCalls]);
   assert.deepEqual(result.calls.find((call) => call.command === 'pull').args,
     ['egress', 'backend', 'cockpit', 'x-console', 'gateway', 'mysql', 'redis']);
   const dependencyArgs = result.calls.find((call) => call.command === 'dependencies').args;
@@ -294,6 +330,56 @@ test('image pull elapsed time advances while the mocked Docker command is busy',
   assert.equal(result.status, 0, result.diagnostic);
   const completed = result.stages.find(({ stage, event }) => stage === 'image_pull' && event === 'complete');
   assert.ok(completed.elapsed >= 1, result.diagnostic);
+});
+
+test('backend release writes a verified backup after stop and before starting migrations', () => {
+  const result = run();
+  assert.equal(result.status, 0, result.diagnostic);
+  const commands = result.calls.map((call) => call.command);
+  assert.ok(commands.indexOf('stop') < commands.indexOf('database_dump'));
+  assert.ok(commands.indexOf('database_dump') < commands.indexOf('health'));
+  const directory = result.local(result.server + '/deploy/releases/database-backups');
+  const file = fs.readdirSync(directory).find((name) => name.endsWith('.sql.gz'));
+  const bytes = fs.readFileSync(path.join(directory, file));
+  assert.match(require('node:zlib').gunzipSync(bytes).toString(), /CREATE TABLE preserved/);
+  assert.equal(fs.readFileSync(path.join(directory, file + '.sha256'), 'utf8').split(' ')[0],
+    require('node:crypto').createHash('sha256').update(bytes).digest('hex'));
+});
+
+test('backup failure stops the release and cannot start the new backend', () => {
+  const result = run({ fail: 'database_dump', exitCode: 41 });
+  assert.equal(result.status, 41, result.diagnostic);
+  assert.equal(result.stages.at(-1).stage, 'database_backup');
+  assert.ok(!result.calls.some((call) => call.command === 'health'));
+  assert.ok(!result.stdout.includes('DATABASE_BACKUP_OK'));
+  assert.equal(fs.readFileSync(result.local(result.server + '/deploy/releases/current.env'), 'utf8'), manifest('current'));
+});
+
+test('downgrades, unlabelled old images, failed history and non-InnoDB tables block before stop', () => {
+  for (const options of [
+    { currentVersion: 3 }, { noLabel: true, currentVersion: 2 },
+    { failedMigration: true }, { nonInnoDB: true },
+  ]) {
+    const result = run(options);
+    assert.equal(result.status, 1, result.diagnostic);
+    assert.ok(!result.calls.some((call) => ['stop', 'database_dump', 'health'].includes(call.command)));
+    assert.equal(fs.readFileSync(result.local(result.server + '/deploy/releases/previous.env'), 'utf8'), manifest('previous'));
+  }
+});
+
+test('wrong installed schema stops the backend and cannot record a successful release', () => {
+  const result = run({ installedVersion: 1 });
+  assert.equal(result.status, 1, result.diagnostic);
+  assert.equal(result.stages.at(-1).stage, 'database_verification');
+  assert.deepEqual(result.calls.at(-1).args, ['backend']);
+  assert.ok(!result.stages.some(({ stage }) => stage === 'release_record'));
+});
+
+test('frontend-only updates and validation never inspect, back up or migrate the database', () => {
+  const result = run({ service: 'cockpit' });
+  assert.equal(result.status, 0, result.diagnostic);
+  assertSuccessfulStages(result, ['validation', 'image_pull', 'container_stop', 'container_start_and_health', 'release_record']);
+  assert.deepEqual(result.calls.map((call) => call.command), ['flock', 'validation', 'pull', 'stop', 'health']);
 });
 
 after(() => {

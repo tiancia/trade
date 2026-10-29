@@ -112,9 +112,10 @@ public class PaperAccountService {
         var result = store.fill(new PaperAccountStore.FillCommand(properties.getInstId(), context.getPaperSessionId(),
                 context.getPaperSessionVersion(), record.getDecisionId(), record.getStrategyId(),
                 record.getStrategyConfigVersion(), snapshot, side, size, TradingMarketInputs.lastPrice(context),
-                properties.getTakerFeeRate(), context.getPaperPriceAt(), Instant.now(clock)));
+                properties.getTakerFeeRate(), context.getPaperPriceAt(), Instant.now(clock),
+                com.trade.trading.application.risk.RiskInputs.policy(properties.getRisk())));
         // The fill transaction has committed. Refresh monetary facts locally;
-        // defer any risk I/O to the separately guarded post-fill transition.
+        // Risk facts have committed in that same transaction.
         overlay(context, result.account(), false);
         tag(record, result.account().sessionId());
         return result;

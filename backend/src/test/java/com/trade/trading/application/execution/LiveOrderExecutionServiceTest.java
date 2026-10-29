@@ -59,6 +59,32 @@ class LiveOrderExecutionServiceTest {
     @TempDir
     Path tempDir;
 
+    @Test void ordinaryDrawdownBlocksBuyingWithoutLatchingTheAllOrdersStopAndSellingStillWorks() {
+        TradingProperties properties = liveProperties();
+        properties.getRisk().setEnabled(true);
+        properties.getRisk().setMaxDrawdownRatio(new BigDecimal("0.05"));
+        properties.getRisk().setMaxDailyLossRatio(BigDecimal.ONE);
+        var repository = new TradingStateRepository(tempDir.resolve("drawdown.json"));
+        repository.recordBuy(new BigDecimal("0.01"), new BigDecimal("50000"));
+        repository.recordRiskState(new com.trade.trading.domain.model.TradingRiskState()
+                .setCurrentEquity(new BigDecimal("1000")).setEquityHighWatermark(new BigDecimal("1000"))
+                .setDayStartEquity(new BigDecimal("1000")));
+        var api = new FakeOkxApi(filledOrder("sell", "0.01", "50000"));
+        var safety = mock(FundSafetyService.class);
+        var execution = broker(properties, api, new InMemoryTradingOrderRepository(), safety,
+                mock(TradingLeadershipService.class), repository);
+        var context = context("0.01", "400");
+        var blocked = new TradingDecisionRecord();
+        execution.execute(buyDecision(), context, blocked);
+        assertEquals("SKIPPED", blocked.getExecutionStatus());
+        assertTrue(blocked.getSkipReason().startsWith("RISK_MAX_DRAWDOWN"));
+        org.mockito.Mockito.verify(safety, org.mockito.Mockito.never()).halt(any(), any());
+        var sold = new TradingDecisionRecord().setDecisionId("exit-after-daily-loss");
+        execution.execute(sellDecision("0.01"), context, sold);
+        assertEquals("FILLED", sold.getExecutionStatus());
+        assertEquals("sell", api.orderReq.getSide());
+    }
+
     @Test
     void liveBrokerRequiresExplicitDoubleEnableBeforeOkxOrder() {
         TradingProperties properties = properties();

@@ -100,6 +100,8 @@ services:
       SERVER_ADDRESS: 0.0.0.0
       SERVER_FORWARD_HEADERS_STRATEGY: framework
       SERVER_SHUTDOWN: graceful
+      SPRING_FLYWAY_ENABLED: "true"
+      SPRING_SQL_INIT_MODE: never
       SPRING_LIFECYCLE_TIMEOUT_PER_SHUTDOWN_PHASE: 60s
       JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=65.0 -XX:+ExitOnOutOfMemoryError}
     volumes:

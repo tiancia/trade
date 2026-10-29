@@ -39,6 +39,10 @@ public final class OrderSettlementPolicy {
             FillAmounts amounts
     ) {
         BigDecimal filled = amounts.filledSize();
+        if (amounts.fee().signum() != 0 && !sameCurrency(exchangeOrder.getFeeCcy(), baseCurrency)
+                && !sameCurrency(exchangeOrder.getFeeCcy(), quoteCurrency)) {
+            throw new IllegalStateException("Cannot account for a nonzero fee outside the base/quote currencies");
+        }
         if ("buy".equalsIgnoreCase(localOrder.getSide())) {
             BigDecimal netBase = sameCurrency(exchangeOrder.getFeeCcy(), baseCurrency)
                     ? filled.add(amounts.fee())
@@ -55,7 +59,9 @@ public final class OrderSettlementPolicy {
         BigDecimal reduction = sameCurrency(exchangeOrder.getFeeCcy(), baseCurrency)
                 ? filled.subtract(amounts.fee())
                 : filled;
-        return new CumulativeSpotAmounts(reduction, BigDecimal.ZERO);
+        BigDecimal netProceeds = filled.multiply(amounts.averagePrice());
+        if (sameCurrency(exchangeOrder.getFeeCcy(), quoteCurrency)) netProceeds = netProceeds.add(amounts.fee());
+        return new CumulativeSpotAmounts(reduction, netProceeds);
     }
 
     private static FillAmounts fillAmounts(ExchangeOrderObservation order, String state) {
@@ -161,6 +167,7 @@ public final class OrderSettlementPolicy {
 
     public record CumulativeSpotAmounts(
             BigDecimal positionQuantity,
+            /** BUY cost or SELL net proceeds, both cumulative in quote currency. */
             BigDecimal quoteCost
     ) {
     }

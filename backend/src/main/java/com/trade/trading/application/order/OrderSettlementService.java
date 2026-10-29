@@ -92,10 +92,10 @@ public class OrderSettlementService {
                     exchangeState,
                     exchangeUpdatedAt(exchangeOrder)
             );
-            if (application.firstApplication()) {
-                riskControlService.recordReconciledAction(
+            if (application.changed()) {
+                riskControlService.recordReconciledFill(
                         TradingAction.valueOf(localOrder.getAction()),
-                        exchangeUpdatedAt(exchangeOrder)
+                        exchangeUpdatedAt(exchangeOrder), application
                 );
             }
         }

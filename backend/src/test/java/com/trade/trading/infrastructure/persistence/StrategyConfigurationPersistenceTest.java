@@ -236,7 +236,7 @@ class StrategyConfigurationPersistenceTest {
         TradingMarketSource market = mock(TradingMarketSource.class);
         TickerResp ticker = new TickerResp();
         ticker.setLast("100");
-        when(market.collect(any())).thenReturn(new TradingDecisionContext().setTicker(ticker));
+        when(market.collect(any(), anyString())).thenReturn(new TradingDecisionContext().setTicker(ticker));
         TradingStrategyEngine engine = new TradingStrategyEngine(market,
                 new TradingStrategySelectionService(registry, state), mock(TradingBroker.class), state, properties,
                 mock(TradingMarketFeed.class), mock(FundSafetyService.class), mock(OrderReconciliationService.class),

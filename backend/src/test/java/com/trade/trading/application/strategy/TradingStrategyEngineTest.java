@@ -98,7 +98,7 @@ class TradingStrategyEngineTest {
     }
 
     @Test
-    void activeStrategyExceptionIsRecordedAsHoldWithoutRunningAnotherStrategy() {
+    void activeStrategyExceptionFailsTheRunWithoutRunningAnotherStrategy() {
         TradingProperties properties = properties(List.of(
                 strategyConfig("first", "throw"),
                 strategyConfig("second", "buy")
@@ -107,11 +107,11 @@ class TradingStrategyEngineTest {
         TradingStateRepository repository = new TradingStateRepository(tempDir.resolve("engine-error-state.json"));
         repository.selectActiveStrategy("first", null);
 
-        engine(properties, broker, repository)
-                .runDecision(TradingTrigger.scheduled());
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> engine(properties, broker, repository).runDecision(TradingTrigger.scheduled()));
 
         assertEquals(0, broker.executeCount);
-        assertEquals("first", repository.getState().getRecentDecisions().getFirst().getStrategyId());
+        org.junit.jupiter.api.Assertions.assertTrue(repository.getState().getRecentDecisions().isEmpty());
     }
 
     @Test
@@ -250,6 +250,8 @@ class TradingStrategyEngineTest {
         public TradingDecisionContext collect(TradingTrigger trigger) {
             return context;
         }
+        @Override
+        public TradingDecisionContext collect(TradingTrigger trigger, String bar) { return context; }
     }
 
     private static class NoopOkxRestClient implements OkxRestClient {

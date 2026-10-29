@@ -31,6 +31,22 @@ import static org.mockito.Mockito.when;
 class TradingTriggerServiceTest {
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-22T08:04:20Z"), ZoneOffset.UTC);
 
+    @Test void scheduledAndEventFailuresReachTheAutomationCaller() {
+        var engine = mock(TradingStrategyEngine.class);
+        when(engine.isIntradayStrategyActive()).thenReturn(true);
+        when(engine.runDecision(any())).thenThrow(new IllegalStateException("decision failed"));
+        var leadership = mock(TradingLeadershipService.class);
+        when(leadership.runIfLeader(anyString(), any(Runnable.class))).thenAnswer(call -> {
+            call.<Runnable>getArgument(1).run(); return true;
+        });
+        var service = new TradingTriggerService(engine, mock(OrderReconciliationService.class), leadership,
+                mock(TradingMarketSource.class), mock(TradingMarketFeed.class), mock(HotMarketDataCache.class),
+                mock(TradingEventDetector.class), mock(TradingStateStore.class), new TradingProperties(),
+                mock(PaperAccountService.class), CLOCK);
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class, service::runScheduledDecision);
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class, service::scanEventTriggers);
+    }
+
     @Test
     void intradayScanEvaluatesWithoutLegacyOneMinuteMarketEventOrCooldown() {
         TradingStrategyEngine engine = mock(TradingStrategyEngine.class);

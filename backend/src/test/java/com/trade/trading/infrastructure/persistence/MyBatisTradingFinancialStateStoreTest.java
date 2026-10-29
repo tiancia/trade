@@ -71,6 +71,7 @@ import static org.mockito.Mockito.mock;
                 "account_scope VARCHAR(32) NOT NULL UNIQUE, current_equity DECIMAL(38,18) NOT NULL," +
                 "equity_high_watermark DECIMAL(38,18) NOT NULL, day_start_equity DECIMAL(38,18) NOT NULL," +
                 "day_start_date VARCHAR(16), consecutive_losses INT NOT NULL, loss_cooldown_until TIMESTAMP," +
+                "open_trade_realized_pnl DECIMAL(38,18), closed_trade_accounting_version INT NOT NULL DEFAULT 0," +
                 "last_trade_time TIMESTAMP, consecutive_open_actions INT NOT NULL, last_risk_reason VARCHAR(1000)," +
                 "consecutive_reconciliation_failures INT NOT NULL, last_reconciliation_at TIMESTAMP," +
                 "last_reconciliation_error VARCHAR(1000), version BIGINT NOT NULL," +

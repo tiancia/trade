@@ -31,8 +31,9 @@
 
 ## 数据库变更
 
-- `db/schema/<module>/schema.sql` 按模块保存完整结构，应用启动时按 `spring.sql.init.schema-locations` 中的显式顺序执行；
-- `db/upgrade/<module>/` 是已有数据库的手工升级脚本，不会自动执行；跨模块历史补丁放在 `db/upgrade/legacy/`；
+- `db/schema/<module>/schema.sql` 按模块保存当前完整结构，供查阅与离线结构测试；运行时仅执行 Flyway 版本迁移，`spring.sql.init.mode=never`；
+- 新增 `db/migration/V<N>__description.sql`（全库唯一递增版本），同时更新所属模块完整结构、Dockerfile 的 `com.trade.database.version` 和迁移测试；已发布的迁移及支持文件禁止修改；
+- `db/upgrade/<module>/` 仅保存 Flyway 接入前的手工历史补丁，不扫描执行，不能当作版本链；跨模块历史补丁放在 `db/upgrade/legacy/`；
 - SQL 必须注明适用旧结构、前置条件、验证方式和不可逆操作；
 - 表结构、Mapper 接口、Row 类型和 XML 必须在同一变更中保持一致；
 - 合并前至少在隔离数据库验证，生产执行前必须备份。

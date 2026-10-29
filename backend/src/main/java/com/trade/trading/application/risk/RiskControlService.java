@@ -132,8 +132,7 @@ public class RiskControlService {
             riskState = paperAccounts.updateRiskState(decisionContext,
                     current -> RiskStateTransitions.copyRiskState(current).setLastRiskReason(reason));
         } else {
-            riskState.setLastRiskReason(reason);
-            stateRepository.recordRiskState(riskState);
+            riskState = stateRepository.updateRiskState(current -> RiskStateTransitions.copyRiskState(current).setLastRiskReason(reason));
         }
         recordAssessment("blocked", metricValue(violations.getFirst().getCode()), violations);
         return RiskAssessment.blocked(riskState, currentEquity, violations);
@@ -150,8 +149,7 @@ public class RiskControlService {
             paperAccounts.updateRiskState(decisionContext,
                     current -> transitions().executed(current, decision.getAction(), equity, now));
         } else {
-            stateRepository.recordRiskState(transitions().executed(
-                    stateRepository.getState().getRiskState(), decision.getAction(), equity, now));
+            stateRepository.updateRiskState(current -> transitions().executed(current, decision.getAction(), equity, now));
         }
     }
 
@@ -166,10 +164,16 @@ public class RiskControlService {
         if (action == null || !riskProperties().isEnabled()) {
             return;
         }
-        TradingRiskState riskState = transitions().executed(
-                stateRepository.getState().getRiskState(), action, BigDecimal.ZERO,
-                executedAt == null ? Instant.now(clock) : executedAt);
-        stateRepository.recordRiskState(riskState);
+        stateRepository.updateRiskState(current -> transitions().executed(current, action, BigDecimal.ZERO,
+                executedAt == null ? Instant.now(clock) : executedAt));
+    }
+
+    public void recordReconciledFill(TradingAction action, Instant executedAt,
+                                     com.trade.trading.domain.order.SpotFillApplication fill) {
+        if (!fill.changed()) return;
+        stateRepository.updateRiskState(current -> transitions().filled(current, action, BigDecimal.ZERO,
+                fill.openedPosition(), fill.closedPosition(), fill.realizedPnlDelta(),
+                executedAt == null ? Instant.now(clock) : executedAt, fill.firstApplication()));
     }
 
     private TradingRiskState refreshRiskState(TradingDecisionContext decisionContext) {
@@ -178,11 +182,7 @@ public class RiskControlService {
         if (paperRisk()) {
             return paperAccounts.updateRiskState(decisionContext, current -> transitions().refresh(current, equity, now));
         }
-        TradingRiskState state = transitions().refresh(stateRepository.getState().getRiskState(), equity, now);
-        if (equity.signum() > 0) {
-            stateRepository.recordRiskState(state);
-        }
-        return state;
+        return stateRepository.updateRiskState(current -> transitions().refresh(current, equity, now));
     }
 
     private boolean paperRisk() {

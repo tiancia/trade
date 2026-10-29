@@ -38,9 +38,12 @@ class RiskControlServiceTest {
         TradingStateRepository repository = repository();
         RiskControlService service = service(properties, repository, NOW);
 
-        assertTrue(service.evaluate(openDecision(TradingAction.BUY), context("1000")).isAllowed());
-        assertTrue(service.evaluate(openDecision(TradingAction.BUY), context("990")).isAllowed());
-        assertTrue(service.evaluate(openDecision(TradingAction.BUY), context("980")).isAllowed());
+        for (int i = 0; i < 3; i++) {
+            service.recordReconciledFill(TradingAction.BUY, NOW,
+                    new com.trade.trading.domain.order.SpotFillApplication(true, true, BigDecimal.ONE, true, false, BigDecimal.ZERO));
+            service.recordReconciledFill(TradingAction.SELL, NOW,
+                    new com.trade.trading.domain.order.SpotFillApplication(true, true, BigDecimal.ONE, false, true, BigDecimal.ONE.negate()));
+        }
 
         RiskAssessment thirdLoss = service.evaluate(openDecision(TradingAction.BUY), context("970"));
 

@@ -19,7 +19,21 @@ class OrderSettlementPolicyTest {
         observation = observed("sell", "filled", "-0.01", "BTC");
         amounts = policy.cumulativeSpotAmounts(sell, observation, policy.prepare(sell, observation).amounts());
         assertDecimal("1.01", amounts.positionQuantity());
-        assertDecimal("0", amounts.quoteCost());
+        assertDecimal("100", amounts.quoteCost());
+    }
+
+    @Test void quoteFeeReducesCumulativeSellProceeds() {
+        var order = local("sell");
+        var observation = observed("sell", "filled", "-2", "USDT");
+        var amounts = policy.cumulativeSpotAmounts(order, observation, policy.prepare(order, observation).amounts());
+        assertDecimal("98", amounts.quoteCost());
+    }
+
+    @Test void unknownFeeCurrencyCannotSilentlyDistortNetTradePnl() {
+        var order = local("sell");
+        var observation = observed("sell", "filled", "-2", "OKB");
+        var amounts = policy.prepare(order, observation).amounts();
+        assertThrows(IllegalStateException.class, () -> policy.cumulativeSpotAmounts(order, observation, amounts));
     }
 
     @Test

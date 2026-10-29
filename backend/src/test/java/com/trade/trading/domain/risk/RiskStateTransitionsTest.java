@@ -31,17 +31,36 @@ class RiskStateTransitionsTest {
     }
 
     @Test
-    void activeCooldownIsNotExtendedByFurtherLossesAndExpiresAtExactBoundary() {
+    void closedLosingTradesTriggerCooldownAndOnlyFullRoundTripsCount() {
         Instant now = Instant.parse("2026-09-27T00:00:00Z");
-        TradingRiskState source = new TradingRiskState().setCurrentEquity(new BigDecimal("100"))
-                .setConsecutiveLosses(1);
-        TradingRiskState blocked = transitions.refresh(source, new BigDecimal("90"), now);
+        TradingRiskState source = new TradingRiskState().setCurrentEquity(new BigDecimal("100"));
+        source = transitions.filled(source, TradingAction.BUY, BigDecimal.ZERO, true, false, BigDecimal.ZERO, now, true);
+        source = transitions.filled(source, TradingAction.SELL, BigDecimal.ZERO, false, false, new BigDecimal("-10"), now, true);
+        assertEquals(0, source.getConsecutiveLosses());
+        source = transitions.filled(source, TradingAction.SELL, BigDecimal.ZERO, false, true, new BigDecimal("5"), now, false);
+        assertEquals(1, source.getConsecutiveLosses());
+        source = transitions.filled(source, TradingAction.BUY, BigDecimal.ZERO, true, false, BigDecimal.ZERO, now, true);
+        TradingRiskState blocked = transitions.filled(source, TradingAction.SELL, BigDecimal.ZERO,
+                false, true, new BigDecimal("-1"), now, true);
         assertEquals(now.plusSeconds(60).toString(), blocked.getLossCooldownUntil());
         TradingRiskState continued = transitions.refresh(blocked, new BigDecimal("80"), now.plusSeconds(30));
         assertEquals(blocked.getLossCooldownUntil(), continued.getLossCooldownUntil());
         TradingRiskState expired = transitions.refresh(continued, new BigDecimal("80"), now.plusSeconds(60));
         assertNull(expired.getLossCooldownUntil());
         assertEquals(0, expired.getConsecutiveLosses());
+    }
+
+    @Test
+    void sampledEquityDeclinesAndLegacyLossStreaksNeverCountAsClosedLosses() {
+        Instant now = Instant.parse("2026-09-27T00:00:00Z");
+        TradingRiskState state = new TradingRiskState().setCurrentEquity(new BigDecimal("100"))
+                .setConsecutiveLosses(99).setLossCooldownUntil(now.plusSeconds(3600).toString());
+        for (int i = 1; i <= 5; i++) state = transitions.refresh(state, BigDecimal.valueOf(100 - i), now.plusSeconds(i));
+        assertEquals(0, state.getConsecutiveLosses());
+        assertNull(state.getLossCooldownUntil());
+        // A legacy position has no reliable opening boundary; its first close is not fabricated as a full trade.
+        state = transitions.filled(state, TradingAction.SELL, BigDecimal.ZERO, false, true, new BigDecimal("-100"), now, true);
+        assertEquals(0, state.getConsecutiveLosses());
     }
 
     @Test

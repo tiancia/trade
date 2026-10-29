@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.trade.trading.infrastructure.persistence.StrategySelectionMapper">
+    <resultMap id="selection" type="com.trade.trading.infrastructure.persistence.StrategySelectionRow">
+        <id property="id" column="id"/>
+        <result property="accountScope" column="account_scope"/>
+        <result property="instId" column="inst_id"/>
+        <result property="strategyId" column="strategy_id"/>
+        <result property="revision" column="revision"/>
+        <result property="changedAt" column="changed_at"/>
+    </resultMap>
+    <insert id="insertIfAbsent" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO okx_strategy_selection (account_scope, inst_id, strategy_id, revision, changed_at)
+        VALUES (#{accountScope}, #{instId}, #{strategyId}, #{revision}, #{changedAt})
+        ON DUPLICATE KEY UPDATE account_scope = VALUES(account_scope)
+    </insert>
+    <select id="find" resultMap="selection" useCache="false">
+        SELECT * FROM okx_strategy_selection WHERE account_scope = #{scope} AND inst_id = #{instId}
+    </select>
+    <select id="lock" resultMap="selection" flushCache="true" useCache="false">
+        SELECT * FROM okx_strategy_selection WHERE account_scope = #{scope} AND inst_id = #{instId} FOR UPDATE
+    </select>
+    <update id="update">
+        UPDATE okx_strategy_selection
+        SET strategy_id = #{strategyId}, revision = #{revision}, changed_at = #{changedAt}
+        WHERE id = #{id} AND revision = #{revision} - 1
+    </update>
+    <!-- Configurations are shared across modes and instruments. Protect every
+         managed LIVE position, working order and active PAPER session. -->
+    <select id="hasExposure" resultType="boolean" useCache="false" flushCache="true">
+        SELECT (EXISTS (SELECT 1 FROM okx_position_state WHERE account_scope = 'live' AND quantity &gt; 0)
+            OR EXISTS (SELECT 1 FROM okx_orders WHERE status NOT IN ('FILLED', 'CANCELED', 'REJECTED', 'ABANDONED'))
+            OR EXISTS (SELECT 1 FROM okx_paper_account_heads h
+                JOIN okx_paper_sessions s ON s.session_id = h.session_id
+                WHERE s.position_quantity &gt; 0))
+    </select>
+</mapper>

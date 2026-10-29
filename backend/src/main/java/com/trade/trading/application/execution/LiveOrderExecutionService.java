@@ -29,6 +29,8 @@ import com.trade.trading.infrastructure.config.TradingProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.trade.trading.application.strategy.TradingStrategyMaintenance;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -47,6 +49,7 @@ public class LiveOrderExecutionService {
     private final OrderSettlementService orderSettlementService;
     private final OrderIdempotencyKeyFactory idempotencyKeyFactory;
     private final TradingStateStore stateRepository;
+    private final TradingStrategyMaintenance maintenance;
 
     public LiveOrderExecutionService(
             ExchangeOrderGateway orderGateway,
@@ -60,6 +63,16 @@ public class LiveOrderExecutionService {
             OrderIdempotencyKeyFactory idempotencyKeyFactory,
             TradingStateStore stateRepository
     ) {
+        this(orderGateway, orderSizingService, properties, riskControlService, fundSafetyService, leadershipService,
+                orderLifecycleService, orderSettlementService, idempotencyKeyFactory, stateRepository, null);
+    }
+
+    @Autowired
+    public LiveOrderExecutionService(ExchangeOrderGateway orderGateway, OrderSizingService orderSizingService,
+            TradingProperties properties, RiskControlService riskControlService, FundSafetyService fundSafetyService,
+            TradingLeadershipService leadershipService, OrderLifecycleService orderLifecycleService,
+            OrderSettlementService orderSettlementService, OrderIdempotencyKeyFactory idempotencyKeyFactory,
+            TradingStateStore stateRepository, TradingStrategyMaintenance maintenance) {
         this.orderGateway = orderGateway;
         this.orderSizingService = orderSizingService;
         this.properties = properties;
@@ -70,6 +83,7 @@ public class LiveOrderExecutionService {
         this.orderSettlementService = orderSettlementService;
         this.idempotencyKeyFactory = idempotencyKeyFactory;
         this.stateRepository = stateRepository;
+        this.maintenance = maintenance;
     }
 
     public void execute(
@@ -107,7 +121,8 @@ public class LiveOrderExecutionService {
 
         RiskAssessment riskAssessment = riskControlService.evaluate(decision, context);
         if (!riskAssessment.isAllowed()) {
-            fundSafetyService.haltForHardRisk(riskAssessment);
+            // Daily loss and drawdown block opens through the risk rules. They
+            // must not latch the all-orders emergency stop and disable exits.
             decisionRecord.setExecutionStatus("SKIPPED")
                     .setSkipReason(riskAssessment.skipReason());
             log.info("{}", riskAssessment.skipReason());
@@ -266,7 +281,14 @@ public class LiveOrderExecutionService {
                 new BigDecimal(request.getSz())
         );
 
-        OrderReservation reservation = orderLifecycleService.reserve(submission);
+        OrderReservation reservation;
+        try {
+            reservation = maintenance == null ? orderLifecycleService.reserve(submission)
+                    : maintenance.execute(record, () -> orderLifecycleService.reserve(submission));
+        } catch (java.util.ConcurrentModificationException e) {
+            record.setExecutionStatus("SKIPPED").setSkipReason(e.getMessage());
+            return;
+        }
         applyOrder(record, reservation.order(), !reservation.acquired());
         if (!reservation.acquired()) {
             reconcileReplay(record, reservation.order());

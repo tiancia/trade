@@ -9,6 +9,10 @@ import java.util.List;
 /** On-demand context collection; provider calls and event publication belong to adapters. */
 public interface TradingMarketSource {
     TradingDecisionContext collect(TradingTrigger trigger);
+    /** Collect only the interval and account facts required by a deterministic strategy. */
+    default TradingDecisionContext collect(TradingTrigger trigger, String bar) {
+        return collect(trigger);
+    }
     List<CandleResp> getOneMinuteCandles();
     List<CandleResp> getFifteenMinuteCandles();
     TickerResp getTicker();

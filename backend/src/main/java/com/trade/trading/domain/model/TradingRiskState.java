@@ -13,6 +13,9 @@ public class TradingRiskState {
     private BigDecimal dayStartEquity = BigDecimal.ZERO;
     private String dayStartDate;
     private int consecutiveLosses;
+    /** Null means the current position predates reliable round-trip accounting. */
+    private BigDecimal openTradeRealizedPnl;
+    private int closedTradeAccountingVersion;
     private String lossCooldownUntil;
     private String lastTradeTime;
     private int consecutiveOpenActions;

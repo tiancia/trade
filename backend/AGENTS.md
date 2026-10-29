@@ -26,7 +26,7 @@
 
 - 交易：保持幂等键、确定性 `clOrdId`、订单状态机、乐观锁和审计历史的语义；重试不得直接二次下单。
 - 行情：生产者统一发布到有界事件总线；保留背压、异常隔离、指标和优雅停机，不在 WebSocket 回调线程直接写数据库。
-- 数据库：完整结构更新所属模块的 `db/schema/<module>/schema.sql`；存量库升级另增 `db/upgrade/<module>/` 手工脚本并更新升级说明。新增数据库模块时同步更新 `spring.sql.init.schema-locations`。Mapper 类型改包时同步更新 XML namespace/resultType/parameterType。
+- 数据库：完整结构更新所属模块的 `db/schema/<module>/schema.sql`；运行时升级新增全局递增的 `db/migration/V<N>__description.sql`，同步提升 Dockerfile 的 `com.trade.database.version`。已发布迁移（包括 Java 迁移及支持 SQL）不可修改，只能追加新版本。`db/upgrade/` 只保留接入 Flyway 前的历史补丁，不扫描执行。新增模块同步更新完整结构列表与迁移。Mapper 类型改包时同步更新 XML namespace/resultType/parameterType。
 - 配置：新增配置时同步检查 `application.yml`、`.env.example`、`@ConfigurationProperties`、默认安全值和运维文档。
 - 凭据：不得读取、打印或提交 `.env`、密钥、令牌、私钥和生产数据。
 

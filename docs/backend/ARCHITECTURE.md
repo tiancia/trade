@@ -149,11 +149,13 @@ OKX order snapshot
 
 订单结算失败或仍有未决订单时不记录整轮对账成功。现货账户余额只更新交易所观测量，不覆盖受管理仓位与成本，包括 `DEDICATED_ACCOUNT`；受管理仓位只由成交账本推进。专用账户差异触发停止，共用账户仍执行原有受管理仓位约束。
 
-MySQL 是资金状态的权威来源。旧 JSON 的仓位、成本和风险仅在目标数据库行为空时兼容初始化；之后 JSON 只保存策略选择、画像和有界决策记忆。
+MySQL 是活动策略和资金状态的权威来源。旧 JSON 的仓位、成本、风险和活动选择仅在目标数据库行为空时兼容初始化；之后 JSON 只维护画像和有界决策记忆。活动选择按执行模式及标的存储，每次直接读取共享数据库。
 
-本地记忆在副本上修改，同目录临时文件完成序列化后原子替换，成功后才更新内存；不支持原子替换的文件系统会拒绝写入。此机制只保证单进程的失败一致性，不提供跨实例策略同步。实际启停、领导权和资金恢复步骤见 [后端运维手册](OPERATIONS.md)。
+本地记忆在副本上修改，同目录临时文件完成序列化后原子替换，成功后才更新内存；不支持原子替换的文件系统会拒绝写入。此机制只负责单进程记忆的失败一致性。`TradingStrategyMaintenance` 使用共享数据库锁串行化策略修改、PAPER 成交和 LIVE 预留，并核对活动选择 revision 及参数版本；锁内不调用交易所。同库有 LIVE/PAPER 持仓或未决订单时拒绝策略修改，保持持仓退出规则稳定。实际启停、领导权和资金恢复步骤见 [后端运维手册](OPERATIONS.md)。
 
 资金级停止先提交 `HALTED`，再设置 cancel-all-after 并逐笔撤销挂单。设置定时器失败或某笔撤单失败不阻止后续撤单；错误聚合到 `lastActionError`，不会自动解除停止。每次真实提交在取得提交所有权后再次读取停止门；恢复要求期望 revision、确认词、本地无待对账订单且交易所无挂单。
+
+日亏损、回撤和连亏冷却只拦截加仓，不激活禁止全部真实下单的 HALTED。连亏来自空仓至完整平仓的净盈亏，部分成交差量及累计手续费在资金事务中应用，重放不重复计数。采集、策略或执行失败向 automation 传播异常；正常禁用、锁忙及风险拦截仍为跳过。
 
 ### 行情事件管道
 
@@ -210,7 +212,7 @@ X 的 `application/service/XPostService` 编排配置驱动的 AI 草稿、Teleg
 
 - 生产代码和测试包路径镜像，移动类型必须同步移动测试并运行 `clean test`。
 - MyBatis XML 保留 `src/main/resources/mapper/<module>/`，同步更新 namespace/resultType/parameterType。
-- 数据库完整结构按模块保存于 `db/schema/<module>/schema.sql`，`application.yml` 的 `spring.sql.init.schema-locations` 显式列出启动顺序；存量升级使用手工 `db/upgrade/<module>/`。详见 [数据库目录](../../backend/src/main/resources/db/README.md)。
+- 数据库完整结构按模块保存于 `db/schema/<module>/schema.sql`，仅用于查阅和离线校验；运行时由 `automation/infrastructure/migration` 编排 Flyway 的全库版本迁移，完成后才进入应用就绪及任务启动阶段。`db/upgrade/` 仅保留接入前的历史补丁。详见 [数据库目录](../../backend/src/main/resources/db/README.md)。
 - `PackageArchitectureTest` 检查包与路径、四层入口、业务域隔离、共享模块依赖方向、Web 不引用持久化、内层不依赖接口入口、port 不依赖实现、领域类型不依赖外层，以及 Mapper XML 中类名可解析。
 - domain 不允许引用 provider DTO；应用层采集与执行契约可以保留供应商协议，在调用纯规则前转换。结构规则不得通过放宽限制来掩盖错误归层。
 - 新增边界检查禁止 domain 引入 Spring/MyBatis/SQL 框架，禁止 Trading 的 application/interfaces 直接依赖已抽象的四类状态/行情/事件实现。

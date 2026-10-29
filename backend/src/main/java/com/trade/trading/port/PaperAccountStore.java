@@ -32,6 +32,11 @@ public interface PaperAccountStore {
 
     record FillCommand(String instId, String expectedSessionId, long expectedVersion, String decisionId,
                        String strategyId, long strategyConfigVersion, String strategyConfigSnapshotJson,
-                       String side, BigDecimal size, BigDecimal price, BigDecimal feeRate, Instant marketTime, Instant now) {}
+                       String side, BigDecimal size, BigDecimal price, BigDecimal feeRate, Instant marketTime, Instant now,
+                       com.trade.trading.domain.risk.RiskPolicy riskPolicy) {
+        public FillCommand {
+            java.util.Objects.requireNonNull(riskPolicy, "Risk policy is required for atomic simulated fills");
+        }
+    }
     record AppliedFill(PaperFill fill, PaperAccount account, boolean replay) {}
 }

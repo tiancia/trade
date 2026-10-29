@@ -2,6 +2,16 @@
 -- Loaded at application startup; existing database upgrades are manual under db/upgrade/trading/.
 -- CREATE TABLE IF NOT EXISTS does not add missing columns to existing tables.
 
+CREATE TABLE IF NOT EXISTS `okx_strategy_selection` (
+    `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    `account_scope` varchar(32) NOT NULL,
+    `inst_id` varchar(64) NOT NULL,
+    `strategy_id` varchar(128),
+    `revision` bigint NOT NULL DEFAULT 0,
+    `changed_at` datetime(6),
+    UNIQUE KEY `uk_okx_strategy_selection_scope_inst` (`account_scope`, `inst_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- -----------------------------------------------------------------------------
 -- OKX trading, strategy, backtest, and market-data storage
 -- -----------------------------------------------------------------------------
@@ -167,6 +177,8 @@ CREATE TABLE IF NOT EXISTS `okx_risk_state` (
     `day_start_equity` decimal(38,18) NOT NULL DEFAULT 0,
     `day_start_date` varchar(16),
     `consecutive_losses` int NOT NULL DEFAULT 0,
+    `open_trade_realized_pnl` decimal(38,18),
+    `closed_trade_accounting_version` int NOT NULL DEFAULT 0,
     `loss_cooldown_until` datetime(6),
     `last_trade_time` datetime(6),
     `consecutive_open_actions` int NOT NULL DEFAULT 0,

@@ -25,6 +25,16 @@ import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.port.HistoricalCandleSource;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.trade.trading.application.execution.OrderSizingService;
+import com.trade.trading.application.risk.RiskInputs;
+import com.trade.trading.application.market.TradingMarketInputs;
+import com.trade.trading.domain.risk.RiskRule;
+import com.trade.trading.domain.risk.RiskContext;
+import com.trade.trading.domain.risk.RiskStateTransitions;
+import com.trade.trading.domain.model.TradingRiskState;
+import com.trade.trading.domain.model.TradingAction;
+import com.trade.client.okx.dto.InstrumentInfoResp;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -51,6 +61,7 @@ public class BacktestService {
     private final TradingStrategyRegistry strategyRegistry;
     private final TradingProperties properties;
     private final Executor executor;
+    private final List<RiskRule> riskRules;
     private final ConcurrentMap<String, BacktestRun> runs = new ConcurrentHashMap<>();
 
     public BacktestService(
@@ -59,10 +70,18 @@ public class BacktestService {
             TradingProperties properties,
             @Qualifier("backtestExecutor") Executor executor
     ) {
+        this(historicalCandleService, strategyRegistry, properties, executor, RiskRule.standardRules());
+    }
+
+    @Autowired
+    public BacktestService(HistoricalCandleSource historicalCandleService, TradingStrategyRegistry strategyRegistry,
+                           TradingProperties properties, @Qualifier("backtestExecutor") Executor executor,
+                           @Qualifier("tradingRiskRules") List<RiskRule> riskRules) {
         this.historicalCandleService = historicalCandleService;
         this.strategyRegistry = strategyRegistry;
         this.properties = properties;
         this.executor = executor;
+        this.riskRules = List.copyOf(riskRules);
     }
 
     public BacktestRun start(BacktestRequest request) {
@@ -136,6 +155,8 @@ public class BacktestService {
             equityCurve.add(equityPoint(broker, firstCandle));
             int windowLimit = configured.config() instanceof IntradayTechnicalStrategyConfig intraday
                     ? intraday.warmupCandles() : candles.size();
+            TradingRiskState riskState = new TradingRiskState();
+            RiskStateTransitions riskTransitions = new RiskStateTransitions(RiskInputs.policy(properties.getRisk()));
 
             for (int i = 0; i < candles.size() - 1; i++) {
                 CandleResp signalCandle = candles.get(i);
@@ -145,9 +166,8 @@ public class BacktestService {
                 // same bounded warmup window as realtime evaluation.
                 List<CandleResp> windowNewestFirst = candles
                         .subList(Math.max(0, i + 1 - windowLimit), i + 1).reversed();
-                Instant evaluatedAt = IntradayTechnicalStrategy.TYPE.equals(configured.type())
-                        ? candleTime(signalCandle).plusSeconds(15 * 60L)
-                        : candleTime(signalCandle);
+                Instant evaluatedAt = candleTime(signalCandle)
+                        .plusMillis(BacktestPolicy.barDurationMillis(request.getBar()));
                 TradingDecisionContext decisionContext = context(
                         broker,
                         signalCandle,
@@ -155,8 +175,37 @@ public class BacktestService {
                         request.getBar(),
                         evaluatedAt
                 );
+                decisionContext.getTradingState().setRiskState(riskState);
                 StrategyDecision decision = evaluate(configured, request, decisionContext, evaluatedAt);
-                addTrade(trades, broker.execute(decision, fillCandle(fillCandle)), run.getRunId());
+                if (decision != null && !decision.isHold()) {
+                    riskState = riskTransitions.refresh(riskState, broker.equity(price(signalCandle.getClose(), "close", signalCandle)), evaluatedAt);
+                    RiskContext riskContext = new RiskContext().setDecision(decision)
+                            .setPolicy(RiskInputs.policy(properties.getRisk())).setRiskState(riskState)
+                            .setSpotInstrument(true).setCurrentEquity(riskState.getCurrentEquity())
+                            .setLastPrice(TradingMarketInputs.lastPrice(decisionContext)).setNow(evaluatedAt);
+                    boolean blocked = properties.getRisk().isEnabled()
+                            && riskRules.stream().anyMatch(rule -> rule.evaluate(riskContext).isPresent());
+                    if (!blocked) {
+                        OrderSizingService sizing = new OrderSizingService(properties);
+                        var size = decision.getAction() == TradingAction.BUY ? sizing.buySize(decision, decisionContext)
+                                : decision.getAction() == TradingAction.SELL ? sizing.sellSize(decision, decisionContext, broker.getBase()) : null;
+                        if (size != null && size.isExecutable()) {
+                            StrategyDecision executable = new StrategyDecision().setStrategyId(decision.getStrategyId())
+                                    .setAction(decision.getAction()).setReason(decision.getReason())
+                                    .setBuyQuoteAmount(decision.getAction() == TradingAction.BUY ? new BigDecimal(size.getSize()) : null)
+                                    .setSellBaseAmount(decision.getAction() == TradingAction.SELL ? new BigDecimal(size.getSize()) : null);
+                            BigDecimal before = broker.getBase();
+                            BacktestTrade trade = broker.execute(executable, fillCandle(fillCandle));
+                            if (trade != null) {
+                                riskState = riskTransitions.filled(riskState, trade.action(), broker.equity(trade.price()),
+                                        trade.action() == TradingAction.BUY && before.signum() == 0,
+                                        trade.action() == TradingAction.SELL && broker.getBase().signum() == 0,
+                                        trade.realizedPnl(), trade.timestamp(), true);
+                            }
+                            addTrade(trades, trade, run.getRunId());
+                        }
+                    }
+                }
                 equityCurve.add(equityPoint(broker, fillCandle));
                 run.setProcessedCandleCount(i + 2);
             }
@@ -255,6 +304,9 @@ public class BacktestService {
                 .setAccountBalance(account)
                 .setBaseBalance(base)
                 .setQuoteBalance(quote)
+                // Historical candles do not carry historical product rules.
+                // Zero exchange limits leave application caps and risk rules in force.
+                .setInstrument(new InstrumentInfoResp())
                 .setOneMinuteCandles("1m".equalsIgnoreCase(bar) ? windowNewestFirst : List.of())
                 .setFiveMinuteCandles("5m".equalsIgnoreCase(bar) ? windowNewestFirst : List.of())
                 .setFifteenMinuteCandles("15m".equalsIgnoreCase(bar) ? windowNewestFirst : List.of())

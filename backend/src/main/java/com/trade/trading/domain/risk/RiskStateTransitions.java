@@ -17,11 +17,15 @@ public final class RiskStateTransitions {
 
     public TradingRiskState refresh(TradingRiskState source, BigDecimal equity, Instant now) {
         TradingRiskState state = copyRiskState(source);
+        initializeClosedTradeAccounting(state);
+        Instant cooldown = parseInstant(state.getLossCooldownUntil());
+        if (cooldown != null && !now.isBefore(cooldown)) {
+            state.setLossCooldownUntil(null).setConsecutiveLosses(0);
+        }
         if (equity.signum() <= 0) {
             return state;
         }
         applyDailyBoundary(state, equity, now);
-        applyEquityLossState(state, equity, now);
         updateEquity(state, equity);
         return state;
     }
@@ -66,34 +70,43 @@ public final class RiskStateTransitions {
         }
     }
 
-    private void applyEquityLossState(TradingRiskState riskState, BigDecimal currentEquity, Instant now) {
-        RiskPolicy riskProperties = policy;
-        BigDecimal previousEquity = zeroIfNull(riskState.getCurrentEquity());
-        if (previousEquity.signum() <= 0) {
-            riskState.setConsecutiveLosses(Math.max(0, riskState.getConsecutiveLosses()));
-            return;
+    /** Called exactly once per advancing fill, inside the monetary transaction. */
+    public TradingRiskState filled(TradingRiskState source, TradingAction action, BigDecimal equity,
+                                   boolean openedPosition, boolean closedPosition, BigDecimal realizedPnlDelta,
+                                   Instant now, boolean firstOrderFill) {
+        TradingRiskState state = copyRiskState(source);
+        initializeClosedTradeAccounting(state);
+        if (policy.isEnabled() && firstOrderFill) state = executed(state, action, equity, now);
+        else {
+            updateEquity(state, equity);
+            state.setLastTradeTime(latestTradeTime(state.getLastTradeTime(), now));
         }
-
-        BigDecimal noise = previousEquity.multiply(zeroIfNull(riskProperties.getEquityNoiseRatio()));
-        BigDecimal decline = previousEquity.subtract(currentEquity);
-        boolean hasLoss = decline.compareTo(noise) > 0;
-        Instant cooldownUntil = parseInstant(riskState.getLossCooldownUntil());
-        boolean activeCooldown = cooldownUntil != null && now.isBefore(cooldownUntil);
-        // Tiny equity movements below the noise ratio do not count as losses;
-        // this prevents fees or mark-price jitter from triggering cooldowns.
-        if (hasLoss) {
-            riskState.setConsecutiveLosses(riskState.getConsecutiveLosses() + 1);
-        } else if (!activeCooldown) {
-            riskState.setConsecutiveLosses(0);
+        if (openedPosition) state.setOpenTradeRealizedPnl(BigDecimal.ZERO);
+        if (action.isCloseAction() && state.getOpenTradeRealizedPnl() != null) {
+            state.setOpenTradeRealizedPnl(state.getOpenTradeRealizedPnl().add(zeroIfNull(realizedPnlDelta)));
+            if (closedPosition) {
+                if (policy.isEnabled()) {
+                    boolean loss = state.getOpenTradeRealizedPnl().signum() < 0;
+                    state.setConsecutiveLosses(loss ? state.getConsecutiveLosses() + 1 : 0);
+                    Instant until = parseInstant(state.getLossCooldownUntil());
+                    if (loss && policy.getMaxConsecutiveLosses() > 0
+                            && state.getConsecutiveLosses() >= policy.getMaxConsecutiveLosses()
+                            && (until == null || !now.isBefore(until))) {
+                        state.setLossCooldownUntil(now.plusMillis(policy.getLossCooldownMs()).toString());
+                    }
+                }
+                state.setOpenTradeRealizedPnl(null);
+            }
         }
+        return state;
+    }
 
-        if (hasLoss
-                && riskProperties.getMaxConsecutiveLosses() > 0
-                && riskState.getConsecutiveLosses() >= riskProperties.getMaxConsecutiveLosses()
-                && !activeCooldown) {
-            riskState.setLossCooldownUntil(now.plusMillis(riskProperties.getLossCooldownMs()).toString());
-        } else if (!activeCooldown) {
-            riskState.setLossCooldownUntil(null);
+    private static void initializeClosedTradeAccounting(TradingRiskState state) {
+        if (state.getClosedTradeAccountingVersion() == 0) {
+            // Old values counted sampled equity declines, not closed trades.
+            // An already-open legacy position is untracked until the next flat entry.
+            state.setConsecutiveLosses(0).setLossCooldownUntil(null).setOpenTradeRealizedPnl(null)
+                    .setClosedTradeAccountingVersion(1);
         }
     }
 
@@ -115,6 +128,8 @@ public final class RiskStateTransitions {
                 .setDayStartEquity(zeroIfNull(source.getDayStartEquity()))
                 .setDayStartDate(source.getDayStartDate())
                 .setConsecutiveLosses(source.getConsecutiveLosses())
+                .setOpenTradeRealizedPnl(source.getOpenTradeRealizedPnl())
+                .setClosedTradeAccountingVersion(source.getClosedTradeAccountingVersion())
                 .setLossCooldownUntil(source.getLossCooldownUntil())
                 .setLastTradeTime(source.getLastTradeTime())
                 .setConsecutiveOpenActions(source.getConsecutiveOpenActions())

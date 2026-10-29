@@ -57,9 +57,9 @@ GENERATION_FAILED  REJECTED      EXPIRED      FAILED / UNKNOWN
 
 ## 数据库升级
 
-[`db/schema/weibo/schema.sql`](../../backend/src/main/resources/db/schema/weibo/schema.sql) 包含 OAuth、账号、草稿、审核历史、发布尝试和 Telegram 审核投递/轮询表。应用启动会创建缺失的表，已有表不会自动补字段。
+[`db/schema/weibo/schema.sql`](../../backend/src/main/resources/db/schema/weibo/schema.sql) 是 OAuth、账号、草稿、审核历史、发布尝试和 Telegram 审核投递/轮询表的完整结构参考；运行时由 Flyway 执行版本迁移，详见 [数据库说明](../../backend/src/main/resources/db/README.md)。
 
-需要在启动前手工建表或升级历史结构时，先检查目标库。手工脚本的依赖顺序为
+仅在接入 Flyway 前需要补齐更老结构时，先检查目标库。历史手工脚本的依赖顺序为
 [`migration_add_weibo_oauth.sql`](../../backend/src/main/resources/db/upgrade/weibo/migration_add_weibo_oauth.sql)、
 [`migration_add_weibo_workflow.sql`](../../backend/src/main/resources/db/upgrade/weibo/migration_add_weibo_workflow.sql)、
 [`migration_add_weibo_review_delivery.sql`](../../backend/src/main/resources/db/upgrade/weibo/migration_add_weibo_review_delivery.sql)。

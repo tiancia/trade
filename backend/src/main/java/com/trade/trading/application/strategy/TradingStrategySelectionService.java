@@ -4,6 +4,7 @@ import com.trade.trading.domain.model.ActiveStrategySelection;
 import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.port.TradingStateStore;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
@@ -17,16 +18,24 @@ import java.util.List;
 public class TradingStrategySelectionService {
     private final TradingStrategyRegistry strategyRegistry;
     private final TradingStateStore stateRepository;
+    private final TradingStrategyMaintenance maintenance;
 
     public TradingStrategySelectionService(
             TradingStrategyRegistry strategyRegistry,
             TradingStateStore stateRepository
     ) {
-        this.strategyRegistry = strategyRegistry;
-        this.stateRepository = stateRepository;
+        this(strategyRegistry, stateRepository, null);
     }
 
-    public synchronized ActiveStrategySelection current() {
+    @Autowired
+    public TradingStrategySelectionService(TradingStrategyRegistry strategyRegistry, TradingStateStore stateRepository,
+                                           TradingStrategyMaintenance maintenance) {
+        this.strategyRegistry = strategyRegistry;
+        this.stateRepository = stateRepository;
+        this.maintenance = maintenance;
+    }
+
+    public ActiveStrategySelection current() {
         List<ConfiguredTradingStrategy<?>> configured = strategyRegistry.configuredStrategies();
         TradingState state = stateRepository.getState();
         if (configured.isEmpty()) {
@@ -37,6 +46,8 @@ public class TradingStrategySelectionService {
         boolean selectionExists = configured.stream()
                 .anyMatch(strategy -> strategy.id().equals(selectedStrategyId));
         if (!selectionExists) {
+            if (selectedStrategyId != null) throw new IllegalStateException(
+                    "Selected strategy is disabled or missing; restore it or explicitly select a strategy while flat");
             state = stateRepository.selectActiveStrategy(
                     configured.getFirst().id(),
                     state.getActiveStrategyRevision()
@@ -45,9 +56,16 @@ public class TradingStrategySelectionService {
         return selection(state);
     }
 
-    public synchronized ActiveStrategySelection activate(String strategyId, Long expectedRevision) {
+    public ActiveStrategySelection activate(String strategyId, Long expectedRevision) {
         ConfiguredTradingStrategy<?> configured = strategyRegistry.configuredStrategy(strategyId);
+        // The shared selection adapter fences and checks exposure only when the
+        // ID actually changes. Re-selecting the current ID stays idempotent even
+        // with an open position, while still checking the expected revision.
         return selection(stateRepository.selectActiveStrategy(configured.id(), expectedRevision));
+    }
+
+    public <T> T withMaintenance(java.util.function.Supplier<T> action) {
+        return maintenance == null ? action.get() : maintenance.change(action);
     }
 
     public List<ConfiguredTradingStrategy<?>> activeStrategies() {

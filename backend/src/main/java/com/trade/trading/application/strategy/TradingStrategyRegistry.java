@@ -25,6 +25,7 @@ public class TradingStrategyRegistry {
     private final TradingProperties properties;
     private final ObjectMapper objectMapper;
     private final StrategyConfigurationStore configurationStore;
+    private final TradingStrategyMaintenance maintenance;
 
     /** Test-only construction without shared configuration persistence. */
     public TradingStrategyRegistry(
@@ -34,12 +35,18 @@ public class TradingStrategyRegistry {
         this(strategies, properties, null);
     }
 
-    @Autowired
     public TradingStrategyRegistry(
             List<TradingStrategy<? extends StrategyConfig>> strategies,
             TradingProperties properties,
             StrategyConfigurationStore configurationStore
     ) {
+        this(strategies, properties, configurationStore, null);
+    }
+
+    @Autowired
+    public TradingStrategyRegistry(List<TradingStrategy<? extends StrategyConfig>> strategies,
+                                  TradingProperties properties, StrategyConfigurationStore configurationStore,
+                                  TradingStrategyMaintenance maintenance) {
         this.strategies = strategies.stream()
                 .collect(Collectors.toMap(
                         strategy -> normalize(strategy.type()),
@@ -49,6 +56,7 @@ public class TradingStrategyRegistry {
                 ));
         this.properties = properties;
         this.configurationStore = configurationStore;
+        this.maintenance = maintenance;
         this.objectMapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.KEBAB_CASE);
     }
@@ -169,7 +177,8 @@ public class TradingStrategyRegistry {
         StrategyConfigurationVersion next = new StrategyConfigurationVersion(
                 configured.id(), configured.type(), configured.bar(), expectedVersion + 1,
                 Instant.now().toString(), reason.trim(), validated);
-        return configurationStore.update(expectedVersion, next);
+        return maintenance == null ? configurationStore.update(expectedVersion, next)
+                : maintenance.change(() -> configurationStore.update(expectedVersion, next));
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})

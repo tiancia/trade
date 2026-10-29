@@ -17,6 +17,9 @@ record_tmp=''
 mutation_started=false
 phase=''
 phase_started_at=0
+backend_update=false
+backend_stopped=false
+schema_target=0
 
 usage() {
   cat <<'EOF'
@@ -47,11 +50,17 @@ and requires its domain/TLS configuration. Pass --access public for every public
 validate, deploy, and rollback command (or export DEPLOY_ACCESS_MODE=public).
 The access mode is not stored in image manifests or read from the runtime config.
 
-The script never sources or prints the runtime config, runs database migrations,
-uses compose down, or removes volumes. Image manifests accept only four *_IMAGE
+Backend updates check schema compatibility, stop the old backend and save a
+verified local MySQL backup in deploy/releases/database-backups. The new backend
+runs versioned Flyway migrations before becoming ready. Migration failure stops
+the release; never automatically repair history or restore a database backup.
+Older images cannot run against a newer schema. Use a compatible forward fix.
+
+The script never sources or prints runtime config, uses compose down, or removes
+volumes. Image manifests accept only four *_IMAGE
 keys and an optional RELEASE_VERSION. Successful operations update release.env
 and releases/current.env; rollback swaps current and previous, so it is repeatable.
-If an update fails after stopping containers, inspect it and retry or rollback;
+If an update fails after stopping containers, inspect schema and application;
 the script exits unsuccessfully and retains the last successful version record.
 EOF
 }
@@ -78,7 +87,10 @@ cleanup() {
   [[ -z $manifest_tmp ]] || rm -f -- "$manifest_tmp" || true
   [[ -z $record_tmp ]] || rm -f -- "$record_tmp" || true
   if ((status != 0)) && [[ $mutation_started == true ]]; then
-    printf 'Deployment failed. Containers may be stopped or partially updated. Last successful image records were retained; inspect the stack, then retry or rollback.\n' >&2 || true
+    if [[ $backend_stopped == true ]]; then
+      compose_run stop backend >&2 || true
+    fi
+    printf 'Deployment failed. Containers may be stopped or partially updated. Last successful image records were retained. Database changes may have committed; inspect before retrying and do not blindly roll back an image or repair migration history.\n' >&2 || true
   fi
   exit "$status"
 }
@@ -189,6 +201,7 @@ for key in "${IMAGE_KEYS[@]}"; do
 done
 activated[RELEASE_VERSION]=${desired[RELEASE_VERSION]:-}
 for service in "${TARGETS[@]}"; do
+  [[ $service != backend ]] || backend_update=true
   case "$service" in
     backend) activated[BACKEND_IMAGE]=${desired[BACKEND_IMAGE]} ;;
     cockpit) activated[COCKPIT_IMAGE]=${desired[COCKPIT_IMAGE]} ;;
@@ -208,6 +221,46 @@ for key in "${IMAGE_KEYS[@]}"; do
   image_environment+=("$key=${activated[$key]}")
 done
 compose_run() { env "${image_environment[@]}" "${compose[@]}" "$@"; }
+
+# Credentials remain inside the MySQL container. Never source env files or put
+# passwords on the host command line. All version queries are read-only.
+mysql_query() {
+  compose_run exec -T mysql sh -ec 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --protocol=TCP -h 127.0.0.1 -u "$MYSQL_USER" "$MYSQL_DATABASE" --batch --skip-column-names -e "$1"' sh "$1"
+}
+schema_version() {
+  local history invalid version
+  history=$(mysql_query "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='flyway_schema_history'")
+  [[ $history == 0 || $history == 1 ]] || fail 'Unable to read database migration history'
+  if [[ $history == 0 ]]; then printf '0\n'; return; fi
+  invalid=$(mysql_query "SELECT COUNT(*) FROM flyway_schema_history WHERE success=0 OR (version IS NOT NULL AND version NOT REGEXP '^[0-9]+$')")
+  [[ $invalid == 0 ]] || fail 'Failed or unsupported migrations exist; inspect and reconcile before deployment'
+  version=$(mysql_query 'SELECT COALESCE(MAX(CAST(version AS UNSIGNED)),0) FROM flyway_schema_history WHERE success=1')
+  [[ $version =~ ^[0-9]{1,9}$ ]] || fail 'Invalid database schema version'
+  printf '%s\n' "$((10#$version))"
+}
+database_preflight() {
+  local label current_version non_transactional
+  label=$(docker image inspect --format '{{ index .Config.Labels "com.trade.database.version" }}' "${activated[BACKEND_IMAGE]}")
+  case "$label" in ''|'<no value>'|'<nil>') label=0 ;; esac
+  [[ $label =~ ^[0-9]{1,9}$ ]] || fail 'Backend image has an invalid database version label'
+  schema_target=$((10#$label))
+  current_version=$(schema_version)
+  ((schema_target >= current_version)) || fail "Backend schema version $schema_target is older than database version $current_version; image downgrade refused"
+  non_transactional=$(mysql_query "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_TYPE='BASE TABLE' AND ENGINE<>'InnoDB'")
+  [[ $non_transactional == 0 ]] || fail 'Automatic deployment backup requires all database tables to use InnoDB'
+  printf 'DATABASE_PREFLIGHT_OK current=%s target=%s\n' "$current_version" "$schema_target"
+}
+database_backup() {
+  local directory="$RECORD_DIR/database-backups" backup_file
+  command -v gzip >/dev/null || fail 'gzip is required for the pre-migration backup'
+  command -v sha256sum >/dev/null || fail 'sha256sum is required for the pre-migration backup'
+  mkdir -p -- "$directory"
+  backup_file=$(mktemp "$directory/before-migration-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX.sql.gz")
+  compose_run exec -T mysql sh -ec 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysqldump --protocol=TCP -h 127.0.0.1 --single-transaction --quick --no-tablespaces --set-gtid-purged=OFF --triggers -u "$MYSQL_USER" "$MYSQL_DATABASE"' | gzip -c > "$backup_file"
+  gzip -t "$backup_file"
+  sha256sum "$backup_file" > "$backup_file.sha256"
+  printf 'DATABASE_BACKUP_OK file=%s\n' "$backup_file"
+}
 
 compose_run config -q
 phase_complete
@@ -234,6 +287,18 @@ else
 fi
 phase_complete
 
+if [[ $FULL_DEPLOY == true ]]; then
+  mutation_started=true
+  phase_start dependencies_start
+  compose_run up -d --pull never --no-recreate --wait --wait-timeout "$WAIT_TIMEOUT" mysql redis
+  phase_complete
+fi
+if [[ $backend_update == true ]]; then
+  phase_start database_preflight
+  database_preflight
+  phase_complete
+fi
+
 if ((${#current[@]})); then
   record_tmp=$(mktemp "$RECORD_DIR/.record.XXXXXX")
   write_manifest "$record_tmp" current
@@ -249,19 +314,26 @@ mv -f -- "$record_tmp" "$RECORD_DIR/target-$(date -u +%Y%m%dT%H%M%SZ)-$$.env"
 record_tmp=''
 
 mutation_started=true
-if [[ $FULL_DEPLOY == true ]]; then
-  phase_start dependencies_start
-  compose_run up -d --pull never --no-recreate --wait --wait-timeout "$WAIT_TIMEOUT" mysql redis
-  phase_complete
-fi
 phase_start container_stop
+[[ $backend_update == false ]] || backend_stopped=true
 compose_run stop "${TARGETS[@]}"
 phase_complete
+if [[ $backend_update == true ]]; then
+  phase_start database_backup
+  database_backup
+  phase_complete
+fi
 # Recreate selected applications so bind-mounted files replaced atomically on
 # the host (SSH keys, certificates, gateway template) bind to their new inode.
 phase_start container_start_and_health
 compose_run up -d --pull never --no-deps --force-recreate --wait --wait-timeout "$WAIT_TIMEOUT" "${TARGETS[@]}"
 phase_complete
+if [[ $backend_update == true ]]; then
+  phase_start database_verification
+  installed_version=$(schema_version)
+  [[ $installed_version == "$schema_target" ]] || fail "Installed schema version $installed_version does not match backend image version $schema_target"
+  phase_complete
+fi
 
 phase_start release_record
 record_tmp=$(mktemp "$RECORD_DIR/.record.XXXXXX")

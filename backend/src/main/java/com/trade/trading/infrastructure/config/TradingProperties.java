@@ -285,7 +285,7 @@ public class TradingProperties {
         private int maxConsecutiveOpenActions = 2;
         /** Maximum estimated equity fraction opened by one action. */
         private BigDecimal maxSingleOpenEquityRatio = new BigDecimal("0.10");
-        /** Ratio below which equity changes are ignored as numerical noise. */
+        /** Legacy compatibility setting; equity samples no longer count as closed-trade losses. */
         private BigDecimal equityNoiseRatio = new BigDecimal("0.0001");
     }
 

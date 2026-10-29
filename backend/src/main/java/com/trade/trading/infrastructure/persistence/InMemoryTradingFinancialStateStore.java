@@ -98,6 +98,12 @@ public class InMemoryTradingFinancialStateStore implements TradingFinancialState
     }
 
     @Override
+    public synchronized TradingRiskState updateRiskState(String accountScope, java.util.function.UnaryOperator<TradingRiskState> transition) {
+        saveRiskState(accountScope, transition.apply(copyRisk(risks.get(accountScope))));
+        return copyRisk(risks.get(accountScope));
+    }
+
+    @Override
     public synchronized TradingRiskState recordReconciliationSuccess(String accountScope, Instant reconciledAt) {
         TradingRiskState risk = risks.computeIfAbsent(accountScope, ignored -> new TradingRiskState());
         risk.setConsecutiveReconciliationFailures(0)
@@ -154,7 +160,10 @@ public class InMemoryTradingFinancialStateStore implements TradingFinancialState
         positions.put(key(accountScope, instId), next);
         fills.put(orderId, new FillCheckpoint(side, observedFill, observedPosition, observedCost));
         risks.put(accountScope, risk);
-        return new SpotFillApplication(true, previous.position().signum() == 0, delta);
+        return new SpotFillApplication(true, previous.position().signum() == 0, delta,
+                "buy".equalsIgnoreCase(side) && position.getQuantity().signum() == 0,
+                "sell".equalsIgnoreCase(side) && next.getQuantity().signum() == 0,
+                "sell".equalsIgnoreCase(side) ? costDelta.subtract(delta.multiply(position.getAverageCost())) : BigDecimal.ZERO);
     }
 
     private TradingPositionState currentPosition(String accountScope, String instId) {
@@ -178,6 +187,8 @@ public class InMemoryTradingFinancialStateStore implements TradingFinancialState
                 .setDayStartEquity(zero(safe.getDayStartEquity()))
                 .setDayStartDate(safe.getDayStartDate())
                 .setConsecutiveLosses(safe.getConsecutiveLosses())
+                .setOpenTradeRealizedPnl(safe.getOpenTradeRealizedPnl())
+                .setClosedTradeAccountingVersion(safe.getClosedTradeAccountingVersion())
                 .setLossCooldownUntil(safe.getLossCooldownUntil())
                 .setLastTradeTime(safe.getLastTradeTime())
                 .setConsecutiveOpenActions(safe.getConsecutiveOpenActions())

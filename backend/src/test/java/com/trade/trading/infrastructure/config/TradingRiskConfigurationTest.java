@@ -19,6 +19,7 @@ import com.trade.trading.domain.risk.SingleOpenExposureRule;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -30,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 
 class TradingRiskConfigurationTest {
     private final TradingStateStore stateStore = mock(TradingStateStore.class);
@@ -44,10 +46,18 @@ class TradingRiskConfigurationTest {
             .withBean(PaperAccountService.class, () -> mock(PaperAccountService.class))
             .withBean(MeterRegistry.class, SimpleMeterRegistry::new);
 
+    @BeforeEach void transactionalRiskAdapter() {
+        TradingState state = new TradingState();
+        when(stateStore.getState()).thenReturn(state);
+        when(stateStore.updateRiskState(any())).thenAnswer(call -> {
+            var transition = call.<java.util.function.UnaryOperator<com.trade.trading.domain.model.TradingRiskState>>getArgument(0);
+            var next = transition.apply(state.getRiskState());
+            state.setRiskState(next); return next;
+        });
+    }
+
     @Test
     void wiresNamedRulesInOriginalOrderAndIgnoresUnrelatedRuleBeans() {
-        when(stateStore.getState()).thenReturn(new TradingState());
-
         runner.withUserConfiguration(TradingRiskConfiguration.class)
                 .withBean("unrelatedRule", RiskRule.class,
                         () -> context -> Optional.of(RiskViolation.of("UNRELATED", "unrelated rule")))
@@ -66,8 +76,6 @@ class TradingRiskConfigurationTest {
 
     @Test
     void evaluatesInjectedRulesAndPreservesPrimaryViolationAndMetrics() {
-        when(stateStore.getState()).thenReturn(new TradingState());
-
         runner.withUserConfiguration(CustomRiskConfiguration.class).run(context -> {
             assertThat(context).hasNotFailed().hasSingleBean(RiskControlService.class);
             var assessment = context.getBean(RiskControlService.class).evaluate(

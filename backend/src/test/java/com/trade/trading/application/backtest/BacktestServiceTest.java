@@ -39,6 +39,33 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class BacktestServiceTest {
+    @Test
+    void replayAppliesTheSameBuyCapsAndOpeningGuardsAsPaperAndLive() {
+        for (String guard : List.of("interval", "action-count", "daily-loss")) {
+            TradingProperties properties = properties("repeating-buy");
+            properties.setMaxBuyQuoteAmount(BigDecimal.TEN);
+            properties.getRisk().setEnabled(true);
+            properties.getRisk().setMinOpenIntervalMs("interval".equals(guard) ? 600_000 : 0);
+            properties.getRisk().setMaxConsecutiveOpenActions("action-count".equals(guard) ? 1 : 0);
+            properties.getRisk().setMaxDailyLossRatio("daily-loss".equals(guard) ? new BigDecimal("0.00005") : BigDecimal.ONE);
+            HistoricalCandleSource history = (inst, bar, from, to, limit) -> List.of(
+                    candle("2026-05-17T00:00:00Z", "100", "100", "1"),
+                    candle("2026-05-17T00:01:00Z", "100", "99", "1"),
+                    candle("2026-05-17T00:02:00Z", "99", "99", "1"));
+            var strategy = new TradingStrategy<TestConfig>() {
+                @Override public String type() { return "repeating-buy"; }
+                @Override public Class<TestConfig> configType() { return TestConfig.class; }
+                @Override public StrategyDecision evaluate(StrategyEvaluationContext c, TestConfig config) {
+                    return StrategyDecision.buy(c.getStrategyId(), new BigDecimal("100"), "repeat");
+                }
+            };
+            var service = new BacktestService(history, new TradingStrategyRegistry(List.of(strategy), properties), properties, Runnable::run);
+            var run = service.start(request().setForceCloseAtEnd(false));
+            assertEquals(BacktestStatus.SUCCEEDED, run.getStatus(), run.getError());
+            assertEquals(1, run.getTradeCount(), guard);
+            assertEquals(0, BigDecimal.TEN.compareTo(run.getTrades().getFirst().quoteAmount()));
+        }
+    }
 
     @Test
     void realIntradayStrategyWarmsUpThenFillsTheNextOpenWithActualFeesAndSlippage() {
@@ -333,8 +360,8 @@ class BacktestServiceTest {
 
         assertEquals(BacktestStatus.SUCCEEDED, run.getStatus());
         assertEquals(List.of(
-                Instant.parse("2026-05-17T00:00:00Z"),
-                Instant.parse("2026-05-17T00:01:00Z")
+                Instant.parse("2026-05-17T00:01:00Z"),
+                Instant.parse("2026-05-17T00:02:00Z")
         ), strategy.evaluatedAt);
         assertEquals(3, run.getCandleCount());
         assertEquals(3, run.getProcessedCandleCount());
@@ -478,6 +505,10 @@ class BacktestServiceTest {
 
     private static TradingProperties properties(String strategyType) {
         TradingProperties properties = new TradingProperties();
+        // Statistical fixtures deliberately isolate fill arithmetic. The policy
+        // regression above explicitly enables production caps and risk guards.
+        properties.setMaxBuyQuoteAmount(new BigDecimal("100"));
+        properties.getRisk().setEnabled(false);
         TradingProperties.StrategyInstanceProperties instance = new TradingProperties.StrategyInstanceProperties();
         instance.setId("test-strategy");
         instance.setType(strategyType);

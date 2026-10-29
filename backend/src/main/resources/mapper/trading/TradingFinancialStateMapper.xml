@@ -23,6 +23,8 @@
         <result property="dayStartEquity" column="day_start_equity"/>
         <result property="dayStartDate" column="day_start_date"/>
         <result property="consecutiveLosses" column="consecutive_losses"/>
+        <result property="openTradeRealizedPnl" column="open_trade_realized_pnl"/>
+        <result property="closedTradeAccountingVersion" column="closed_trade_accounting_version"/>
         <result property="lossCooldownUntil" column="loss_cooldown_until"/>
         <result property="lastTradeTime" column="last_trade_time"/>
         <result property="consecutiveOpenActions" column="consecutive_open_actions"/>
@@ -89,13 +91,13 @@
     <insert id="insertRiskStateIfAbsent" parameterType="com.trade.trading.infrastructure.persistence.TradingRiskStateRow">
         INSERT INTO okx_risk_state (
             account_scope, current_equity, equity_high_watermark, day_start_equity,
-            day_start_date, consecutive_losses, loss_cooldown_until, last_trade_time,
+            day_start_date, consecutive_losses, open_trade_realized_pnl, closed_trade_accounting_version, loss_cooldown_until, last_trade_time,
             consecutive_open_actions, last_risk_reason,
             consecutive_reconciliation_failures, last_reconciliation_at,
             last_reconciliation_error, version, created_at, updated_at
         ) VALUES (
             #{accountScope}, #{currentEquity}, #{equityHighWatermark}, #{dayStartEquity},
-            #{dayStartDate}, #{consecutiveLosses}, #{lossCooldownUntil}, #{lastTradeTime},
+            #{dayStartDate}, #{consecutiveLosses}, #{openTradeRealizedPnl}, #{closedTradeAccountingVersion}, #{lossCooldownUntil}, #{lastTradeTime},
             #{consecutiveOpenActions}, #{lastRiskReason},
             #{consecutiveReconciliationFailures}, #{lastReconciliationAt},
             #{lastReconciliationError}, #{version}, #{createdAt}, #{updatedAt}
@@ -118,6 +120,8 @@
             day_start_equity = #{dayStartEquity},
             day_start_date = #{dayStartDate},
             consecutive_losses = #{consecutiveLosses},
+            open_trade_realized_pnl = #{openTradeRealizedPnl},
+            closed_trade_accounting_version = #{closedTradeAccountingVersion},
             loss_cooldown_until = #{lossCooldownUntil},
             last_trade_time = #{lastTradeTime},
             consecutive_open_actions = #{consecutiveOpenActions},

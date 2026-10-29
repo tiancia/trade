@@ -1,6 +1,8 @@
 # 数据库升级说明
 
-本目录按模块保存已有数据库的手工升级脚本，跨模块历史脚本归 `legacy/`。项目没有启用 Flyway 或 Liquibase，Spring Boot 启动时只执行 `spring.sql.init.schema-locations` 中显式配置的模块 schema，不会执行这里的文件。完整结构与模块索引见 [数据库目录](../README.md)。
+本目录按模块保留接入 Flyway 前的手工升级脚本，跨模块历史脚本归 `legacy/`。当前后端启动会执行 `db/migration/` 中的版本迁移，不扫描本目录。完整结构、自动升级流程与开发约定见 [数据库目录](../README.md)。
+
+2026-10-29 Trading 运行安全变更已纳入自动 V2 迁移。正常发布无需手工运行同名历史 SQL；已手工应用的结构会经核验后接入。以下流程只适用于被旧库核验拒绝、需要先补齐历史前置结构的数据库；不要在已经由 Flyway 管理的库中绕过版本记录执行补丁。
 
 ## 使用方式
 
@@ -10,7 +12,7 @@
 4. 检查表、索引、字段类型和历史数据后，再应用到正式库；
 5. 完成后重新对比模块 schema，确认结构一致。
 
-这些文件名描述变更内容，不代表可按字母顺序无条件执行。部分脚本面向不同历史版本，重复执行 `ALTER TABLE` 可能失败。启动 schema 会创建缺失的表，但不会补齐已有表字段或修改索引；新表已由启动创建且结构一致时，无需再执行对应建表补丁。
+这些文件名描述变更内容，不代表可按字母顺序无条件执行。部分脚本面向不同历史版本，重复执行 `ALTER TABLE` 可能失败；相同结构已由版本迁移创建时，无需再执行对应历史建表补丁。
 
 已知依赖与重叠：
 
@@ -60,6 +62,7 @@ MySQL DDL 会隐式提交，无法用事务回滚；脚本不能重复执行。�
 
 | 模块 / 脚本 | 作用 |
 | --- | --- |
+| [trading/2026-10-29-trading-runtime-safety.sql](trading/2026-10-29-trading-runtime-safety.sql) | 共享活动策略及修订号、完整交易净盈亏风险字段；迁移 SELL 已应用净收入 checkpoint。先停所有实例，核对旧 leader 的策略选择，禁止新旧版本混跑；MySQL DDL 不可事务回滚 |
 | [trading/2026-10-28-ai-strategy-advisor.sql](trading/2026-10-28-ai-strategy-advisor.sql) | 新增 AI 策略评估审计与跨实例评估/通知频率限制表；不保存凭据、不修改旧交易记录 |
 | [trading/2026-10-19-strategy-configuration.sql](trading/2026-10-19-strategy-configuration.sql) | 新增策略有效参数当前版本和不可变配置历史；独立新增表，不改写原策略选择及交易历史 |
 | [trading/migration_add_okx_paper_accounts.sql](trading/migration_add_okx_paper_accounts.sql) | 新增独立模拟批次、现金持仓、风险状态、幂等成交和估值曲线四张表；不迁入旧 PAPER 或交易所余额 |

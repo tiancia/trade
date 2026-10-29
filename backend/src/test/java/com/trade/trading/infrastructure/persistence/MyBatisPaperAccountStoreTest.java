@@ -133,7 +133,8 @@ class MyBatisPaperAccountStoreTest {
 
     private PaperAccountStore.FillCommand timedCommand(PaperAccount account, String id, String side, String size, Instant time) {
         return new PaperAccountStore.FillCommand("BTC-USDT", account.sessionId(), account.version(), id, "intraday", 1,
-                "{}", side, new BigDecimal(size), new BigDecimal("BUY".equals(side) ? "10" : "12"), new BigDecimal("0.01"), time, time);
+                "{}", side, new BigDecimal(size), new BigDecimal("BUY".equals(side) ? "10" : "12"), new BigDecimal("0.01"), time, time,
+                com.trade.trading.application.risk.RiskInputs.policy(new TradingProperties().getRisk()));
     }
 
     @Test void deletionRemovesOnlyTheSelectedTrialAndItsLedger() {
@@ -213,7 +214,8 @@ class MyBatisPaperAccountStoreTest {
         assertThrows(IllegalArgumentException.class, () -> store.fill(command(a, "no-cash", "BUY", "101", "10", "0.01")));
         assertThrows(IllegalArgumentException.class, () -> store.fill(command(a, "oversell", "SELL", "1", "10", "0.01")));
         var stale = new PaperAccountStore.FillCommand("BTC-USDT", a.sessionId(), a.version(), "stale", "threshold", 1,
-                "{}", "BUY", BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO, NOW.minusSeconds(121), NOW);
+                "{}", "BUY", BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO, NOW.minusSeconds(121), NOW,
+                com.trade.trading.application.risk.RiskInputs.policy(new TradingProperties().getRisk()));
         assertThrows(IllegalArgumentException.class, () -> store.fill(stale));
         decimal("100", store.active("BTC-USDT").cash());
         assertEquals(0, store.active("BTC-USDT").version());
@@ -226,7 +228,7 @@ class MyBatisPaperAccountStoreTest {
         PaperAccount original = start("100");
         var buy = store.fill(commandAt(original, "first", NOW.plusSeconds(10)));
         assertEquals(NOW.plusSeconds(10).toString(), store.risk("BTC-USDT", original.sessionId()).getLastTradeTime());
-        assertEquals(0, store.risk("BTC-USDT", original.sessionId()).getConsecutiveOpenActions());
+        assertEquals(1, store.risk("BTC-USDT", original.sessionId()).getConsecutiveOpenActions());
 
         assertTrue(store.fill(commandAt(original, "first", NOW.plusSeconds(60))).replay());
         assertEquals(NOW.plusSeconds(10).toString(), store.risk("BTC-USDT", original.sessionId()).getLastTradeTime());
@@ -261,24 +263,23 @@ class MyBatisPaperAccountStoreTest {
         assertEquals(NOW.toString(), store.risk("BTC-USDT", original.sessionId()).getLastTradeTime());
     }
 
-    @Test void secondaryRiskFailureCannotEraseTradeTimeRecoveredByAFreshService() {
+    @Test void monetaryAndRiskFactsAreRecoveredTogetherByAFreshService() {
         TradingProperties props = new TradingProperties();
         PaperAccount original = start("100");
         PaperAccountService service = new PaperAccountService(store, props, Clock.fixed(NOW, ZoneOffset.UTC));
         TradingDecisionContext context = service.enrichContext(context());
         RiskControlService risk = mock(RiskControlService.class);
         when(risk.evaluate(any(), eq(context))).thenReturn(new RiskAssessment().setAllowed(true));
-        doThrow(new IllegalStateException("secondary risk write unavailable")).when(risk).recordExecutedAction(any(), eq(context));
         PaperOrderExecutionService executor = new PaperOrderExecutionService(new OrderSizingService(props), props, risk, service);
         var record = new TradingDecisionRecord().setDecisionId("committed-before-risk-error").setStrategyId("threshold")
                 .setStrategyConfigVersion(1).setStrategyConfigSnapshot(Map.of());
         executor.execute(StrategyDecision.buy("threshold", BigDecimal.TEN, "test"), context, record);
         assertEquals("PAPER_FILLED", record.getExecutionStatus());
-        assertTrue(record.getMetadata().containsKey("paperRiskUpdateWarning"));
+        assertFalse(record.getMetadata().containsKey("paperRiskUpdateWarning"));
 
         PaperAccountService restarted = new PaperAccountService(store, props, Clock.fixed(NOW.plusSeconds(1), ZoneOffset.UTC));
         assertEquals(NOW.toString(), restarted.enrichContext(context()).getTradingState().getRiskState().getLastTradeTime());
-        assertEquals(0, store.risk("BTC-USDT", original.sessionId()).getConsecutiveOpenActions());
+        assertEquals(1, store.risk("BTC-USDT", original.sessionId()).getConsecutiveOpenActions());
         assertEquals(1, store.fills("BTC-USDT", original.sessionId(), null, 10).size());
     }
 
@@ -497,11 +498,13 @@ class MyBatisPaperAccountStoreTest {
     private PaperAccount start(String cash) { return store.start("BTC-USDT", "USDT", new BigDecimal(cash), null, null, NOW); }
     private PaperAccountStore.FillCommand commandAt(PaperAccount account, String decisionId, Instant fillTime) {
         return new PaperAccountStore.FillCommand("BTC-USDT", account.sessionId(), account.version(), decisionId,
-                "threshold", 1, "{}", "BUY", BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO, NOW, fillTime);
+                "threshold", 1, "{}", "BUY", BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO, NOW, fillTime,
+                com.trade.trading.application.risk.RiskInputs.policy(new TradingProperties().getRisk()));
     }
     private PaperAccountStore.FillCommand command(PaperAccount a, String decisionId, String side, String size, String price, String fee) {
         return new PaperAccountStore.FillCommand("BTC-USDT", a.sessionId(), a.version(), decisionId, "threshold", 1,
-                "{\"params\":{\"lookback\":5}}", side, new BigDecimal(size), new BigDecimal(price), new BigDecimal(fee), NOW, NOW);
+                "{\"params\":{\"lookback\":5}}", side, new BigDecimal(size), new BigDecimal(price), new BigDecimal(fee), NOW, NOW,
+                com.trade.trading.application.risk.RiskInputs.policy(new TradingProperties().getRisk()));
     }
     private TradingDecisionContext context() {
         TickerResp ticker = new TickerResp(); ticker.setLast("10"); ticker.setTs(Long.toString(NOW.toEpochMilli()));

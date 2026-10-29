@@ -5,6 +5,8 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.trading.port.TradingFinancialStateStore;
+import com.trade.trading.port.StrategySelectionStore;
+import com.trade.trading.domain.model.ActiveStrategySelection;
 import com.trade.trading.domain.model.AiTradingDecision;
 import com.trade.trading.domain.model.TradingDecisionRecord;
 import com.trade.trading.domain.model.TradingPositionState;
@@ -29,9 +31,10 @@ import java.util.List;
 /**
  * Composes local strategy memory with authoritative MySQL financial state.
  *
- * <p>The JSON document retains only strategy selection, strategy thesis, and
- * bounded decision memory. Position, cost, and risk reads and writes always go
- * through {@link TradingFinancialStateStore}. On first startup after upgrade,
+ * <p>The JSON document retains strategy thesis and bounded decision memory.
+ * Its legacy active selection only seeds an absent shared selection row once.
+ * Position, cost, and risk reads and writes always go through
+ * {@link TradingFinancialStateStore}. On first startup after upgrade,
  * legacy financial values in the JSON file seed otherwise-empty MySQL rows;
  * subsequent JSON writes omit those values.</p>
  */
@@ -42,6 +45,7 @@ public class TradingStateRepository implements TradingStateStore {
             .setSerializationInclusion(JsonInclude.Include.NON_NULL);
     private final Path statePath;
     private final TradingFinancialStateStore financialStateStore;
+    private final StrategySelectionStore selections;
     private final String accountScope;
     private final String instId;
     /** Protects only file-backed memory. Database calls must never hold this lock. */
@@ -52,13 +56,14 @@ public class TradingStateRepository implements TradingStateStore {
     @Autowired
     public TradingStateRepository(
             TradingProperties properties,
-            TradingFinancialStateStore financialStateStore
+            TradingFinancialStateStore financialStateStore,
+            StrategySelectionStore selections
     ) {
         this(
                 Path.of(properties.getStateFile()),
                 financialStateStore,
                 properties.financialAccountScope(),
-                properties.getInstId()
+                properties.getInstId(), selections
         );
     }
 
@@ -73,10 +78,16 @@ public class TradingStateRepository implements TradingStateStore {
             String accountScope,
             String instId
     ) {
+        this(statePath, financialStateStore, accountScope, instId, null);
+    }
+
+    public TradingStateRepository(Path statePath, TradingFinancialStateStore financialStateStore,
+                                  String accountScope, String instId, StrategySelectionStore selections) {
         this.statePath = statePath;
         this.financialStateStore = financialStateStore;
         this.accountScope = accountScope;
         this.instId = instId;
+        this.selections = selections;
     }
 
     public TradingState getState() {
@@ -100,7 +111,15 @@ public class TradingStateRepository implements TradingStateStore {
                 accountScope,
                 seed.getRiskState()
         );
-        return compose(current, position, riskState);
+        TradingState result = compose(current, position, riskState);
+        if (selections != null) {
+            ActiveStrategySelection selected = selections.currentOrCreate(accountScope, instId,
+                    new ActiveStrategySelection(current.getActiveStrategyId(), current.getActiveStrategyRevision(),
+                            current.getActiveStrategyChangedAt() == null ? null : Instant.parse(current.getActiveStrategyChangedAt())));
+            result.setActiveStrategyId(selected.strategyId()).setActiveStrategyRevision(selected.revision())
+                    .setActiveStrategyChangedAt(selected.changedAt() == null ? null : selected.changedAt().toString());
+        }
+        return result;
     }
 
     public void recordBuy(BigDecimal baseAmount, BigDecimal price) {
@@ -219,13 +238,18 @@ public class TradingStateRepository implements TradingStateStore {
         return financialStateStore.recordReconciliationSuccess(accountScope, reconciledAt);
     }
 
+    public TradingRiskState updateRiskState(java.util.function.UnaryOperator<TradingRiskState> transition) {
+        getState();
+        return financialStateStore.updateRiskState(accountScope, transition);
+    }
+
     public TradingRiskState recordReconciliationFailure(Instant reconciledAt, String error) {
         getState();
         return financialStateStore.recordReconciliationFailure(accountScope, reconciledAt, error);
     }
 
     /**
-     * Atomically changes the strategy used by scheduled decisions.
+     * Atomically changes the shared strategy used by scheduled decisions.
      *
      * <p>The optional revision prevents two operator screens from silently
      * overwriting each other. Re-selecting the current strategy is idempotent
@@ -236,6 +260,10 @@ public class TradingStateRepository implements TradingStateStore {
             throw new IllegalArgumentException("strategyId is required");
         }
         getState();
+        if (selections != null) {
+            selections.select(accountScope, instId, strategyId.trim(), expectedRevision);
+            return getState();
+        }
         TradingMemoryDocument current;
         TradingState seed;
         synchronized (memoryLock) {
@@ -385,6 +413,7 @@ public class TradingStateRepository implements TradingStateStore {
                 .setDecisionId(source.getDecisionId())
                 .setStrategyId(source.getStrategyId())
                 .setStrategyConfigVersion(source.getStrategyConfigVersion())
+                .setActiveStrategyRevision(source.getActiveStrategyRevision())
                 .setStrategyConfigSnapshot(source.getStrategyConfigSnapshot() == null ? null
                         : java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(source.getStrategyConfigSnapshot())))
                 .setTimestamp(source.getTimestamp())
@@ -448,6 +477,8 @@ public class TradingStateRepository implements TradingStateStore {
                 .setDayStartEquity(zero(source.getDayStartEquity()))
                 .setDayStartDate(source.getDayStartDate())
                 .setConsecutiveLosses(source.getConsecutiveLosses())
+                .setOpenTradeRealizedPnl(source.getOpenTradeRealizedPnl())
+                .setClosedTradeAccountingVersion(source.getClosedTradeAccountingVersion())
                 .setLossCooldownUntil(source.getLossCooldownUntil())
                 .setLastTradeTime(source.getLastTradeTime())
                 .setConsecutiveOpenActions(source.getConsecutiveOpenActions())

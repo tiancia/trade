@@ -148,6 +148,7 @@ public class TradingTriggerService {
             }
         } catch (Exception e) {
             log.error("Strategy trading event scan failed", e);
+            throw new IllegalStateException("Trading event scan failed; inspect trading runtime status", e);
         }
     }
 

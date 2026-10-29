@@ -15,6 +15,8 @@ public class TradingRiskStateRow {
     private BigDecimal dayStartEquity;
     private String dayStartDate;
     private int consecutiveLosses;
+    private BigDecimal openTradeRealizedPnl;
+    private int closedTradeAccountingVersion;
     private Instant lossCooldownUntil;
     private Instant lastTradeTime;
     private int consecutiveOpenActions;

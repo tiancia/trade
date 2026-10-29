@@ -57,7 +57,7 @@ AI 复用现有 `TRADE_AI_PROVIDER`、`TRADE_AI_MODEL`、`TRADE_AI_BASE_URL`、`
 
 ## 数据库、观测与回退
 
-新增 `okx_ai_strategy_guard` 和 `okx_ai_strategy_review`，不存储凭据。新库由 schema 初始化；旧库执行 [手工建表补丁](../../backend/src/main/resources/db/upgrade/trading/2026-10-28-ai-strategy-advisor.sql)，先备份并在隔离测试库验证。启动已创建相同结构时无需重复操作。
+`okx_ai_strategy_guard` 和 `okx_ai_strategy_review` 不存储凭据，已纳入 Flyway V1 的冻结结构。新库自动初始化，符合已知结构的旧库接入时会补齐缺失的表，无需重复执行历史建表补丁；接入前置条件见 [数据库说明](../../backend/src/main/resources/db/README.md)。
 
 驾驶舱显示每日目标、交易日与时区、当前模拟会话的今日/昨日进度和已实现净收益，以及 AI 状态、最近 5 次评估、原因、参数和逻辑建议，并可单独启停顾问。已有 schema 不需要为日度统计新增迁移。管理认证及 CSRF 规则与现有 API 一致：
 

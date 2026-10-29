@@ -25,6 +25,36 @@ import static org.mockito.Mockito.*;
 
 class MarketContextCollectorTest {
     @Test
+    void deterministicExitContextNeverCallsUnrelatedIntervalsBookOrPrivateHistory() {
+        TradingProperties properties = new TradingProperties();
+        properties.setExecutionMode(ExecutionMode.LIVE);
+        OkxApi api = marketApi();
+        when(api.getOrderHistory(any())).thenThrow(new IllegalStateException("history down"));
+        when(api.getFills(any())).thenThrow(new IllegalStateException("fills down"));
+        when(api.getOrderBook(any())).thenThrow(new IllegalStateException("book down"));
+        when(api.getCandles(any())).thenAnswer(call -> {
+            CandlesReq request = call.getArgument(0);
+            if (!"15m".equals(request.getBar())) throw new IllegalStateException("unrelated candle service down");
+            return OkxResponse.success(List.of(candle("900000")));
+        });
+        when(api.getAccountBalance(any())).thenReturn(OkxResponse.success(List.of(new AccountBalanceResp())));
+        TradingStateRepository state = mock(TradingStateRepository.class);
+        when(state.getState()).thenReturn(new TradingState());
+        var collector = new MarketContextCollector(api, properties, state,
+                event -> TradingEventPublishResult.ACCEPTED, mock(PaperAccountService.class));
+
+        var context = collector.collect(TradingTrigger.scheduled(), "15m");
+
+        assertEquals(1, context.getFifteenMinuteCandles().size());
+        assertTrue(context.getOneMinuteCandles().isEmpty());
+        verify(api, never()).getOrderHistory(any());
+        verify(api, never()).getFills(any());
+        verify(api, never()).getOrderBook(any());
+        verify(api, never()).getPendingOrders(any());
+        when(api.getAccountBalance(any())).thenThrow(new IllegalStateException("required account data down"));
+        assertThrows(IllegalStateException.class, () -> collector.collect(TradingTrigger.scheduled(), "15m"));
+    }
+    @Test
     void fifteenMinuteFallbackPublishesToTheSharedPipelineWithoutPrivateAccountAccess() {
         TradingProperties properties = new TradingProperties();
         OkxApi api = marketApi();

@@ -15,11 +15,11 @@ public class OpenIntervalRule implements RiskRule {
         long minOpenIntervalMs = riskProperties.getMinOpenIntervalMs();
         Instant lastTradeTime = parseInstant(context.getRiskState().getLastTradeTime());
         Instant now = context.getNow();
-        if (minOpenIntervalMs <= 0 || lastTradeTime == null || now == null || !now.isAfter(lastTradeTime)) {
+        if (minOpenIntervalMs <= 0 || lastTradeTime == null || now == null) {
             return Optional.empty();
         }
 
-        long elapsedMs = Duration.between(lastTradeTime, now).toMillis();
+        long elapsedMs = Math.max(0, Duration.between(lastTradeTime, now).toMillis());
         if (elapsedMs >= minOpenIntervalMs) {
             return Optional.empty();
         }

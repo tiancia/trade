@@ -64,7 +64,7 @@ public class TradingStrategyEngine {
     /** Only the short application phase shares the decision lock; network AI work never does. */
     public <T> T withStrategyMaintenance(java.util.function.Supplier<T> action) {
         if (!decisionLock.tryLock()) throw new java.util.ConcurrentModificationException("Trading decision is running");
-        try { return action.get(); }
+        try { return strategySelectionService.withMaintenance(action); }
         finally { decisionLock.unlock(); }
     }
 
@@ -130,12 +130,14 @@ public class TradingStrategyEngine {
         lastRunStartedAt = Instant.now();
         lastError = null;
         try {
-            TradingDecisionContext marketContext = contextCollector.collect(trigger);
             TradingDecisionRecord finalRecord = null;
             for (ConfiguredTradingStrategy<?> configured : strategySelectionService.activeStrategies()) {
+                ActiveStrategySelection selection = strategySelectionService.current();
+                TradingDecisionContext marketContext = contextCollector.collect(trigger, configured.bar());
                 StrategyDecision decision = evaluate(configured, trigger, marketContext);
                 TradingDecisionRecord record = decisionRecord(decision, trigger, marketContext);
                 record.setStrategyConfigVersion(configured.configuration().version())
+                        .setActiveStrategyRevision(selection.revision())
                         .setStrategyConfigSnapshot(configured.configuration().params());
                 if (properties.getExecutionMode() == ExecutionMode.PAPER) {
                     paperAccountService.markDecision(marketContext, record);
@@ -173,7 +175,7 @@ public class TradingStrategyEngine {
         } catch (Exception e) {
             lastError = e.getMessage();
             log.error("OKX strategy decision failed, trigger={}, err={}", trigger, e.getMessage(), e);
-            return false;
+            throw new IllegalStateException("Trading decision failed; inspect trading runtime status", e);
         } finally {
             lastRunCompletedAt = Instant.now();
             recordRun(triggerType, runOutcome, runTimer);
@@ -239,7 +241,7 @@ public class TradingStrategyEngine {
         } catch (Exception e) {
             lastError = "Strategy " + configured.id() + " failed: " + e.getMessage();
             log.warn("Strategy evaluation failed: strategyId={}", configured.id(), e);
-            return StrategyDecision.hold(configured.id(), lastError);
+            throw new IllegalStateException(lastError, e);
         }
     }
 

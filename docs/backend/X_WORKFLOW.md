@@ -83,7 +83,7 @@ TRADE_X_CONTENT_MAX_CHARS=120
 
 ## 准备账号与数据库
 
-1. 应用启动会执行 [`db/schema/x/schema.sql`](../../backend/src/main/resources/db/schema/x/schema.sql)，自动创建缺失的六张 X 表。若在应用启动前手工建表，可选择 [`migration_add_x_workflow.sql`](../../backend/src/main/resources/db/upgrade/x/migration_add_x_workflow.sql)。已有表不会由 `CREATE TABLE IF NOT EXISTS` 补字段；需要升级时先对比实际结构，再按[升级说明](../../backend/src/main/resources/db/upgrade/README.md)选择适用补丁。
+1. 应用启动通过 Flyway 完成版本迁移，六张 X 表已纳入 V1。完整结构参考为 [`db/schema/x/schema.sql`](../../backend/src/main/resources/db/schema/x/schema.sql)，正常发布无需手工建表；只有首次接入前的历史结构不兼容时，才按[数据库说明](../../backend/src/main/resources/db/README.md)核实适用的历史前置补丁。
 2. 在 X Developer 平台准备可访问相应端点的 App，设置 **Read and Write** 权限并获取该账号的 API Key、API Secret、Access Token、Access Token Secret。权限修改后按平台要求重新取得用户 token。这里只实现单账号凭据，不提供网页登录授权流程。[OAuth 1.0a 用户凭据](https://docs.x.com/fundamentals/authentication/oauth-1-0a/obtaining-user-access-tokens)
 3. 将四个值安全注入 `X_API_KEY`、`X_API_SECRET`、`X_ACCESS_TOKEN`、`X_ACCESS_TOKEN_SECRET`。设置 `TRADE_X_TARGET_USER_ID` 为 X 账号的数字 ID，保持字符串，不是 `@username`。客户端的 `XApi.getMe()` 对应 `GET /2/users/me`；每次发帖前会查询并比对 token 的账号 ID，错账号不会 POST。[客户端使用](X_API.md)
 4. 保留现有 `TRADE_TELEGRAM_BOT_TOKEN`，为 X 设置 `TRADE_X_TELEGRAM_CHAT_ID` 和 `TRADE_X_TELEGRAM_REVIEWER_USER_IDS`；后者是允许审核的数字 Telegram 用户 ID，多个用逗号分隔。继续使用现有 AI 提供商和其环境变量，不需要新增 AI 客户端凭据。

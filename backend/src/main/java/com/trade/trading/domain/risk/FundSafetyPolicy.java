@@ -3,18 +3,9 @@ package com.trade.trading.domain.risk;
 import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.domain.model.TradingRiskState;
 import java.time.Instant;
-import java.util.Optional;
-import java.util.Set;
 /** Pure persistent-stop activation and recovery eligibility rules. */
 public final class FundSafetyPolicy {
     private FundSafetyPolicy() {}
-    private static final Set<String> HARD_RISK_CODES = Set.of("RISK_MAX_DRAWDOWN", "RISK_DAILY_LOSS");
-    public static Optional<String> hardRiskReason(RiskAssessment assessment) {
-        if (assessment == null || assessment.getViolations() == null) { return Optional.empty(); }
-        return assessment.getViolations().stream()
-                .filter(v -> v != null && HARD_RISK_CODES.contains(v.getCode()))
-                .findFirst().map(RiskViolation::getReason);
-    }
     public static void requireResumeState(FundSafetyState current, long expectedVersion) {
         if (!current.isHalted()) {
             throw new IllegalStateException("Fund safety is already ACTIVE");

@@ -12,7 +12,6 @@ import com.trade.client.okx.dto.PendingOrdersReq;
 import com.trade.trading.port.FundSafetyRepository;
 import com.trade.trading.port.TradingOrderRepository;
 import com.trade.trading.domain.risk.FundSafetyState;
-import com.trade.trading.domain.risk.RiskAssessment;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.port.TradingStateStore;
 import io.micrometer.core.instrument.Counter;
@@ -129,11 +128,6 @@ public class FundSafetyService {
             cancelOutstandingOrders();
         }
         return state();
-    }
-
-    public FundSafetyState haltForHardRisk(RiskAssessment assessment) {
-        return FundSafetyPolicy.hardRiskReason(assessment)
-                .map(reason -> halt("risk-control", reason)).orElseGet(this::state);
     }
 
     public FundSafetyState resume(long expectedVersion, String reason, String confirmation) {

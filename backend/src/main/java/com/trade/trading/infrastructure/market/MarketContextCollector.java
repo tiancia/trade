@@ -76,37 +76,48 @@ public class MarketContextCollector implements TradingMarketSource {
     }
 
     public TradingDecisionContext collect(TradingTrigger trigger) {
+        return collect(trigger, null);
+    }
+
+    @Override
+    public TradingDecisionContext collect(TradingTrigger trigger, String requiredBar) {
+        if (requiredBar != null && !List.of("1m", "5m", "15m").contains(requiredBar)) {
+            throw new IllegalArgumentException("Unsupported deterministic decision interval: " + requiredBar);
+        }
         TickerResp ticker = OkxResponses.requireFirst(
                 okxApi.getTicker(new TickerReq().setInstId(properties.getInstId())),
                 "ticker"
         );
-        OrderBookResp orderBook = OkxResponses.requireFirst(
+        // The full context remains available for explicit audit consumers. Live
+        // deterministic decisions never wait for unrelated history or intervals.
+        boolean full = requiredBar == null;
+        OrderBookResp orderBook = full ? OkxResponses.requireFirst(
                 okxApi.getOrderBook(new OrderBookReq()
                         .setInstId(properties.getInstId())
                         .setSz(String.valueOf(properties.getOrderBookDepth()))),
                 "order book"
-        );
-        List<CandleResp> candles1m = OkxResponses.data(
+        ) : null;
+        List<CandleResp> candles1m = full || "1m".equals(requiredBar) ? OkxResponses.data(
                 okxApi.getCandles(new CandlesReq()
                         .setInstId(properties.getInstId())
                         .setBar("1m")
                         .setLimit(String.valueOf(properties.getOneMinuteCandleLimit()))),
                 "1m candles"
-        );
-        List<CandleResp> candles5m = OkxResponses.data(
+        ) : List.of();
+        List<CandleResp> candles5m = full || "5m".equals(requiredBar) ? OkxResponses.data(
                 okxApi.getCandles(new CandlesReq()
                         .setInstId(properties.getInstId())
                         .setBar("5m")
                         .setLimit(String.valueOf(properties.getFiveMinuteCandleLimit()))),
                 "5m candles"
-        );
-        List<CandleResp> candles15m = OkxResponses.data(
+        ) : List.of();
+        List<CandleResp> candles15m = full || "15m".equals(requiredBar) ? OkxResponses.data(
                 okxApi.getCandles(new CandlesReq()
                         .setInstId(properties.getInstId())
                         .setBar("15m")
                         .setLimit(String.valueOf(properties.getFifteenMinuteCandleLimit()))),
                 "15m candles"
-        );
+        ) : List.of();
         publishDecisionMarketData(ticker, orderBook, candles1m, candles5m, candles15m);
         // PAPER uses its own persisted cash and position. Private account data
         // must neither gate simulation nor leak into its sizing and risk inputs.
@@ -116,28 +127,28 @@ public class MarketContextCollector implements TradingMarketSource {
                         .setCcy(properties.getBaseCcy() + "," + properties.getQuoteCcy())),
                 "account balance"
         );
-        List<OrderInfoResp> pendingOrders = paper ? List.of() : OkxResponses.data(
+        List<OrderInfoResp> pendingOrders = paper || !full ? List.of() : OkxResponses.data(
                 okxApi.getPendingOrders(new PendingOrdersReq()
                         .setInstType(properties.getInstType())
                         .setInstId(properties.getInstId())
                         .setLimit(String.valueOf(properties.getRecentOrderLimit()))),
                 "pending orders"
         );
-        List<OrderInfoResp> recentOrders = paper ? List.of() : OkxResponses.data(
+        List<OrderInfoResp> recentOrders = paper || !full ? List.of() : OkxResponses.data(
                 okxApi.getOrderHistory(new OrderHistoryReq()
                         .setInstType(properties.getInstType())
                         .setInstId(properties.getInstId())
                         .setLimit(String.valueOf(properties.getRecentOrderLimit()))),
                 "recent orders"
         );
-        List<FillResp> recentFills = paper ? List.of() : OkxResponses.data(
+        List<FillResp> recentFills = paper || !full ? List.of() : OkxResponses.data(
                 okxApi.getFills(new FillsReq()
                         .setInstType(properties.getInstType())
                         .setInstId(properties.getInstId())
                         .setLimit(String.valueOf(properties.getRecentFillLimit()))),
                 "recent fills"
         );
-        List<PositionResp> positions = paper ? List.of() : collectPositions();
+        List<PositionResp> positions = paper || !full ? List.of() : collectPositions();
 
         InstrumentInfoResp instrument = getInstrument();
         TradingState tradingState = stateRepository.getState();

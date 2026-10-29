@@ -8,11 +8,13 @@
  * scheduler or derived market signal triggers the strategy engine; the active
  * strategy evaluates one collected context; risk and sizing are applied
  * through the broker path; and local strategy memory records the decision.
- * Position, cost, risk, cumulative fills, and the fund-level stop are
+ * Active strategy selection, position, cost, risk, cumulative fills, and the fund-level stop are
  * authoritative in MySQL. {@code OrderReconciliationService} continuously
  * advances unresolved live orders without ever resubmitting them. A
  * database-backed leadership lease keeps scheduled work and LIVE submissions
- * single-writer across application instances. Main
+ * single-writer across application instances. A short shared database fence
+ * protects strategy maintenance and execution reservations; no exchange network
+ * call runs under that fence. Main
  * entry points are {@link com.trade.trading.interfaces.web.TradingController},
  * {@link com.trade.trading.interfaces.scheduler.TradingScheduler}, and
  * {@link com.trade.trading.application.strategy.TradingStrategyEngine}.</p>

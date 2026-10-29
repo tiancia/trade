@@ -11,6 +11,7 @@ COPY backend/src/ src/
 # The existing full test suite also validates these infrastructure files.
 COPY backend/infrastructure/ infrastructure/
 COPY compose.yaml /workspace/compose.yaml
+COPY backend/Dockerfile ./Dockerfile
 # Package runs the offline provider tests; the opt-in exchange test stays off.
 RUN RUN_INTEGRATION_TESTS=false mvn -s .mvn/ci-settings.xml -B -ntp clean package
 # Rename before extraction so the slim executable jar keeps the runtime path.
@@ -18,6 +19,8 @@ RUN cp target/trade-0.0.1-SNAPSHOT.jar app.jar \
     && java -Djarmode=tools -jar app.jar extract --layers --destination extracted
 
 FROM ${RUNTIME_JAVA_IMAGE} AS runtime
+# Highest immutable migration shipped in this image; deployment blocks schema downgrades.
+LABEL com.trade.database.version="2"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl python3 python3-venv \
     && rm -rf /var/lib/apt/lists/* \

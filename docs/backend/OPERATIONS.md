@@ -45,7 +45,7 @@ Shell、IDE 或 systemd 已有环境变量会覆盖 YAML 回退值。启停自�
 
 Polymarket LIVE BUY 执行前使用独立事务预留 `polymarket_execution_guard`。只有正常执行结果和最终审计均提交后才释放；超时、拒绝或不完整确认、进程崩溃及审计失败均保留预留。后续调度会报失败而不再提交真实订单，重启和等待不会解除。该门禁覆盖共享同一数据库的后端实例，当前配置按单账户使用固定 `primary` 名称。
 
-部署时确认模块 schema 已创建门禁表；禁用启动 SQL 初始化的已有库先按[数据库升级说明](../../backend/src/main/resources/db/upgrade/README.md)应用对应建表脚本。首次启用门禁前停止旧版所有 Polymarket 任务并核实已有订单，旧版未决执行不会自动转换为新门禁记录。
+部署时由 Flyway 创建缺失的门禁表；接入前旧结构的适用条件见[数据库升级说明](../../backend/src/main/resources/db/README.md)。首次启用门禁前停止旧版所有 Polymarket 任务并核实已有订单，旧版未决执行不会自动转换为新门禁记录。
 
 恢复步骤：
 
@@ -127,7 +127,7 @@ Telegram 协议和共享 Bean 在 `client/telegram`，审核行为分别由微�
 初次联调保持两个发布开关关闭；确认审核状态后，按[工作流说明](WEIBO_WORKFLOW.md)配置目标账号授权和发布门禁。
 创建 Bean 不启动任务；实际聊天权限、消息发送和微博发布仍需独立联调。轮询模式不能与该 bot 已有 webhook 或另一套 consumer 共用。
 
-X 的 `x` 任务也包含生成、审核、发布三个循环。启动 schema 会创建缺失的六张 X 表；已有表升级时检查 `db/upgrade/x/` 的适用补丁。
+X 的 `x` 任务也包含生成、审核、发布三个循环。启动时 Flyway 完成 X 表结构迁移；`db/upgrade/x/` 只用于核实接入前历史结构的前置条件。
 配置 `TRADE_X_CONTENT_*`、目标 X 用户 ID 与四个 OAuth 1.0a 凭据，再按
 [X 工作流](X_WORKFLOW.md)联调。复用现有 Bot 时，先停止所有实例的微博审核并关闭
 `TRADE_WEIBO_TELEGRAM_REVIEW_ENABLED`；应用会拒绝两套审核同时 enabled。
@@ -151,8 +151,7 @@ automation `stop` 只阻止后续循环并停止域运行时，不代表资金�
 
 ## 多实例单写租约
 
-同一 OKX 资金账户运行多个后端实例时，必须先确认租约表结构完整；手工建表或升级旧库使用
-`db/upgrade/trading/migration_add_okx_trading_leader_lease.sql`，再在所有实例启用：
+同一 OKX 资金账户运行多个后端实例时，必须先确认 Flyway 已完成租约表结构迁移；更早旧库的前置条件见[数据库说明](../../backend/src/main/resources/db/README.md)，再在所有实例启用：
 
 ```powershell
 $env:TRADE_TRADING_LEADERSHIP_ENABLED="true"
@@ -177,11 +176,17 @@ $env:TRADE_TRADING_LEADERSHIP_HEARTBEAT_INTERVAL_MS="5000"
 `execution-mode=live + live-enabled=true`，未启用租约或数据库租约不可用时也不会调用 OKX 下单。
 不要为了绕过迁移把该门禁改成 `false`；单实例 PAPER 环境可继续保持 leadership disabled。
 
+活动策略选择和 revision 由 `okx_strategy_selection` 按执行模式和标的共享。切换后各实例直接读取数据库，接管不会恢复本地缓存中的旧策略。本次结构随 Flyway V2 自动升级，正常发布无需手工执行旧 SQL；所有共享该库的旧实例都须先停写，并核对旧 leader 的活动策略。表为空时首个实例仅导入一次自己的旧 JSON 选择，不应同时启动内容冲突的旧文件，也不能与旧二进制混跑。
+
+已有仓位但旧文件没有活动策略时，必须先核实并填入共享选择；系统不会在持仓期间自动猜测新策略。升级前由旧版日亏损/回撤触发的 HALTED 也不会自动解除，仍按下述完整对账及显式恢复流程处理。
+
 ## 资金级停止与恢复
 
 策略切换、HTTP stop/resume 和手工对账无需单独的应用令牌，仍须通过[管理接口的 Basic 认证与 CSRF 校验](#后台任务操作)。生产后端端口保持在容器网络内；本地开发只在受信任的隔离环境调用。
 
 `PUT /api/trading/strategies/active` 请求体仍为 `strategyId` 和可选 `expectedRevision`，版本冲突仍返回 409。浏览器跨域访问只放行 `trade.trading.frontend-allowed-origin-patterns` 中允许的来源，CORS 不替代网关认证。以下命令用于本地后端；生产访问使用网关地址并完成网关认证。
+
+同库存在受管理 LIVE 持仓、未决订单或当前 PAPER 会话持仓时，策略切换和参数修改返回 409；先完成退出和对账。普通日亏损、回撤及连亏冷却仅阻止加仓，允许已核实持仓减仓。HALTED 专用于人工或对账事故停止，仍禁止所有真实下单，包括卖出，不会自动市价平仓。
 
 ```powershell
 # expectedRevision 使用 GET /api/trading/runtime/status 返回的 activeStrategyRevision。
@@ -289,18 +294,13 @@ X 内容方向、语言、格式、字数与生成协议统一以 [X 工作流](
 
 ## 数据库升级
 
-应用每次启动按 `spring.sql.init.schema-locations` 的显式顺序执行 `db/schema/<module>/schema.sql`。`CREATE TABLE IF NOT EXISTS` 会创建缺失的表，但不会自动补齐已有表字段或修改索引。模块位置见 [数据库目录](../../backend/src/main/resources/db/README.md)，存量库按以下流程升级：
+后端启动通过 Flyway 执行镜像内尚未应用的版本，`flyway_schema_history` 保存版本、校验值及结果。`spring.sql.init.mode=never`，模块完整 schema 供查阅与离线校验。无历史记录的旧库先核验已知结构，通过后从版本 0 接入；未知或过旧结构会拒绝启动，不能盲目建立基线。开发约定见 [数据库目录](../../backend/src/main/resources/db/README.md)。
 
-1. 备份并记录当前 schema；
-2. 阅读 [db/upgrade/README.md](../../backend/src/main/resources/db/upgrade/README.md) 的依赖和重叠说明，按模块选择适用补丁；
-3. 在隔离库执行目标脚本；
-4. 验证表、索引、历史数据和应用测试；
-5. 在维护窗口执行并保留结果；
-6. 应用启动后检查 Mapper 和关键读写路径。
+标准发布脚本先检查镜像版本、停止旧后端并校验本地 MySQL 备份，再启动新后端迁移；新版本健康且数据库版本符合镜像标签后才记录成功。正常发布不再需要粘贴 SQL。多主机共享库须提前停止其他写入实例。备份位置、失败处置和异机备份见 [部署说明](../../deploy/README.md#数据备份和监控)。
 
-项目当前没有 Flyway/Liquibase 版本表，不能假设按文件名字典序全部执行是安全的。
+MySQL DDL 失败可能留下部分已提交结构及失败记录；保留停止状态，核实实际结构与数据后恢复或向前修复，不自动 `repair` 或重跑旧 SQL。禁止用旧镜像直接访问更高版本数据库；发布脚本会在停机前拒绝此类回滚。不要扫描执行历史 `db/upgrade/`，其中补丁存在不同适用阶段和重叠定义。
 
-从旧版 JSON 资金状态迁移至 MySQL 账本时，至少需要先有
+以下仅适用于 Flyway 接入前仍使用更老 JSON 结构的库：迁移至 MySQL 账本时，至少需要先有
 `db/upgrade/trading/migration_add_okx_order_idempotency_state_machine.sql`，再执行
 `db/upgrade/trading/migration_add_okx_financial_safety_state.sql`，多实例部署随后执行
 `db/upgrade/trading/migration_add_okx_trading_leader_lease.sql`。首次启动时，若目标
