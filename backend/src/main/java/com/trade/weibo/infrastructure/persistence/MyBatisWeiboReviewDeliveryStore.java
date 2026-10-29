@@ -1,5 +1,9 @@
 package com.trade.weibo.infrastructure.persistence;
 
+import org.springframework.cache.Cache;
+import org.springframework.cache.concurrent.ConcurrentMapCache;
+import org.springframework.cache.transaction.TransactionAwareCacheDecorator;
+
 import com.trade.weibo.port.WeiboReviewDeliveryStore;
 import com.trade.weibo.domain.model.WeiboReviewDelivery;
 import org.springframework.dao.DuplicateKeyException;
@@ -15,6 +19,9 @@ import java.util.OptionalLong;
 
 @Repository
 public class MyBatisWeiboReviewDeliveryStore implements WeiboReviewDeliveryStore {
+    private final Cache initializedRows = new TransactionAwareCacheDecorator(
+            new ConcurrentMapCache("initialized-rows"));
+
     private final WeiboReviewDeliveryMapper mapper;
 
     public MyBatisWeiboReviewDeliveryStore(WeiboReviewDeliveryMapper mapper) {
@@ -67,7 +74,7 @@ public class MyBatisWeiboReviewDeliveryStore implements WeiboReviewDeliveryStore
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public OptionalLong acquirePolling(long botId, String owner, Instant now, Instant until) {
         validateLease(owner, now, until);
-        mapper.ensurePolling(botId);
+        initializeOnce(botId, () -> mapper.ensurePolling(botId), () -> mapper.lockPolling(botId) != null);
         if (mapper.acquirePolling(botId, owner, time(now), time(until)) != 1) return OptionalLong.empty();
         return OptionalLong.of(mapper.pollingOffset(botId));
     }
@@ -118,5 +125,21 @@ public class MyBatisWeiboReviewDeliveryStore implements WeiboReviewDeliveryStore
 
     private static Instant instant(Timestamp value) {
         return value == null ? null : value.toInstant();
+    }
+    /** Memoize only committed existence; values and transactional locks remain in MySQL. */
+    private void initializeOnce(Object key, Runnable insert, java.util.function.BooleanSupplier exists) {
+        if (initializedRows.get(key) != null) {
+            if (exists.getAsBoolean()) {
+                return;
+            }
+            // A restored or manually cleared database must not retain an old existence marker.
+            initializedRows.evictIfPresent(key);
+        }
+        insert.run();
+        // Eviction only repeats a safe insert; bound account and replay identities.
+        if (((java.util.Map<?, ?>) initializedRows.getNativeCache()).size() >= 1024) {
+            initializedRows.clear();
+        }
+        initializedRows.put(key, Boolean.TRUE);
     }
 }

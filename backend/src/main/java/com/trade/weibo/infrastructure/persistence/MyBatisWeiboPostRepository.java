@@ -1,5 +1,9 @@
 package com.trade.weibo.infrastructure.persistence;
 
+import org.springframework.cache.Cache;
+import org.springframework.cache.concurrent.ConcurrentMapCache;
+import org.springframework.cache.transaction.TransactionAwareCacheDecorator;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.weibo.port.WeiboPostRepository;
 import com.trade.weibo.domain.model.HotEvent;
@@ -17,6 +21,9 @@ import java.util.Optional;
 
 @Repository
 public class MyBatisWeiboPostRepository implements WeiboPostRepository {
+    private final Cache initializedRows = new TransactionAwareCacheDecorator(
+            new ConcurrentMapCache("initialized-rows"));
+
     private final WeiboPostMapper mapper;
     private final ObjectMapper json = new ObjectMapper().findAndRegisterModules();
 
@@ -94,7 +101,7 @@ public class MyBatisWeiboPostRepository implements WeiboPostRepository {
 
     private void lock(String uid) {
         // All generation/publishing quota checks for an account run under the same row lock.
-        mapper.ensureAccountGate(uid);
+        initializeOnce(uid, () -> mapper.ensureAccountGate(uid), () -> mapper.lockAccountGate(uid) != null);
         mapper.lockAccountGate(uid);
     }
 
@@ -124,4 +131,20 @@ public class MyBatisWeiboPostRepository implements WeiboPostRepository {
     private static int bound(int limit) { return Math.max(1, Math.min(100, limit)); }
     private static Timestamp time(Instant value) { return value == null ? null : Timestamp.from(value); }
     private static Instant instant(Timestamp value) { return value == null ? null : value.toInstant(); }
+    /** Memoize only committed existence; values and transactional locks remain in MySQL. */
+    private void initializeOnce(Object key, Runnable insert, java.util.function.BooleanSupplier exists) {
+        if (initializedRows.get(key) != null) {
+            if (exists.getAsBoolean()) {
+                return;
+            }
+            // A restored or manually cleared database must not retain an old existence marker.
+            initializedRows.evictIfPresent(key);
+        }
+        insert.run();
+        // Eviction only repeats a safe insert; bound account and replay identities.
+        if (((java.util.Map<?, ?>) initializedRows.getNativeCache()).size() >= 1024) {
+            initializedRows.clear();
+        }
+        initializedRows.put(key, Boolean.TRUE);
+    }
 }

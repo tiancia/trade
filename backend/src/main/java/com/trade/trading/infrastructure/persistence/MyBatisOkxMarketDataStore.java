@@ -13,7 +13,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 /** MyBatis-backed, best-effort persistence for public OKX market data. */
@@ -83,16 +87,32 @@ public class MyBatisOkxMarketDataStore implements OkxMarketDataStore {
             return SaveResult.SKIPPED;
         }
 
-        List<OkxCandleCacheRow> rows = candles.stream()
-                .map(candle -> toCandleRow(instId, bar, candle))
-                .filter(row -> row.getTs() != null && row.getTs() > 0)
-                .toList();
+        Map<Long, OkxCandleCacheRow> rowsByTimestamp = new LinkedHashMap<>();
+        for (CandleResp candle : candles) {
+            OkxCandleCacheRow row = toCandleRow(instId, bar, candle);
+            if (row.getTs() != null && row.getTs() > 0) {
+                rowsByTimestamp.put(row.getTs(), row);
+            }
+        }
+        List<OkxCandleCacheRow> rows = List.copyOf(rowsByTimestamp.values());
         if (rows.isEmpty()) {
             return SaveResult.SKIPPED;
         }
 
         try {
-            candleMapper.upsertBatch(rows);
+            Set<Long> existingTimestamps = new HashSet<>(candleMapper.findExistingTimestamps(
+                    instId, bar, List.copyOf(rowsByTimestamp.keySet())));
+            List<OkxCandleCacheRow> existingRows = rows.stream()
+                    .filter(row -> existingTimestamps.contains(row.getTs())).toList();
+            List<OkxCandleCacheRow> newRows = rows.stream()
+                    .filter(row -> !existingTimestamps.contains(row.getTs())).toList();
+            if (!existingRows.isEmpty()) {
+                candleMapper.updateBatch(instId, bar, existingRows);
+            }
+            if (!newRows.isEmpty()) {
+                // A concurrent writer can insert after our lookup; keep the unique-key fallback.
+                candleMapper.upsertBatch(newRows);
+            }
             return SaveResult.SAVED;
         } catch (Exception e) {
             log.warn("Persist OKX candles failed: instId={}, bar={}, count={}, error={}",

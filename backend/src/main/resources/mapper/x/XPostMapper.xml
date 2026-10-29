@@ -23,7 +23,7 @@
         <result column="last_error" property="lastError"/>
     </resultMap>
     <insert id="ensureAccountGate">INSERT IGNORE INTO x_account_gate (user_id) VALUES (#{userId})</insert>
-    <select id="lockAccountGate" resultType="string">
+    <select id="lockAccountGate" resultType="string" flushCache="true" useCache="false">
         SELECT user_id FROM x_account_gate WHERE user_id = #{userId} FOR UPDATE
     </select>
     <select id="countGenerated" resultType="int">

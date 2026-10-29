@@ -18,7 +18,7 @@
         INSERT IGNORE INTO okx_ai_strategy_guard (scope_key, next_review_at, notification_after)
         VALUES (#{scope}, '2000-01-01 00:00:00', '2000-01-01 00:00:00')
     </insert>
-    <select id="lockGuard" resultType="java.time.Instant">
+    <select id="lockGuard" resultType="java.time.Instant" flushCache="true" useCache="false">
         SELECT next_review_at FROM okx_ai_strategy_guard WHERE scope_key = #{scope} FOR UPDATE
     </select>
     <update id="advanceReview">

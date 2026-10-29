@@ -22,6 +22,8 @@ public interface TradingLeaderLeaseMapper {
 
     TradingLeaderLeaseRow find(@Param("leaseName") String leaseName);
 
+    TradingLeaderLeaseRow lock(@Param("leaseName") String leaseName);
+
     int release(
             @Param("leaseName") String leaseName,
             @Param("ownerId") String ownerId,

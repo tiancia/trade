@@ -8,9 +8,45 @@ public interface AiDecisionAuditMapper {
 
     void updateDecisionRun(AiDecisionRunRow row);
 
-    void upsertAiRequest(AiRequestRow row);
+    default void upsertAiRequest(AiRequestRow row) {
+        if (aiRequestExists(row.getDecisionRunId())) {
+            updateAiRequest(row);
+        } else {
+            insertAiRequest(row);
+        }
+    }
 
-    void upsertAiResponse(AiResponseRow row);
+    int updateAiRequest(AiRequestRow row);
 
-    void upsertOrderExecution(OrderExecutionRow row);
+    boolean aiRequestExists(Long decisionRunId);
+
+    void insertAiRequest(AiRequestRow row);
+
+    default void upsertAiResponse(AiResponseRow row) {
+        if (aiResponseExists(row.getDecisionRunId())) {
+            updateAiResponse(row);
+        } else {
+            insertAiResponse(row);
+        }
+    }
+
+    int updateAiResponse(AiResponseRow row);
+
+    boolean aiResponseExists(Long decisionRunId);
+
+    void insertAiResponse(AiResponseRow row);
+
+    default void upsertOrderExecution(OrderExecutionRow row) {
+        if (orderExecutionExists(row.getDecisionRunId())) {
+            updateOrderExecution(row);
+        } else {
+            insertOrderExecution(row);
+        }
+    }
+
+    int updateOrderExecution(OrderExecutionRow row);
+
+    boolean orderExecutionExists(Long decisionRunId);
+
+    void insertOrderExecution(OrderExecutionRow row);
 }

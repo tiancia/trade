@@ -61,6 +61,67 @@
             confirm = VALUES(confirm)
     </insert>
 
+    <select id="findExistingTimestamps" resultType="java.lang.Long">
+        SELECT ts
+        FROM okx_candle_cache
+        WHERE inst_id = #{instId}
+          AND bar = #{bar}
+          AND ts IN
+        <foreach collection="timestamps" item="ts" open="(" separator="," close=")">
+            #{ts}
+        </foreach>
+    </select>
+
+    <update id="updateBatch">
+        UPDATE okx_candle_cache
+        SET open = CASE ts
+            <foreach collection="rows" item="row">
+                WHEN #{row.ts} THEN #{row.open}
+            </foreach>
+            END,
+            high = CASE ts
+            <foreach collection="rows" item="row">
+                WHEN #{row.ts} THEN #{row.high}
+            </foreach>
+            END,
+            low = CASE ts
+            <foreach collection="rows" item="row">
+                WHEN #{row.ts} THEN #{row.low}
+            </foreach>
+            END,
+            close = CASE ts
+            <foreach collection="rows" item="row">
+                WHEN #{row.ts} THEN #{row.close}
+            </foreach>
+            END,
+            vol = CASE ts
+            <foreach collection="rows" item="row">
+                WHEN #{row.ts} THEN #{row.vol}
+            </foreach>
+            END,
+            vol_ccy = CASE ts
+            <foreach collection="rows" item="row">
+                WHEN #{row.ts} THEN #{row.volCcy}
+            </foreach>
+            END,
+            vol_ccy_quote = CASE ts
+            <foreach collection="rows" item="row">
+                WHEN #{row.ts} THEN #{row.volCcyQuote}
+            </foreach>
+            END,
+            confirm = CASE ts
+            <foreach collection="rows" item="row">
+                WHEN #{row.ts} THEN #{row.confirm}
+            </foreach>
+            END
+        WHERE inst_id = #{instId}
+          AND bar = #{bar}
+          AND ts IN
+        <foreach collection="rows" item="row" open="(" separator="," close=")">
+            #{row.ts}
+        </foreach>
+    </update>
+
     <insert id="upsertBatch">
         INSERT INTO okx_candle_cache (
             inst_id,

@@ -5,7 +5,7 @@
     <sql id="fillColumns">f.id,f.session_id,f.decision_id,f.strategy_id,f.strategy_config_version,f.strategy_config_snapshot_json,f.side,f.requested_size,f.filled_base,f.position_delta,f.price,f.cash_delta,f.fee_quote,f.realized_pnl,f.cash_after,f.position_after,f.equity_after,f.account_version,f.created_at</sql>
     <sql id="equityColumns">e.id,e.session_id,e.created_at AS timestamp,e.cash,e.position_quantity,e.last_price,e.valuation_at,e.equity,e.realized_pnl,e.unrealized_pnl,e.account_version,e.strategy_id,e.strategy_config_version,e.kind</sql>
     <insert id="insertHeadIfAbsent">INSERT INTO okx_paper_account_heads(inst_id) VALUES(#{instId}) ON DUPLICATE KEY UPDATE inst_id=VALUES(inst_id)</insert>
-    <select id="lockHead" resultType="string">SELECT session_id FROM okx_paper_account_heads WHERE inst_id=#{instId} FOR UPDATE</select>
+    <select id="lockHead" resultType="string" flushCache="true" useCache="false">SELECT inst_id FROM okx_paper_account_heads WHERE inst_id=#{instId} FOR UPDATE</select>
     <update id="updateHead">UPDATE okx_paper_account_heads SET session_id=#{sessionId} WHERE inst_id=#{instId}</update>
     <select id="active" resultType="com.trade.trading.infrastructure.persistence.PaperAccountRow">
         SELECT <include refid="accountColumns"/> FROM okx_paper_sessions s JOIN okx_paper_account_heads h ON s.session_id=h.session_id WHERE h.inst_id=#{instId}

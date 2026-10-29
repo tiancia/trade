@@ -23,7 +23,7 @@
         <result column="last_error" property="lastError"/>
     </resultMap>
     <insert id="ensureAccountGate">INSERT IGNORE INTO weibo_account_gate (uid) VALUES (#{uid})</insert>
-    <select id="lockAccountGate" resultType="string">
+    <select id="lockAccountGate" resultType="string" flushCache="true" useCache="false">
         SELECT uid FROM weibo_account_gate WHERE uid = #{uid} FOR UPDATE
     </select>
     <select id="countGenerated" resultType="int">

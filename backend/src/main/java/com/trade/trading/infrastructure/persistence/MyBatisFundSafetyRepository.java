@@ -1,5 +1,9 @@
 package com.trade.trading.infrastructure.persistence;
 
+import org.springframework.cache.Cache;
+import org.springframework.cache.concurrent.ConcurrentMapCache;
+import org.springframework.cache.transaction.TransactionAwareCacheDecorator;
+
 import com.trade.trading.port.FundSafetyRepository;
 import com.trade.trading.domain.risk.FundSafetyState;
 import com.trade.trading.domain.risk.FundSafetyStatus;
@@ -11,6 +15,9 @@ import java.util.ConcurrentModificationException;
 
 @Component
 public class MyBatisFundSafetyRepository implements FundSafetyRepository {
+    private final Cache initializedRows = new TransactionAwareCacheDecorator(
+            new ConcurrentMapCache("initialized-rows"));
+
     private final FundSafetyMapper mapper;
 
     public MyBatisFundSafetyRepository(FundSafetyMapper mapper) {
@@ -22,7 +29,7 @@ public class MyBatisFundSafetyRepository implements FundSafetyRepository {
     public FundSafetyState getOrCreate(String accountScope) {
         boolean liveScope = "live".equalsIgnoreCase(accountScope);
         Instant now = Instant.now();
-        mapper.insertIfAbsent(new FundSafetyStateRow()
+        initializeOnce(accountScope, () -> mapper.insertIfAbsent(new FundSafetyStateRow()
                 .setAccountScope(accountScope)
                 .setStatus(liveScope ? FundSafetyStatus.HALTED : FundSafetyStatus.ACTIVE)
                 .setReason(liveScope
@@ -31,7 +38,7 @@ public class MyBatisFundSafetyRepository implements FundSafetyRepository {
                 .setSource(liveScope ? "bootstrap" : null)
                 .setHaltedAt(liveScope ? now : null)
                 .setUpdatedAt(now)
-                .setVersion(0));
+                .setVersion(0)), () -> mapper.lock(accountScope) != null);
         return required(accountScope);
     }
 
@@ -69,7 +76,7 @@ public class MyBatisFundSafetyRepository implements FundSafetyRepository {
     }
 
     private FundSafetyState required(String accountScope) {
-        FundSafetyStateRow row = mapper.find(accountScope);
+        FundSafetyStateRow row = mapper.lock(accountScope);
         if (row == null) {
             throw new IllegalStateException("Fund safety state not found: " + accountScope);
         }
@@ -84,5 +91,21 @@ public class MyBatisFundSafetyRepository implements FundSafetyRepository {
                 .setResumedAt(row.getResumedAt())
                 .setUpdatedAt(row.getUpdatedAt())
                 .setVersion(row.getVersion());
+    }
+    /** Memoize only committed existence; values and transactional locks remain in MySQL. */
+    private void initializeOnce(Object key, Runnable insert, java.util.function.BooleanSupplier exists) {
+        if (initializedRows.get(key) != null) {
+            if (exists.getAsBoolean()) {
+                return;
+            }
+            // A restored or manually cleared database must not retain an old existence marker.
+            initializedRows.evictIfPresent(key);
+        }
+        insert.run();
+        // Eviction only repeats a safe insert; bound account and replay identities.
+        if (((java.util.Map<?, ?>) initializedRows.getNativeCache()).size() >= 1024) {
+            initializedRows.clear();
+        }
+        initializedRows.put(key, Boolean.TRUE);
     }
 }

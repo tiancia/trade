@@ -67,7 +67,7 @@
         WHERE account_scope = #{accountScope} AND inst_id = #{instId}
     </select>
 
-    <select id="lockPosition" resultMap="positionResult">
+    <select id="lockPosition" resultMap="positionResult" flushCache="true" useCache="false">
         SELECT * FROM okx_position_state
         WHERE account_scope = #{accountScope} AND inst_id = #{instId}
         FOR UPDATE
@@ -107,7 +107,7 @@
         SELECT * FROM okx_risk_state WHERE account_scope = #{accountScope}
     </select>
 
-    <select id="lockRiskState" resultMap="riskResult">
+    <select id="lockRiskState" resultMap="riskResult" flushCache="true" useCache="false">
         SELECT * FROM okx_risk_state WHERE account_scope = #{accountScope} FOR UPDATE
     </select>
 
@@ -170,7 +170,7 @@
         ON DUPLICATE KEY UPDATE order_id = VALUES(order_id)
     </insert>
 
-    <select id="lockFillLedger" resultMap="fillLedgerResult">
+    <select id="lockFillLedger" resultMap="fillLedgerResult" flushCache="true" useCache="false">
         SELECT * FROM okx_order_fill_ledger WHERE order_id = #{orderId} FOR UPDATE
     </select>
 

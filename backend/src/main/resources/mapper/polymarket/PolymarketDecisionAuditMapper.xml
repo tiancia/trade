@@ -82,7 +82,7 @@
         WHERE id = #{id}
     </update>
 
-    <insert id="upsertAiRequest" parameterType="com.trade.polymarket.infrastructure.persistence.PolymarketDecisionAuditRow">
+    <insert id="insertAiRequest" parameterType="com.trade.polymarket.infrastructure.persistence.PolymarketDecisionAuditRow">
         INSERT INTO polymarket_ai_requests (
             decision_run_id,
             prompt_text,
@@ -97,7 +97,18 @@
             ai_parameters_json = VALUES(ai_parameters_json)
     </insert>
 
-    <insert id="upsertAiResponse" parameterType="com.trade.polymarket.infrastructure.persistence.PolymarketDecisionAuditRow">
+    <update id="updateAiRequest">
+        UPDATE polymarket_ai_requests
+        SET prompt_text = #{promptText},
+            ai_parameters_json = #{aiParametersJson}
+        WHERE decision_run_id = #{decisionRunId}
+    </update>
+
+    <select id="aiRequestExists" resultType="boolean">
+        SELECT EXISTS (SELECT 1 FROM polymarket_ai_requests WHERE decision_run_id = #{decisionRunId})
+    </select>
+
+    <insert id="insertAiResponse" parameterType="com.trade.polymarket.infrastructure.persistence.PolymarketDecisionAuditRow">
         INSERT INTO polymarket_ai_responses (
             decision_run_id,
             received_at,
@@ -151,7 +162,31 @@
             parsed_estimated_edge = VALUES(parsed_estimated_edge)
     </insert>
 
-    <insert id="upsertOrderExecution" parameterType="com.trade.polymarket.infrastructure.persistence.PolymarketDecisionAuditRow">
+    <update id="updateAiResponse">
+        UPDATE polymarket_ai_responses
+        SET received_at = #{completedAt},
+            raw_response = #{rawResponse},
+            parsed_action = #{action},
+            parsed_reason = #{decisionReason},
+            parsed_market_id = #{marketId},
+            parsed_market_slug = #{marketSlug},
+            parsed_market_question = #{marketQuestion},
+            parsed_outcome = #{outcome},
+            parsed_token_id = #{tokenId},
+            parsed_limit_price = #{limitPrice},
+            parsed_max_spend_usdc = #{maxSpendUsdc},
+            parsed_win_probability = #{winProbability},
+            parsed_confidence = #{confidence},
+            parsed_estimated_probability = #{estimatedProbability},
+            parsed_estimated_edge = #{estimatedEdge}
+        WHERE decision_run_id = #{decisionRunId}
+    </update>
+
+    <select id="aiResponseExists" resultType="boolean">
+        SELECT EXISTS (SELECT 1 FROM polymarket_ai_responses WHERE decision_run_id = #{decisionRunId})
+    </select>
+
+    <insert id="insertOrderExecution" parameterType="com.trade.polymarket.infrastructure.persistence.PolymarketDecisionAuditRow">
         INSERT INTO polymarket_order_executions (
             decision_run_id,
             execution_status,
@@ -171,4 +206,17 @@
             order_response = VALUES(order_response),
             error = VALUES(error)
     </insert>
+
+    <update id="updateOrderExecution">
+        UPDATE polymarket_order_executions
+        SET execution_status = #{executionStatus},
+            skip_reason = #{skipReason},
+            order_response = #{orderResponse},
+            error = #{error}
+        WHERE decision_run_id = #{decisionRunId}
+    </update>
+
+    <select id="orderExecutionExists" resultType="boolean">
+        SELECT EXISTS (SELECT 1 FROM polymarket_order_executions WHERE decision_run_id = #{decisionRunId})
+    </select>
 </mapper>

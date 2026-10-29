@@ -1,5 +1,9 @@
 package com.trade.trading.infrastructure.persistence;
 
+import org.springframework.cache.Cache;
+import org.springframework.cache.concurrent.ConcurrentMapCache;
+import org.springframework.cache.transaction.TransactionAwareCacheDecorator;
+
 import com.trade.trading.port.TradingOrderRepository;
 import com.trade.trading.domain.order.OrderSubmission;
 import com.trade.trading.domain.order.TradingOrder;
@@ -12,6 +16,9 @@ import java.util.Optional;
 
 @Component
 public class MyBatisTradingOrderRepository implements TradingOrderRepository {
+    private final Cache initializedRows = new TransactionAwareCacheDecorator(
+            new ConcurrentMapCache("initialized-rows"));
+
     private final TradingOrderMapper mapper;
 
     public MyBatisTradingOrderRepository(TradingOrderMapper mapper) {
@@ -23,9 +30,9 @@ public class MyBatisTradingOrderRepository implements TradingOrderRepository {
     public TradingOrder createOrGet(OrderSubmission submission) {
         Instant now = Instant.now();
         TradingOrderRow candidate = TradingOrderRow.fromDomain(TradingOrder.pending(submission, now));
-        mapper.insertIfAbsent(candidate);
+        initializeOnce(submission.idempotencyKey(), () -> mapper.insertIfAbsent(candidate), () -> mapper.lockByIdempotencyKey(submission.idempotencyKey()) != null);
 
-        TradingOrderRow storedRow = mapper.findByIdempotencyKey(submission.idempotencyKey());
+        TradingOrderRow storedRow = mapper.lockByIdempotencyKey(submission.idempotencyKey());
         if (storedRow == null) {
             throw new IllegalStateException("Order reservation disappeared: " + submission.idempotencyKey());
         }
@@ -70,5 +77,21 @@ public class MyBatisTradingOrderRepository implements TradingOrderRepository {
                     "Idempotency key was reused with different order parameters: " + requested.idempotencyKey()
             );
         }
+    }
+    /** Memoize only committed existence; values and transactional locks remain in MySQL. */
+    private void initializeOnce(Object key, Runnable insert, java.util.function.BooleanSupplier exists) {
+        if (initializedRows.get(key) != null) {
+            if (exists.getAsBoolean()) {
+                return;
+            }
+            // A restored or manually cleared database must not retain an old existence marker.
+            initializedRows.evictIfPresent(key);
+        }
+        insert.run();
+        // Eviction only repeats a safe insert; bound account and replay identities.
+        if (((java.util.Map<?, ?>) initializedRows.getNativeCache()).size() >= 1024) {
+            initializedRows.clear();
+        }
+        initializedRows.put(key, Boolean.TRUE);
     }
 }

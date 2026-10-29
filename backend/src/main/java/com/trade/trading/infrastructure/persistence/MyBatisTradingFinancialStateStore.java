@@ -1,5 +1,9 @@
 package com.trade.trading.infrastructure.persistence;
 
+import org.springframework.cache.Cache;
+import org.springframework.cache.concurrent.ConcurrentMapCache;
+import org.springframework.cache.transaction.TransactionAwareCacheDecorator;
+
 import com.trade.trading.domain.order.PositionAccounting;
 import com.trade.trading.port.TradingFinancialStateStore;
 import com.trade.trading.domain.model.TradingPositionState;
@@ -20,6 +24,9 @@ import java.time.Instant;
  */
 @Component
 public class MyBatisTradingFinancialStateStore implements TradingFinancialStateStore {
+    private final Cache initializedRows = new TransactionAwareCacheDecorator(
+            new ConcurrentMapCache("initialized-rows"));
+
     private static final String NET_POSITION = "net";
 
     private final TradingFinancialStateMapper mapper;
@@ -37,7 +44,7 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
             BigDecimal seedAverageCost
     ) {
         insertPositionIfAbsent(accountScope, instId, seedQuantity, seedAverageCost);
-        TradingPositionRow row = mapper.findPosition(accountScope, instId);
+        TradingPositionRow row = mapper.lockPosition(accountScope, instId);
         if (row == null) {
             throw new IllegalStateException("Trading position disappeared after initialization");
         }
@@ -95,7 +102,7 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
     @Transactional
     public TradingRiskState getOrCreateRiskState(String accountScope, TradingRiskState seed) {
         insertRiskIfAbsent(accountScope, seed);
-        TradingRiskStateRow row = mapper.findRiskState(accountScope);
+        TradingRiskStateRow row = mapper.lockRiskState(accountScope);
         if (row == null) {
             throw new IllegalStateException("Trading risk state disappeared after initialization");
         }
@@ -195,7 +202,7 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
                 .setVersion(0)
                 .setCreatedAt(Instant.now())
                 .setUpdatedAt(Instant.now());
-        mapper.insertFillLedgerIfAbsent(seed);
+        initializeOnce(java.util.List.of("fill", orderId), () -> mapper.insertFillLedgerIfAbsent(seed), () -> mapper.lockFillLedger(orderId) != null);
         OrderFillLedgerRow ledger = mapper.lockFillLedger(orderId);
         if (ledger == null) {
             throw new IllegalStateException("Order fill ledger cannot be locked: " + orderId);
@@ -267,7 +274,7 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
         BigDecimal quantity = seed.getQuantity();
         BigDecimal averageCost = seed.getAverageCost();
         Instant now = Instant.now();
-        mapper.insertPositionIfAbsent(new TradingPositionRow()
+        initializeOnce(java.util.List.of("position", accountScope, instId), () -> mapper.insertPositionIfAbsent(new TradingPositionRow()
                 .setAccountScope(accountScope)
                 .setInstId(instId)
                 .setPositionSide(NET_POSITION)
@@ -275,7 +282,7 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
                 .setAverageCost(averageCost)
                 .setVersion(0)
                 .setCreatedAt(now)
-                .setUpdatedAt(now));
+                .setUpdatedAt(now)), () -> mapper.lockPosition(accountScope, instId) != null);
     }
 
     private void insertRiskIfAbsent(String accountScope, TradingRiskState seed) {
@@ -289,7 +296,7 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
         row.setConsecutiveReconciliationFailures(safe.getConsecutiveReconciliationFailures())
                 .setLastReconciliationAt(parseInstant(safe.getLastReconciliationAt()))
                 .setLastReconciliationError(safe.getLastReconciliationError());
-        mapper.insertRiskStateIfAbsent(row);
+        initializeOnce(java.util.List.of("risk", accountScope), () -> mapper.insertRiskStateIfAbsent(row), () -> mapper.lockRiskState(accountScope) != null);
     }
 
     private void updatePosition(TradingPositionRow row) {
@@ -387,5 +394,21 @@ public class MyBatisTradingFinancialStateStore implements TradingFinancialStateS
 
     private static String formatInstant(Instant value) {
         return value == null ? null : value.toString();
+    }
+    /** Memoize only committed existence; values and transactional locks remain in MySQL. */
+    private void initializeOnce(Object key, Runnable insert, java.util.function.BooleanSupplier exists) {
+        if (initializedRows.get(key) != null) {
+            if (exists.getAsBoolean()) {
+                return;
+            }
+            // A restored or manually cleared database must not retain an old existence marker.
+            initializedRows.evictIfPresent(key);
+        }
+        insert.run();
+        // Eviction only repeats a safe insert; bound account and replay identities.
+        if (((java.util.Map<?, ?>) initializedRows.getNativeCache()).size() >= 1024) {
+            initializedRows.clear();
+        }
+        initializedRows.put(key, Boolean.TRUE);
     }
 }

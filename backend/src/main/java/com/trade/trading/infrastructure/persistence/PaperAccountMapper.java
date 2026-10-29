@@ -11,6 +11,7 @@ import java.util.List;
 @Mapper
 public interface PaperAccountMapper {
     int insertHeadIfAbsent(String instId);
+    /** Returns the instrument key, including when the head has no active session. */
     String lockHead(String instId);
     int updateHead(@Param("instId") String instId, @Param("sessionId") String sessionId);
     PaperAccountRow active(String instId);

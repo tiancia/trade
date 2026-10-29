@@ -11,7 +11,19 @@ public interface WeiboMapper {
 
     int consumeOAuthState(@Param("state") String state, @Param("usedAt") Timestamp usedAt);
 
-    void upsertAccountToken(WeiboAccountTokenRow row);
+    default void upsertAccountToken(WeiboAccountTokenRow row) {
+        if (accountTokenExists(row.getUid())) {
+            updateAccountToken(row);
+        } else {
+            insertAccountToken(row);
+        }
+    }
+
+    int updateAccountToken(WeiboAccountTokenRow row);
+
+    boolean accountTokenExists(String uid);
+
+    void insertAccountToken(WeiboAccountTokenRow row);
 
     WeiboAccountTokenRow findCurrentToken();
 

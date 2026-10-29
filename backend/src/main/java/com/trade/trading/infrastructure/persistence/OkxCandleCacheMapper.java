@@ -16,6 +16,19 @@ public interface OkxCandleCacheMapper {
 
     void upsert(OkxCandleCacheRow row);
 
-    /** Upserts one API/WebSocket batch in a single database round trip. */
+    List<Long> findExistingTimestamps(
+            @Param("instId") String instId,
+            @Param("bar") String bar,
+            @Param("timestamps") List<Long> timestamps
+    );
+
+    /** Updates existing candles without allocating AUTO_INCREMENT values. */
+    void updateBatch(
+            @Param("instId") String instId,
+            @Param("bar") String bar,
+            @Param("rows") List<OkxCandleCacheRow> rows
+    );
+
+    /** Inserts newly observed candles; the duplicate path handles concurrent first writes. */
     void upsertBatch(@Param("rows") List<OkxCandleCacheRow> rows);
 }

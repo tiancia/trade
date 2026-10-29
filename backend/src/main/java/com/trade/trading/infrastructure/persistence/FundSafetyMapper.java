@@ -11,6 +11,8 @@ public interface FundSafetyMapper {
 
     FundSafetyStateRow find(@Param("accountScope") String accountScope);
 
+    FundSafetyStateRow lock(@Param("accountScope") String accountScope);
+
     int halt(
             @Param("accountScope") String accountScope,
             @Param("source") String source,

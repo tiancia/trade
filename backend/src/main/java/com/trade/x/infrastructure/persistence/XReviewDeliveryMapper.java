@@ -17,6 +17,7 @@ public interface XReviewDeliveryMapper {
                        @Param("decidedAt") Timestamp decidedAt);
     int finishDecision(@Param("botId") long botId, @Param("id") String id, @Param("decisionStatus") String decisionStatus);
     void ensurePolling(@Param("botId") long botId);
+    Long lockPolling(@Param("botId") long botId);
     int acquirePolling(@Param("botId") long botId, @Param("owner") String owner,
                        @Param("now") Timestamp now, @Param("until") Timestamp until);
     Long pollingOffset(@Param("botId") long botId);

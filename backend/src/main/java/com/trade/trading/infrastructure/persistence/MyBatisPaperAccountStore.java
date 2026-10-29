@@ -1,5 +1,9 @@
 package com.trade.trading.infrastructure.persistence;
 
+import org.springframework.cache.Cache;
+import org.springframework.cache.concurrent.ConcurrentMapCache;
+import org.springframework.cache.transaction.TransactionAwareCacheDecorator;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.trading.port.PaperAccountStore;
@@ -24,6 +28,9 @@ import java.util.function.UnaryOperator;
 /** The head row fences all writers, including replacement of a trial during an in-flight decision. */
 @Component
 public class MyBatisPaperAccountStore implements PaperAccountStore {
+    private final Cache initializedRows = new TransactionAwareCacheDecorator(
+            new ConcurrentMapCache("initialized-rows"));
+
     private final PaperAccountMapper mapper;
     private final ObjectMapper json = new ObjectMapper();
 
@@ -182,7 +189,7 @@ public class MyBatisPaperAccountStore implements PaperAccountStore {
     }
 
     private PaperAccount lock(String instId) {
-        mapper.insertHeadIfAbsent(instId);
+        initializeOnce(instId, () -> mapper.insertHeadIfAbsent(instId), () -> mapper.lockHead(instId) != null);
         mapper.lockHead(instId);
         return active(instId);
     }
@@ -213,5 +220,21 @@ public class MyBatisPaperAccountStore implements PaperAccountStore {
                 .setPositionQuantity(a.positionQuantity()).setPositionCost(a.positionCost()).setRealizedPnl(a.realizedPnl())
                 .setTotalFeesQuote(a.totalFeesQuote()).setLastPrice(a.lastPrice()).setValuationAt(a.valuationAt()).setVersion(a.version())
                 .setCreatedAt(a.createdAt()).setUpdatedAt(a.updatedAt());
+    }
+    /** Memoize only committed existence; values and transactional locks remain in MySQL. */
+    private void initializeOnce(Object key, Runnable insert, java.util.function.BooleanSupplier exists) {
+        if (initializedRows.get(key) != null) {
+            if (exists.getAsBoolean()) {
+                return;
+            }
+            // A restored or manually cleared database must not retain an old existence marker.
+            initializedRows.evictIfPresent(key);
+        }
+        insert.run();
+        // Eviction only repeats a safe insert; bound account and replay identities.
+        if (((java.util.Map<?, ?>) initializedRows.getNativeCache()).size() >= 1024) {
+            initializedRows.clear();
+        }
+        initializedRows.put(key, Boolean.TRUE);
     }
 }

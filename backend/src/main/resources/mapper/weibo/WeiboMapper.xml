@@ -16,13 +16,24 @@
           AND expires_at &gt; #{usedAt}
     </update>
 
-    <insert id="upsertAccountToken" parameterType="com.trade.weibo.infrastructure.persistence.WeiboAccountTokenRow">
+    <insert id="insertAccountToken" parameterType="com.trade.weibo.infrastructure.persistence.WeiboAccountTokenRow">
         INSERT INTO weibo_account_token (uid, access_token, expires_at)
         VALUES (#{uid}, #{accessToken}, #{expiresAt})
         ON DUPLICATE KEY UPDATE
             access_token = VALUES(access_token),
             expires_at = VALUES(expires_at)
     </insert>
+
+    <update id="updateAccountToken">
+        UPDATE weibo_account_token
+        SET access_token = #{accessToken},
+            expires_at = #{expiresAt}
+        WHERE uid = #{uid}
+    </update>
+
+    <select id="accountTokenExists" resultType="boolean">
+        SELECT EXISTS (SELECT 1 FROM weibo_account_token WHERE uid = #{uid})
+    </select>
 
     <select id="findCurrentToken" resultType="com.trade.weibo.infrastructure.persistence.WeiboAccountTokenRow">
         SELECT uid, access_token, expires_at, created_at, updated_at

@@ -1,5 +1,9 @@
 package com.trade.trading.infrastructure.persistence;
 
+import org.springframework.cache.Cache;
+import org.springframework.cache.concurrent.ConcurrentMapCache;
+import org.springframework.cache.transaction.TransactionAwareCacheDecorator;
+
 import com.trade.trading.port.TradingLeaderLeaseRepository;
 import com.trade.trading.domain.model.TradingLeaderLease;
 import org.springframework.stereotype.Repository;
@@ -19,6 +23,9 @@ import java.util.Objects;
  */
 @Repository
 public class MyBatisTradingLeaderLeaseRepository implements TradingLeaderLeaseRepository {
+    private final Cache initializedRows = new TransactionAwareCacheDecorator(
+            new ConcurrentMapCache("initialized-rows"));
+
     private final TradingLeaderLeaseMapper mapper;
 
     public MyBatisTradingLeaderLeaseRepository(TradingLeaderLeaseMapper mapper) {
@@ -39,13 +46,13 @@ public class MyBatisTradingLeaderLeaseRepository implements TradingLeaderLeaseRe
         }
         Instant now = databaseNow();
         Instant leaseUntil = now.plus(leaseDuration);
-        mapper.insertIfAbsent(new TradingLeaderLeaseRow()
+        initializeOnce(leaseName, () -> mapper.insertIfAbsent(new TradingLeaderLeaseRow()
                 .setLeaseName(leaseName)
                 .setOwnerId(ownerId)
                 .setLeaseUntil(leaseUntil)
                 .setFencingToken(1L)
                 .setCreatedAt(now)
-                .setUpdatedAt(now));
+                .setUpdatedAt(now)), () -> mapper.lock(leaseName) != null);
         mapper.acquireOrRenew(leaseName, ownerId, now, leaseUntil);
         return toLease(requireLease(mapper.find(leaseName), leaseName));
     }
@@ -94,5 +101,21 @@ public class MyBatisTradingLeaderLeaseRepository implements TradingLeaderLeaseRe
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(field + " must not be blank");
         }
+    }
+    /** Memoize only committed existence; values and transactional locks remain in MySQL. */
+    private void initializeOnce(Object key, Runnable insert, java.util.function.BooleanSupplier exists) {
+        if (initializedRows.get(key) != null) {
+            if (exists.getAsBoolean()) {
+                return;
+            }
+            // A restored or manually cleared database must not retain an old existence marker.
+            initializedRows.evictIfPresent(key);
+        }
+        insert.run();
+        // Eviction only repeats a safe insert; bound account and replay identities.
+        if (((java.util.Map<?, ?>) initializedRows.getNativeCache()).size() >= 1024) {
+            initializedRows.clear();
+        }
+        initializedRows.put(key, Boolean.TRUE);
     }
 }

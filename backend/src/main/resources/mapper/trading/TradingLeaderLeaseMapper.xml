@@ -44,6 +44,10 @@
         WHERE lease_name = #{leaseName}
     </select>
 
+    <select id="lock" resultMap="leaderLeaseResult" flushCache="true" useCache="false">
+        SELECT * FROM okx_trading_leader_lease WHERE lease_name = #{leaseName} FOR UPDATE
+    </select>
+
     <update id="release">
         UPDATE okx_trading_leader_lease
         SET lease_until = #{now},

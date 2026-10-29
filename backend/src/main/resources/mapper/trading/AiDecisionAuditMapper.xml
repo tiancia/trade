@@ -100,7 +100,7 @@
         WHERE id = #{id}
     </update>
 
-    <insert id="upsertAiRequest" parameterType="com.trade.trading.infrastructure.persistence.AiRequestRow">
+    <insert id="insertAiRequest" parameterType="com.trade.trading.infrastructure.persistence.AiRequestRow">
         INSERT INTO okx_ai_requests (
             decision_run_id,
             prompt_text,
@@ -115,7 +115,18 @@
             ai_parameters_json = VALUES(ai_parameters_json)
     </insert>
 
-    <insert id="upsertAiResponse" parameterType="com.trade.trading.infrastructure.persistence.AiResponseRow">
+    <update id="updateAiRequest">
+        UPDATE okx_ai_requests
+        SET prompt_text = #{promptText},
+            ai_parameters_json = #{aiParametersJson}
+        WHERE decision_run_id = #{decisionRunId}
+    </update>
+
+    <select id="aiRequestExists" resultType="boolean">
+        SELECT EXISTS (SELECT 1 FROM okx_ai_requests WHERE decision_run_id = #{decisionRunId})
+    </select>
+
+    <insert id="insertAiResponse" parameterType="com.trade.trading.infrastructure.persistence.AiResponseRow">
         INSERT INTO okx_ai_responses (
             decision_run_id,
             received_at,
@@ -163,7 +174,29 @@
             parsed_strategy_horizon = VALUES(parsed_strategy_horizon)
     </insert>
 
-    <insert id="upsertOrderExecution" parameterType="com.trade.trading.infrastructure.persistence.OrderExecutionRow">
+    <update id="updateAiResponse">
+        UPDATE okx_ai_responses
+        SET received_at = #{receivedAt},
+            raw_response = #{rawResponse},
+            parsed_action = #{parsedAction},
+            parsed_reason = #{parsedReason},
+            parsed_buy_quote_amount = #{parsedBuyQuoteAmount},
+            parsed_sell_base_amount = #{parsedSellBaseAmount},
+            parsed_order_size = #{parsedOrderSize},
+            parsed_win_probability = #{parsedWinProbability},
+            parsed_confidence = #{parsedConfidence},
+            parsed_strategy_bias = #{parsedStrategyBias},
+            parsed_strategy_thesis = #{parsedStrategyThesis},
+            parsed_strategy_invalidation = #{parsedStrategyInvalidation},
+            parsed_strategy_horizon = #{parsedStrategyHorizon}
+        WHERE decision_run_id = #{decisionRunId}
+    </update>
+
+    <select id="aiResponseExists" resultType="boolean">
+        SELECT EXISTS (SELECT 1 FROM okx_ai_responses WHERE decision_run_id = #{decisionRunId})
+    </select>
+
+    <insert id="insertOrderExecution" parameterType="com.trade.trading.infrastructure.persistence.OrderExecutionRow">
         INSERT INTO okx_order_executions (
             decision_run_id,
             inst_id,
@@ -216,4 +249,28 @@
             fee_ccy = VALUES(fee_ccy),
             error = VALUES(error)
     </insert>
+
+    <update id="updateOrderExecution">
+        UPDATE okx_order_executions
+        SET inst_id = #{instId},
+            side = #{side},
+            td_mode = #{tdMode},
+            order_type = #{orderType},
+            target_currency = #{targetCurrency},
+            order_size = #{orderSize},
+            order_id = #{orderId},
+            client_order_id = #{clientOrderId},
+            execution_status = #{executionStatus},
+            skip_reason = #{skipReason},
+            filled_base_amount = #{filledBaseAmount},
+            average_fill_price = #{averageFillPrice},
+            fee = #{fee},
+            fee_ccy = #{feeCcy},
+            error = #{error}
+        WHERE decision_run_id = #{decisionRunId}
+    </update>
+
+    <select id="orderExecutionExists" resultType="boolean">
+        SELECT EXISTS (SELECT 1 FROM okx_order_executions WHERE decision_run_id = #{decisionRunId})
+    </select>
 </mapper>

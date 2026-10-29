@@ -96,6 +96,50 @@ class MyBatisOkxMarketDataStoreTest {
         ));
     }
 
+    @Test
+    void updatesKnownCandlesAndInsertsOnlyNewTimestampsUsingLastObservationInBatch() {
+        CapturingCandleMapper mapper = new CapturingCandleMapper();
+        mapper.existingTimestamps.add(1710000000000L);
+        MyBatisOkxMarketDataStore store = store(new CapturingSnapshotMapper(), mapper, new TradingProperties());
+
+        assertEquals(OkxMarketDataStore.SaveResult.SAVED, store.saveCandlesWithResult("BTC-USDT", "1m", List.of(
+                candle("1710000000000", "65000"),
+                candle("1710000060000", "65001"),
+                candle("1710000000000", "65002"),
+                candle("1710000060000", "65003")
+        )));
+
+        assertEquals(1, mapper.updatedRows.size());
+        assertEquals(1710000000000L, mapper.updatedRows.getFirst().getTs());
+        assertEquals(0, new BigDecimal("65002").compareTo(mapper.updatedRows.getFirst().getClose()));
+        assertEquals(1, mapper.rows.size());
+        assertEquals(1710000060000L, mapper.rows.getFirst().getTs());
+        assertEquals(0, new BigDecimal("65003").compareTo(mapper.rows.getFirst().getClose()));
+    }
+
+    @Test
+    void candleLookupAndUpdateFailuresDoNotEscapeIntoTradingFlow() {
+        for (boolean failLookup : List.of(true, false)) {
+            CapturingCandleMapper mapper = new CapturingCandleMapper() {
+                @Override
+                public List<Long> findExistingTimestamps(String instId, String bar, List<Long> timestamps) {
+                    if (failLookup) {
+                        throw new IllegalStateException("database unavailable");
+                    }
+                    return timestamps;
+                }
+
+                @Override
+                public void updateBatch(String instId, String bar, List<OkxCandleCacheRow> rows) {
+                    throw new IllegalStateException("database unavailable");
+                }
+            };
+            MyBatisOkxMarketDataStore store = store(new CapturingSnapshotMapper(), mapper, new TradingProperties());
+            assertEquals(OkxMarketDataStore.SaveResult.FAILED, store.saveCandlesWithResult(
+                    "BTC-USDT", "1m", List.of(candle("1710000000000", "65000"))));
+        }
+    }
+
     private static MyBatisOkxMarketDataStore store(
             OkxMarketSnapshotMapper snapshotMapper,
             OkxCandleCacheMapper candleMapper,
@@ -129,6 +173,8 @@ class MyBatisOkxMarketDataStoreTest {
 
     private static class CapturingCandleMapper implements OkxCandleCacheMapper {
         private final List<OkxCandleCacheRow> rows = new ArrayList<>();
+        private final List<OkxCandleCacheRow> updatedRows = new ArrayList<>();
+        private final List<Long> existingTimestamps = new ArrayList<>();
 
         @Override
         public List<OkxCandleCacheRow> findRange(String instId, String bar, long fromTs, long toTs) {
@@ -138,6 +184,16 @@ class MyBatisOkxMarketDataStoreTest {
         @Override
         public void upsert(OkxCandleCacheRow row) {
             rows.add(row);
+        }
+
+        @Override
+        public List<Long> findExistingTimestamps(String instId, String bar, List<Long> timestamps) {
+            return existingTimestamps;
+        }
+
+        @Override
+        public void updateBatch(String instId, String bar, List<OkxCandleCacheRow> rows) {
+            updatedRows.addAll(rows);
         }
 
         @Override

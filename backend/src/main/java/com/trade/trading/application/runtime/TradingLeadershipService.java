@@ -127,7 +127,7 @@ public class TradingLeadershipService {
             return true;
         }
         if (!isLeader() && !refreshSafely("before-" + metricValue(operation))) {
-            counter("operation.skipped", metricValue(operation)).increment();
+            counter("operati on.skipped", metricValue(operation)).increment();
             log.debug(
                     "Trading operation skipped on follower: operation={}, lease={}, owner={}",
                     operation,

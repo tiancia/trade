@@ -50,6 +50,9 @@
         INSERT INTO x_review_polling (bot_id, next_offset) VALUES (#{botId}, 0)
         ON DUPLICATE KEY UPDATE bot_id = bot_id
     </insert>
+    <select id="lockPolling" resultType="java.lang.Long" flushCache="true" useCache="false">
+        SELECT bot_id FROM x_review_polling WHERE bot_id = #{botId} FOR UPDATE
+    </select>
     <update id="acquirePolling">
         UPDATE x_review_polling SET lease_owner = #{owner}, lease_until = #{until}
         WHERE bot_id = #{botId} AND (lease_owner IS NULL OR lease_until &lt;= #{now})

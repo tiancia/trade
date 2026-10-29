@@ -1,5 +1,9 @@
 package com.trade.trading.infrastructure.persistence;
 
+import org.springframework.cache.Cache;
+import org.springframework.cache.concurrent.ConcurrentMapCache;
+import org.springframework.cache.transaction.TransactionAwareCacheDecorator;
+
 import com.trade.trading.port.TradingAiReviewStore;
 import com.trade.trading.domain.model.TradingAiReview;
 import org.springframework.stereotype.Repository;
@@ -10,13 +14,16 @@ import java.util.List;
 
 @Repository
 public class MyBatisTradingAiReviewStore implements TradingAiReviewStore {
+    private final Cache initializedRows = new TransactionAwareCacheDecorator(
+            new ConcurrentMapCache("initialized-rows"));
+
     private final TradingAiReviewMapper mapper;
 
     public MyBatisTradingAiReviewStore(TradingAiReviewMapper mapper) { this.mapper = mapper; }
 
     @Override @Transactional
     public boolean claim(String scope, String reviewId, Instant now, Instant nextReviewAt, Instant expiresAt) {
-        mapper.insertGuard(scope);
+        initializeOnce(scope, () -> mapper.insertGuard(scope), () -> mapper.lockGuard(scope) != null);
         if (mapper.lockGuard(scope).isAfter(now)) return false;
         TradingAiReviewRow row = new TradingAiReviewRow();
         row.setReviewId(reviewId);
@@ -72,5 +79,21 @@ public class MyBatisTradingAiReviewStore implements TradingAiReviewStore {
         return mapper.recent(scope, limit).stream().map(r -> new TradingAiReview(r.getReviewId(), r.getScope(),
                 r.getStartedAt(), r.getExpiresAt(), r.getSnapshotJson(), r.getProposalJson(), r.getOutcome(),
                 r.getDetail(), r.getNotificationStatus(), r.getCompletedAt())).toList();
+    }
+    /** Memoize only committed existence; values and transactional locks remain in MySQL. */
+    private void initializeOnce(Object key, Runnable insert, java.util.function.BooleanSupplier exists) {
+        if (initializedRows.get(key) != null) {
+            if (exists.getAsBoolean()) {
+                return;
+            }
+            // A restored or manually cleared database must not retain an old existence marker.
+            initializedRows.evictIfPresent(key);
+        }
+        insert.run();
+        // Eviction only repeats a safe insert; bound account and replay identities.
+        if (((java.util.Map<?, ?>) initializedRows.getNativeCache()).size() >= 1024) {
+            initializedRows.clear();
+        }
+        initializedRows.put(key, Boolean.TRUE);
     }
 }

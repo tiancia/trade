@@ -8,6 +8,10 @@
         VALUES ('primary', CURRENT_TIMESTAMP(6))
     </insert>
 
+    <select id="lockGuard" resultType="string" flushCache="true" useCache="false">
+        SELECT guard_name FROM polymarket_execution_guard WHERE guard_name = 'primary' FOR UPDATE
+    </select>
+
     <update id="reserve">
         UPDATE polymarket_execution_guard
         SET pending_decision_id = #{decisionId}, updated_at = CURRENT_TIMESTAMP(6)

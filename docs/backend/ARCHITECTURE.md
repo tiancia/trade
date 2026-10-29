@@ -171,6 +171,7 @@ REST / WebSocket producers
 - handler 异常隔离，不向 WebSocket 回调传播数据库失败。
 - Micrometer 继续报告队列深度、容量、发布结果、丢弃、延迟和处理耗时；状态 API 保持 `/api/trading/runtime/events`。
 - 历史 K 线异步写入，但调用返回时合并本次 REST 数据与缓存，保留回测读取语义。
+- MySQL K 线落库先按标的、周期和时间戳批量查询已存在记录：已有 K 线走批量 `UPDATE`，新 K 线才走批量插入，同批重复时间戳保留最后一次观测。插入仍保留唯一键冲突更新以处理并发首次写入；日常重复更新不会消耗自增 ID，但并发插入、回滚等情况仍可能产生编号缺口。表没有自动过期清理，Redis 的 TTL 与根数上限不影响 MySQL 数据。
 
 ## 5. Weibo 分层示例
 

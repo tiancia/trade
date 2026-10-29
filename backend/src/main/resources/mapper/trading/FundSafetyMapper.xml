@@ -29,6 +29,10 @@
         SELECT * FROM okx_fund_safety_state WHERE account_scope = #{accountScope}
     </select>
 
+    <select id="lock" resultMap="fundSafetyResult" flushCache="true" useCache="false">
+        SELECT * FROM okx_fund_safety_state WHERE account_scope = #{accountScope} FOR UPDATE
+    </select>
+
     <update id="halt">
         UPDATE okx_fund_safety_state
         SET status = 'HALTED',

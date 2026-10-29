@@ -11,6 +11,8 @@ public interface TradingOrderMapper {
 
     TradingOrderRow findByIdempotencyKey(String idempotencyKey);
 
+    TradingOrderRow lockByIdempotencyKey(String idempotencyKey);
+
     List<TradingOrderRow> findReconciliationCandidates(
             @Param("instId") String instId,
             @Param("limit") int limit
