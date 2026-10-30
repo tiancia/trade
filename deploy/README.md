@@ -266,6 +266,34 @@ bash deploy/scripts/release.sh rollback --no-pull
 
 发布成功后清理更早的本地应用镜像，保留当前、上一成功清单及容器引用的镜像。清理失败仅告警，不改变已成功发布的结果。CNB 不会自动同步 Compose、Nginx 或业务配置文件；这些文件变更需先同步服务器，再安排相应服务更新。
 
+### Docker Hub 基础镜像限流（429）：纯云端镜像源切换
+
+CNB 使用的公共 Docker Hub 加速地址 `mirror.ccs.tencentyun.com` 可能返回
+HTTP 429。CNB 托管平台的默认 Builder 和 Docker daemon 配置未必可修改，
+因此构建脚本通过 Dockerfile `ARG` 直接引用备用镜像地址。
+
+**CNB 云端构建默认启用 `BASE_IMAGE_SOURCE=daocloud`**：对应镜像为
+`m.daocloud.io/docker.io/library/{maven,eclipse-temurin,node,nginx,alpine}` 的固定版本。
+无需通过 Windows 下载/上传镜像，也不必创建嵌套 Buildx Builder。
+本地调用 `build-images.sh` 的默认来源仍然是 Docker Hub。
+
+在 CNB 导入的受控环境变量中，可以显式覆盖以下值：
+- `BASE_IMAGE_SOURCE=daocloud`（CNB 默认），DaoCloud 公共镜像代理；
+- `BASE_IMAGE_SOURCE=dockerhub`，原有 Docker Hub 引用（可能仍经 CNB 默认加速站）；
+- `BASE_IMAGE_SOURCE=tcr`，可选，仅在 TCR 的五个 `base-*` 镜像仓库
+  已存在对应版本时使用，**不要求手工 Windows 上传作为正常部署步骤**。
+
+DaoCloud 公共服务同样可能限流和出现缓存问题；参见
+[DaoCloud 镜像站官方项目](https://github.com/DaoCloud/public-image-mirror)。
+如果备用源不可用，可切换到原始镜像源测试；频繁发生时应在 CNB 中
+引入自动云端同步/私有镜像缓存机制，而无需本地机器介入。
+
+日志应包含 `Build base image source: daocloud`，以及对应
+`m.daocloud.io/docker.io/library/...` 镜像元数据下载记录。
+Dockerfile 最顶部的 `# syntax=docker/dockerfile:1` 是独立的
+BuildKit 前端镜像依赖，可能仍经平台默认镜像站拉取。业务镜像推送目标、
+发布版本、生产服务器镜像拉取与回滚逻辑都维持原样。
+
 ### 构建缓存与耗时定位
 
 BuildKit 按服务保存本地 OCI 缓存，CNB 节点数据卷提供复用；节点变化或缓存淘汰后可能重新填充。构建脚本逐服务记录构建、推送和 `elapsed_seconds`；发布脚本通过 `DEPLOY_STAGE` 区分配置校验、镜像拉取、容器停止、重建与健康等待。依赖下载和推送发生在 CNB，`image_pull` 才是生产服务器下载。
