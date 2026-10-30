@@ -1,3 +1,8 @@
+# Keep repository rules, documentation, and environment examples consistent across platforms.
+.gitattributes text eol=lf
+*.md text eol=lf
+*.env.example text eol=lf
+
 # Linux entrypoints must remain executable by sh after a Windows checkout.
 *.sh text eol=lf
 **/Dockerfile text eol=lf
