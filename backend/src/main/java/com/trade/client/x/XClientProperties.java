@@ -10,7 +10,7 @@ import java.net.URISyntaxException;
 @Data
 @ConfigurationProperties(prefix = "trade.x.client")
 public class XClientProperties {
-    private boolean enabled = false;
+    private Boolean enabled;
     @ToString.Exclude
     private String apiKey = "";
     @ToString.Exclude
@@ -23,6 +23,13 @@ public class XClientProperties {
     private int connectTimeoutSeconds = 10;
     private int requestTimeoutSeconds = 30;
     private ProxyProperties proxy = new ProxyProperties();
+
+    public boolean isEnabled() {
+        if (enabled != null) return enabled;
+        return apiKey != null && !apiKey.isBlank() && apiSecret != null && !apiSecret.isBlank()
+                && accessToken != null && !accessToken.isBlank()
+                && accessTokenSecret != null && !accessTokenSecret.isBlank();
+    }
 
     public String requiredApiKey() {
         return requiredCredential(apiKey, "trade.x.client.api-key is required");

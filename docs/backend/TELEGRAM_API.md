@@ -4,7 +4,7 @@
 
 `client/telegram` 使用 JDK `HttpClient` 和现有 Jackson 2，承载 Telegram 的 HTTP 协议、响应 DTO 和错误处理。
 `client/telegram/config/TelegramClientConfiguration` 绑定属性并装配共享 `TelegramApi`；微博和 X 分别在自身业务域实现审核行为，没有顶层 `telegram` 模块。复用同一 Bot 时两套审核不能同时启用，见 [X 工作流](X_WORKFLOW.md)。
-属性默认关闭，创建客户端不调用 API，不启动轮询。
+未配置 Token 时客户端不可用；配置 Token 后默认接入，`enabled=false` 可显式暂停。创建客户端不调用 API，不启动轮询。
 
 已提供以下四类方法，协议依据 [Telegram 官方 Bot API](https://core.telegram.org/bots/api)：
 
@@ -21,12 +21,12 @@
 ## 配置
 
 `TelegramClientProperties` 的前缀为 `trade.telegram`，由 `TelegramClientConfiguration` 装配。
-`application.yml` 与 `.env.example` 提供 `TRADE_TELEGRAM_ENABLED/BOT_TOKEN/BASE_URL`、连接/请求超时及代理配置。
+`.env.example` 提供 `TRADE_TELEGRAM_BOT_TOKEN/BASE_URL`、连接/请求超时及代理配置；`TRADE_TELEGRAM_ENABLED` 作为可选覆盖保留在 `application.yml`。
 其他调用方也可以通过 setter 手动创建客户端：
 
 | Java 属性 | 默认值 |
 | --- | --- |
-| `enabled` | `false` |
+| `enabled` | 留空，按 Token 自动接入；显式 true/false 优先 |
 | `botToken` | 空 |
 | `baseUrl` | `https://api.telegram.org` |
 | `connectTimeoutSeconds` | `10` |

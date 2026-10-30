@@ -25,12 +25,12 @@ AI 读取公开行情，提出保持策略、切换已有策略或调整当前�
 
 本地 Java 进程参考 [backend/.env.example](../../backend/.env.example)；Spring Boot 不自动读取普通 `.env`，需由 IDE 或进程环境注入。生产使用 [deploy/backend.env.example](../../deploy/backend.env.example) 对应的后端 env_file。根 `.env` 仅用于基础设施。
 
-下表开关默认值指配置类和 env 示例；当前 `application.yml` 运行模板已开启顾问、自动启动、模拟自动应用及通知，启动前核对环境覆盖。已有 `REVIEW_INTERVAL_MS=3600000` 或 `86400000` 环境变量会保留原节奏，需改为 `1800000` 并重启后端才使用 30 分钟复评。已预留的数据库冷却窗口不会提前清除，页面显示真实的下一窗口，下一轮再按新间隔预留；不要通过删除 guard 行触发付费重试。手续费、最低净优势、风险收益门槛和日亏损限制作为只读约束进入 AI 输入，实际价差和滑点并非该输入的实测数据。
+下表开关默认值指配置类和 env 示例；当前 `application.yml` 运行模板已开启顾问和模拟自动应用；自动启动跟随顾问主开关，通知按独立聊天配置接入，启动前核对环境覆盖。已有 `REVIEW_INTERVAL_MS=3600000` 或 `86400000` 环境变量会保留原节奏，需改为 `1800000` 并重启后端才使用 30 分钟复评。已预留的数据库冷却窗口不会提前清除，页面显示真实的下一窗口，下一轮再按新间隔预留；不要通过删除 guard 行触发付费重试。手续费、最低净优势、风险收益门槛和日亏损限制作为只读约束进入 AI 输入，实际价差和滑点并非该输入的实测数据。
 
 | 变量 | 默认值 / 用途 |
 | --- | --- |
 | `TRADE_TRADING_AI_ENABLED` | `false`，允许付费 AI 评估 |
-| `TRADE_AUTOMATION_TRADING_AI_AUTO_START` | `false`，应用启动后自动启动顾问任务；也可在驾驶舱点启动 |
+| `TRADE_AUTOMATION_TRADING_AI_AUTO_START` | 可省略，默认跟随顾问主开关；仅需手动启动时设 `false` |
 | `TRADE_TRADING_AI_AUTO_APPLY` | `false`，改为 `true` 后允许符合条件的 PAPER 自动调整；LIVE 始终仅建议 |
 | `TRADE_TRADING_AI_REVIEW_INTERVAL_MS` | `1800000`，默认每 30 分钟复评；范围 900000–86400000 |
 | `TRADE_TRADING_AI_TARGET_MIN_CLOSED_TRADES_PER_DAY` | `5`，完整交易数目标下限，至少 1 |
@@ -38,7 +38,7 @@ AI 读取公开行情，提出保持策略、切换已有策略或调整当前�
 | `TRADE_TRADING_AI_MAX_REVIEW_AGE_SECONDS` | `300`，从预留到应用的有效期，范围 30–600 |
 | `TRADE_TRADING_AI_CANDLE_COUNT` | `96`，范围 32–199 |
 | `TRADE_TRADING_AI_MINIMUM_CONFIDENCE` | `0.80`，范围 0.5–1 |
-| `TRADE_TRADING_AI_TELEGRAM_ENABLED` | `false`，独立通知开关 |
+| `TRADE_TRADING_AI_TELEGRAM_ENABLED` | 可省略，配置独立 chat ID 即接入通知；`false` 可单独暂停 |
 | `TRADE_TRADING_AI_TELEGRAM_BOT_TOKEN` | 留空，填写新 Bot 的 token，不能使用 X/微博共享 Bot |
 | `TRADE_TRADING_AI_TELEGRAM_CHAT_ID` | 留空，该 Bot 的独立私聊或另建群的数字 chat ID |
 | `TRADE_TRADING_AI_TELEGRAM_COOLDOWN_MS` | `86400000`，通知最小间隔，至少 3600000 |

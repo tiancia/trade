@@ -17,7 +17,6 @@
 
 ```powershell
 cd backend
-.\mvnw.cmd test
 .\mvnw.cmd spring-boot:run
 ```
 
@@ -27,11 +26,11 @@ cd backend
 
 当前运行配置启用 OKX 自动 PAPER 交易，以及每三小时生成、经 Telegram 人工审核后发布的 X 工作流；OKX 真实下单、Polymarket 和小说生成保持关闭。首次在未知环境验收时，按 [运维手册](../docs/backend/OPERATIONS.md) 的安全启动覆盖值关闭自动任务。X 需要由运行环境提供目标账号、审核会话 / 审核人以及供应商凭据。
 
-开发流程和测试命令见 [贡献指南](CONTRIBUTING.md)，AI 工具先读 [AGENTS.md](AGENTS.md)。其余架构、业务和观测专题见 [文档总导航](../docs/README.md)。
+开发时按改动选择相关用例或模块测试，无需在每次启动或交付前运行全量；命令及范围选择见 [贡献指南](CONTRIBUTING.md#测试与质量门禁)，AI 工具先读 [AGENTS.md](AGENTS.md)。其余架构、业务和观测专题见 [文档总导航](../docs/README.md)。
 
 ## 配置与安全开关
 
-自动任务、业务模块与真实执行是不同门禁。OKX 新单必须同时满足 `execution-mode=live`、`live-enabled=true` 和资金安全条件；启动覆盖值、SPOT 执行范围及首次 LIVE 对账/恢复步骤统一见 [运维手册](../docs/backend/OPERATIONS.md#安全启动)。
+模块主开关默认同时启动自动任务；X/微博的生成和发布扫描默认跟随工作流，Telegram 根据聊天与凭据配置接入。`auto-start` 等细分开关仅作可选暂停覆盖。真实发布仍需独立授权；OKX 新单必须同时满足 `execution-mode=live`、`live-enabled=true` 和资金安全条件。最少配置与旧变量迁移见 [运维手册](../docs/backend/OPERATIONS.md#功能启用)。
 
 新的 `live` 资金域以 `HALTED` 初始化；首次上线或迁移保持 `live-enabled=false`，先完成对账，再通过受保护的 resume 流程显式放行。
 

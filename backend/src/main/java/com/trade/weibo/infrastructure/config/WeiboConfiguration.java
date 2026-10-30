@@ -10,7 +10,6 @@ import com.trade.weibo.port.HumanReviewGateway;
 import com.trade.weibo.port.WeiboReviewDeliveryStore;
 import com.trade.weibo.infrastructure.review.TelegramHumanReviewGateway;
 import com.trade.weibo.infrastructure.review.UnavailableHumanReviewGateway;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -29,18 +28,10 @@ public class WeiboConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "trade.weibo.review.telegram", name = "enabled", havingValue = "true")
     public HumanReviewGateway telegramWeiboReviewGateway(TelegramApi api, TelegramClientProperties client,
             WeiboTelegramReviewProperties review, WeiboWorkflowProperties workflow, WeiboReviewDeliveryStore deliveries) {
         review.validate(client, workflow);
+        if (!workflow.isEnabled() || !review.isEnabled()) return new UnavailableHumanReviewGateway();
         return new TelegramHumanReviewGateway(api, client, review, workflow, deliveries);
-    }
-
-    @Bean
-    @ConditionalOnProperty(prefix = "trade.weibo.review.telegram", name = "enabled", havingValue = "false", matchIfMissing = true)
-    public HumanReviewGateway unavailableWeiboReviewGateway(WeiboTelegramReviewProperties review,
-            TelegramClientProperties client, WeiboWorkflowProperties workflow) {
-        review.validate(client, workflow);
-        return new UnavailableHumanReviewGateway();
     }
 }

@@ -8,10 +8,14 @@ import java.util.List;
 @Data
 @ConfigurationProperties(prefix = "trade.x.review.telegram")
 public class XTelegramReviewProperties {
-    private boolean enabled = false;
+    private Boolean enabled;
     private String chatId = "";
     private List<Long> reviewerUserIds = List.of();
     private long pollingFixedDelayMs = 5000;
+
+    public boolean isEnabled() {
+        return enabled != null ? enabled : chatId != null && !chatId.isBlank();
+    }
 
     public long requiredChatId() {
         try {
@@ -24,10 +28,10 @@ public class XTelegramReviewProperties {
     }
 
     public void validate(TelegramClientProperties client, XWorkflowProperties workflow) {
+        if (!workflow.isEnabled() || !isEnabled()) return;
         if (pollingFixedDelayMs < 1000) throw new IllegalArgumentException("Invalid X Telegram polling delay");
-        if (!enabled) return;
-        if (!client.isEnabled() || !workflow.isEnabled()) {
-            throw new IllegalArgumentException("X review requires Telegram client and X workflow enabled");
+        if (!client.isEnabled()) {
+            throw new IllegalArgumentException("X review requires Telegram client enabled");
         }
         requiredChatId();
         if (reviewerUserIds == null || reviewerUserIds.isEmpty()

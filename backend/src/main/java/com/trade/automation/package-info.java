@@ -8,7 +8,8 @@
  * API, {@link com.trade.automation.application.task.AutomationTaskRegistrar} for the
  * domain-to-task map, and
  * {@link com.trade.automation.application.task.AutomationTaskManager} for lifecycle
- * behavior. Infrastructure migration configuration completes versioned Flyway
+ * behavior. Tasks default to their module's enabled state; auto-start is an optional override.
+ * Infrastructure migration configuration completes versioned Flyway
  * database upgrades before application-ready task registration can start loops.</p>
  */
 package com.trade.automation;

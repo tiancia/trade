@@ -26,7 +26,7 @@
 
 ### automation
 
-`AutomationTaskRegistrar` 把 trading、trading-ai、polymarket、story、weibo、x 的循环定义登记到 `AutomationTaskManager`。登记不等于运行：只有应用就绪后的 `auto-start` 或 `/api/automation/tasks/{taskId}/start` 才会调用 `start()`。
+`AutomationTaskRegistrar` 把 trading、trading-ai、polymarket、story、weibo、x 的循环定义登记到 `AutomationTaskManager`。登记不等于运行：应用就绪后默认跟随对应模块主开关启动；`auto-start` 留空继承，显式 true/false 覆盖。`/api/automation/tasks/{taskId}/start` 仍可手动启动，但不越过业务主开关或真实执行授权。
 
 两者位于 `automation/application/task`；HTTP 入口在 `interfaces/web`，任务定义和快照在 `domain/model`，调度器装配在 `infrastructure/config`。
 

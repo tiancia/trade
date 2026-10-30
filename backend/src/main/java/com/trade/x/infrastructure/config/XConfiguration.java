@@ -10,7 +10,6 @@ import com.trade.x.port.XReviewDeliveryStore;
 import com.trade.x.domain.model.XWorkflowPolicy;
 import com.trade.x.infrastructure.review.TelegramXReviewGateway;
 import com.trade.x.infrastructure.review.UnavailableXReviewGateway;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -23,18 +22,10 @@ public class XConfiguration {
     @Bean public XApi xApi(XClientProperties properties) { return new XApi(new XHttpClient(properties)); }
 
     @Bean
-    @ConditionalOnProperty(prefix = "trade.x.review.telegram", name = "enabled", havingValue = "true")
     public XHumanReviewGateway telegramXReviewGateway(TelegramApi api, TelegramClientProperties client,
             XTelegramReviewProperties review, XWorkflowProperties workflow, XReviewDeliveryStore deliveries) {
         review.validate(client, workflow);
+        if (!workflow.isEnabled() || !review.isEnabled()) return new UnavailableXReviewGateway();
         return new TelegramXReviewGateway(api, client, review, workflow, deliveries);
-    }
-
-    @Bean
-    @ConditionalOnProperty(prefix = "trade.x.review.telegram", name = "enabled", havingValue = "false", matchIfMissing = true)
-    public XHumanReviewGateway unavailableXReviewGateway(XTelegramReviewProperties review,
-            TelegramClientProperties client, XWorkflowProperties workflow) {
-        review.validate(client, workflow);
-        return new UnavailableXReviewGateway();
     }
 }

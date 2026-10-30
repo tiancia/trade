@@ -13,8 +13,8 @@ class WeiboWorkflowPropertiesTest {
     void defaultsAndBindingKeepEveryExternalActionOff() {
         var defaults = new WeiboWorkflowProperties().policy();
         assertFalse(defaults.enabled());
-        assertFalse(defaults.generationEnabled());
-        assertFalse(defaults.publishingEnabled());
+        assertThrows(IllegalStateException.class, defaults::requireGeneration);
+        assertThrows(IllegalStateException.class, defaults::requirePublishing);
         assertFalse(new WeiboClientProperties().isLivePublishingEnabled());
         assertTrue(new WeiboClientProperties().isReviewRequired());
         var binder = new Binder(new MapConfigurationPropertySource(Map.of(
@@ -24,7 +24,8 @@ class WeiboWorkflowPropertiesTest {
         assertTrue(bound.policy().enabled());
         assertEquals("uid", bound.policy().targetUid());
         assertEquals(2, bound.policy().dailyGenerationLimit());
-        assertFalse(bound.policy().publishingEnabled());
+        assertDoesNotThrow(bound.policy()::requireGeneration);
+        assertDoesNotThrow(bound.policy()::requirePublishing);
     }
 
     @Test

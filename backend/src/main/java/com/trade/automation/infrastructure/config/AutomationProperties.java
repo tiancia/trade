@@ -15,6 +15,11 @@ public class AutomationProperties {
 
     @Data
     public static class ModuleProperties {
-        private boolean autoStart = false;
+        // Unset follows the module switch; false keeps an enabled module manual-only.
+        private Boolean autoStart;
+
+        public boolean shouldAutoStart(boolean moduleEnabled) {
+            return autoStart != null ? autoStart : moduleEnabled;
+        }
     }
 }

@@ -9,6 +9,7 @@ import com.trade.story.infrastructure.config.AiStoryProperties;
 import com.trade.story.interfaces.scheduler.AiStoryScheduler;
 import com.trade.trading.application.runtime.TradingMarketDataRuntime;
 import com.trade.trading.infrastructure.config.TradingProperties;
+import com.trade.trading.infrastructure.config.TradingAiProperties;
 import com.trade.trading.interfaces.scheduler.TradingScheduler;
 import com.trade.trading.interfaces.scheduler.TradingAiScheduler;
 import com.trade.weibo.interfaces.scheduler.WeiboScheduler;
@@ -39,6 +40,7 @@ public class AutomationTaskRegistrar {
             TradingProperties tradingProperties,
             TradingMarketDataRuntime tradingMarketDataRuntime,
             TradingAiScheduler tradingAiScheduler,
+            TradingAiProperties tradingAiProperties,
             AiPolymarketScheduler polymarketScheduler,
             AiPolymarketProperties polymarketProperties,
             AiStoryScheduler storyScheduler,
@@ -53,7 +55,7 @@ public class AutomationTaskRegistrar {
         manager.register(new AutomationTaskDefinition(
                 "trading",
                 "OKX strategy trading",
-                automationProperties.getTrading().isAutoStart(),
+                automationProperties.getTrading().shouldAutoStart(tradingProperties.isEnabled()),
                 tradingMarketDataRuntime::start,
                 tradingMarketDataRuntime::stop,
                 List.of(
@@ -79,7 +81,7 @@ public class AutomationTaskRegistrar {
         ));
 
         manager.register(new AutomationTaskDefinition(
-                "trading-ai", "Trading AI strategy advisor", automationProperties.getTradingAi().isAutoStart(),
+                "trading-ai", "Trading AI strategy advisor", automationProperties.getTradingAi().shouldAutoStart(tradingAiProperties.isEnabled()),
                 tradingAiScheduler::start, tradingAiScheduler::stop, List.of(new AutomationLoopDefinition("review", Duration.ofSeconds(60),
                         // The durable guard decides paid-call eligibility, including calendar-day rollover.
                         Duration.ofSeconds(60), tradingAiScheduler::review))
@@ -88,7 +90,7 @@ public class AutomationTaskRegistrar {
         manager.register(new AutomationTaskDefinition(
                 "polymarket",
                 "Polymarket AI trading",
-                automationProperties.getPolymarket().isAutoStart(),
+                automationProperties.getPolymarket().shouldAutoStart(polymarketProperties.isEnabled()),
                 null,
                 null,
                 List.of(new AutomationLoopDefinition(
@@ -102,7 +104,7 @@ public class AutomationTaskRegistrar {
         manager.register(new AutomationTaskDefinition(
                 "story",
                 "AI story generation",
-                automationProperties.getStory().isAutoStart(),
+                automationProperties.getStory().shouldAutoStart(storyProperties.isEnabled()),
                 null,
                 null,
                 List.of(new AutomationLoopDefinition(
@@ -114,7 +116,7 @@ public class AutomationTaskRegistrar {
         ));
 
         manager.register(new AutomationTaskDefinition(
-                "weibo", "Reviewed AI Weibo publishing", automationProperties.getWeibo().isAutoStart(),
+                "weibo", "Reviewed AI Weibo publishing", automationProperties.getWeibo().shouldAutoStart(weiboProperties.isEnabled()),
                 null, null, List.of(
                     new AutomationLoopDefinition("generation", millis(weiboProperties.getInitialDelayMs()),
                             millis(weiboProperties.getGenerationFixedDelayMs()), weiboScheduler::generate),
@@ -126,7 +128,7 @@ public class AutomationTaskRegistrar {
         ));
 
         manager.register(new AutomationTaskDefinition(
-                "x", "Reviewed AI X publishing", automationProperties.getX().isAutoStart(),
+                "x", "Reviewed AI X publishing", automationProperties.getX().shouldAutoStart(xProperties.isEnabled()),
                 null, null, List.of(
                     new AutomationLoopDefinition("generation", millis(xProperties.getInitialDelayMs()),
                             millis(xProperties.getGenerationFixedDelayMs()), xScheduler::generate),

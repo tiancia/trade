@@ -19,7 +19,7 @@
 
 | 属性 | 默认值 |
 | --- | --- |
-| `enabled` | `false` |
+| `enabled` | 留空，四项 OAuth 凭据齐备后自动接入；显式 true/false 优先 |
 | `api-key`、`api-secret`、`access-token`、`access-token-secret` | 空 |
 | `base-url` | `https://api.x.com` |
 | `connect-timeout-seconds` | `10` |

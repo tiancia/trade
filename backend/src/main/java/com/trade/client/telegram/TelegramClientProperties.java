@@ -10,13 +10,17 @@ import java.net.URISyntaxException;
 @Data
 @ConfigurationProperties(prefix = "trade.telegram")
 public class TelegramClientProperties {
-    private boolean enabled = false;
+    private Boolean enabled;
     @ToString.Exclude
     private String botToken = "";
     private String baseUrl = "https://api.telegram.org";
     private int connectTimeoutSeconds = 10;
     private int requestTimeoutSeconds = 30;
     private ProxyProperties proxy = new ProxyProperties();
+
+    public boolean isEnabled() {
+        return enabled != null ? enabled : botToken != null && !botToken.isBlank();
+    }
 
     public String requiredBotToken() {
         if (botToken == null || botToken.isBlank()) {

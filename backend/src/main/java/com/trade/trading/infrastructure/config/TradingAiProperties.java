@@ -33,10 +33,14 @@ public class TradingAiProperties {
 
     @Data
     public static class Telegram {
-        private boolean enabled = false;
+        private Boolean enabled;
         private String chatId = "";
         private long cooldownMs = 86400000;
         // A separate transport and bot identity; never inherits trade.telegram credentials.
         private TelegramClientProperties client = new TelegramClientProperties();
+
+        public boolean isEnabled() {
+            return enabled != null ? enabled : chatId != null && !chatId.isBlank();
+        }
     }
 }

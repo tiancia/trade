@@ -7,7 +7,7 @@
 - 技术栈：Java 21、Spring Boot 4、Maven Wrapper、MyBatis、MySQL；Redis 只承担可关闭的热行情缓存。
 - 架构形态：按业务域组织的模块化单体，域内统一先分 `interfaces`、`application`、`domain`、`infrastructure`，再按能力细分；出站契约放在模块根目录的 `port`，与四层目录并列。
 - 应用入口：`src/main/java/com/trade/TradeApplication.java`。
-- 后台任务入口：`automation/application/task/AutomationTaskRegistrar.java`；`register()` 只登记任务，真正启动由 `ApplicationReadyEvent + auto-start` 或任务管理 API 触发。
+- 后台任务入口：`automation/application/task/AutomationTaskRegistrar.java`；`register()` 只登记任务，应用就绪后默认跟随模块主开关启动；`auto-start` 为可选覆盖，也可通过任务管理 API 启停。
 - 不得为通过测试或方便调试而打开自动任务、真实下单或真实发布开关。配置类默认值与当前运行模板不同，启动前核对 [运维手册](../docs/backend/OPERATIONS.md)。
 
 ## 开始修改前
@@ -34,9 +34,13 @@
 
 ## 验证要求
 
-按 [贡献指南的质量门禁](CONTRIBUTING.md#测试与质量门禁) 先运行受影响测试，交付前运行完整 `clean test`。PowerShell 中给完整 `-Dtest=...` 参数加引号；测试必须离线，不得真实下单、发布、消耗付费 AI 请求或写入生产数据库，缺少外部凭据时显式跳过。
+默认按改动影响范围运行必要测试，不要求每次交付运行全量测试。局部逻辑选直接相关用例；模块内改动选该模块；共享契约或配置改动补充直接受影响调用方及相关集成测试，不因涉及多个模块就自动全量。纯文档或注释改动只检查内容、链接和差异。具体选择与命令见 [贡献指南的质量门禁](CONTRIBUTING.md#测试与质量门禁)。
 
-移动 Java 类型时必须同步移动测试并使用 `clean test`，防止 `target/` 中旧 class 掩盖遗漏。结构规则由 `src/test/java/com/trade/architecture/PackageArchitectureTest.java` 保护，不要通过放宽规则来掩盖分层问题。
+只有用户明确要求、发布/CI 验收，或改动触及全局构建/运行基础且无法合理限定影响范围时，才运行全量；执行前说明具体原因。同一代码状态已有足够且通过的验证结果时直接复用，不为结束对话重复运行，也不机械地先定向再全量。交付时说明选了哪些测试、结果及未覆盖范围。
+
+`clean` 与测试范围分别判断：普通修改保留增量编译；移动、删除或重命名 Java 类型时清理旧 class，但仍可用 `clean "-Dtest=..." test` 限定测试，并覆盖相关模块及 `PackageArchitectureTest`。不要通过放宽架构规则掩盖分层问题。
+
+PowerShell 中给完整 `-Dtest=...` 参数加引号；测试必须离线，不得真实下单、发布、消耗付费 AI 请求或写入生产数据库，缺少外部凭据时显式跳过。不得用跳过测试、关闭未匹配用例报错或削弱断言代替合理选择范围。
 
 ## 交付说明
 

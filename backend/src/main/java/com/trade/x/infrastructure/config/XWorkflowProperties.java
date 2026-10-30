@@ -10,8 +10,8 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "trade.x.workflow")
 public class XWorkflowProperties {
     private boolean enabled = false;
-    private boolean generationEnabled = false;
-    private boolean publishingEnabled = false;
+    private boolean generationEnabled = true;
+    private boolean publishingEnabled = true;
     private String targetUserId = "";
     private Content content = new Content();
     private int dailyGenerationLimit = 8;

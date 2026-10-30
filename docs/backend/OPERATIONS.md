@@ -16,16 +16,33 @@ Trading AI 顾问的配置类及 env 示例默认关闭；当前 `application.ym
 
 `.env.example` 是变量清单，Spring Boot 不会自动加载 `.env`。不要把真实值写回示例文件、启动脚本、日志或问题单。
 
+## 功能启用
+
+凭据和业务参数配置好后，日常只改下列主开关；自动任务默认随模块启动，不必再设置 `AUTO_START`：
+
+| 能力 | 主开关 | 额外授权（按需） |
+| --- | --- | --- |
+| OKX 模拟交易 | `TRADE_TRADING_ENABLED=true` | 实盘选择 `EXECUTION_MODE=live` 并开启 `LIVE_ENABLED`；保留租约、资金停止及风控 |
+| Trading AI 评估 | `TRADE_TRADING_AI_ENABLED=true` | 自动修改模拟策略另设 `TRADE_TRADING_AI_AUTO_APPLY=true` |
+| 小说生成 | `TRADE_STORY_ENABLED=true` | 无 |
+| Polymarket 决策 | `TRADE_POLYMARKET_ENABLED=true` | 真实下单另设 `TRADE_POLYMARKET_EXECUTION_ENABLED=true` |
+| X 工作流 | `TRADE_X_WORKFLOW_ENABLED=true` | 真实发布另设 `TRADE_X_LIVE_PUBLISHING_ENABLED=true`，且稿件须审核通过 |
+| 微博工作流 | `TRADE_WEIBO_WORKFLOW_ENABLED=true` | 真实发布另设 `TRADE_WEIBO_LIVE_PUBLISHING_ENABLED=true`，且稿件须审核通过 |
+
+X/微博默认启用生成和发布扫描；只做草稿时保持真实发布授权关闭。Telegram 客户端按 Token 接入，审核按模块 chat ID 接入并校验审核人；Trading AI 通知使用自己的 chat ID 和 Bot Token。未配置聊天时不接入，配置了聊天但缺少凭据或审核人时仍报告配置错误。关闭 X/微博模块会同时停用其审核消费者，不必清空聊天配置。
+
+兼容旧配置：显式的 `TRADE_AUTOMATION_*_AUTO_START`、`TRADE_*_GENERATION_ENABLED`、`TRADE_*_PUBLISHING_ENABLED`、客户端和 Telegram 开关仍优先。升级时从实际运行环境移除不再需要的这些覆盖值（特别是旧示例中的 `false`），即可使用自动接入；不会静默忽略已有暂停意图。要保留手动启动、仅暂停生成或停用通知时，才单独设置相应覆盖。修改环境后重启后端；任务 API 的暂停只对当前进程有效。此变更不需要数据库迁移。
+
 ## 仓库配置与运行环境
 
 当前 `application.yml` 和 `.env.example` 按以下方案配置，环境变量仍可覆盖这些值：
 
 | 能力 | 配置及行为 |
 | --- | --- |
-| OKX | `TRADE_AUTOMATION_TRADING_AUTO_START=true`、`TRADE_TRADING_ENABLED=true`、`TRADE_TRADING_EXECUTION_MODE=paper`、`TRADE_TRADING_LIVE_ENABLED=false`；自动运行策略，仅模拟成交 |
-| X | auto-start、client、workflow、generation、Telegram review、publishing 和 live-publishing 均开启；只有经人工审核批准的版本可发布 |
+| OKX | `TRADE_TRADING_ENABLED=true`、`TRADE_TRADING_EXECUTION_MODE=paper`、`TRADE_TRADING_LIVE_ENABLED=false`；自动运行策略，仅模拟成交 |
+| X | 工作流默认开启，调度和生成随之启用；审核按配置接入；YAML 的 live-publishing 默认 false，env 示例为 true，只有经人工审核批准的版本可发布 |
 | X 节奏 | `TRADE_X_GENERATION_FIXED_DELAY_MS=10800000`，每轮完成后等待三小时；首次延迟 30 秒；UTC 日生成 / 发布尝试额度各 8 次 |
-| Polymarket | auto-start、业务、真实执行和代理均关闭 |
+| Polymarket | 模块、真实执行和代理均关闭 |
 | 代理 | 宿主机直接运行 Java 时可使用 `127.0.0.1:13128` 的隧道入口；生产 Compose 将 OKX、Telegram、X 地址覆盖为 `egress:13128`，其容器负责连接德国 Squid |
 | AI | DeepSeek 直连 `https://api.deepseek.com`，使用 `deepseek-flash`；供应商、型号、基础地址和密钥环境变量名可用 `TRADE_AI_PROVIDER`、`TRADE_AI_MODEL`、`TRADE_AI_BASE_URL`、`TRADE_AI_API_KEY_ENV_NAME` 覆盖 |
 
@@ -37,9 +54,9 @@ Trading AI 顾问的配置类及 env 示例默认关闭；当前 `application.ym
 
 当前 PAPER 使用独立的持久化模拟现金和持仓账本，行情及产品规则来自 OKX 公共接口，不读取真实账户数据，也不要求三个 OKX 私有凭据。LIVE 私有接口需另行配置和验收；模拟账本口径见 [策略参数版本与模拟资金](TRADING_SIMULATION.md)，完整部署与代理验收按生产部署说明执行。
 
-开启 X 前，运行环境必须提供 `TRADE_X_TARGET_USER_ID`、`TRADE_X_TELEGRAM_CHAT_ID`、`TRADE_X_TELEGRAM_REVIEWER_USER_IDS`、Telegram Bot Token、DeepSeek API Key 和 X OAuth 1.0a 凭据。缺少必需的目标 / 审核配置会在启动校验时拒绝；发布权限、额度和实际网络连接需另行联调。启动后的发布扫描可能处理数据库中已有、未过期且审核仍有效的 `APPROVED` 草稿；`PENDING_REVIEW` 不发布，`UNKNOWN` 不自动重发。详细说明见 [X 工作流](X_WORKFLOW.md)。
+开启 X 前，运行环境必须提供 `TRADE_X_TARGET_USER_ID`、`TRADE_X_TELEGRAM_CHAT_ID`、`TRADE_X_TELEGRAM_REVIEWER_USER_IDS`、Telegram Bot Token、DeepSeek API Key 和 X OAuth 1.0a 凭据。缺少目标账号，或已配置审核聊天却缺少审核人 / Bot Token，会在启动校验时拒绝；未配置审核聊天时只保存待审核草稿；发布权限、额度和实际网络连接需另行联调。启动后的发布扫描可能处理数据库中已有、未过期且审核仍有效的 `APPROVED` 草稿；`PENDING_REVIEW` 不发布，`UNKNOWN` 不自动重发。详细说明见 [X 工作流](X_WORKFLOW.md)。
 
-Shell、IDE 或 systemd 已有环境变量会覆盖 YAML 回退值。启停自动任务前，应核对 `TRADE_AUTOMATION_TRADING_AUTO_START`、`TRADE_AUTOMATION_X_AUTO_START` 等实际值；修改后重启 Java 进程，仅修改 YAML 不会覆盖已有环境变量。systemd 部署可通过服务的 `EnvironmentFile=/etc/trade/trade.env` 注入运行配置；实际文件不进入仓库。SSH 隧道和 Java 服务需分别常驻，普通进程与容器中的 `127.0.0.1` 指向各自网络环境。
+Shell、IDE 或 systemd 已有环境变量会覆盖 YAML 回退值。启停自动任务前，应核对模块主开关以及是否保留了旧的 `AUTO_START` 等显式覆盖值；修改后重启 Java 进程，仅修改 YAML 不会覆盖已有环境变量。systemd 部署可通过服务的 `EnvironmentFile=/etc/trade/trade.env` 注入运行配置；实际文件不进入仓库。SSH 隧道和 Java 服务需分别常驻，普通进程与容器中的 `127.0.0.1` 指向各自网络环境。
 
 ### Polymarket 未决执行恢复
 
@@ -65,31 +82,20 @@ WHERE guard_name = 'primary' AND pending_decision_id = @verified_decision_id;
 
 ## 安全启动
 
-首次启动或未知环境中，至少确认以下能力关闭：
+首次启动或未知环境中，先移除不需要的旧启动覆盖，再关闭模块及真实执行授权：
 
 ```powershell
-$env:TRADE_AUTOMATION_STORY_AUTO_START="false"
-$env:TRADE_AUTOMATION_TRADING_AUTO_START="false"
-$env:TRADE_AUTOMATION_POLYMARKET_AUTO_START="false"
 $env:TRADE_TRADING_ENABLED="false"
+$env:TRADE_TRADING_AI_ENABLED="false"
 $env:TRADE_TRADING_EXECUTION_MODE="paper"
 $env:TRADE_TRADING_LIVE_ENABLED="false"
 $env:TRADE_POLYMARKET_ENABLED="false"
 $env:TRADE_POLYMARKET_EXECUTION_ENABLED="false"
 $env:TRADE_STORY_ENABLED="false"
-$env:TRADE_AUTOMATION_WEIBO_AUTO_START="false"
 $env:TRADE_WEIBO_WORKFLOW_ENABLED="false"
-$env:TRADE_WEIBO_GENERATION_ENABLED="false"
-$env:TRADE_WEIBO_PUBLISHING_ENABLED="false"
 $env:TRADE_WEIBO_LIVE_PUBLISHING_ENABLED="false"
-$env:TRADE_AUTOMATION_X_AUTO_START="false"
-$env:TRADE_X_CLIENT_ENABLED="false"
 $env:TRADE_X_WORKFLOW_ENABLED="false"
-$env:TRADE_X_GENERATION_ENABLED="false"
-$env:TRADE_X_PUBLISHING_ENABLED="false"
 $env:TRADE_X_LIVE_PUBLISHING_ENABLED="false"
-$env:TRADE_X_TELEGRAM_REVIEW_ENABLED="false"
-$env:TRADE_TELEGRAM_ENABLED="false"
 
 .\mvnw.cmd spring-boot:run
 ```
@@ -110,28 +116,28 @@ OKX 真实下单还要求 `trade.trading.execution-mode=live` 与 `live-enabled=
 4. `GET /api/trading/runtime/events` 的队列容量、深度和消费者状态合理；
 5. `GET /api/trading/runtime/status` 中执行模式、live 开关、lastError 和最新决策符合预期；LIVE 放行前还需确认 `fundSafety.status=ACTIVE` 且对账无连续失败，HALTED 时先查明原因，不得直接改库；
 6. 若启用 Redis，确认缓存写入成功且没有持续连接重试；
-7. 再按任务逐个启用业务开关和 auto-start，避免一次打开多个外部副作用。
+7. 按需启用模块主开关，自动任务随模块启动。
 
 Actuator 当前暴露 health、info、metrics 和 prometheus。automation 启停 API 的应用认证与 CSRF 要求见[后台任务操作](#后台任务操作)；部署时仍须限制后端端口的网络访问，不能直接暴露到公网。
 
 ## 后台任务操作
 
-微博 `weibo` 任务包含生成、Telegram 审核与发布循环；默认关闭，真实发布需要多重门禁。
+微博 `weibo` 任务包含生成、Telegram 审核与发布循环；默认关闭，真实发布需要独立授权及审核通过。
 机器人将完整正文和审核按钮发到指定聊天，仅认证审核人能批准具体版本。配置、数据库升级和 UNKNOWN 排障见
 [微博审核工作流](WEIBO_WORKFLOW.md)。
 
 Telegram 协议和共享 Bean 在 `client/telegram`，审核行为分别由微博与 X 装配。启用微博前确认
 `db/schema/weibo/schema.sql` 中的表已创建；旧表结构有差异时按[微博工作流](WEIBO_WORKFLOW.md)选择 `db/upgrade/weibo/` 补丁。安全注入 `TRADE_TELEGRAM_BOT_TOKEN`，
 配置 `TRADE_WEIBO_TELEGRAM_CHAT_ID` 与 `TRADE_WEIBO_TELEGRAM_REVIEWER_USER_IDS`，再开启
-`TRADE_TELEGRAM_ENABLED`、`TRADE_WEIBO_TELEGRAM_REVIEW_ENABLED` 和 workflow/generation 开关。
-初次联调保持两个发布开关关闭；确认审核状态后，按[工作流说明](WEIBO_WORKFLOW.md)配置目标账号授权和发布门禁。
+`TRADE_WEIBO_WORKFLOW_ENABLED` 即可启动工作流。
+初次联调保持真实发布授权关闭；确认审核状态后，按[工作流说明](WEIBO_WORKFLOW.md)配置目标账号授权和发布门禁。
 创建 Bean 不启动任务；实际聊天权限、消息发送和微博发布仍需独立联调。轮询模式不能与该 bot 已有 webhook 或另一套 consumer 共用。
 
 X 的 `x` 任务也包含生成、审核、发布三个循环。启动时 Flyway 完成 X 表结构迁移；`db/upgrade/x/` 只用于核实接入前历史结构的前置条件。
 配置 `TRADE_X_CONTENT_*`、目标 X 用户 ID 与四个 OAuth 1.0a 凭据，再按
 [X 工作流](X_WORKFLOW.md)联调。复用现有 Bot 时，先停止所有实例的微博审核并关闭
-`TRADE_WEIBO_TELEGRAM_REVIEW_ENABLED`；应用会拒绝两套审核同时 enabled。
-保留两项 X 发布开关关闭直到联调完成；X 外部协议见 [X 客户端](X_API.md)。
+`TRADE_WEIBO_TELEGRAM_REVIEW_ENABLED`；应用会拒绝两个已启用模块同时消费同一个 Bot；也可直接关闭微博模块。
+保持 X 真实发布授权关闭直到联调完成；X 外部协议见 [X 客户端](X_API.md)。
 
 查询、启动和停止任务：
 
@@ -338,7 +344,7 @@ MySQL DDL 失败可能留下部分已提交结构及失败记录；保留停止�
 
 ## 发布检查清单
 
-- [ ] `clean test` 通过，构建产物来自干净、可追溯的提交；
+- [ ] 发布候选提交已通过完整测试（可复用同一代码状态的 CI/构建结果；Docker 构建的 `clean package` 包含测试），构建产物来自干净、可追溯的提交；此要求不用于日常每次编辑；
 - [ ] 配置差异和数据库迁移经过评审；
 - [ ] 凭据来自密钥系统，日志无敏感信息；
 - [ ] 自动任务和真实执行默认值符合目标环境；

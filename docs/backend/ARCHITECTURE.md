@@ -210,7 +210,7 @@ X 的 `application/service/XPostService` 编排配置驱动的 AI 草稿、Teleg
 
 ## 6. 验证与资源约定
 
-- 生产代码和测试包路径镜像，移动类型必须同步移动测试并运行 `clean test`。
+- 生产代码和测试包路径镜像；移动、删除或重命名类型后清理旧 class，运行相关模块及 `PackageArchitectureTest`，无需因此执行全量。范围与命令见[贡献指南](../../backend/CONTRIBUTING.md#测试与质量门禁)。
 - MyBatis XML 保留 `src/main/resources/mapper/<module>/`，同步更新 namespace/resultType/parameterType。
 - 数据库完整结构按模块保存于 `db/schema/<module>/schema.sql`，仅用于查阅和离线校验；运行时由 `automation/infrastructure/migration` 编排 Flyway 的全库版本迁移，完成后才进入应用就绪及任务启动阶段。`db/upgrade/` 仅保留接入前的历史补丁。详见 [数据库目录](../../backend/src/main/resources/db/README.md)。
 - `PackageArchitectureTest` 检查包与路径、四层入口、业务域隔离、共享模块依赖方向、Web 不引用持久化、内层不依赖接口入口、port 不依赖实现、领域类型不依赖外层，以及 Mapper XML 中类名可解析。

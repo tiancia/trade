@@ -4,6 +4,7 @@ import com.trade.automation.infrastructure.config.AutomationConfiguration;
 import com.trade.client.telegram.TelegramClientProperties;
 import com.trade.client.telegram.config.TelegramClientConfiguration;
 import com.trade.weibo.infrastructure.config.WeiboTelegramReviewProperties;
+import com.trade.weibo.infrastructure.config.WeiboWorkflowProperties;
 import com.trade.x.port.*;
 import com.trade.x.application.service.XPostService;
 import com.trade.x.domain.model.XContentPolicy;
@@ -22,6 +23,7 @@ import static org.mockito.Mockito.*;
 class XConfigurationTest {
     private final XReviewDeliveryStore store = mock(XReviewDeliveryStore.class);
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withPropertyValues("trade.telegram.enabled=", "trade.telegram.bot-token=")
             .withUserConfiguration(XConfiguration.class, TelegramClientConfiguration.class, ServiceComponents.class)
             .withBean(XPostRepository.class, () -> mock(XPostRepository.class))
             .withBean(XDraftGenerator.class, () -> mock(XDraftGenerator.class))
@@ -34,7 +36,9 @@ class XConfigurationTest {
                     .hasSingleBean(XPostService.class).hasBean("xPostService").hasSingleBean(XScheduler.class);
             assertInstanceOf(UnavailableXReviewGateway.class, context.getBean(XHumanReviewGateway.class));
             XWorkflowPolicy policy = context.getBean(XWorkflowPolicy.class);
-            assertFalse(policy.enabled()); assertFalse(policy.generationEnabled()); assertFalse(policy.publishingEnabled());
+            assertFalse(policy.enabled());
+            assertThrows(IllegalStateException.class, policy::requireGeneration);
+            assertThrows(IllegalStateException.class, policy::requirePublishing);
             assertFalse(context.getBean(XPublishingProperties.class).isLivePublishingEnabled());
             assertEquals(8, policy.content().minChars()); assertEquals(120, policy.content().maxChars());
             assertEquals(XContentPolicy.Format.CHAT_DIALOGUE, policy.content().format());
@@ -50,7 +54,7 @@ class XConfigurationTest {
 
     @Test void scannedServiceUsesConfiguredGenerationInterval() {
         runner.withPropertyValues("trade.x.workflow.enabled=true", "trade.x.workflow.target-user-id=123",
-                "trade.x.workflow.generation-enabled=true", "trade.x.workflow.content.direction=开发经验",
+                "trade.x.workflow.content.direction=开发经验",
                 "trade.x.workflow.generation-fixed-delay-ms=" + Long.MAX_VALUE).run(context -> {
             assertThat(context).hasNotFailed().hasSingleBean(XPostService.class).hasSingleBean(XScheduler.class);
             XPostRepository posts = context.getBean(XPostRepository.class);
@@ -81,8 +85,7 @@ class XConfigurationTest {
 
     @Test void enabledReviewBindsAllowlistAndNeedsNoStartupNetwork() {
         runner.withPropertyValues("trade.x.workflow.enabled=true", "trade.x.workflow.target-user-id=123",
-                "trade.telegram.enabled=true", "trade.telegram.bot-token=offline-token",
-                "trade.x.review.telegram.enabled=true", "trade.x.review.telegram.chat-id=-100123",
+                "trade.telegram.bot-token=offline-token", "trade.x.review.telegram.chat-id=-100123",
                 "trade.x.review.telegram.reviewer-user-ids=42,43").run(context -> {
             assertThat(context).hasNotFailed().hasSingleBean(XHumanReviewGateway.class);
             assertInstanceOf(TelegramXReviewGateway.class, context.getBean(XHumanReviewGateway.class));
@@ -95,7 +98,8 @@ class XConfigurationTest {
         runner.withPropertyValues("trade.x.workflow.enabled=true", "trade.x.workflow.target-user-id=123",
                 "trade.x.workflow.generation-enabled=true", "trade.x.workflow.content.direction=")
                 .run(context -> assertThat(context).hasFailed());
-        runner.withPropertyValues("trade.x.review.telegram.enabled=true").run(context -> assertThat(context).hasFailed());
+        runner.withPropertyValues("trade.x.workflow.enabled=true", "trade.x.workflow.target-user-id=123",
+                "trade.x.review.telegram.enabled=true").run(context -> assertThat(context).hasFailed());
         runner.withPropertyValues("trade.x.workflow.content.min-chars=100", "trade.x.workflow.content.max-chars=20")
                 .run(context -> assertThat(context).hasFailed());
         runner.withPropertyValues("trade.x.workflow.content.format=UNSUPPORTED")
@@ -105,8 +109,12 @@ class XConfigurationTest {
 
     @Test void sharedBotRejectsTwoReviewConsumersWhileEitherAloneCanStart() {
         var weibo = new WeiboTelegramReviewProperties(); var x = new XTelegramReviewProperties();
+        var weiboWorkflow = new WeiboWorkflowProperties(); weiboWorkflow.setEnabled(true);
+        var xWorkflow = new XWorkflowProperties(); xWorkflow.setEnabled(true);
         var both = new ApplicationContextRunner().withUserConfiguration(AutomationConfiguration.class)
                 .withBean(WeiboTelegramReviewProperties.class, () -> weibo)
+                .withBean(WeiboWorkflowProperties.class, () -> weiboWorkflow)
+                .withBean(XWorkflowProperties.class, () -> xWorkflow)
                 .withBean(XTelegramReviewProperties.class, () -> x);
         x.setEnabled(true);
         both.run(context -> assertThat(context).hasNotFailed());
@@ -117,6 +125,23 @@ class XConfigurationTest {
                     "Weibo and X share one Telegram bot: disable trade.weibo.review.telegram.enabled before enabling X review");
         });
         x.setEnabled(false); both.run(context -> assertThat(context).hasNotFailed());
+        x.setEnabled(true); weiboWorkflow.setEnabled(false);
+        both.run(context -> assertThat(context).hasNotFailed());
+    }
+
+    @Test void moduleOffIgnoresStaleReviewSettingsAndExplicitReviewPauseWins() {
+        runner.withPropertyValues("trade.x.review.telegram.enabled=true",
+                "trade.x.review.telegram.chat-id=unfinished").run(context -> {
+            assertThat(context).hasNotFailed();
+            assertInstanceOf(UnavailableXReviewGateway.class, context.getBean(XHumanReviewGateway.class));
+        });
+        runner.withPropertyValues("trade.x.workflow.enabled=true", "trade.x.workflow.target-user-id=123",
+                "trade.x.review.telegram.enabled=false", "trade.x.review.telegram.chat-id=-100123")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertInstanceOf(UnavailableXReviewGateway.class, context.getBean(XHumanReviewGateway.class));
+                });
+        verifyNoInteractions(store);
     }
 
     @TestConfiguration(proxyBeanMethods = false)

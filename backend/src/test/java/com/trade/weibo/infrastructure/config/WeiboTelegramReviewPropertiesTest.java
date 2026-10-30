@@ -17,6 +17,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 class WeiboTelegramReviewPropertiesTest {
     private final WeiboReviewDeliveryStore store = mock(WeiboReviewDeliveryStore.class);
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withPropertyValues("trade.telegram.enabled=", "trade.telegram.bot-token=")
             .withUserConfiguration(WeiboConfiguration.class, TelegramClientConfiguration.class)
             .withBean(WeiboReviewDeliveryStore.class, () -> store);
 
@@ -33,8 +34,8 @@ class WeiboTelegramReviewPropertiesTest {
 
     @Test
     void explicitSettingsBindNumericAllowlistAndSelectTelegramWithoutNetworkAccess() {
-        runner.withPropertyValues("trade.weibo.workflow.enabled=true", "trade.telegram.enabled=true",
-                "trade.telegram.bot-token=offline-test-token", "trade.weibo.review.telegram.enabled=true",
+        runner.withPropertyValues("trade.weibo.workflow.enabled=true",
+                "trade.telegram.bot-token=offline-test-token",
                 "trade.weibo.review.telegram.chat-id=-100123", "trade.weibo.review.telegram.reviewer-user-ids=123,456")
                 .run(context -> {
                     assertThat(context).hasNotFailed().hasSingleBean(HumanReviewGateway.class);
@@ -47,7 +48,8 @@ class WeiboTelegramReviewPropertiesTest {
 
     @Test
     void incompleteReviewConfigurationFailsClosed() {
-        runner.withPropertyValues("trade.weibo.review.telegram.enabled=true").run(context -> assertThat(context).hasFailed());
+        runner.withPropertyValues("trade.weibo.workflow.enabled=true", "trade.weibo.review.telegram.enabled=true")
+                .run(context -> assertThat(context).hasFailed());
         TelegramClientProperties client = new TelegramClientProperties();
         client.setEnabled(true);
         client.setBotToken("offline-test-token");
@@ -64,5 +66,20 @@ class WeiboTelegramReviewPropertiesTest {
         settings.setReviewerUserIds(List.of(123L));
         workflow.setMaxBodyChars(10000);
         assertThrows(IllegalArgumentException.class, () -> settings.validate(client, workflow));
+    }
+
+    @Test
+    void moduleOffIgnoresStaleReviewSettingsAndExplicitReviewPauseWins() {
+        runner.withPropertyValues("trade.weibo.review.telegram.enabled=true",
+                "trade.weibo.review.telegram.chat-id=unfinished").run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context.getBean(HumanReviewGateway.class)).isInstanceOf(UnavailableHumanReviewGateway.class);
+        });
+        runner.withPropertyValues("trade.weibo.workflow.enabled=true", "trade.weibo.review.telegram.enabled=false",
+                "trade.weibo.review.telegram.chat-id=-100123").run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context.getBean(HumanReviewGateway.class)).isInstanceOf(UnavailableHumanReviewGateway.class);
+        });
+        verifyNoInteractions(store);
     }
 }

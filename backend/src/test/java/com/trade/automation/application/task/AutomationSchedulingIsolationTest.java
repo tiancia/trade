@@ -8,7 +8,9 @@ import com.trade.trading.application.runtime.TradingLeadershipService;
 import com.trade.trading.domain.model.TradingLeaderLease;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.weibo.infrastructure.config.WeiboTelegramReviewProperties;
+import com.trade.weibo.infrastructure.config.WeiboWorkflowProperties;
 import com.trade.x.infrastructure.config.XTelegramReviewProperties;
+import com.trade.x.infrastructure.config.XWorkflowProperties;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
@@ -53,6 +55,8 @@ class AutomationSchedulingIsolationTest {
             context.registerBean(TradingLeaderLeaseRepository.class, () -> leases);
             context.registerBean(WeiboTelegramReviewProperties.class, WeiboTelegramReviewProperties::new);
             context.registerBean(XTelegramReviewProperties.class, XTelegramReviewProperties::new);
+            context.registerBean(WeiboWorkflowProperties.class, WeiboWorkflowProperties::new);
+            context.registerBean(XWorkflowProperties.class, XWorkflowProperties::new);
             context.refresh();
             AutomationTaskManager manager = context.getBean(AutomationTaskManager.class);
             TradingLeadershipService leadership = context.getBean(TradingLeadershipService.class);

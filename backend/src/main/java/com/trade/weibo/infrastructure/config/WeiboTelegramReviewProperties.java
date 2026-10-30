@@ -9,10 +9,14 @@ import java.util.List;
 @Data
 @ConfigurationProperties(prefix = "trade.weibo.review.telegram")
 public class WeiboTelegramReviewProperties {
-    private boolean enabled = false;
+    private Boolean enabled;
     private String chatId = "";
     private List<Long> reviewerUserIds = List.of();
     private long pollingFixedDelayMs = 5000;
+
+    public boolean isEnabled() {
+        return enabled != null ? enabled : chatId != null && !chatId.isBlank();
+    }
 
     public long requiredChatId() {
         try {
@@ -25,10 +29,10 @@ public class WeiboTelegramReviewProperties {
     }
 
     public void validate(TelegramClientProperties client, WeiboWorkflowProperties workflow) {
+        if (!workflow.isEnabled() || !isEnabled()) return;
         if (pollingFixedDelayMs < 1000) throw new IllegalArgumentException("Invalid Telegram review polling delay");
-        if (!enabled) return;
-        if (!client.isEnabled() || !workflow.isEnabled()) {
-            throw new IllegalArgumentException("Telegram review requires both Telegram client and Weibo workflow enabled");
+        if (!client.isEnabled()) {
+            throw new IllegalArgumentException("Telegram review requires Telegram client enabled");
         }
         requiredChatId();
         if (reviewerUserIds == null || reviewerUserIds.isEmpty()

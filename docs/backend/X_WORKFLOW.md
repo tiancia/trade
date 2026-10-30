@@ -37,7 +37,7 @@ TRADE_X_CONTENT_MAX_CHARS=120
 
 这是当前代码、YAML 和 `.env.example` 的默认内容方向。部署环境中已有的 `TRADE_X_CONTENT_*` 值会覆盖默认值：切换聊天样式时需同步更新方向、语气、额外规则、`FORMAT=CHAT_DIALOGUE` 和字数范围后重启；若从英文切换，还需同步语言。旧散文或前缀标识要求会与聊天格式冲突，不能只改语言或格式。仅修改仓库不会覆盖环境变量；已有草稿不会被自动改写。
 
-当前 `application.yml` 和 `.env.example` 开启 X auto-start、workflow、generation、review、client、live 和 publishing，以及共享 Telegram 客户端和相应代理；Java 属性类的布尔安全默认值仍为 false。生成间隔统一为完成上一轮后等待 3 小时，每个 UTC 日最多预约 8 次生成和 8 次发布尝试。部署环境应显式配置，不能仅凭属性类默认值判断实际运行状态。启用生成或审核而缺少目标账号、聊天或审核人配置时，启动校验会拒绝；缺少 X 凭据时发布等待。共享 Telegram 客户端使用独立配置；X 审核关闭时不会通过它轮询或送审。实际 `.env`、凭据和生产数据不进入仓库，配置开启不能代替外部联调。
+X 只需工作流主开关及必要凭据：调度、生成和发布扫描默认跟随工作流，客户端按 OAuth 凭据接入，Telegram 按 Bot Token 和审核聊天接入。YAML 的真实发布授权默认 false，env 示例为 true；Java 工作流默认关闭。细分开关仅作可选覆盖，旧配置迁移见[功能启用](OPERATIONS.md#功能启用)。生成间隔统一为完成上一轮后等待 3 小时，每个 UTC 日最多预约 8 次生成和 8 次发布尝试。部署环境应显式配置，不能仅凭属性类默认值判断实际运行状态。缺少目标账号，或已配置审核聊天却缺少 Token / 审核人时，启动校验会拒绝；未配置审核聊天时只保留待审核草稿；缺少 X 凭据时发布等待。共享 Telegram 客户端使用独立配置；X 审核关闭时不会通过它轮询或送审。实际 `.env`、凭据和生产数据不进入仓库，配置开启不能代替外部联调。
 
 ## 创作与筛选流程
 
@@ -96,14 +96,10 @@ TRADE_X_CONTENT_MAX_CHARS=120
 Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/weibo/stop
 ```
 
-在**所有使用该 Bot 的实例**关闭微博审核，并保持微博任务自动启动关闭。暂时不使用微博时，也关闭其生成和发布开关：
+暂时不使用微博时，在**所有使用该 Bot 的实例**关闭微博模块即可；旧的 auto-start 显式覆盖按[功能启用](OPERATIONS.md#功能启用)移除：
 
 ```ini
-TRADE_AUTOMATION_WEIBO_AUTO_START=false
-TRADE_WEIBO_TELEGRAM_REVIEW_ENABLED=false
 TRADE_WEIBO_WORKFLOW_ENABLED=false
-TRADE_WEIBO_GENERATION_ENABLED=false
-TRADE_WEIBO_PUBLISHING_ENABLED=false
 TRADE_WEIBO_LIVE_PUBLISHING_ENABLED=false
 ```
 
@@ -111,18 +107,11 @@ TRADE_WEIBO_LIVE_PUBLISHING_ENABLED=false
 
 ## 当前运行配置
 
-仓库默认运行自动生成、Telegram 人工审核及审核后真实发布流程。YAML 回退值和 `.env.example` 与以下开关一致；数字账号、聊天和审核人标识需通过部署环境提供：
+以下示例运行自动生成、Telegram 人工审核及审核后真实发布流程；只需工作流和真实发布两个开关。YAML 的真实发布授权默认 false，以下示例显式开启。数字账号、聊天、审核人标识及凭据需通过部署环境提供：
 
 ```ini
-TRADE_AUTOMATION_X_AUTO_START=true
-TRADE_X_CLIENT_ENABLED=true
 TRADE_X_WORKFLOW_ENABLED=true
-TRADE_X_GENERATION_ENABLED=true
-TRADE_X_PUBLISHING_ENABLED=true
 TRADE_X_LIVE_PUBLISHING_ENABLED=true
-TRADE_TELEGRAM_ENABLED=true
-TRADE_X_TELEGRAM_REVIEW_ENABLED=true
-TRADE_WEIBO_TELEGRAM_REVIEW_ENABLED=false
 TRADE_X_TARGET_USER_ID=替换为X账号数字ID
 TRADE_X_TELEGRAM_CHAT_ID=替换为Telegram数字ChatID
 TRADE_X_TELEGRAM_REVIEWER_USER_IDS=替换为Telegram数字用户ID
@@ -145,15 +134,13 @@ Spring Boot 不自动加载 `.env`。将部署值注入 Shell、IDE、systemd `E
 
 ### 可选：分阶段联调覆盖值
 
-如需先验收生成和审核而暂不发帖，使用以下临时覆盖值：
+如需先验收生成和审核而暂不发帖，只需关闭真实发布：
 
 ```ini
-TRADE_X_PUBLISHING_ENABLED=false
 TRADE_X_LIVE_PUBLISHING_ENABLED=false
-TRADE_AUTOMATION_X_AUTO_START=false
 ```
 
-设置临时覆盖值并重启后，显式启动任务：
+工作流开启后默认自动运行。仅需手动启动时，额外设置 `TRADE_AUTOMATION_X_AUTO_START=false`；任务 API 可随时查询或启停：
 
 ```powershell
 Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/x/start
@@ -164,9 +151,9 @@ Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8
 
 automation API 沿用现有运维访问控制，须置于受保护的部署控制面。手工启动不会打开业务开关；注册 Bean 不发起外部请求。
 
-X 内容工作台也可读取并启停当前后端实例的 X 自动工作流，覆盖生成、审核和发布三个循环。停止不取消已经开始的工作，也不禁用独立的手动生成 API；恢复后仍在有效期内且符合门禁的已批准草稿可能继续发布。该状态只在当前进程有效，重启后由 `TRADE_AUTOMATION_X_AUTO_START` 决定；多实例需要分别控制。操作结果未知时应刷新状态确认。
+X 内容工作台也可读取并启停当前后端实例的 X 自动工作流，覆盖生成、审核和发布三个循环。停止不取消已经开始的工作，也不禁用独立的手动生成 API；恢复后仍在有效期内且符合门禁的已批准草稿可能继续发布。该状态只在当前进程有效，重启后默认跟随工作流主开关；`TRADE_AUTOMATION_X_AUTO_START` 可显式覆盖；多实例需要分别控制。操作结果未知时应刷新状态确认。
 
-完成分阶段验收后，移除临时覆盖或恢复 `TRADE_X_PUBLISHING_ENABLED=true`、`TRADE_X_LIVE_PUBLISHING_ENABLED=true`、`TRADE_AUTOMATION_X_AUTO_START=true`，重启生效。以上操作说明不代表已完成真实 AI、Telegram 或 X API 联调。
+完成分阶段验收后，设置 `TRADE_X_LIVE_PUBLISHING_ENABLED=true`，并移除不再需要的手动启动覆盖，重启生效。以上操作说明不代表已完成真实 AI、Telegram 或 X API 联调。
 
 Bot 消息展示目标账号、草稿 ID、版本、过期时间和完整待发布正文。审核上下文优先展示中文 AI 创作说明，并显示冻结格式：`CHAT_DIALOGUE` 检查2～6句成对引号、自然来回、潜台词与情绪，识别旁白、角色名、解释和总结，确认没有冒充真实聊天；`FREE_TEXT` 只按旧稿冻结的风格和规则判断，不强制聊天格式。共同核对冻结语言与方向、成年人边界，以及是否冒充专家或承诺操纵、挽回、涨粉与收益。审核说明不会发布，过长说明可能被截断，正文完整保留。只有指定聊天、审核人、Bot 与绑定消息匹配的按钮才有效。点击“通过并发布”后立即尝试发布；开关未开、本地配额不足或发布间隔未到时保持 APPROVED，后续 publishing 循环继续检查。拒绝不发布；修改正文使旧批准失效，必须审核新版本。按钮反馈表示审核受理，发布结果需查看草稿状态。
 

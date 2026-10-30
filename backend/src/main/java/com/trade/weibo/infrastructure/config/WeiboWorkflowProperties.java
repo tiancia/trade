@@ -9,8 +9,8 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "trade.weibo.workflow")
 public class WeiboWorkflowProperties {
     private boolean enabled = false;
-    private boolean generationEnabled = false;
-    private boolean publishingEnabled = false;
+    private boolean generationEnabled = true;
+    private boolean publishingEnabled = true;
     private String targetUid = "";
     private String feedUrl = "";
     private int maxBodyChars = 280;

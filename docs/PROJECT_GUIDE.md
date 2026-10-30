@@ -224,7 +224,7 @@ docs/                       文档总导航、交接指南及 backend/ 后端专
 
 ### 5.2 后台任务不是打开网页后才运行
 
-`AutomationTaskRegistrar` 登记任务；应用收到 `ApplicationReadyEvent` 后按 auto-start 配置启动，或通过任务 API 启停。每个循环先等待 initialDelay，执行完成后再等待 fixedDelay。同一任务的循环共用互斥锁，忙时跳过该次执行，不积压排队；实际触发时间还会受执行耗时与其他循环影响。
+`AutomationTaskRegistrar` 登记任务；应用收到 `ApplicationReadyEvent` 后默认跟随模块主开关启动（auto-start 可显式覆盖），或通过任务 API 启停。每个循环先等待 initialDelay，执行完成后再等待 fixedDelay。同一任务的循环共用互斥锁，忙时跳过该次执行，不积压排队；实际触发时间还会受执行耗时与其他循环影响。
 
 当前主要节奏：交易决策约每 30 分钟一次、事件扫描约每 60 秒、订单对账循环约每 15 秒；X 生成约每三小时、审核轮询约每 5 秒、发布扫描约每 60 秒。它们是不同循环，后台任务启动也不等于每个业务门禁都已放行。
 

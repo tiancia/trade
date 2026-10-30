@@ -67,28 +67,22 @@ GENERATION_FAILED  REJECTED      EXPIRED      FAILED / UNKNOWN
 
 ## 配置与启动
 
-参数见 `application.yml` 和 `.env.example`。首次试用保持真实发布关闭：
+配置好账号、AI 与审核凭据后，工作流主开关会同时启动生成、审核和发布扫描；真实发布另行授权。参数见 `application.yml` 和 `.env.example`，旧覆盖值按[功能启用](OPERATIONS.md#功能启用)迁移。首次试用保持真实发布关闭：
 
 ```powershell
 $env:TRADE_WEIBO_WORKFLOW_ENABLED="true"
-$env:TRADE_WEIBO_GENERATION_ENABLED="true"
 $env:TRADE_WEIBO_TARGET_UID="目标微博账号的 UID"
 $env:TRADE_WEIBO_LIVE_PUBLISHING_ENABLED="false"
-$env:TRADE_WEIBO_PUBLISHING_ENABLED="false"
-$env:TRADE_AUTOMATION_WEIBO_AUTO_START="false"
-$env:TRADE_TELEGRAM_ENABLED="true"
-$env:TRADE_WEIBO_TELEGRAM_REVIEW_ENABLED="true"
 # Bot Token 由部署环境安全注入 TRADE_TELEGRAM_BOT_TOKEN，不在示例填写。
 $env:TRADE_WEIBO_TELEGRAM_CHAT_ID="123456789"
 $env:TRADE_WEIBO_TELEGRAM_REVIEWER_USER_IDS="123456789"
 ```
 
-生成开关允许使用已配置 AI 的真实额度；离线测试不使用这些设置。管理员 API 需要部署环境中的
+工作流开启后允许使用已配置 AI 的真实额度；离线测试不使用这些设置。管理员 API 需要部署环境中的
 `TRADE_WEIBO_ADMIN_TOKEN`；OAuth 使用现有微博应用配置。不在仓库、命令输出或响应中填写真实凭据。
 
 机器人须已加入目标聊天；私人聊天先向机器人发送 `/start`。chat ID 与 reviewer ID 必须是数字，
-审核人列表可以逗号分隔多个用户 ID，不能用用户名鉴权。开启审核时缺少 Token、聊天、审核人，
-或未开启 workflow/Telegram client 会使启动校验失败；默认全部关闭时不需要这些值。
+审核人列表可以逗号分隔多个用户 ID，不能用用户名鉴权。配置审核聊天后缺少 Token / 审核人会使启动校验失败；未配置聊天时不接入审核，模块关闭时不校验残留审核配置。
 网络需要代理时使用 `TRADE_TELEGRAM_PROXY_ENABLED/HOST/PORT`。Telegram 审核时正文上限配置不超过 3000，
 默认仍为 280；正文完整展示，过长的来源上下文会标明截断。
 
@@ -97,7 +91,7 @@ title/link/description/pubDate；Atom 要求 title/alternate link、summary 或 
 来源发布时间作为事件资料时间。缺少字段、非法时间或摘要的条目跳过；前 20 条、响应最大 256 KiB。
 过期事件不生成，不使用 fallback 热点。无源时可以手动提交资料。
 
-任务登记不等于运行；通过运维控制面启动/停止：
+工作流开启后默认自动启动；仅需手动启动时设 `TRADE_AUTOMATION_WEIBO_AUTO_START=false`。通过运维控制面查询或启停：
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8080/api/automation/tasks/weibo

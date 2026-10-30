@@ -1,6 +1,6 @@
 # ${环境变量:默认值}：优先使用运行进程的环境变量；未设置时使用冒号后的默认值。
 # fixed-delay-ms：本轮执行结束后等待的毫秒数；initial-delay-ms：任务启动后首次执行前的等待毫秒数。
-# 后台循环由 trade.automation.*.auto-start 或任务管理 API 启动；仍须通过各业务 enabled / 发布 / 实盘门禁。
+# 模块 enabled 默认同时启用后台循环；auto-start 仅作可选覆盖，真实发布 / 实盘另行授权。
 spring:
   application:
     # 应用名称，同时用于日志和指标标签。
@@ -111,25 +111,25 @@ trade:
       # Management APIs fail closed (503) until a bcrypt htpasswd file is configured.
       enabled: ${TRADE_MANAGEMENT_AUTH_ENABLED:true}
       credentials-file: ${TRADE_MANAGEMENT_AUTH_CREDENTIALS_FILE:}
-  # 自动任务启动开关：只启动循环，不替代对应业务开关；false 时可通过任务管理 API 手动启动。
+  # 可选启动覆盖：留空跟随模块 enabled；false 保持手动启动；true 保留旧版独立启动行为。
   automation:
     weibo:
       # 应用就绪后是否启动微博生成、Telegram 审核轮询和发布扫描三个循环。
-      auto-start: ${TRADE_AUTOMATION_WEIBO_AUTO_START:false}
+      auto-start: ${TRADE_AUTOMATION_WEIBO_AUTO_START:}
     x:
       # 应用就绪后是否启动 X 生成、Telegram 审核轮询和发布扫描三个循环。
-      auto-start: ${TRADE_AUTOMATION_X_AUTO_START:true}
+      auto-start: ${TRADE_AUTOMATION_X_AUTO_START:}
     story:
       # 应用就绪后是否启动小说生成循环。
-      auto-start: ${TRADE_AUTOMATION_STORY_AUTO_START:false}
+      auto-start: ${TRADE_AUTOMATION_STORY_AUTO_START:}
     trading:
       # 应用就绪后是否启动交易决策、事件扫描、对账循环和行情运行时。
-      auto-start: ${TRADE_AUTOMATION_TRADING_AUTO_START:true}
+      auto-start: ${TRADE_AUTOMATION_TRADING_AUTO_START:}
     trading-ai:
-      auto-start: ${TRADE_AUTOMATION_TRADING_AI_AUTO_START:true}
+      auto-start: ${TRADE_AUTOMATION_TRADING_AI_AUTO_START:}
     polymarket:
       # 应用就绪后是否启动 Polymarket AI 决策循环。
-      auto-start: ${TRADE_AUTOMATION_POLYMARKET_AUTO_START:false}
+      auto-start: ${TRADE_AUTOMATION_POLYMARKET_AUTO_START:}
   text-game:
     # 文字游戏管理 API 的鉴权令牌；留空时管理接口关闭。
     admin-token: ${TRADE_TEXT_GAME_ADMIN_TOKEN:}
@@ -164,8 +164,8 @@ trade:
 
 
   telegram:
-    # 共享 Telegram Bot API 客户端开关；微博 / X 审核还需打开各自的 review.telegram.enabled。
-    enabled: ${TRADE_TELEGRAM_ENABLED:true}
+    # 留空时配置 Bot Token 即接入客户端；false 可单独暂停。
+    enabled: ${TRADE_TELEGRAM_ENABLED:}
     # BotFather 创建的机器人 Token，通过环境变量提供。
     bot-token: ${TRADE_TELEGRAM_BOT_TOKEN:}
     # Telegram Bot API 服务基础地址。
@@ -198,8 +198,8 @@ trade:
     review-required: ${TRADE_WEIBO_REVIEW_REQUIRED:true}
     review:
       telegram:
-        # 开启微博 Telegram 审核投递和轮询；与 X 复用同一机器人时只能启用其中一套。
-        enabled: ${TRADE_WEIBO_TELEGRAM_REVIEW_ENABLED:false}
+        # 留空时配置 chat-id 即接入审核；模块关闭时不创建审核消费者。
+        enabled: ${TRADE_WEIBO_TELEGRAM_REVIEW_ENABLED:}
         # 接收审核消息的数字 chat ID；私聊 / 群聊的会话标识。
         chat-id: ${TRADE_WEIBO_TELEGRAM_CHAT_ID:}
         # 允许点击审核按钮的 Telegram 数字用户 ID 列表，多个 ID 用逗号分隔。
@@ -209,10 +209,10 @@ trade:
     workflow:
       # 微博草稿生成、审核与发布工作流总开关。
       enabled: ${TRADE_WEIBO_WORKFLOW_ENABLED:false}
-      # 允许调用 AI 生成草稿；需工作流开启、配置事件源和目标账号。
-      generation-enabled: ${TRADE_WEIBO_GENERATION_ENABLED:false}
-      # 允许发布已审核草稿；仍受 live-publishing-enabled、TTL、额度和间隔限制。
-      publishing-enabled: ${TRADE_WEIBO_PUBLISHING_ENABLED:false}
+      # 默认跟随工作流生成草稿；false 可单独暂停生成。
+      generation-enabled: ${TRADE_WEIBO_GENERATION_ENABLED:true}
+      # 默认扫描已审核草稿；false 可单独暂停，真实发布另由 live-publishing-enabled 授权。
+      publishing-enabled: ${TRADE_WEIBO_PUBLISHING_ENABLED:true}
       # 微博目标账号数字 UID，发布授权须属于这个账号。
       target-uid: ${TRADE_WEIBO_TARGET_UID:}
       # 用于获取真实事件的 RSS / Atom 源地址。
@@ -254,8 +254,8 @@ trade:
     # X 真实发布的总门禁；还需工作流发布开关、客户端和有效用户授权。
     live-publishing-enabled: ${TRADE_X_LIVE_PUBLISHING_ENABLED:false}
     client:
-      # X API 客户端开关，调用查询和发布前均检查。
-      enabled: ${TRADE_X_CLIENT_ENABLED:true}
+      # 留空时按 OAuth 凭据自动接入；false 可单独暂停客户端。
+      enabled: ${TRADE_X_CLIENT_ENABLED:}
       # OAuth 1.0a 应用 Consumer Key / API Key。
       api-key: ${X_API_KEY:}
       # 与 Consumer Key 配对的 Consumer Secret / API Secret。
@@ -279,8 +279,8 @@ trade:
         port: ${TRADE_X_PROXY_PORT:13128}
     review:
       telegram:
-        # 开启 X Telegram 审核投递和轮询；同时要求共享 Telegram 客户端和 X 工作流开启。
-        enabled: ${TRADE_X_TELEGRAM_REVIEW_ENABLED:false}
+        # 留空时配置 chat-id 即接入审核；模块关闭时不创建审核消费者。
+        enabled: ${TRADE_X_TELEGRAM_REVIEW_ENABLED:}
         # 接收 X 审核消息的数字 chat ID，可填写现有机器人使用的会话 ID。
         chat-id: ${TRADE_X_TELEGRAM_CHAT_ID:}
         # 允许审核的 Telegram 数字用户 ID 列表，多个 ID 用逗号分隔，须显式配置。
@@ -290,9 +290,9 @@ trade:
     workflow:
       # X 草稿生成、审核与发布工作流总开关。
       enabled: ${TRADE_X_WORKFLOW_ENABLED:true}
-      # 允许调用 AI 生成草稿；需开启工作流并配置内容方向和目标账号。
+      # 默认跟随工作流生成草稿；false 可单独暂停生成。
       generation-enabled: ${TRADE_X_GENERATION_ENABLED:true}
-      # 允许发布已审核草稿；仍受真实发布门禁、TTL、账号、额度和最小间隔限制。
+      # 默认扫描已审核草稿；false 可单独暂停，真实发布另由 live-publishing-enabled 授权。
       publishing-enabled: ${TRADE_X_PUBLISHING_ENABLED:true}
       # 目标 X 账号数字用户 ID；发布前查询 /2/users/me 校验授权账号一致。
       target-user-id: ${TRADE_X_TARGET_USER_ID:}
@@ -530,11 +530,12 @@ trade:
       candle-count: ${TRADE_TRADING_AI_CANDLE_COUNT:96}
       minimum-confidence: ${TRADE_TRADING_AI_MINIMUM_CONFIDENCE:0.80}
       telegram:
-        enabled: ${TRADE_TRADING_AI_TELEGRAM_ENABLED:true}
+        # 留空时配置 chat-id 即接入通知；仍使用独立 Bot 凭据。
+        enabled: ${TRADE_TRADING_AI_TELEGRAM_ENABLED:}
         chat-id: ${TRADE_TRADING_AI_TELEGRAM_CHAT_ID:}
         cooldown-ms: ${TRADE_TRADING_AI_TELEGRAM_COOLDOWN_MS:86400000}
         client:
-          enabled: ${TRADE_TRADING_AI_TELEGRAM_ENABLED:true}
+          enabled: ${TRADE_TRADING_AI_TELEGRAM_ENABLED:}
           bot-token: ${TRADE_TRADING_AI_TELEGRAM_BOT_TOKEN:}
           base-url: ${TRADE_TRADING_AI_TELEGRAM_BASE_URL:https://api.telegram.org}
           connect-timeout-seconds: ${TRADE_TRADING_AI_TELEGRAM_CONNECT_TIMEOUT_SECONDS:10}
