@@ -105,7 +105,7 @@ public class LiveOrderExecutionService {
             return;
         }
         try {
-            leadershipService.requireLiveLeadership();
+            leadershipService.requireLiveSubmissionLeadership();
         } catch (TradingLeadershipService.TradingLeadershipUnavailableException e) {
             decisionRecord.setExecutionStatus("SKIPPED")
                     .setSkipReason(e.getMessage());
@@ -297,11 +297,11 @@ public class LiveOrderExecutionService {
 
         OrderActionResp actionResp;
         try {
-            // Re-check both distributed ownership and the persistent stop after
+            // Re-check runtime admission, distributed ownership and the persistent stop after
             // acquiring submission ownership. Neither failure may be treated as
             // an ambiguous external submit because placeOrder was not called.
             fundSafetyService.requireActive();
-            leadershipService.requireLiveLeadership();
+            leadershipService.requireLiveSubmissionLeadership();
             requireNoOutstandingOrder(idempotencyKey);
             if (decision.getAction() == TradingAction.SELL) {
                 requireManagedSell(request);

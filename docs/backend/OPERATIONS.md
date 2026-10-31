@@ -163,6 +163,8 @@ Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8
 
 automation `stop` 只阻止后续循环并停止域运行时，不代表资金级停止。真实资金异常应使用下节的持久化停止；该动作会先阻止新单，再尽力撤销挂单，但不会自动市价平仓。
 
+对 `trading` 执行 `stop` 后，旧心跳和延迟进入的交易任务回调不会重新获取租约；停机前一批心跳在重启后也会被忽略。LIVE 在预留订单前及提交前检查本实例的交易运行状态和模块开关，停止或禁用时拒绝新的准入。已经通过最终检查的在途请求仍可能完成，任务停止不会撤销该请求。手工对账、未知单人工恢复仍可在停机时按原有租约及资金安全门禁执行；独立的 `trading-ai` 任务保留自己的启停控制，必要时也须单独停止。
+
 ## 多实例单写租约
 
 同一 OKX 资金账户运行多个后端实例时，必须先确认 Flyway 已完成租约表结构迁移；更早旧库的前置条件见[数据库说明](../../backend/src/main/resources/db/README.md)，再在所有实例启用：
@@ -184,7 +186,7 @@ $env:TRADE_TRADING_LEADERSHIP_HEARTBEAT_INTERVAL_MS="5000"
 - 集群中必须恰好一个实例 `leadership.leader=true`；
 - follower 的决策、事件扫描和对账循环会跳过；
 - 手工对账发到 follower 会返回 HTTP 409，应转发到当前 leader；
-- LIVE 下单在预留订单前和调用 OKX 前都会重新验证数据库租约。
+- LIVE 下单在预留订单前和调用 OKX 前都会检查交易运行状态、模块开关，并重新验证数据库租约；停机时的人工恢复不会重新放行 LIVE 下单。
 
 `TRADE_TRADING_LEADERSHIP_REQUIRED_FOR_LIVE` 默认是 `true`。因此即使误开
 `execution-mode=live + live-enabled=true`，未启用租约或数据库租约不可用时也不会调用 OKX 下单。

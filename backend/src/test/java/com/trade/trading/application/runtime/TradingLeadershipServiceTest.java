@@ -9,9 +9,12 @@ import org.springframework.scheduling.TaskScheduler;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -28,11 +31,13 @@ class TradingLeadershipServiceTest {
         AtomicInteger runs = new AtomicInteger();
         TradingLeadershipService service = service(properties, new InMemoryLeaseRepository());
 
-        assertTrue(service.runIfLeader("paper-decision", runs::incrementAndGet));
+        assertFalse(service.runIfRunningLeader("paper-decision", runs::incrementAndGet));
+        service.start();
+        assertTrue(service.runIfRunningLeader("paper-decision", runs::incrementAndGet));
         assertEquals(1, runs.get());
         assertThrows(
                 TradingLeadershipService.TradingLeadershipUnavailableException.class,
-                service::requireLiveLeadership
+                service::requireLiveSubmissionLeadership
         );
     }
 
@@ -48,8 +53,8 @@ class TradingLeadershipServiceTest {
         first.start();
         second.start();
 
-        assertTrue(first.runIfLeader("decision", firstRuns::incrementAndGet));
-        assertFalse(second.runIfLeader("decision", secondRuns::incrementAndGet));
+        assertTrue(first.runIfRunningLeader("decision", firstRuns::incrementAndGet));
+        assertFalse(second.runIfRunningLeader("decision", secondRuns::incrementAndGet));
         assertEquals(1, firstRuns.get());
         assertEquals(0, secondRuns.get());
         assertTrue(first.status().leader());
@@ -57,7 +62,7 @@ class TradingLeadershipServiceTest {
 
         first.stop();
 
-        assertTrue(second.runIfLeader("decision", secondRuns::incrementAndGet));
+        assertTrue(second.runIfRunningLeader("decision", secondRuns::incrementAndGet));
         assertEquals(1, secondRuns.get());
         assertTrue(second.status().leader());
         assertEquals(2L, second.status().fencingToken());
@@ -74,10 +79,90 @@ class TradingLeadershipServiceTest {
 
         assertThrows(
                 TradingLeadershipService.TradingLeadershipUnavailableException.class,
-                service::requireLiveLeadership
+                service::requireLiveSubmissionLeadership
         );
         assertFalse(service.status().leader());
         assertEquals(1, service.status().consecutiveFailures());
+    }
+
+    @Test
+    void canceledHeartbeatCannotReacquireAReleasedLeaseOrRenewAfterRestart() {
+        TradingProperties properties = leadershipProperties();
+        InMemoryLeaseRepository repository = new InMemoryLeaseRepository();
+        TaskScheduler scheduler = mock(TaskScheduler.class);
+        List<Runnable> heartbeats = new ArrayList<>();
+        when(scheduler.scheduleWithFixedDelay(any(Runnable.class), any(Duration.class)))
+                .thenAnswer(invocation -> {
+                    heartbeats.add(invocation.getArgument(0));
+                    return mock(java.util.concurrent.ScheduledFuture.class);
+                });
+        var first = new TradingLeadershipService(repository,
+                properties, scheduler, new SimpleMeterRegistry(), "instance-a");
+        first.start();
+        first.stop();
+
+        // cancel(false) cannot recall a callback already waiting for the service monitor.
+        heartbeats.getFirst().run();
+
+        assertFalse(first.status().running());
+        assertFalse(first.isLeader());
+        assertEquals(1, repository.acquisitions);
+        var second = service(properties, repository, "instance-b");
+        second.start();
+        assertTrue(second.isLeader());
+        second.stop();
+        first.start();
+        int afterRestart = repository.acquisitions;
+        heartbeats.getFirst().run();
+        assertEquals(afterRestart, repository.acquisitions);
+        heartbeats.get(1).run();
+        assertEquals(afterRestart + 1, repository.acquisitions);
+    }
+
+    @Test
+    void stoppedCallbacksCannotReacquireButManualRecoveryRemainsAvailable() {
+        TradingProperties properties = leadershipProperties();
+        InMemoryLeaseRepository repository = new InMemoryLeaseRepository();
+        TradingLeadershipService service = service(properties, repository);
+        AtomicInteger runs = new AtomicInteger();
+        service.start();
+        service.stop();
+
+        assertFalse(service.runIfRunningLeader("decision", runs::incrementAndGet));
+        assertFalse(service.runIfRunningLeader("event-scan", runs::incrementAndGet));
+        assertFalse(service.runIfRunningLeader("reconciliation", runs::incrementAndGet));
+        assertThrows(TradingLeadershipService.TradingLeadershipUnavailableException.class,
+                service::requireLiveSubmissionLeadership);
+        assertEquals(0, runs.get());
+        assertEquals(1, repository.acquisitions);
+
+        properties.setEnabled(false);
+        assertTrue(service.runIfLeader("manual-reconciliation", runs::incrementAndGet));
+        assertDoesNotThrow(service::requireLiveLeadership);
+        assertEquals(1, runs.get());
+        assertFalse(service.status().running());
+        assertThrows(TradingLeadershipService.TradingLeadershipUnavailableException.class,
+                service::requireLiveSubmissionLeadership);
+    }
+
+    @Test
+    void runtimeAndModuleGatesStillApplyWhenLiveLeaseRequirementIsDisabled() {
+        TradingProperties properties = leadershipProperties();
+        properties.getLeadership().setRequiredForLive(false);
+        TradingLeadershipService service = service(properties, new InMemoryLeaseRepository());
+        assertThrows(TradingLeadershipService.TradingLeadershipUnavailableException.class,
+                service::requireLiveSubmissionLeadership);
+        service.start();
+        assertDoesNotThrow(service::requireLiveSubmissionLeadership);
+        properties.setEnabled(false);
+        assertThrows(TradingLeadershipService.TradingLeadershipUnavailableException.class,
+                service::requireLiveSubmissionLeadership);
+        properties.setEnabled(true);
+        service.stop();
+        assertThrows(TradingLeadershipService.TradingLeadershipUnavailableException.class,
+                service::requireLiveSubmissionLeadership);
+        service.start();
+        assertDoesNotThrow(service::requireLiveSubmissionLeadership);
     }
 
     private static TradingProperties leadershipProperties() {
@@ -116,6 +201,7 @@ class TradingLeadershipServiceTest {
         private TradingLeaderLease lease;
         private boolean fail;
         private boolean shortLease;
+        private int acquisitions;
 
         @Override
         public synchronized TradingLeaderLease acquireOrRenew(
@@ -123,6 +209,7 @@ class TradingLeadershipServiceTest {
                 String ownerId,
                 Duration leaseDuration
         ) {
+            acquisitions++;
             if (fail) {
                 throw new IllegalStateException("database unavailable");
             }

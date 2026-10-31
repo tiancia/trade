@@ -20,6 +20,8 @@ import com.trade.trading.application.risk.FundSafetyService;
 import com.trade.trading.application.risk.RiskControlService;
 import com.trade.trading.application.runtime.TradingLeadershipService;
 import com.trade.trading.domain.model.ExecutionMode;
+import com.trade.trading.domain.model.TradingLeaderLease;
+import com.trade.trading.port.TradingLeaderLeaseRepository;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.domain.model.TradingState;
@@ -33,15 +35,19 @@ import com.trade.trading.infrastructure.persistence.TradingStateRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.scheduling.TaskScheduler;
 
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -363,7 +369,7 @@ class LiveOrderExecutionServiceTest {
         TradingLeadershipService leadershipService = mock(TradingLeadershipService.class);
         doThrow(new TradingLeadershipService.TradingLeadershipUnavailableException(
                 "Live OKX order blocked: trading lease unavailable"
-        )).when(leadershipService).requireLiveLeadership();
+        )).when(leadershipService).requireLiveSubmissionLeadership();
         TradingDecisionRecord record = new TradingDecisionRecord();
 
         broker(
@@ -389,7 +395,7 @@ class LiveOrderExecutionServiceTest {
                         "Live OKX order blocked: lease transferred"
                 ))
                 .when(leadershipService)
-                .requireLiveLeadership();
+                .requireLiveSubmissionLeadership();
         TradingDecisionRecord record = new TradingDecisionRecord();
 
         broker(
@@ -404,6 +410,74 @@ class LiveOrderExecutionServiceTest {
         assertEquals("SKIPPED", record.getExecutionStatus());
         assertEquals(OrderStatus.REJECTED.name(), record.getOrderStatus());
         assertTrue(record.getSkipReason().contains("lease transferred"));
+    }
+
+    @Test
+    void stoppingRuntimeAfterReservationCannotReacquireLeadershipAndSubmit() {
+        TradingProperties properties = liveProperties();
+        TradingLeadershipService leadership = runningLeadership(properties);
+        FundSafetyService safety = mock(FundSafetyService.class);
+        doNothing().doAnswer(invocation -> { leadership.stop(); return null; }).when(safety).requireActive();
+        FakeOkxApi api = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(properties, api, new InMemoryTradingOrderRepository(), safety, leadership)
+                .execute(buyDecision(), context("0", "1000"), record);
+
+        assertNull(api.orderReq);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertEquals("REJECTED", record.getOrderStatus());
+        assertTrue(record.getSkipReason().contains("stopped"));
+        assertTrue(!leadership.status().running() && !leadership.status().leader());
+    }
+
+    @Test
+    void disablingModuleAfterReservationBlocksTheNewExternalSubmission() {
+        TradingProperties properties = liveProperties();
+        TradingLeadershipService leadership = runningLeadership(properties);
+        FundSafetyService safety = mock(FundSafetyService.class);
+        doNothing().doAnswer(invocation -> { properties.setEnabled(false); return null; }).when(safety).requireActive();
+        FakeOkxApi api = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(properties, api, new InMemoryTradingOrderRepository(), safety, leadership)
+                .execute(buyDecision(), context("0", "1000"), record);
+
+        assertNull(api.orderReq);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertEquals("REJECTED", record.getOrderStatus());
+        assertTrue(record.getSkipReason().contains("disabled"));
+    }
+
+    @Test
+    void restartedRuntimeCanSubmitWithFreshLeadership() {
+        TradingProperties properties = liveProperties();
+        TradingLeadershipService leadership = runningLeadership(properties);
+        leadership.stop();
+        leadership.start();
+        FakeOkxApi api = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(properties, api, new InMemoryTradingOrderRepository(), mock(FundSafetyService.class), leadership)
+                .execute(buyDecision(), context("0", "1000"), record);
+
+        assertNotNull(api.orderReq);
+        assertEquals("FILLED", record.getExecutionStatus());
+    }
+
+    private static TradingLeadershipService runningLeadership(TradingProperties properties) {
+        properties.getLeadership().setEnabled(true);
+        properties.getLeadership().setInstanceId("offline-runtime-test");
+        TradingLeaderLeaseRepository leases = mock(TradingLeaderLeaseRepository.class);
+        when(leases.acquireOrRenew(any(), any(), any())).thenAnswer(invocation -> new TradingLeaderLease(
+                invocation.getArgument(0), invocation.getArgument(1), Instant.now().plusSeconds(60), 1, Instant.now()));
+        when(leases.release(any(), any())).thenReturn(true);
+        TaskScheduler scheduler = mock(TaskScheduler.class);
+        when(scheduler.scheduleWithFixedDelay(any(Runnable.class), any(Duration.class)))
+                .thenReturn(mock(java.util.concurrent.ScheduledFuture.class));
+        var leadership = new TradingLeadershipService(leases, properties, scheduler, new SimpleMeterRegistry());
+        leadership.start();
+        return leadership;
     }
 
     @Test
@@ -524,7 +598,7 @@ class LiveOrderExecutionServiceTest {
         FakeOkxApi api = new FakeOkxApi(filledOrder("sell", "0.2", "50000"));
         TradingLeadershipService leadership = mock(TradingLeadershipService.class);
         doNothing().doAnswer(invocation -> { repository.recordSell(new BigDecimal("0.2")); return null; })
-                .when(leadership).requireLiveLeadership();
+                .when(leadership).requireLiveSubmissionLeadership();
         TradingDecisionRecord record = new TradingDecisionRecord();
 
         broker(properties, api, new InMemoryTradingOrderRepository(), mock(FundSafetyService.class), leadership,
@@ -546,7 +620,7 @@ class LiveOrderExecutionServiceTest {
         doNothing().doAnswer(invocation -> {
             doThrow(new IllegalStateException("database unavailable")).when(repository).getState();
             return null;
-        }).when(leadership).requireLiveLeadership();
+        }).when(leadership).requireLiveSubmissionLeadership();
         TradingDecisionRecord record = new TradingDecisionRecord();
 
         broker(properties, api, new InMemoryTradingOrderRepository(), mock(FundSafetyService.class), leadership,

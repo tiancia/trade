@@ -41,6 +41,7 @@ public class TradingLeadershipService {
     private final String ownerId;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean leader = new AtomicBoolean(false);
+    private long generation;
     private volatile ScheduledFuture<?> heartbeat;
     private volatile TradingLeaderLease currentLease;
     private volatile Instant lastAttemptAt;
@@ -82,6 +83,7 @@ public class TradingLeadershipService {
         if (!running.compareAndSet(false, true)) {
             return;
         }
+        long startedGeneration = ++generation;
         if (!isEnabled()) {
             log.warn(
                     "Database trading leadership is disabled; PAPER remains available, "
@@ -93,11 +95,12 @@ public class TradingLeadershipService {
             validateConfiguration();
             refreshSafely("start");
             heartbeat = scheduler.scheduleWithFixedDelay(
-                    () -> refreshSafely("heartbeat"),
+                    () -> refreshHeartbeat(startedGeneration),
                     Duration.ofMillis(properties.getLeadership().getHeartbeatIntervalMs())
             );
         } catch (RuntimeException e) {
             running.set(false);
+            generation++;
             leader.set(false);
             releaseQuietly();
             throw e;
@@ -108,6 +111,7 @@ public class TradingLeadershipService {
         if (!running.compareAndSet(true, false)) {
             return;
         }
+        generation++;
         if (heartbeat != null) {
             heartbeat.cancel(false);
             heartbeat = null;
@@ -117,13 +121,33 @@ public class TradingLeadershipService {
     }
 
     /**
-     * Runs one scheduled operation on the current leader. Leadership disabled
-     * means single-instance compatibility mode; the live broker still enforces
-     * {@link #requireLiveLeadership()} before any external order submission.
+     * Runs an operation with on-demand leadership, including manual recovery
+     * and the independently managed AI advisor. Trading task callbacks must use
+     * {@link #runIfRunningLeader(String, Runnable)} instead.
      */
     public boolean runIfLeader(String operation, Runnable action) {
+        if (!mayRun(operation, false)) {
+            return false;
+        }
+        action.run();
+        return true;
+    }
+
+    /** Rejects delayed trading task callbacks once the runtime has stopped. */
+    public boolean runIfRunningLeader(String operation, Runnable action) {
+        if (!mayRun(operation, true)) {
+            return false;
+        }
+        // Do not hold the lifecycle monitor across market or exchange calls.
+        action.run();
+        return true;
+    }
+
+    private synchronized boolean mayRun(String operation, boolean requireRunning) {
+        if (requireRunning && !running.get()) {
+            return false;
+        }
         if (!isEnabled()) {
-            action.run();
             return true;
         }
         if (!isLeader() && !refreshSafely("before-" + metricValue(operation))) {
@@ -136,11 +160,21 @@ public class TradingLeadershipService {
             );
             return false;
         }
-        action.run();
         return true;
     }
 
-    /** Enforces an up-to-date lease immediately before a real OKX submission. */
+    /** Admits a new live submission only while this trading runtime is active. */
+    public synchronized void requireLiveSubmissionLeadership() {
+        if (!properties.isEnabled()) {
+            throw new TradingLeadershipUnavailableException("Live OKX order blocked: trading module disabled");
+        }
+        if (!running.get()) {
+            throw new TradingLeadershipUnavailableException("Live OKX order blocked: trading runtime stopped");
+        }
+        requireLiveLeadership();
+    }
+
+    /** Enforces a fresh lease, also allowing manual recovery while tasks are stopped. */
     public void requireLiveLeadership() {
         if (!properties.getLeadership().isRequiredForLive()) {
             return;
@@ -188,6 +222,12 @@ public class TradingLeadershipService {
             leader.set(false);
         }
         return active;
+    }
+
+    private synchronized void refreshHeartbeat(long expectedGeneration) {
+        if (running.get() && generation == expectedGeneration) {
+            refreshSafely("heartbeat");
+        }
     }
 
     private synchronized boolean refreshSafely(String trigger) {

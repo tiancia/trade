@@ -31,12 +31,35 @@ import static org.mockito.Mockito.when;
 class TradingTriggerServiceTest {
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-22T08:04:20Z"), ZoneOffset.UTC);
 
+    @Test
+    void stoppedRuntimeRejectsAllTradingTaskCallbacks() {
+        var engine = mock(TradingStrategyEngine.class);
+        var reconciliation = mock(OrderReconciliationService.class);
+        var properties = new TradingProperties();
+        properties.getLeadership().setEnabled(false);
+        var leadership = new TradingLeadershipService(mock(com.trade.trading.port.TradingLeaderLeaseRepository.class),
+                properties, mock(org.springframework.scheduling.TaskScheduler.class),
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+        leadership.start();
+        leadership.stop();
+        var service = new TradingTriggerService(engine, reconciliation, leadership,
+                mock(TradingMarketSource.class), mock(TradingMarketFeed.class), mock(HotMarketDataCache.class),
+                mock(TradingEventDetector.class), mock(TradingStateStore.class), properties,
+                mock(PaperAccountService.class), CLOCK);
+
+        service.runScheduledDecision();
+        service.scanEventTriggers();
+        service.reconcileOrders();
+
+        org.mockito.Mockito.verifyNoInteractions(engine, reconciliation);
+    }
+
     @Test void scheduledAndEventFailuresReachTheAutomationCaller() {
         var engine = mock(TradingStrategyEngine.class);
         when(engine.isIntradayStrategyActive()).thenReturn(true);
         when(engine.runDecision(any())).thenThrow(new IllegalStateException("decision failed"));
         var leadership = mock(TradingLeadershipService.class);
-        when(leadership.runIfLeader(anyString(), any(Runnable.class))).thenAnswer(call -> {
+        when(leadership.runIfRunningLeader(anyString(), any(Runnable.class))).thenAnswer(call -> {
             call.<Runnable>getArgument(1).run(); return true;
         });
         var service = new TradingTriggerService(engine, mock(OrderReconciliationService.class), leadership,
@@ -52,7 +75,7 @@ class TradingTriggerServiceTest {
         TradingStrategyEngine engine = mock(TradingStrategyEngine.class);
         when(engine.isIntradayStrategyActive()).thenReturn(true);
         TradingLeadershipService leadership = mock(TradingLeadershipService.class);
-        when(leadership.runIfLeader(anyString(), any(Runnable.class))).thenAnswer(call -> {
+        when(leadership.runIfRunningLeader(anyString(), any(Runnable.class))).thenAnswer(call -> {
             call.<Runnable>getArgument(1).run(); return true;
         });
         TradingEventDetector detector = mock(TradingEventDetector.class);
@@ -82,7 +105,7 @@ class TradingTriggerServiceTest {
         List<CandleResp> candles = confirmedCandles(21);
         TradingState state = new TradingState();
         TradingLeadershipService leadershipService = mock(TradingLeadershipService.class);
-        when(leadershipService.runIfLeader(anyString(), any(Runnable.class)))
+        when(leadershipService.runIfRunningLeader(anyString(), any(Runnable.class)))
                 .thenAnswer(invocation -> {
                     invocation.<Runnable>getArgument(1).run();
                     return true;
@@ -124,7 +147,7 @@ class TradingTriggerServiceTest {
         TradingProperties properties = new TradingProperties();
         properties.setOneMinuteCandleLimit(25);
         TradingLeadershipService leadership = mock(TradingLeadershipService.class);
-        when(leadership.runIfLeader(anyString(), any(Runnable.class))).thenAnswer(call -> {
+        when(leadership.runIfRunningLeader(anyString(), any(Runnable.class))).thenAnswer(call -> {
             call.<Runnable>getArgument(1).run();
             return true;
         });

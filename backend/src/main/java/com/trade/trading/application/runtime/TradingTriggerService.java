@@ -91,21 +91,21 @@ public class TradingTriggerService {
     }
 
     public void runScheduledDecision() {
-        leadershipService.runIfLeader(
+        leadershipService.runIfRunningLeader(
                 "scheduled-decision",
                 () -> tradingEngine.runDecision(TradingTrigger.scheduled())
         );
     }
 
     public void reconcileOrders() {
-        leadershipService.runIfLeader(
+        leadershipService.runIfRunningLeader(
                 "order-reconciliation",
                 () -> orderReconciliationService.reconcileOnce()
         );
     }
 
     public void scanEventTriggers() {
-        leadershipService.runIfLeader("event-scan", () -> scanEventTriggersAsLeader());
+        leadershipService.runIfRunningLeader("event-scan", () -> scanEventTriggersAsLeader());
     }
 
     private void scanEventTriggersAsLeader() {
