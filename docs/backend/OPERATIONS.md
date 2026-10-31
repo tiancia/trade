@@ -229,6 +229,8 @@ Invoke-RestMethod http://127.0.0.1:8080/api/trading/safety
 
 OKX 的超时、空响应或缺少完整身份确认会使订单保持 `SUBMIT_UNKNOWN`。先按原 `clOrdId` 查询与结算，禁止因未收到确认就创建新订单；50004 的含糊结果语义见 [OKX 官方说明](https://www.okx.com/en-us/help/api-faq)。累计成交快照缺少有效数量或均价、数值错误或数量回退时保留未决并报告失败，等待取得完整快照后再推进账本。
 
+下单返回 `51016`（客户端订单号已存在，包括带子码的响应）同样保持 `SUBMIT_UNKNOWN`，因为原订单可能已被接受，不能标为最终拒单后继续增加敞口。返回了逐单结果时，拒单也必须具备唯一结果、匹配的 `clOrdId` 和明确错误码；身份错配、缺少子结果的通用失败、部分成功或成功/失败冲突均保留待对账。普通余额不足等明确业务拒单仍进入 `REJECTED`。错误码语义见 [OKX 错误码文档](https://www.okx.com/docs-v5/en/#error-code-rest-api-public)。
+
 撤单快照也必须显式返回累计成交量 `accFillSz`；缺失或空值不能当作零成交，首次看到的撤单同样可能已有部分成交。快照必须至少匹配本地已知的 `ordId` 或确定性 `clOrdId`；未知提交尚未保存交易所 ID 时，不能仅凭一个陌生 `ordId` 结算。上述异常不清除未决订单、不导入余额、不重发订单。
 
 对于持续返回 51603 的未知单，`GET /api/trading/orders/unresolved` 返回待处理订单及版本。查不到并不能证明从未成交，[OKX 订单查询文档](https://www.okx.com/docs-v5/en/#order-book-trading-trade-get-order-details)规定了历史记录保留范围；系统不会按超时或查询次数自动清除未知单。默认连续三次对账失败仍会 HALT。

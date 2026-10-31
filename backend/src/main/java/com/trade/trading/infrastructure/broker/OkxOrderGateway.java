@@ -25,18 +25,36 @@ public class OkxOrderGateway implements ExchangeOrderGateway {
         // An absent acknowledgement, timeout, or system error cannot prove that
         // the exchange rejected a submit. Leave it unresolved so the durable
         // clOrdId is queried and new exposure stays blocked.
-        if (response == null || !hasText(response.getCode())
+        if (response == null || !hasText(response.getCode()) || "2".equals(response.getCode())
                 || ambiguousCode(response.getCode())
                 || actionResp != null && ambiguousCode(actionResp.getSCode())) {
             throw ambiguousSubmission(response, actionResp);
         }
-        if (!"0".equals(response.getCode())
-                || actionResp != null && hasText(actionResp.getSCode()) && !"0".equals(actionResp.getSCode())) {
+
+        if (response.getData() == null || response.getData().isEmpty()) {
+            // Envelope-only validation errors are possible. A generic failure
+            // without an order result does not prove this order was rejected.
+            if (!isErrorCode(response.getCode())) {
+                throw ambiguousSubmission(response, actionResp);
+            }
             throw new OrderRejectedException("OKX order rejected: " + orderResponseMessage(response, actionResp));
         }
-        if (actionResp == null || response.getData().size() != 1
-                || !"0".equals(actionResp.getSCode()) || !hasText(actionResp.getOrdId())
+
+        // Validate rejection identities as well as successful acknowledgements:
+        // a different order's error must never release our unresolved-order gate.
+        if (actionResp == null || response.getData().size() != 1 || !hasText(actionResp.getSCode())
                 || !hasText(req.getClOrdId()) || !req.getClOrdId().equals(actionResp.getClOrdId())) {
+            throw ambiguousSubmission(response, actionResp);
+        }
+        if (!"0".equals(actionResp.getSCode())) {
+            if (!isErrorCode(actionResp.getSCode())
+                    || !("0".equals(response.getCode()) || "1".equals(response.getCode())
+                    || actionResp.getSCode().equals(response.getCode()))) {
+                throw ambiguousSubmission(response, actionResp);
+            }
+            throw new OrderRejectedException("OKX order rejected: " + orderResponseMessage(response, actionResp));
+        }
+        if (!"0".equals(response.getCode()) || !hasText(actionResp.getOrdId())) {
             throw ambiguousSubmission(response, actionResp);
         }
         log.info("OKX order accepted: ordId={}, clOrdId={}", actionResp.getOrdId(), actionResp.getClOrdId());
@@ -44,8 +62,15 @@ public class OkxOrderGateway implements ExchangeOrderGateway {
     }
 
     private static boolean ambiguousCode(String code) {
-        return "50004".equals(code) || "50026".equals(code)
-                || "50001".equals(code) || "50013".equals(code);
+        String baseCode = code == null ? "" : code.split("_", 2)[0];
+        // 51016 means an order with this clOrdId already exists. Reconcile that
+        // identity; marking it REJECTED could leave real exposure untracked.
+        return "50004".equals(baseCode) || "50026".equals(baseCode)
+                || "50001".equals(baseCode) || "50013".equals(baseCode) || "51016".equals(baseCode);
+    }
+
+    private static boolean isErrorCode(String code) {
+        return code != null && code.matches("5[0-9]{4}(?:_[0-9]+)?");
     }
 
     private static IllegalStateException ambiguousSubmission(

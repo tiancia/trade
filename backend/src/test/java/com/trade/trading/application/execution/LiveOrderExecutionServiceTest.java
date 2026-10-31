@@ -205,6 +205,110 @@ class LiveOrderExecutionServiceTest {
     }
 
     @Test
+    void duplicateClientOrderIdKeepsTheOriginalOrderUnresolved() {
+        assertAmbiguousResponseBlocksNextSignal(request ->
+                OkxResponse.fail("51016", "Client order ID already exists"));
+        assertAmbiguousResponseBlocksNextSignal(request ->
+                orderAcknowledgement("1", "51016", request.getClOrdId(), ""));
+        assertAmbiguousResponseBlocksNextSignal(request ->
+                orderAcknowledgement("1", "51016_1000", request.getClOrdId(), ""));
+    }
+
+    @Test
+    void malformedRejectionsCannotReleaseTheUnresolvedOrderGate() {
+        assertAmbiguousResponseBlocksNextSignal(request ->
+                orderAcknowledgement("1", "51008", "another-order", ""));
+        assertAmbiguousResponseBlocksNextSignal(request ->
+                orderAcknowledgement("1", "51008", null, ""));
+        assertAmbiguousResponseBlocksNextSignal(request ->
+                orderAcknowledgement("1", null, request.getClOrdId(), ""));
+        assertAmbiguousResponseBlocksNextSignal(request ->
+                orderAcknowledgement("1", "0", request.getClOrdId(), "accepted-order"));
+        assertAmbiguousResponseBlocksNextSignal(request -> OkxResponse.fail("1", "Operation failed"));
+        assertAmbiguousResponseBlocksNextSignal(request -> OkxResponse.fail("2", "Partially succeeded"));
+        assertAmbiguousResponseBlocksNextSignal(request -> OkxResponse.fail("unknown", "Invalid result"));
+        assertAmbiguousResponseBlocksNextSignal(request -> {
+            var response = orderAcknowledgement("1", "51008", request.getClOrdId(), "");
+            response.setData(List.of(response.getData().getFirst(), response.getData().getFirst()));
+            return response;
+        });
+    }
+
+    @Test
+    void matchingItemBusinessRejectionRemainsTerminal() {
+        OkxApi okx = mock(OkxApi.class);
+        when(okx.placeOrder(any())).thenAnswer(invocation -> {
+            PlaceOrderReq request = invocation.getArgument(0);
+            return orderAcknowledgement("1", "51008", request.getClOrdId(), "");
+        });
+        TradingDecisionRecord record = new TradingDecisionRecord().setDecisionId("item-rejected-submit");
+
+        assertThrows(com.trade.trading.port.ExchangeOrderGateway.OrderRejectedException.class,
+                () -> broker(liveProperties(), okx).execute(buyDecision(), context("0", "1000"), record));
+
+        assertEquals(OrderStatus.REJECTED.name(), record.getOrderStatus());
+    }
+
+    @Test
+    void duplicateClientOrderIdCanReconcileTheExistingFillWithoutResubmitting() {
+        OkxApi okx = mock(OkxApi.class);
+        when(okx.placeOrder(any())).thenReturn(OkxResponse.fail("51016", "Client order ID already exists"));
+        when(okx.getOrder(any())).thenAnswer(invocation -> {
+            OrderQueryReq query = invocation.getArgument(0);
+            OrderInfoResp existing = filledOrder("buy", "0.002", "50000");
+            existing.setOrdId("existing-order");
+            existing.setClOrdId(query.getClOrdId());
+            return OkxResponse.success(List.of(existing));
+        });
+        var orders = new InMemoryTradingOrderRepository();
+        var state = new TradingStateRepository(tempDir.resolve("duplicate-id-reconciliation.json"));
+        var execution = broker(liveProperties(), okx, orders,
+                mock(FundSafetyService.class), mock(TradingLeadershipService.class), state);
+        var first = new TradingDecisionRecord().setDecisionId("duplicate-id");
+        assertThrows(IllegalStateException.class,
+                () -> execution.execute(buyDecision(), context("0", "1000"), first));
+
+        var replay = new TradingDecisionRecord().setDecisionId("duplicate-id");
+        execution.execute(buyDecision(), context("0", "1000"), replay);
+
+        assertEquals(OrderStatus.FILLED.name(), replay.getOrderStatus());
+        assertTrue(replay.isIdempotentReplay());
+        assertEquals(0, new BigDecimal("0.002").compareTo(state.getState().getTrackedBaseAmount()));
+        verify(okx, times(1)).placeOrder(any());
+    }
+
+    private void assertAmbiguousResponseBlocksNextSignal(
+            java.util.function.Function<PlaceOrderReq, OkxResponse<OrderActionResp>> response) {
+        OkxApi okx = mock(OkxApi.class);
+        when(okx.placeOrder(any())).thenAnswer(invocation -> response.apply(invocation.getArgument(0)));
+        InMemoryTradingOrderRepository orders = new InMemoryTradingOrderRepository();
+        LiveOrderExecutionService execution = broker(liveProperties(), okx, orders);
+        TradingDecisionRecord first = new TradingDecisionRecord().setDecisionId("ambiguous-rejection");
+
+        assertThrows(IllegalStateException.class,
+                () -> execution.execute(buyDecision(), context("0", "1000"), first));
+
+        assertEquals(OrderStatus.SUBMIT_UNKNOWN.name(), first.getOrderStatus());
+        assertEquals(OrderStatus.SUBMIT_UNKNOWN,
+                orders.findByIdempotencyKey(first.getIdempotencyKey()).orElseThrow().getStatus());
+        TradingDecisionRecord next = new TradingDecisionRecord().setDecisionId("next-signal-after-rejection");
+        execution.execute(buyDecision(), context("0", "1000"), next);
+        assertEquals("SKIPPED", next.getExecutionStatus());
+        verify(okx, times(1)).placeOrder(any());
+    }
+
+    private static OkxResponse<OrderActionResp> orderAcknowledgement(
+            String code, String itemCode, String clientOrderId, String orderId) {
+        OrderActionResp item = new OrderActionResp();
+        item.setSCode(itemCode);
+        item.setClOrdId(clientOrderId);
+        item.setOrdId(orderId);
+        var response = OkxResponse.success(List.of(item));
+        response.setCode(code);
+        return response;
+    }
+
+    @Test
     void sameConfirmedSignalCannotSubmitAgainAfterSizeConfigOrFastMarketSnapshotChanges() {
         TradingProperties properties = liveProperties();
         FakeOkxApi okxApi = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
