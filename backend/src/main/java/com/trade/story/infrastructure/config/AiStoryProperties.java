@@ -9,7 +9,7 @@ import java.util.List;
 @Data
 @ConfigurationProperties(prefix = "trade.story")
 public class AiStoryProperties {
-    private boolean enabled = false;
+    private volatile boolean enabled = false;
     private long generationFixedDelayMs = 14_400_000L;
     private long initialDelayMs = 120_000L;
     private String outputDir = "../story";

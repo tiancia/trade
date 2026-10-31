@@ -25,7 +25,7 @@ public class XConfiguration {
     public XHumanReviewGateway telegramXReviewGateway(TelegramApi api, TelegramClientProperties client,
             XTelegramReviewProperties review, XWorkflowProperties workflow, XReviewDeliveryStore deliveries) {
         review.validate(client, workflow);
-        if (!workflow.isEnabled() || !review.isEnabled()) return new UnavailableXReviewGateway();
+        if (!review.isEnabled()) return new UnavailableXReviewGateway();
         return new TelegramXReviewGateway(api, client, review, workflow, deliveries);
     }
 }

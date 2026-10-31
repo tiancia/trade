@@ -21,6 +21,7 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   SquareActivity,
   TestTube2,
@@ -31,6 +32,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { aiReviewScheduleLabel, apiTimestampMillis, backtestSelectionForStrategy, buildBacktestPayload, buildPaperSessionPayload, buildStrategyParametersPayload, createJsonRequestHeaders, decisionIndicatorEntries, filterConfigurationEvents, formatDateTimeLocal, formatReturnFraction, formatTradingTimestamp, intradayModes, marketDataIsFresh, mergeContiguousHistory, parameterFieldsForStrategy, reconcileCockpitRefresh } from "./lib/trading-api.mjs";
 
 type View = "overview" | "strategies" | "events" | "backtests";
@@ -848,6 +850,7 @@ export default function Home() {
 
       <aside className={`sidebar ${mobileNavOpen ? "open" : ""}`}>
         <nav aria-label="主导航">
+          <Link href="/controls" className="module-nav-link"><SlidersHorizontal size={19} /><span>功能管理</span></Link>
           {navItems.map((item) => {
             const Icon = item.icon;
             return (

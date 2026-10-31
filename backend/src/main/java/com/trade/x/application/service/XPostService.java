@@ -36,7 +36,7 @@ public class XPostService {
     private final XDraftGenerator generator;
     private final XHumanReviewGateway reviews;
     private final XPostPublisher publisher;
-    private final XWorkflowPolicy policy;
+    private java.util.function.Supplier<XWorkflowPolicy> policySource;
     private final long generationIntervalMs;
     private final Clock clock;
 
@@ -45,22 +45,23 @@ public class XPostService {
             XPostPublisher publisher, XWorkflowPolicy policy, XWorkflowProperties settings) {
         this(posts, generator, reviews, publisher, policy,
                 settings.getGenerationFixedDelayMs(), Clock.systemUTC());
+        this.policySource = settings::policy;
     }
 
     public XPostService(XPostRepository posts, XDraftGenerator generator, XHumanReviewGateway reviews,
             XPostPublisher publisher, XWorkflowPolicy policy, long generationIntervalMs, Clock clock) {
         if (generationIntervalMs < 1000) throw new IllegalArgumentException("Invalid X generation interval");
         this.posts = posts; this.generator = generator; this.reviews = reviews; this.publisher = publisher;
-        this.policy = policy; this.generationIntervalMs = generationIntervalMs; this.clock = clock;
+        this.policySource = () -> policy; this.generationIntervalMs = generationIntervalMs; this.clock = clock;
     }
 
     public Optional<XPost> generate() { return generate("manual:" + UUID.randomUUID(), false); }
 
     private Optional<XPost> generate(String key, boolean requireReviewDelivery) {
-        policy.requireGeneration();
+        policySource.get().requireGeneration();
         Instant now = now();
-        XPost reserved = XPost.generating(policy.targetUserId(), key, now, policy);
-        if (!posts.reserveGeneration(reserved, dayStart(now), policy.dailyGenerationLimit())) return Optional.empty();
+        XPost reserved = XPost.generating(policySource.get().targetUserId(), key, now, policySource.get());
+        if (!posts.reserveGeneration(reserved, dayStart(now), policySource.get().dailyGenerationLimit())) return Optional.empty();
         XPost generated;
         try {
             List<String> recentBodies = posts.recent(30).stream()
@@ -84,7 +85,7 @@ public class XPostService {
     }
 
     public boolean runGeneration() {
-        if (!policy.enabled() || !policy.generationEnabled()) return true;
+        if (!policySource.get().enabled() || !policySource.get().generationEnabled()) return true;
         // One durable reservation per UTC interval and account, including multiple app instances.
         try {
             Optional<XPost> result = generate("scheduled:" + Math.floorDiv(now().toEpochMilli(), generationIntervalMs), true);
@@ -102,9 +103,9 @@ public class XPostService {
     public List<XPostHistory> history(String id) { get(id); return posts.history(id); }
 
     public XPost revise(String id, long expectedRevision, String body) {
-        policy.requireEnabled();
+        policySource.get().requireEnabled();
         XPost current = get(id);
-        if (!policy.targetUserId().equals(current.targetUserId())) throw new IllegalStateException("X target account changed");
+        if (!policySource.get().targetUserId().equals(current.targetUserId())) throw new IllegalStateException("X target account changed");
         if (current.revision() != expectedRevision) throw new IllegalStateException("Post changed; reload before editing");
         String validated = XPostTextValidator.normalizeAndValidate(body, current.contentPolicy());
         XPost changed = current.revise(validated, now());
@@ -115,9 +116,9 @@ public class XPostService {
 
     /** Called only after the Telegram adapter authenticates the reviewer and bound message. */
     public XPost applyReview(XReviewDecision decision) {
-        policy.requireEnabled();
+        policySource.get().requireEnabled();
         XPost current = get(decision.reference());
-        if (!policy.targetUserId().equals(current.targetUserId())) throw new IllegalStateException("X target account changed");
+        if (!policySource.get().targetUserId().equals(current.targetUserId())) throw new IllegalStateException("X target account changed");
         if (matchesReview(current, decision)) return current;
         XPost changed = current.review(decision.version(), decision.approved(), decision.reviewer(),
                 decision.reason(), decision.decidedAt(), now());
@@ -126,7 +127,7 @@ public class XPostService {
     }
 
     public boolean runReviews() {
-        if (!policy.enabled()) return true;
+        if (!policySource.get().enabled()) return true;
         boolean[] approved = {false};
         reviews.poll(decision -> {
             boolean applied = consumeReview(decision);
@@ -138,7 +139,7 @@ public class XPostService {
 
     private boolean consumeReview(XReviewDecision decision) {
         XPost current = posts.find(decision.reference()).orElse(null);
-        if (current != null && !policy.targetUserId().equals(current.targetUserId())) return false;
+        if (current != null && !policySource.get().targetUserId().equals(current.targetUserId())) return false;
         if (matchesReview(current, decision)) return true;
         if (!canReview(current, decision)) return false;
         try { applyReview(decision); return true; }
@@ -152,7 +153,7 @@ public class XPostService {
 
     private boolean canReview(XPost post, XReviewDecision decision) {
         return post != null && post.status() == XPostStatus.PENDING_REVIEW
-                && policy.targetUserId().equals(post.targetUserId()) && post.contentVersion() == decision.version()
+                && policySource.get().targetUserId().equals(post.targetUserId()) && post.contentVersion() == decision.version()
                 && post.live(now()) && !decision.decidedAt().isBefore(post.updatedAt())
                 && !decision.decidedAt().isAfter(now().plusSeconds(30));
     }
@@ -169,7 +170,7 @@ public class XPostService {
     }
 
     public boolean runPublishing() {
-        if (!policy.enabled()) return true;
+        if (!policySource.get().enabled()) return true;
         boolean successful = true;
         for (XPost snapshot : posts.actionable(100)) {
             try { if (!process(snapshot)) successful = false; }
@@ -184,14 +185,14 @@ public class XPostService {
     private boolean process(XPost snapshot) {
         Instant now = now();
         if (snapshot.status() == XPostStatus.GENERATING) {
-            if (!snapshot.updatedAt().plus(policy.claimTimeout()).isAfter(now)) {
+            if (!snapshot.updatedAt().plus(policySource.get().claimTimeout()).isAfter(now)) {
                 requireSaved(posts.save(snapshot.generationFailed(now), snapshot.revision()));
                 return false;
             }
             return true;
         }
         if (snapshot.status() == XPostStatus.PUBLISHING) {
-            if (!snapshot.publishStartedAt().plus(policy.claimTimeout()).isAfter(now)) {
+            if (!snapshot.publishStartedAt().plus(policySource.get().claimTimeout()).isAfter(now)) {
                 XPost interrupted = snapshot.finish(XPostStatus.UNKNOWN, null,
                         "Publishing interrupted; verify on X before taking further action", now);
                 requireSaved(posts.finishPublishing(interrupted, snapshot.revision()));
@@ -202,11 +203,11 @@ public class XPostService {
         }
         if (!snapshot.live(now)) { posts.save(snapshot.expire(now), snapshot.revision()); return true; }
         if (snapshot.status() == XPostStatus.PENDING_REVIEW) return submitReview(snapshot);
-        if (!policy.publishingEnabled()) {
+        if (!policySource.get().publishingEnabled()) {
             recordWaiting(snapshot, "Waiting to publish: X workflow publishing is disabled", now);
             return true;
         }
-        if (!policy.targetUserId().equals(snapshot.targetUserId())) {
+        if (!policySource.get().targetUserId().equals(snapshot.targetUserId())) {
             recordWaiting(snapshot, "Waiting to publish: X target account differs from this draft", now);
             return true;
         }
@@ -216,11 +217,11 @@ public class XPostService {
                     ? "Publisher gates or credentials are unavailable" : reason), now);
             return false;
         }
-        policy.requirePublishing();
+        policySource.get().requirePublishing();
         String validated = XPostTextValidator.normalizeAndValidate(snapshot.body(), snapshot.contentPolicy());
         if (!validated.equals(snapshot.body())) throw new IllegalStateException("Reviewed X text is not canonical");
         XPost claimed = snapshot.claim(now);
-        if (!posts.claimPublishing(claimed, snapshot.revision(), dayStart(now), policy.dailyPublishLimit(), policy.publishInterval())) {
+        if (!posts.claimPublishing(claimed, snapshot.revision(), dayStart(now), policySource.get().dailyPublishLimit(), policySource.get().publishInterval())) {
             // A failed CAS is also reported as false: never overwrite a newer review or publishing claim.
             posts.find(snapshot.id()).filter(latest -> latest.revision() == snapshot.revision()
                     && latest.status() == XPostStatus.APPROVED).ifPresent(latest -> recordWaiting(latest,
@@ -259,7 +260,7 @@ public class XPostService {
     }
 
     private boolean submitReview(XPost post) {
-        if (post.status() != XPostStatus.PENDING_REVIEW || !policy.targetUserId().equals(post.targetUserId()) || !post.live(now())) return true;
+        if (post.status() != XPostStatus.PENDING_REVIEW || !policySource.get().targetUserId().equals(post.targetUserId()) || !post.live(now())) return true;
         if (reviews.disabled()) return true;
         try {
             var content = post.contentPolicy();

@@ -73,7 +73,9 @@ class WeiboTelegramReviewPropertiesTest {
         runner.withPropertyValues("trade.weibo.review.telegram.enabled=true",
                 "trade.weibo.review.telegram.chat-id=unfinished").run(context -> {
             assertThat(context).hasNotFailed();
-            assertThat(context.getBean(HumanReviewGateway.class)).isInstanceOf(UnavailableHumanReviewGateway.class);
+            assertThat(context.getBean(HumanReviewGateway.class)).isInstanceOf(TelegramHumanReviewGateway.class);
+            assertThat(context.getBean(HumanReviewGateway.class).disabled()).isTrue();
+            context.getBean(HumanReviewGateway.class).poll(decision -> { throw new AssertionError("Disabled module must not poll"); });
         });
         runner.withPropertyValues("trade.weibo.workflow.enabled=true", "trade.weibo.review.telegram.enabled=false",
                 "trade.weibo.review.telegram.chat-id=-100123").run(context -> {

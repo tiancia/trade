@@ -9,7 +9,7 @@ import java.math.BigDecimal;
 @Data
 @ConfigurationProperties(prefix = "trade.trading.ai")
 public class TradingAiProperties {
-    private boolean enabled = false;
+    private volatile boolean enabled = false;
     private boolean autoApply = false;
     private long reviewIntervalMs = 1800000;
     private int targetMinClosedTradesPerDay = 5;

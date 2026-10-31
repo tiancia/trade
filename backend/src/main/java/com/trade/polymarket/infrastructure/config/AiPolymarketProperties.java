@@ -10,7 +10,7 @@ import java.util.List;
 @Data
 @ConfigurationProperties(prefix = "trade.polymarket")
 public class AiPolymarketProperties {
-    private boolean enabled = false;
+    private volatile boolean enabled = false;
     private long decisionFixedDelayMs = 1_800_000L;
     private long initialDelayMs = 60_000L;
     private int marketLimit = 5;

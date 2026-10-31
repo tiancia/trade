@@ -6,7 +6,7 @@
 
 | 模块 | 类型 | 主要入口 | 配置前缀 / 数据 |
 | --- | --- | --- | --- |
-| `automation` | 跨域编排 | `AutomationTaskController`、`AutomationTaskRegistrar`、`AutomationTaskManager`、`DatabaseMigrationConfiguration` | `trade.automation.*`；启动前编排 Flyway，不拥有业务表 |
+| `automation` | 跨域编排 | `ModuleControlController`、`AutomationTaskController`、`AutomationTaskRegistrar`、`AutomationTaskManager`、`DatabaseMigrationConfiguration` | `trade.automation.*`；启动前编排 Flyway；`automation_module_switch` 保存模块选择 |
 | `trading` | 业务域 | `TradingController`、`TradingScheduler`、`TradingStrategyEngine` | `trade.trading.*`、`trade.okx.*`；MySQL 行情、策略选择、订单与金融状态，本地画像/近期决策记忆，Redis 热缓存；当前回测运行结果保存在进程内存 |
 | `polymarket` | 业务域 | `AiPolymarketScheduler`、`AiPolymarketService` | `trade.polymarket.*`；决策审计表 |
 | `story` | 业务域 | `AiStoryScheduler`、`AiStoryService` | `trade.story.*`；配置目录下的生成文件 |

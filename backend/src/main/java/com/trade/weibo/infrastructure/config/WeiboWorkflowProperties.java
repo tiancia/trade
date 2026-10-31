@@ -8,7 +8,7 @@ import java.time.Duration;
 @Data
 @ConfigurationProperties(prefix = "trade.weibo.workflow")
 public class WeiboWorkflowProperties {
-    private boolean enabled = false;
+    private volatile boolean enabled = false;
     private boolean generationEnabled = true;
     private boolean publishingEnabled = true;
     private String targetUid = "";
@@ -24,7 +24,9 @@ public class WeiboWorkflowProperties {
     private long publishingFixedDelayMs = 60000;
     private long initialDelayMs = 30000;
 
-    public WeiboWorkflowPolicy policy() {
+    public WeiboWorkflowPolicy policy() { return policy(enabled); }
+
+    public WeiboWorkflowPolicy policy(boolean enabled) {
         if (generationFixedDelayMs < 1000 || publishingFixedDelayMs < 1000 || initialDelayMs < 0) {
             throw new IllegalArgumentException("Invalid Weibo scheduler delays");
         }

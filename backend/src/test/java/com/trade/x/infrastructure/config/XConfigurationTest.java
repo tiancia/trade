@@ -133,7 +133,9 @@ class XConfigurationTest {
         runner.withPropertyValues("trade.x.review.telegram.enabled=true",
                 "trade.x.review.telegram.chat-id=unfinished").run(context -> {
             assertThat(context).hasNotFailed();
-            assertInstanceOf(UnavailableXReviewGateway.class, context.getBean(XHumanReviewGateway.class));
+            assertInstanceOf(TelegramXReviewGateway.class, context.getBean(XHumanReviewGateway.class));
+            assertTrue(context.getBean(XHumanReviewGateway.class).disabled());
+            context.getBean(XHumanReviewGateway.class).poll(decision -> { throw new AssertionError("Disabled module must not poll"); });
         });
         runner.withPropertyValues("trade.x.workflow.enabled=true", "trade.x.workflow.target-user-id=123",
                 "trade.x.review.telegram.enabled=false", "trade.x.review.telegram.chat-id=-100123")

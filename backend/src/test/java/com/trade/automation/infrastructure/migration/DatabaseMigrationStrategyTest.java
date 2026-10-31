@@ -25,13 +25,13 @@ class DatabaseMigrationStrategyTest {
         var data = dataSource(); var flyway = flyway(data);
         new DatabaseMigrationStrategy().migrate(flyway);
         var jdbc = new JdbcTemplate(data);
-        assertEquals(56, jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' AND table_name <> 'flyway_schema_history'", Integer.class));
+        assertEquals(57, jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' AND table_name <> 'flyway_schema_history'", Integer.class));
         assertEquals("HALTED", jdbc.queryForObject("SELECT status FROM okx_fund_safety_state WHERE account_scope='live'", String.class));
-        assertEquals(List.of("1", "2"), jdbc.queryForList("SELECT version FROM flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank", String.class));
-        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM flyway_schema_history WHERE checksum IS NOT NULL AND success", Integer.class));
+        assertEquals(List.of("1", "2", "3"), jdbc.queryForList("SELECT version FROM flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank", String.class));
+        assertEquals(3, jdbc.queryForObject("SELECT COUNT(*) FROM flyway_schema_history WHERE checksum IS NOT NULL AND success", Integer.class));
         jdbc.update("UPDATE okx_fund_safety_state SET reason='preserve operator review' WHERE account_scope='live'");
         new DatabaseMigrationStrategy().migrate(flyway(data));
-        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM flyway_schema_history WHERE version IS NOT NULL", Integer.class));
+        assertEquals(3, jdbc.queryForObject("SELECT COUNT(*) FROM flyway_schema_history WHERE version IS NOT NULL", Integer.class));
         assertEquals("preserve operator review", jdbc.queryForObject("SELECT reason FROM okx_fund_safety_state WHERE account_scope='live'", String.class));
     }
 
@@ -40,7 +40,7 @@ class DatabaseMigrationStrategyTest {
         var jdbc = new JdbcTemplate(data);
         jdbc.update("UPDATE okx_fund_safety_state SET reason='legacy review' WHERE account_scope='live'");
         new DatabaseMigrationStrategy().migrate(flyway(data));
-        assertEquals(List.of("0", "1", "2"), jdbc.queryForList("SELECT version FROM flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank", String.class));
+        assertEquals(List.of("0", "1", "2", "3"), jdbc.queryForList("SELECT version FROM flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank", String.class));
         assertEquals("legacy review", jdbc.queryForObject("SELECT reason FROM okx_fund_safety_state WHERE account_scope='live'", String.class));
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='okx_risk_state' AND column_name IN ('open_trade_realized_pnl','closed_trade_accounting_version')", Integer.class));
     }
@@ -63,7 +63,7 @@ class DatabaseMigrationStrategyTest {
         var migrated = dataSource(); var reference = dataSource();
         var migration = flyway(migrated);
         new DatabaseMigrationStrategy().migrate(migration);
-        for (String module : List.of("ai", "trading", "polymarket", "textgame", "marketplace", "weibo", "x")) {
+        for (String module : List.of("automation", "ai", "trading", "polymarket", "textgame", "marketplace", "weibo", "x")) {
             script(reference, LegacySchemaVerifier.read("db/schema/" + module + "/schema.sql"));
         }
         String columns = "SELECT table_name,column_name,data_type,character_maximum_length,numeric_precision,numeric_scale,is_nullable,column_default,is_identity FROM information_schema.columns WHERE table_schema='public' AND table_name<>'flyway_schema_history' ORDER BY table_name,column_name";
@@ -72,7 +72,7 @@ class DatabaseMigrationStrategyTest {
         assertEquals(expected.size(), actual.size(), "Reference and migrated column counts");
         for (int i = 0; i < expected.size(); i++) assertEquals(expected.get(i), actual.get(i));
         try (var connection = migrated.getConnection()) {
-            for (String module : List.of("ai", "trading", "polymarket", "textgame", "marketplace", "weibo", "x")) {
+            for (String module : List.of("automation", "ai", "trading", "polymarket", "textgame", "marketplace", "weibo", "x")) {
                 LegacySchemaVerifier.verifyExistingDefinitions(connection, LegacySchemaVerifier.read("db/schema/" + module + "/schema.sql"));
             }
         }
@@ -129,13 +129,13 @@ class DatabaseMigrationStrategyTest {
         jdbc.update("UPDATE flyway_schema_history SET checksum=checksum+1 WHERE version='1'");
         assertThrows(FlywayException.class, () -> new DatabaseMigrationStrategy().migrate(flyway(data)));
         jdbc.update("UPDATE flyway_schema_history SET checksum=checksum-1 WHERE version='1'");
-        Files.writeString(temporary.resolve("V3__future_schema.sql"), "CREATE TABLE future_table(id BIGINT AUTO_INCREMENT PRIMARY KEY);");
+        Files.writeString(temporary.resolve("V4__future_schema.sql"), "CREATE TABLE future_table(id BIGINT AUTO_INCREMENT PRIMARY KEY);");
         Flyway future = Flyway.configure().dataSource(data).locations("classpath:db/migration", "filesystem:" + temporary)
                 .javaMigrations(new V2__TradingRuntimeSafety()).baselineVersion("0").cleanDisabled(true)
                 .ignoreMigrationPatterns(new String[0]).load();
         new DatabaseMigrationStrategy().migrate(future);
         assertThrows(FlywayException.class, () -> new DatabaseMigrationStrategy().migrate(flyway(data)));
-        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM flyway_schema_history WHERE version='3' AND success", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM flyway_schema_history WHERE version='4' AND success", Integer.class));
     }
 
     @Test void concurrentInitializersShareOneMigrationHistory() throws Exception {
@@ -150,7 +150,7 @@ class DatabaseMigrationStrategyTest {
             assertTrue(ready.await(5, TimeUnit.SECONDS)); start.countDown();
             first.get(15, TimeUnit.SECONDS); second.get(15, TimeUnit.SECONDS);
         } finally { start.countDown(); }
-        assertEquals(3, new JdbcTemplate(data).queryForObject("SELECT COUNT(*) FROM flyway_schema_history WHERE version IS NOT NULL", Integer.class));
+        assertEquals(4, new JdbcTemplate(data).queryForObject("SELECT COUNT(*) FROM flyway_schema_history WHERE version IS NOT NULL", Integer.class));
     }
 
     private static Flyway flyway(DataSource data) {

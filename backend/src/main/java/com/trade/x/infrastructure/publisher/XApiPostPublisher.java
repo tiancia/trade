@@ -21,10 +21,16 @@ public class XApiPostPublisher implements XPostPublisher {
     private final XApi api;
     private final XClientProperties client;
     private final XPublishingProperties settings;
-    private final XWorkflowPolicy policy;
+    private java.util.function.Supplier<XWorkflowPolicy> policySource;
     private final Clock clock;
 
     @Autowired
+    public XApiPostPublisher(XApi api, XClientProperties client, XPublishingProperties settings,
+            com.trade.x.infrastructure.config.XWorkflowProperties workflow) {
+        this(api, client, settings, workflow.policy(), Clock.systemUTC());
+        this.policySource = workflow::policy;
+    }
+
     public XApiPostPublisher(XApi api, XClientProperties client, XPublishingProperties settings, XWorkflowPolicy policy) {
         this(api, client, settings, policy, Clock.systemUTC());
     }
@@ -34,7 +40,7 @@ public class XApiPostPublisher implements XPostPublisher {
         this.api = api;
         this.client = client;
         this.settings = settings;
-        this.policy = policy;
+        this.policySource = () -> policy;
         this.clock = clock;
     }
 
@@ -43,9 +49,9 @@ public class XApiPostPublisher implements XPostPublisher {
     }
 
     @Override public String unavailableReason(String targetUserId) {
-        if (!policy.enabled()) return "X workflow is disabled";
-        if (!policy.publishingEnabled()) return "X workflow publishing is disabled";
-        if (!policy.targetUserId().equals(targetUserId)) return "X target account differs from this draft";
+        if (!policySource.get().enabled()) return "X workflow is disabled";
+        if (!policySource.get().publishingEnabled()) return "X workflow publishing is disabled";
+        if (!policySource.get().targetUserId().equals(targetUserId)) return "X target account differs from this draft";
         if (!client.isEnabled()) return "X API client is disabled";
         if (!settings.isLivePublishingEnabled()) return "X live publishing is disabled";
         try {
@@ -57,7 +63,7 @@ public class XApiPostPublisher implements XPostPublisher {
 
     @Override public String publish(XPost claimed) {
         try {
-            policy.requirePublishing();
+            policySource.get().requirePublishing();
             if (!credentialsAvailable(claimed.targetUserId()) || claimed.status() != XPostStatus.PUBLISHING
                     || claimed.reviewer() == null || claimed.reviewedAt() == null || claimed.attemptId() == null) {
                 throw new XPublishingException("X publishing gates or review are incomplete");

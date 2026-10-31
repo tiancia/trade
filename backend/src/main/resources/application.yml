@@ -1,6 +1,7 @@
 # ${环境变量:默认值}：优先使用运行进程的环境变量；未设置时使用冒号后的默认值。
 # fixed-delay-ms：本轮执行结束后等待的毫秒数；initial-delay-ms：任务启动后首次执行前的等待毫秒数。
 # 模块 enabled 默认同时启用后台循环；auto-start 仅作可选覆盖，真实发布 / 实盘另行授权。
+# 功能管理页已保存的模块选择优先于 enabled / auto-start；启动任何后台任务前先恢复数据库选择。
 spring:
   application:
     # 应用名称，同时用于日志和指标标签。
@@ -36,8 +37,9 @@ spring:
     init:
       # 完整结构仅用于结构查阅和离线校验；运行时统一由 Flyway 管理版本。
       mode: never
-      # 离线结构测试显式加载这七份完整结构；运行时不执行此列表。
+      # 离线结构测试显式加载完整结构；运行时不执行此列表。
       schema-locations:
+        - classpath:db/schema/automation/schema.sql
         - classpath:db/schema/ai/schema.sql
         - classpath:db/schema/trading/schema.sql
         - classpath:db/schema/polymarket/schema.sql

@@ -9,6 +9,8 @@
  * domain-to-task map, and
  * {@link com.trade.automation.application.task.AutomationTaskManager} for lifecycle
  * behavior. Tasks default to their module's enabled state; auto-start is an optional override.
+ * {@link com.trade.automation.interfaces.web.ModuleControlController} combines module gates
+ * and task lifecycle; automation_module_switch stores operator choices restored before startup.
  * Infrastructure migration configuration completes versioned Flyway
  * database upgrades before application-ready task registration can start loops.</p>
  */

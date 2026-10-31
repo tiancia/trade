@@ -6,6 +6,8 @@
 
 ## 本地启动
 
+导航中的「功能管理」打开 `/controls`，统一管理 OKX 交易、Trading AI、Polymarket、故事生成、微博和 X。通过 `GET /api/automation/modules` 读取状态、`PUT /api/automation/modules/{id}` 提交 `{"enabled":true|false}`；页面使用真实后端状态，连接失败时禁用操作。开关会更新业务模块和任务运行状态，并保存到数据库以便重启恢复。启用失败显示实际状态，可重试或关闭已保存的选择。安全授权和操作边界见[后台任务操作](../../docs/backend/OPERATIONS.md#后台任务操作)。
+
 需要 Node.js `>=22.13.0`。以下命令在 `frontend/trading-cockpit/` 执行。
 
 ```powershell

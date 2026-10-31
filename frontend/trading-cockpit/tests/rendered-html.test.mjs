@@ -7,11 +7,11 @@ import { fileURLToPath } from "node:url";
 
 const root = new URL("../", import.meta.url);
 
-async function render() {
+async function render(path = "/") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
-  const request = new Request("http://localhost/", { headers: { accept: "text/html" } });
+  const request = new Request(`http://localhost${path}`, { headers: { accept: "text/html" } });
   const context = { waitUntil() {}, passThroughOnException() {} };
 
   // Node SSR exports a request handler; the Sites build exports a Worker object.
@@ -41,6 +41,16 @@ test("server-renders the Orbit trading cockpit", async () => {
   assert.match(html, /<span class="timestamp">—<\/span>/);
   assert.doesNotMatch(html, /<span class="candle [^"]*" title=/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
+});
+
+test("module management has a direct route and waits for real backend state", async () => {
+  const response = await render("/controls");
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /功能管理/);
+  assert.match(html, /正在加载模块和运行状态/);
+  assert.match(html, /href="\/"/);
+  assert.doesNotMatch(html, /role="switch"|演示数据/);
 });
 
 test("production HTTP serves every page script, stylesheet and self-hosted font", { timeout: 20_000 }, async () => {

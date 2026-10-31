@@ -34,10 +34,17 @@ public class WeiboPostService {
     private final WeiboDraftGenerator generator;
     private final HumanReviewGateway reviews;
     private final WeiboPostPublisher publisher;
-    private final WeiboWorkflowPolicy policy;
+    private java.util.function.Supplier<WeiboWorkflowPolicy> policySource;
     private final Clock clock;
 
     @Autowired
+    public WeiboPostService(WeiboPostRepository posts, HotEventSource source, WeiboDraftGenerator generator,
+            HumanReviewGateway reviews, WeiboPostPublisher publisher,
+            com.trade.weibo.infrastructure.config.WeiboWorkflowProperties settings) {
+        this(posts, source, generator, reviews, publisher, settings.policy(), Clock.systemUTC());
+        this.policySource = settings::policy;
+    }
+
     public WeiboPostService(WeiboPostRepository posts, HotEventSource source, WeiboDraftGenerator generator,
                              HumanReviewGateway reviews, WeiboPostPublisher publisher, WeiboWorkflowPolicy policy) {
         this(posts, source, generator, reviews, publisher, policy, Clock.systemUTC());
@@ -51,21 +58,21 @@ public class WeiboPostService {
         this.generator = generator;
         this.reviews = reviews;
         this.publisher = publisher;
-        this.policy = policy;
+        this.policySource = () -> policy;
         this.clock = clock;
     }
 
     public Optional<WeiboPost> generate(HotEvent event) { return generate(event, false); }
 
     private Optional<WeiboPost> generate(HotEvent event, boolean requireReviewDelivery) {
-        policy.requireGeneration();
+        policySource.get().requireGeneration();
         Instant now = Instant.now(clock);
-        WeiboPost reserved = WeiboPost.generating(policy.targetUid(), event, now, policy);
-        if (!posts.reserveGeneration(reserved, dayStart(now), policy.dailyGenerationLimit())) return Optional.empty();
+        WeiboPost reserved = WeiboPost.generating(policySource.get().targetUid(), event, now, policySource.get());
+        if (!posts.reserveGeneration(reserved, dayStart(now), policySource.get().dailyGenerationLimit())) return Optional.empty();
         WeiboPost generated;
         try {
-            generated = reserved.generated(generator.generate(event, policy.maxBodyChars()),
-                    Instant.now(clock), policy.maxBodyChars());
+            generated = reserved.generated(generator.generate(event, policySource.get().maxBodyChars()),
+                    Instant.now(clock), policySource.get().maxBodyChars());
         } catch (RuntimeException e) {
             generated = reserved.generationFailed(Instant.now(clock));
             log.warn("Weibo generation failed: postId={}", reserved.id());
@@ -78,7 +85,7 @@ public class WeiboPostService {
 
     /** A failed item does not prevent the remaining events from being processed. */
     public boolean runGeneration() {
-        if (!policy.enabled() || !policy.generationEnabled() || policy.targetUid().isBlank()) return true;
+        if (!policySource.get().enabled() || !policySource.get().generationEnabled() || policySource.get().targetUid().isBlank()) return true;
         boolean successful = true;
         for (HotEvent event : source.collect()) {
             try {
@@ -99,10 +106,10 @@ public class WeiboPostService {
     public List<WeiboPostHistory> history(String id) { get(id); return posts.history(id); }
 
     public WeiboPost revise(String id, long expectedRevision, String body) {
-        policy.requireEnabled();
+        policySource.get().requireEnabled();
         WeiboPost current = get(id);
         if (current.revision() != expectedRevision) throw new IllegalStateException("Post changed; reload before editing");
-        WeiboPost changed = current.revise(body, Instant.now(clock), policy.maxBodyChars());
+        WeiboPost changed = current.revise(body, Instant.now(clock), policySource.get().maxBodyChars());
         requireSaved(posts.save(changed, expectedRevision));
         submitReview(changed);
         return changed;
@@ -110,7 +117,7 @@ public class WeiboPostService {
 
     /** Internal use case; Telegram decisions reach this only after reviewer/message authentication. */
     public WeiboPost applyReview(ReviewDecision decision) {
-        policy.requireEnabled();
+        policySource.get().requireEnabled();
         if (!"weibo".equals(decision.module())) throw new IllegalArgumentException("Review belongs to another module");
         WeiboPost current = get(decision.reference());
         // Exact duplicate callbacks are harmless, conflicting callbacks remain rejected.
@@ -122,7 +129,7 @@ public class WeiboPostService {
     }
 
     public boolean runReviews() {
-        if (!policy.enabled()) return true;
+        if (!policySource.get().enabled()) return true;
         boolean[] approved = {false};
         reviews.poll(decision -> {
             boolean applied = consumeReview(decision);
@@ -133,10 +140,10 @@ public class WeiboPostService {
     }
 
     private boolean consumeReview(ReviewDecision decision) {
-        policy.requireEnabled();
+        policySource.get().requireEnabled();
         if (!"weibo".equals(decision.module())) return false;
         WeiboPost current = posts.find(decision.reference()).orElse(null);
-        if (current != null && !policy.targetUid().equals(current.targetUid())) return false;
+        if (current != null && !policySource.get().targetUid().equals(current.targetUid())) return false;
         if (matchesReview(current, decision)) return true;
         if (!canReview(current, decision)) return false;
         try {
@@ -154,7 +161,7 @@ public class WeiboPostService {
     private boolean canReview(WeiboPost post, ReviewDecision decision) {
         Instant now = Instant.now(clock);
         return post != null && post.status() == WeiboPostStatus.PENDING_REVIEW
-                && policy.targetUid().equals(post.targetUid())
+                && policySource.get().targetUid().equals(post.targetUid())
                 && post.contentVersion() == decision.version() && post.live(now)
                 && !decision.decidedAt().isBefore(post.updatedAt())
                 && !decision.decidedAt().isAfter(now.plusSeconds(30));
@@ -176,7 +183,7 @@ public class WeiboPostService {
     }
 
     public boolean runPublishing() {
-        if (!policy.enabled()) return true;
+        if (!policySource.get().enabled()) return true;
         boolean successful = true;
         for (WeiboPost snapshot : posts.actionable(100)) {
             try { if (!process(snapshot)) successful = false; }
@@ -192,14 +199,14 @@ public class WeiboPostService {
     private boolean process(WeiboPost snapshot) {
         Instant now = Instant.now(clock);
         if (snapshot.status() == WeiboPostStatus.GENERATING) {
-            if (!snapshot.updatedAt().plus(policy.claimTimeout()).isAfter(now)) {
+            if (!snapshot.updatedAt().plus(policySource.get().claimTimeout()).isAfter(now)) {
                 requireSaved(posts.save(snapshot.generationFailed(now), snapshot.revision()));
                 return false;
             }
             return true;
         }
         if (snapshot.status() == WeiboPostStatus.PUBLISHING) {
-            if (!snapshot.publishStartedAt().plus(policy.claimTimeout()).isAfter(now)) {
+            if (!snapshot.publishStartedAt().plus(policySource.get().claimTimeout()).isAfter(now)) {
                 requireSaved(posts.finishPublishing(snapshot.finish(WeiboPostStatus.UNKNOWN, null,
                         "Publishing interrupted; verify on Weibo before taking further action", now), snapshot.revision()));
                 return false;
@@ -211,12 +218,12 @@ public class WeiboPostService {
             return true;
         }
         if (snapshot.status() == WeiboPostStatus.PENDING_REVIEW) return submitReview(snapshot);
-        if (!policy.publishingEnabled() || !policy.targetUid().equals(snapshot.targetUid())) return true;
+        if (!policySource.get().publishingEnabled() || !policySource.get().targetUid().equals(snapshot.targetUid())) return true;
         if (!publisher.credentialsAvailable(snapshot.targetUid())) return false;
-        policy.requirePublishing();
+        policySource.get().requirePublishing();
         WeiboPost claimed = snapshot.claim(now);
-        if (!posts.claimPublishing(claimed, snapshot.revision(), dayStart(now), policy.dailyPublishLimit(),
-                policy.publishInterval())) return true;
+        if (!posts.claimPublishing(claimed, snapshot.revision(), dayStart(now), policySource.get().dailyPublishLimit(),
+                policySource.get().publishInterval())) return true;
 
         // The durable claim and attempt are committed before sending to the provider.
         WeiboPost finished;
@@ -240,7 +247,7 @@ public class WeiboPostService {
     }
 
     private boolean submitReview(WeiboPost post) {
-        if (post.status() != WeiboPostStatus.PENDING_REVIEW || !policy.targetUid().equals(post.targetUid())
+        if (post.status() != WeiboPostStatus.PENDING_REVIEW || !policySource.get().targetUid().equals(post.targetUid())
                 || !post.live(Instant.now(clock))) return true;
         if (reviews.disabled()) return true;
         try {

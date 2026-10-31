@@ -28,9 +28,15 @@ public class WeiboPublishingService implements WeiboPostPublisher {
     private final WeiboAccountTokenRepository tokenRepository;
     private final Clock clock;
     private final WeiboClientProperties properties;
-    private final WeiboWorkflowPolicy policy;
+    private java.util.function.Supplier<WeiboWorkflowPolicy> policySource;
 
     @Autowired
+    public WeiboPublishingService(WeiboApi api, WeiboAccountTokenRepository tokenRepository,
+            WeiboClientProperties properties, com.trade.weibo.infrastructure.config.WeiboWorkflowProperties workflow) {
+        this(api, tokenRepository, Clock.systemUTC(), properties, workflow.policy());
+        this.policySource = workflow::policy;
+    }
+
     public WeiboPublishingService(WeiboApi api, WeiboAccountTokenRepository tokenRepository,
                                   WeiboClientProperties properties, WeiboWorkflowPolicy policy) {
         this(api, tokenRepository, Clock.systemUTC(), properties, policy);
@@ -42,13 +48,13 @@ public class WeiboPublishingService implements WeiboPostPublisher {
         this.tokenRepository = tokenRepository;
         this.clock = clock == null ? Clock.systemUTC() : clock;
         this.properties = properties;
-        this.policy = policy;
+        this.policySource = () -> policy;
     }
 
     public WeiboPublishResult publishText(String status) {
         String cleanStatus = requiredText(status, "status is required");
         requireLivePublishing();
-        if (properties.isReviewRequired() || policy.enabled()) {
+        if (properties.isReviewRequired() || policySource.get().enabled()) {
             throw new WeiboPublishingException("Direct publishing is disabled; use the reviewed post workflow");
         }
         WeiboAccountToken token = tokenRepository.findValid(Instant.now(clock))
@@ -64,17 +70,17 @@ public class WeiboPublishingService implements WeiboPostPublisher {
     @Override
     public String publish(WeiboPost claimed) {
         requireLivePublishing();
-        policy.requirePublishing();
+        policySource.get().requirePublishing();
         if (claimed.status() != WeiboPostStatus.PUBLISHING || claimed.reviewedAt() == null
                 || claimed.reviewer() == null || claimed.attemptId() == null
                 || !claimed.live(Instant.now(clock))
-                || !claimed.event().occurredAt().plus(policy.eventMaxAge()).isAfter(Instant.now(clock))
-                || !policy.targetUid().equals(claimed.targetUid())) {
+                || !claimed.event().occurredAt().plus(policySource.get().eventMaxAge()).isAfter(Instant.now(clock))
+                || !policySource.get().targetUid().equals(claimed.targetUid())) {
             throw new WeiboPublishingException("Post is not eligible for publishing");
         }
         WeiboAccountToken token = tokenRepository.findValidForUid(claimed.targetUid(), Instant.now(clock))
                 .orElseThrow(() -> new WeiboPublishingException("Target Weibo account requires authorization"));
-        try { claimed.validatePublishingBody(policy.maxBodyChars()); }
+        try { claimed.validatePublishingBody(policySource.get().maxBodyChars()); }
         catch (IllegalArgumentException e) { throw new WeiboPublishingException("Post body no longer meets publishing limits"); }
         return api.publishText(token.accessToken(), requiredText(claimed.body(), "status is required")).id();
     }

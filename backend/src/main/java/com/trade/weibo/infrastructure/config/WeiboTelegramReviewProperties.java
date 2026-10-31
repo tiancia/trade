@@ -29,7 +29,11 @@ public class WeiboTelegramReviewProperties {
     }
 
     public void validate(TelegramClientProperties client, WeiboWorkflowProperties workflow) {
-        if (!workflow.isEnabled() || !isEnabled()) return;
+        validate(client, workflow.isEnabled(), workflow.getMaxBodyChars());
+    }
+
+    public void validate(TelegramClientProperties client, boolean workflowEnabled, int maxBodyChars) {
+        if (!workflowEnabled || !isEnabled()) return;
         if (pollingFixedDelayMs < 1000) throw new IllegalArgumentException("Invalid Telegram review polling delay");
         if (!client.isEnabled()) {
             throw new IllegalArgumentException("Telegram review requires Telegram client enabled");
@@ -39,7 +43,7 @@ public class WeiboTelegramReviewProperties {
                 || reviewerUserIds.stream().anyMatch(id -> id == null || id <= 0)) {
             throw new IllegalArgumentException("Telegram review requires numeric reviewer-user-ids");
         }
-        if (workflow.getMaxBodyChars() > 3000) {
+        if (maxBodyChars > 3000) {
             throw new IllegalArgumentException("Telegram review requires max-body-chars at most 3000 to show the full post");
         }
         if (client.getConnectTimeoutSeconds() < 1 || client.getRequestTimeoutSeconds() < 1) {

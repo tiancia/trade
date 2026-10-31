@@ -31,7 +31,7 @@ public class WeiboConfiguration {
     public HumanReviewGateway telegramWeiboReviewGateway(TelegramApi api, TelegramClientProperties client,
             WeiboTelegramReviewProperties review, WeiboWorkflowProperties workflow, WeiboReviewDeliveryStore deliveries) {
         review.validate(client, workflow);
-        if (!workflow.isEnabled() || !review.isEnabled()) return new UnavailableHumanReviewGateway();
+        if (!review.isEnabled()) return new UnavailableHumanReviewGateway();
         return new TelegramHumanReviewGateway(api, client, review, workflow, deliveries);
     }
 }

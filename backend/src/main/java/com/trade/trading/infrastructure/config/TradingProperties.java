@@ -13,7 +13,7 @@ import java.util.Map;
 @ConfigurationProperties(prefix = "trade.trading")
 public class TradingProperties {
     /** Enables scheduled trading decisions and event scans. */
-    private boolean enabled = true;
+    private volatile boolean enabled = true;
     /** OKX instrument identifier, for example BTC-USDT. */
     private String instId = "BTC-USDT";
     /** OKX instrument type such as SPOT, SWAP, FUTURES, or OPTION. */

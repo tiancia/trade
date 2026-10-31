@@ -34,7 +34,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class ManagementWebConfigurationTest {
     private static final String[] MANAGEMENT_PATHS = {
-            "/api/automation/tasks/sample/start", "/api/trading/safety/resume", "/api/x/posts",
+            "/api/automation/tasks/sample/start", "/api/automation/modules/story", "/api/trading/safety/resume", "/api/x/posts",
             "/api/weibo/posts", "/api/text-game/admin/stories/sample/versions"
     };
     private AnnotationConfigWebApplicationContext context;
@@ -97,7 +97,7 @@ class ManagementWebConfigurationTest {
                         .andExpect(status().isOk());
             }
         }
-        assertEquals(20, controller.writes.get());
+        assertEquals(MANAGEMENT_PATHS.length * 4, controller.writes.get());
     }
 
     @Test
@@ -170,7 +170,7 @@ class ManagementWebConfigurationTest {
         final AtomicInteger writes = new AtomicInteger();
 
         @RequestMapping(value = {
-                "/api/automation/tasks/sample/start", "/api/trading/safety/resume", "/api/x/posts",
+                "/api/automation/tasks/sample/start", "/api/automation/modules/story", "/api/trading/safety/resume", "/api/x/posts",
                 "/api/weibo/posts", "/api/text-game/admin/stories/sample/versions",
                 "/api/text-game/sessions", "/api/marketplace/items"
         }, method = {RequestMethod.POST, RequestMethod.PUT, RequestMethod.PATCH, RequestMethod.DELETE})

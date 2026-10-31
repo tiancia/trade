@@ -98,6 +98,10 @@ public class AutomationTaskManager implements DisposableBean {
         return task.status();
     }
 
+    public void overrideAutoStart(String taskId, boolean enabled) {
+        task(taskId).autoStartOverride = enabled;
+    }
+
     @EventListener(ApplicationReadyEvent.class)
     public void startAutoTasks() {
         List<ManagedTask> snapshot;
@@ -105,7 +109,7 @@ public class AutomationTaskManager implements DisposableBean {
             snapshot = new ArrayList<>(tasks.values());
         }
         for (ManagedTask task : snapshot) {
-            if (task.definition.autoStart()) {
+            if (task.shouldAutoStart()) {
                 task.start();
             }
         }
@@ -138,6 +142,11 @@ public class AutomationTaskManager implements DisposableBean {
     }
 
     private final class ManagedTask {
+        private volatile Boolean autoStartOverride;
+
+        private boolean shouldAutoStart() {
+            return autoStartOverride != null ? autoStartOverride : definition.autoStart();
+        }
         private final AutomationTaskDefinition definition;
         private final TaskScheduler taskScheduler;
         private final AtomicBoolean running = new AtomicBoolean(false);
@@ -203,7 +212,7 @@ public class AutomationTaskManager implements DisposableBean {
                     definition.id(),
                     definition.name(),
                     running.get(),
-                    definition.autoStart(),
+                    shouldAutoStart(),
                     loops.values().stream().map(ManagedLoop::status).toList()
             );
         }

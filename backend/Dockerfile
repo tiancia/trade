@@ -20,7 +20,7 @@ RUN cp target/trade-0.0.1-SNAPSHOT.jar app.jar \
 
 FROM ${RUNTIME_JAVA_IMAGE} AS runtime
 # Highest immutable migration shipped in this image; deployment blocks schema downgrades.
-LABEL com.trade.database.version="2"
+LABEL com.trade.database.version="3"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl python3 python3-venv \
     && rm -rf /var/lib/apt/lists/* \

@@ -9,7 +9,7 @@ import java.time.Duration;
 @Data
 @ConfigurationProperties(prefix = "trade.x.workflow")
 public class XWorkflowProperties {
-    private boolean enabled = false;
+    private volatile boolean enabled = false;
     private boolean generationEnabled = true;
     private boolean publishingEnabled = true;
     private String targetUserId = "";
@@ -38,7 +38,9 @@ public class XWorkflowProperties {
         }
     }
 
-    public XWorkflowPolicy policy() {
+    public XWorkflowPolicy policy() { return policy(enabled); }
+
+    public XWorkflowPolicy policy(boolean enabled) {
         if (content == null || generationFixedDelayMs < 1000 || publishingFixedDelayMs < 1000 || initialDelayMs < 0) {
             throw new IllegalArgumentException("Invalid X workflow configuration or scheduler delays");
         }

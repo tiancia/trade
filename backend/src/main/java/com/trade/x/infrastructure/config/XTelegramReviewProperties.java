@@ -28,7 +28,11 @@ public class XTelegramReviewProperties {
     }
 
     public void validate(TelegramClientProperties client, XWorkflowProperties workflow) {
-        if (!workflow.isEnabled() || !isEnabled()) return;
+        validate(client, workflow.isEnabled());
+    }
+
+    public void validate(TelegramClientProperties client, boolean workflowEnabled) {
+        if (!workflowEnabled || !isEnabled()) return;
         if (pollingFixedDelayMs < 1000) throw new IllegalArgumentException("Invalid X Telegram polling delay");
         if (!client.isEnabled()) {
             throw new IllegalArgumentException("X review requires Telegram client enabled");
