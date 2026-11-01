@@ -10,6 +10,19 @@ const common = fs.readFileSync(path.join(nginx, 'includes/proxy-common.conf'), '
 const headers = new Map([...common.matchAll(/^proxy_set_header\s+(\S+)\s+([^;]+);/gm)]
   .map(([, name, value]) => [name.toLowerCase(), value]));
 
+test('SSE timeout overrides do not duplicate directives expanded from shared includes', () => {
+  const expand = (source) => source.replace(/include \/etc\/nginx\/includes\/([\w.-]+);/g,
+    (_, file) => expand(fs.readFileSync(path.join(nginx, 'includes', file), 'utf8')));
+  const api = expand(fs.readFileSync(path.join(nginx, 'includes/api.conf'), 'utf8'));
+  const stream = /location = \/api\/trading\/market\/candles\/stream\s*\{([^}]+)\}/.exec(api)?.[1];
+  assert.ok(stream);
+  for (const directive of ['proxy_read_timeout', 'proxy_send_timeout']) {
+    const values = [...stream.matchAll(new RegExp('^\\s*' + directive + '\\s+(\\S+);', 'gm'))]
+      .map(([, value]) => value);
+    assert.deepEqual(values, ['1h'], directive + ' must be defined once in the SSE location');
+  }
+});
+
 test('framework forwarding metadata cannot bypass gateway values with standard or prefix headers', () => {
   for (const name of ['forwarded', 'x-forwarded-prefix', 'x-forwarded-ssl']) {
     assert.equal(headers.get(name), '""', name + ' must be stripped');

@@ -4,6 +4,7 @@ resolver 127.0.0.11 valid=10s ipv6=off;
 resolver_timeout 5s;
 server_tokens off;
 include /etc/nginx/includes/management-controls.conf;
+include /etc/nginx/includes/proxy-defaults.conf;
 
 # Container-local liveness probe; the public TLS listeners always require a client certificate.
 server {

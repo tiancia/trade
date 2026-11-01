@@ -22,6 +22,7 @@ if (win) {
   unixRoot = fixtureRoot;
 }
 const ownedRoot = fs.realpathSync(fixtureRoot);
+const canonicalUnixRoot = bashPath(fixtureRoot);
 const nodePath = bashPath(process.execPath);
 const source = fs.readFileSync(path.resolve(__dirname, '../scripts/release.sh'), 'utf8').replace(/\r\n/g, '\n');
 const put = (file, value) => {
@@ -74,6 +75,16 @@ function mockTool() {
   }
   const operation = args[index++], operationArgs = args.slice(index);
   if (!composeRoot || envFiles.length !== 2 || composeFiles.length < 1) reject('Incomplete Compose invocation');
+  for (const file of envFiles) {
+    const path = require('node:path');
+    const prefix = JSON.parse(process.env.TEST_FIXTURE_POSIX_PATHS)
+      .map((root) => root + '/').find((root) => file.startsWith(root));
+    const localFile = prefix ? path.join(process.env.TEST_LOCAL_FIXTURE_ROOT, file.slice(prefix.length)) : path.resolve(file);
+    if (!localFile.startsWith(path.resolve(process.env.TEST_LOCAL_FIXTURE_ROOT) + path.sep)) {
+      reject('Compose env file escaped the test fixture');
+    }
+    if (!fs.existsSync(localFile)) reject('Missing Compose env file: ' + file);
+  }
   let command;
   if (operation === 'config') command = operationArgs[0] === '--images' ? 'config_images' : 'validation';
   else if (operation === 'pull') command = 'pull';
@@ -179,6 +190,8 @@ function run(options = {}) {
     'export PATH="$TEST_BIN:/usr/bin:/bin"\nexec bash "$TEST_SCRIPT" "$@"', '--', ...args,
   ], {
     env: { ...process.env, TEST_BIN: unixRoot + '/bin', TEST_NODE: nodePath,
+      TEST_FIXTURE_POSIX_PATHS: JSON.stringify([unixRoot, canonicalUnixRoot]),
+      TEST_LOCAL_FIXTURE_ROOT: fixtureRoot,
       TEST_MOCK: path.join(fixtureRoot, 'mock.cjs'), TEST_STATE: local('state.json'), TEST_AUDIT: local('audit.jsonl'),
       TEST_SCRIPT: unix(script), DEPLOY_WAIT_TIMEOUT: '25', DEPLOY_ACCESS_MODE: 'private', TMPDIR: unix('scratch') },
     encoding: 'utf8', timeout: 30_000,
@@ -319,6 +332,9 @@ test('a health failure retains successful release records, a retry target, and t
   assert.equal(fs.readFileSync(result.local(result.server + '/deploy/releases/previous.env'), 'utf8'), manifest('current'));
   assert.ok(fs.readdirSync(result.local(result.server + '/deploy/releases')).some((name) => /^target-.*\.env$/.test(name)));
   assert.match(result.stderr, /Containers may be stopped or partially updated/);
+  assert.doesNotMatch(result.stderr, /Missing Compose env file/);
+  assert.equal(result.calls.at(-1).command, 'stop');
+  assert.deepEqual(result.calls.at(-1).args, ['backend']);
 });
 
 test('invalid or incomplete root directories fail validation before any Docker call', () => {

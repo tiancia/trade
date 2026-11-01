@@ -84,14 +84,15 @@ cleanup() {
     printf 'DEPLOY_STAGE stage=%s event=failed elapsed_seconds=%s exit_code=%s\n' \
       "$phase" "$((SECONDS - phase_started_at))" "$status" >&2 || true
   fi
-  [[ -z $manifest_tmp ]] || rm -f -- "$manifest_tmp" || true
-  [[ -z $record_tmp ]] || rm -f -- "$record_tmp" || true
   if ((status != 0)) && [[ $mutation_started == true ]]; then
     if [[ $backend_stopped == true ]]; then
       compose_run stop backend >&2 || true
     fi
     printf 'Deployment failed. Containers may be stopped or partially updated. Last successful image records were retained. Database changes may have committed; inspect before retrying and do not blindly roll back an image or repair migration history.\n' >&2 || true
   fi
+  # Failure recovery still uses this Compose --env-file; keep it until stop completes.
+  [[ -z $manifest_tmp ]] || rm -f -- "$manifest_tmp" || true
+  [[ -z $record_tmp ]] || rm -f -- "$record_tmp" || true
   exit "$status"
 }
 trap cleanup EXIT
