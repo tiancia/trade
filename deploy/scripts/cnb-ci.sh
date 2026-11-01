@@ -43,7 +43,7 @@ export CI_RUN_ID=${CI_RUN_ID:-$(date +%s)}
 export BUILD_CACHE_DIR=${BUILD_CACHE_DIR:-/root/.cache/trade-build-cache}
 # The hosted service owns BuildKit; nested docker-container builders cannot run.
 export CI_BUILDER_MODE=platform
-case "$SERVICE" in all|backend|cockpit|x-console|frontends|egress) ;; *) fail 'Unsupported SERVICE selection' ;; esac
+case "$SERVICE" in all|backend|cockpit|x-console|control-console|frontends|egress) ;; *) fail 'Unsupported SERVICE selection' ;; esac
 case "$BUILD_REQUESTED" in true|false) ;; *) fail 'BUILD_REQUESTED must be true or false' ;; esac
 case "$DEPLOY_REQUESTED" in true|false) ;; *) fail 'DEPLOY_REQUESTED must be true or false' ;; esac
 [[ $BUILD_REQUESTED == true || $DEPLOY_REQUESTED == true ]] || fail 'Select building, deployment, or both'
@@ -75,11 +75,11 @@ valid_manifest() {
     [[ $line =~ ^([A-Z_]+)=([A-Za-z0-9][A-Za-z0-9._:/@+-]*)$ ]] || return 1
     key=${BASH_REMATCH[1]}
     value=${BASH_REMATCH[2]}
-    case "$key" in RELEASE_VERSION|BACKEND_IMAGE|COCKPIT_IMAGE|X_CONSOLE_IMAGE|EGRESS_IMAGE) ;; *) return 1 ;; esac
+    case "$key" in RELEASE_VERSION|BACKEND_IMAGE|COCKPIT_IMAGE|X_CONSOLE_IMAGE|CONTROL_CONSOLE_IMAGE|EGRESS_IMAGE) ;; *) return 1 ;; esac
     [[ ! -v values[$key] && $value != *://* ]] || return 1
     values[$key]=$value
   done < "$OUTPUT_DIR/release.env"
-  for key in RELEASE_VERSION BACKEND_IMAGE COCKPIT_IMAGE X_CONSOLE_IMAGE EGRESS_IMAGE; do
+  for key in RELEASE_VERSION BACKEND_IMAGE COCKPIT_IMAGE X_CONSOLE_IMAGE CONTROL_CONSOLE_IMAGE EGRESS_IMAGE; do
     [[ -n ${values[$key]:-} ]] || return 1
   done
   [[ ${values[RELEASE_VERSION]} =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ \

@@ -91,7 +91,7 @@ function mockTool() {
     else reject('Unexpected SQL operation');
   }
   else reject('Unexpected or destructive Compose operation');
-  const images = Object.fromEntries(['BACKEND_IMAGE', 'COCKPIT_IMAGE', 'X_CONSOLE_IMAGE', 'EGRESS_IMAGE']
+  const images = Object.fromEntries(['BACKEND_IMAGE', 'COCKPIT_IMAGE', 'X_CONSOLE_IMAGE', 'CONTROL_CONSOLE_IMAGE', 'EGRESS_IMAGE']
     .map((key) => [key, process.env[key]]));
   record({ tool, command, args: operationArgs, composeRoot, envFiles, composeFiles, images });
   failIfSelected(command);
@@ -110,7 +110,7 @@ function mockTool() {
   }
   if (command === 'config_images') {
     const byService = { backend: images.BACKEND_IMAGE, cockpit: images.COCKPIT_IMAGE,
-      'x-console': images.X_CONSOLE_IMAGE, egress: images.EGRESS_IMAGE,
+      'x-console': images.X_CONSOLE_IMAGE, 'control-console': images.CONTROL_CONSOLE_IMAGE, egress: images.EGRESS_IMAGE,
       gateway: 'nginx:alpine', mysql: 'mysql:8.4', redis: 'redis:7' };
     for (const service of operationArgs.slice(1)) {
       if (!byService[service]) reject('Unknown image service');
@@ -127,7 +127,7 @@ for (const tool of ['docker', 'flock']) {
 }
 function manifest(tag) {
   return ['RELEASE_VERSION=' + tag, ...[
-    ['BACKEND', 'backend'], ['COCKPIT', 'cockpit'], ['X_CONSOLE', 'x-console'], ['EGRESS', 'egress'],
+    ['BACKEND', 'backend'], ['COCKPIT', 'cockpit'], ['X_CONSOLE', 'x-console'], ['CONTROL_CONSOLE', 'control-console'], ['EGRESS', 'egress'],
   ].map(([key, service]) => key + '_IMAGE=trade/' + service + ':' + tag), ''].join('\n');
 }
 
@@ -144,7 +144,8 @@ function run(options = {}) {
   put(local(server + '/compose.public.yaml'), 'services: {}\n');
   put(local(server + '/deploy/.env'), runtime);
   put(local(server + '/deploy/release.env'), manifest('desired'));
-  put(local(server + '/deploy/releases/current.env'), manifest('current'));
+  put(local(server + '/deploy/releases/current.env'), options.legacyCurrent
+    ? manifest('current').replace(/^CONTROL_CONSOLE_IMAGE=.*\n/m, '') : manifest('current'));
   put(local(server + '/deploy/releases/previous.env'), manifest('previous'));
   put(local('state.json'), JSON.stringify({ fail: options.fail, exitCode: options.exitCode || 7,
     lockBusy: options.lockBusy, delay: options.delay, delayMs: options.delayMs,
@@ -286,10 +287,25 @@ test('full deployment pulls everything first and times dependency startup before
   assertSuccessfulStages(result, ['validation', 'image_pull', 'dependencies_start', ...selectedStages.slice(2)]);
   assert.deepEqual(result.calls.map((call) => call.command), ['flock', 'validation', 'pull', 'dependencies', ...preflightCalls, 'stop', 'database_dump', 'health', ...verifiedCalls]);
   assert.deepEqual(result.calls.find((call) => call.command === 'pull').args,
-    ['egress', 'backend', 'cockpit', 'x-console', 'gateway', 'mysql', 'redis']);
+    ['egress', 'backend', 'cockpit', 'x-console', 'control-console', 'gateway', 'mysql', 'redis']);
   const dependencyArgs = result.calls.find((call) => call.command === 'dependencies').args;
   assert.ok(dependencyArgs.includes('--no-recreate'));
   assert.deepEqual(dependencyArgs.slice(-2), ['mysql', 'redis']);
+});
+
+test('a full release upgrades a legacy manifest and preserves its previous image references', () => {
+  const result = run({ full: true, legacyCurrent: true });
+  assert.equal(result.status, 0, result.diagnostic);
+  assert.equal(fs.readFileSync(result.local('server/deploy/releases/current.env'), 'utf8'), manifest('desired'));
+  assert.equal(fs.readFileSync(result.local('server/deploy/releases/previous.env'), 'utf8'),
+    manifest('current').replace(/^CONTROL_CONSOLE_IMAGE=.*\n/m, ''));
+});
+
+test('a legacy deployment requires a full upgrade before a selected-service update', () => {
+  const result = run({ service: 'control-console', legacyCurrent: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.diagnostic, /initial full deployment/);
+  assert.ok(!result.calls.some((call) => call.tool === 'docker'));
 });
 
 test('a health failure retains successful release records, a retry target, and the original error', () => {

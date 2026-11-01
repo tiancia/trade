@@ -120,7 +120,6 @@ async function mountMarketRequests({ runtime = {}, configuration, history = [], 
       if (name === "react") return hooks;
       if (name === "react/jsx-runtime") return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
       if (name === "lucide-react") return {};
-      if (name === "next/link") return { default: "a" };
       if (name === "./lib/trading-api.mjs") return tradingApi;
       throw new Error(`Unexpected import: ${name}`);
     },
@@ -192,7 +191,6 @@ async function mountPaperPanel(panelName = "PaperSimulationPanel", dataMode = "l
       if (name === "react") return hooks;
       if (name === "react/jsx-runtime") return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
       if (name === "lucide-react") return {};
-      if (name === "next/link") return { default: "a" };
       if (name === "./lib/trading-api.mjs") return tradingApi;
       throw new Error(`Unexpected import: ${name}`);
     },

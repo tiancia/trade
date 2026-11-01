@@ -7,7 +7,7 @@ const fs = require('node:fs');
 
 const ENDPOINT = 'https://api.cnb.cool/tiancia/trade-ci/-/build/start';
 const LOG_PREFIX = 'https://cnb.cool/tiancia/trade-ci/-/build/logs/';
-const SERVICES = new Set(['all', 'backend', 'cockpit', 'x-console', 'frontends', 'egress']);
+const SERVICES = new Set(['all', 'backend', 'cockpit', 'x-console', 'control-console', 'frontends', 'egress']);
 const MODES = new Set(['build', 'build_deploy', 'deploy', 'rollback']);
 
 class TriggerError extends Error {}

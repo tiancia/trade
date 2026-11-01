@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR=''
 REGISTRY=''
 APPLY=false
-IMAGE_KEYS=(BACKEND_IMAGE COCKPIT_IMAGE X_CONSOLE_IMAGE EGRESS_IMAGE)
+IMAGE_KEYS=(BACKEND_IMAGE COCKPIT_IMAGE X_CONSOLE_IMAGE CONTROL_CONSOLE_IMAGE EGRESS_IMAGE)
 
 usage() {
   cat <<'EOF'
@@ -14,7 +14,7 @@ Usage: bash cleanup-images.sh --root /opt/trade --registry ccr.ccs.tencentyun.co
 
 Without --apply, only print eligible image tags. With --apply, remove them
 without force. Keep current.env, previous.env, and every container's images.
-Only backend/cockpit/x-console/egress in the supplied registry namespace,
+Only backend/cockpit/x-console/control-console/egress in the supplied registry namespace,
 trade/, and trade-local/ are eligible. No containers, volumes, or registry
 images are deleted. Run after a successful deployment.
 EOF
@@ -58,7 +58,7 @@ read_manifest() {
     key=${BASH_REMATCH[1]}
     value=${BASH_REMATCH[2]}
     case "$key" in
-      BACKEND_IMAGE|COCKPIT_IMAGE|X_CONSOLE_IMAGE|EGRESS_IMAGE|RELEASE_VERSION) ;;
+      BACKEND_IMAGE|COCKPIT_IMAGE|X_CONSOLE_IMAGE|CONTROL_CONSOLE_IMAGE|EGRESS_IMAGE|RELEASE_VERSION) ;;
       *) fail "Unexpected manifest key in $file" ;;
     esac
     [[ ! -v values[$key] && $value != *://* ]] || fail "Invalid or duplicate manifest value in $file"
@@ -68,13 +68,15 @@ read_manifest() {
     values[$key]=$value
   done < "$file"
   for key in "${IMAGE_KEYS[@]}"; do
+    # The previous release may predate the standalone control console.
+    if [[ ${2:-false} == true && $key == CONTROL_CONSOLE_IMAGE && -z ${values[$key]:-} ]]; then continue; fi
     [[ -n ${values[$key]:-} ]] || fail "Missing $key in $file"
     keep_refs[${values[$key]}]=true
   done
 }
 
 read_manifest "$RECORD_DIR/current.env"
-read_manifest "$RECORD_DIR/previous.env"
+read_manifest "$RECORD_DIR/previous.env" true
 
 image_id() {
   local id
@@ -103,7 +105,7 @@ done <<< "$container_ids"
 is_trade_repository() {
   local repository=$1 namespace service
   for namespace in "$REGISTRY" trade trade-local; do
-    for service in backend cockpit x-console egress; do
+    for service in backend cockpit x-console control-console egress; do
       [[ $repository != "$namespace/$service" ]] || return 0
     done
   done

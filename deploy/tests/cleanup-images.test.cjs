@@ -101,6 +101,7 @@ const retained = {
   backend: registry + '/backend:current',
   cockpit: 'trade/cockpit:current',
   'x-console': 'trade/x-console:current',
+  'control-console': 'trade/control-console:current',
   egress: 'trade/egress:current',
 };
 const previousBackend = 'trade/backend:previous';
@@ -110,6 +111,7 @@ function manifest(backend = retained.backend) {
     'BACKEND_IMAGE=' + backend,
     'COCKPIT_IMAGE=' + retained.cockpit,
     'X_CONSOLE_IMAGE=' + retained['x-console'],
+    'CONTROL_CONSOLE_IMAGE=' + retained['control-console'],
     'EGRESS_IMAGE=' + retained.egress,
     '',
   ].join('\n');
@@ -120,6 +122,7 @@ function baseState() {
       { ref: retained.backend, id: imageId(1) },
       { ref: retained.cockpit, id: imageId(2) },
       { ref: retained['x-console'], id: imageId(3) },
+      { ref: retained['control-console'], id: imageId(30) },
       { ref: retained.egress, id: imageId(4) },
       { ref: previousBackend, id: imageId(5) },
       { ref: registry + '/backend:current-alias', id: imageId(1) },
@@ -193,6 +196,12 @@ test('default dry-run lists candidates without removing images', () => {
   assert.equal(result.status, 0, result.diagnostic);
   assert.deepEqual(result.removed, []);
   for (const ref of expectedRemoved) assert.ok(result.stdout.includes(ref), result.diagnostic);
+});
+
+test('a legacy previous manifest keeps all existing protections after adding control-console', () => {
+  const result = run({ apply: true, previous: manifest(previousBackend).replace(/^CONTROL_CONSOLE_IMAGE=.*\n/m, '') });
+  assert.equal(result.status, 0, result.diagnostic);
+  assert.deepEqual(result.removed.sort(), [...expectedRemoved].sort());
 });
 
 test('apply protects both releases, image aliases, and running/stopped container images', () => {

@@ -25,8 +25,8 @@ record_tmp=''
 builder_name=''
 builder_created=false
 ssh_config=''
-names=(backend cockpit x-console egress)
-keys=(BACKEND_IMAGE COCKPIT_IMAGE X_CONSOLE_IMAGE EGRESS_IMAGE)
+names=(backend cockpit x-console control-console egress)
+keys=(BACKEND_IMAGE COCKPIT_IMAGE X_CONSOLE_IMAGE CONTROL_CONSOLE_IMAGE EGRESS_IMAGE)
 targets=()
 
 usage() {
@@ -34,7 +34,7 @@ usage() {
 Usage: bash deploy/scripts/managed-ci.sh
 
 Environment:
-  SERVICE                backend (default), cockpit, x-console, frontends, egress, all
+  SERVICE                backend (default), cockpit, x-console, control-console, frontends, egress, all
   CI_ACTION              release (default) or rollback; rollback uses server previous.env
   BUILD_REQUESTED        true (default) or false
   DEPLOY_REQUESTED       false (default) or true
@@ -98,8 +98,8 @@ case "$DEPLOY_REQUESTED" in true|false) ;; *) fail 'DEPLOY_REQUESTED must be tru
 case "$CI_BUILDER_MODE" in isolated|platform) ;; *) fail 'CI_BUILDER_MODE must be isolated or platform' ;; esac
 [[ $BUILD_REQUESTED == true || $DEPLOY_REQUESTED == true ]] || fail 'Select building, deployment, or both'
 case "$SERVICE" in
-  backend|cockpit|x-console|egress) targets=("$SERVICE") ;;
-  frontends) targets=(cockpit x-console) ;;
+  backend|cockpit|x-console|control-console|egress) targets=("$SERVICE") ;;
+  frontends) targets=(cockpit x-console control-console) ;;
   all) targets=("${names[@]}") ;;
   *) fail 'Unsupported SERVICE selection' ;;
 esac
@@ -132,7 +132,7 @@ read_manifest() {
     [[ $line =~ ^([A-Z_]+)=([A-Za-z0-9][A-Za-z0-9._:/@+-]*)$ ]] || fail 'Invalid image manifest syntax'
     key=${BASH_REMATCH[1]}
     value=${BASH_REMATCH[2]}
-    case "$key" in BACKEND_IMAGE|COCKPIT_IMAGE|X_CONSOLE_IMAGE|EGRESS_IMAGE|RELEASE_VERSION) ;; *) fail 'Unexpected image manifest key' ;; esac
+    case "$key" in BACKEND_IMAGE|COCKPIT_IMAGE|X_CONSOLE_IMAGE|CONTROL_CONSOLE_IMAGE|EGRESS_IMAGE|RELEASE_VERSION) ;; *) fail 'Unexpected image manifest key' ;; esac
     [[ ! -v values[$key] && $value != *://* ]] || fail 'Duplicate or invalid image manifest value'
     if [[ $key == RELEASE_VERSION ]]; then
       [[ $value =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ && $value != latest ]] || fail 'Invalid immutable RELEASE_VERSION'
@@ -299,8 +299,8 @@ registry=$6
 wait_timeout=$7
 action=$8
 case "$service" in
-  backend|cockpit|x-console|egress) targets=("$service") ;;
-  frontends) targets=(cockpit x-console) ;;
+  backend|cockpit|x-console|control-console|egress) targets=("$service") ;;
+  frontends) targets=(cockpit x-console control-console) ;;
   all) targets=() ;;
   *) exit 1 ;;
 esac

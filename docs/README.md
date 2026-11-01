@@ -46,6 +46,7 @@ Maven 命令从 `backend/` 执行，生产 Compose 命令从仓库根目录执�
 | --- | --- |
 | 交易驾驶舱 | [README](../frontend/trading-cockpit/README.md)：本地开发、SSE、策略操作、回测及 Node SSR |
 | X 控制台 | [README](../frontend/x-console/README.md)：只读列表、详情、状态与网关访问 |
+| 功能控制台 | [README](../frontend/control-console/README.md)：独立前端、模块开关、运行状态与部署入口 |
 | 文字游戏 | 尚无独立 README；开发脚本见 [package.json](../frontend/text-game/package.json)，后端归属见模块目录 |
 | 集市 | 尚无独立 README；开发脚本见 [package.json](../frontend/market/package.json)，后端归属见模块目录 |
 

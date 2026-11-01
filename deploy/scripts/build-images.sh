@@ -32,7 +32,7 @@ Usage: bash deploy/scripts/build-images.sh --registry NAMESPACE --tag VERSION [o
                         disabled by default. Intended for restored runner caches.
   --help                Show this help
 
-Services: backend cockpit x-console egress. Omit services to build all four.
+Services: backend cockpit x-console control-console egress. Omit services to build all five.
 Partial builds require a complete baseline manifest (for example, a copy of the
 server's deploy/releases/current.env). Unselected image references are preserved
 in the output manifest; only selected images are built and optionally pushed.
@@ -184,7 +184,7 @@ while (($#)); do
     --cache-dir) require_value "$@"; CACHE_DIR=$2; shift 2 ;;
     --push) PUSH=true; shift ;;
     --help|-h) usage; exit 0 ;;
-    backend|cockpit|x-console|egress) TARGETS+=("$1"); shift ;;
+    backend|cockpit|x-console|control-console|egress) TARGETS+=("$1"); shift ;;
     *) fail "Unknown argument: $1" ;;
   esac
 done
@@ -196,9 +196,9 @@ REGISTRY=${REGISTRY%/}
 [[ $PLATFORM =~ ^linux/(amd64|arm64)(/v[0-9]+)?$ ]] || fail 'Supported target platforms: linux/amd64 or linux/arm64'
 command -v docker >/dev/null || fail 'docker is required'
 
-names=(backend cockpit x-console egress)
-contexts=(. frontend/trading-cockpit frontend/x-console deploy/egress)
-keys=(BACKEND_IMAGE COCKPIT_IMAGE X_CONSOLE_IMAGE EGRESS_IMAGE)
+names=(backend cockpit x-console control-console egress)
+contexts=(. frontend/trading-cockpit frontend/x-console frontend/control-console deploy/egress)
+keys=(BACKEND_IMAGE COCKPIT_IMAGE X_CONSOLE_IMAGE CONTROL_CONSOLE_IMAGE EGRESS_IMAGE)
 if ((${#TARGETS[@]} == 0)); then
   TARGETS=("${names[@]}")
 fi
@@ -226,7 +226,7 @@ if ((${#TARGETS[@]} < ${#names[@]})); then
     [[ $line =~ ^([A-Z_]+)=([A-Za-z0-9][A-Za-z0-9._:/@+-]*)$ ]] || fail "Invalid image manifest line in $BASE_FILE"
     key=${BASH_REMATCH[1]}
     value=${BASH_REMATCH[2]}
-    case "$key" in BACKEND_IMAGE|COCKPIT_IMAGE|X_CONSOLE_IMAGE|EGRESS_IMAGE|RELEASE_VERSION) ;; *) fail "Unexpected manifest key: $key" ;; esac
+    case "$key" in BACKEND_IMAGE|COCKPIT_IMAGE|X_CONSOLE_IMAGE|CONTROL_CONSOLE_IMAGE|EGRESS_IMAGE|RELEASE_VERSION) ;; *) fail "Unexpected manifest key: $key" ;; esac
     [[ ! -v references[$key] ]] || fail "Duplicate manifest key: $key"
     [[ $value != *://* ]] || fail "Image references cannot contain URL schemes: $key"
     if [[ $key == RELEASE_VERSION ]]; then

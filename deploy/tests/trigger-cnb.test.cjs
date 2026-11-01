@@ -72,7 +72,7 @@ test('manual selections and multiline history are transported as JSON without sh
   assert.equal(request.env.BUILD_REQUESTED, 'false');
   assert.equal(request.env.DEPLOY_REQUESTED, 'true');
   assert.equal(JSON.parse(JSON.stringify(request)).env.EXISTING_RELEASE_MANIFEST, manifest);
-  for (const service of ['all', 'backend', 'cockpit', 'x-console', 'frontends', 'egress']) {
+  for (const service of ['all', 'backend', 'cockpit', 'x-console', 'control-console', 'frontends', 'egress']) {
     assert.equal(buildRequest(base({ SERVICE: service })).env.SERVICE, service);
   }
 });

@@ -30,16 +30,16 @@ test('only backend API locations receive Basic credentials and retain all saniti
   assert.match(backend, /proxy_set_header Authorization \$http_authorization;/);
   for (const template of ['private.conf.template', 'default.conf.template']) {
     const source = fs.readFileSync(path.join(nginx, template), 'utf8');
-    assert.equal((source.match(/proxy_set_header Authorization "";/g) || []).length, 2);
+    assert.equal((source.match(/proxy_set_header Authorization "";/g) || []).length, 3);
   }
 });
 
 test('every public TLS server requires a client certificate and a revocation list', () => {
   const source = fs.readFileSync(path.join(nginx, 'default.conf.template'), 'utf8');
-  assert.equal((source.match(/listen 443 ssl;/g) || []).length, 2);
-  assert.equal((source.match(/ssl_verify_client on;/g) || []).length, 2);
-  assert.equal((source.match(/ssl_client_certificate \/etc\/nginx\/tls\/client-ca\.pem;/g) || []).length, 2);
-  assert.equal((source.match(/ssl_crl \/etc\/nginx\/tls\/client-crl\.pem;/g) || []).length, 2);
+  assert.equal((source.match(/listen 443 ssl;/g) || []).length, 3);
+  assert.equal((source.match(/ssl_verify_client on;/g) || []).length, 3);
+  assert.equal((source.match(/ssl_client_certificate \/etc\/nginx\/tls\/client-ca\.pem;/g) || []).length, 3);
+  assert.equal((source.match(/ssl_crl \/etc\/nginx\/tls\/client-crl\.pem;/g) || []).length, 3);
   assert.match(source, /listen 127\.0\.0\.1:8082;/);
   const controls = fs.readFileSync(path.join(nginx, 'includes/management-controls.conf'), 'utf8');
   assert.match(controls, /limit_req_zone \$binary_remote_addr/);
@@ -83,6 +83,7 @@ for (const template of ['private.conf.template', 'default.conf.template']) {
     for (const [scheme, host, expected] of [
       ['http', 'localhost:18080', '18080'],
       ['http', '127.0.0.1:18081', '18081'],
+      ['http', '127.0.0.1:18082', '18082'],
       ['http', '[::1]:18080', '18080'],
       ['http', 'localhost', '80'],
       ['https', 'dashboard.example', '443'],
@@ -90,6 +91,6 @@ for (const template of ['private.conf.template', 'default.conf.template']) {
     ]) {
       assert.equal(portFor(scheme, host), expected, scheme + '://' + host);
     }
-    assert.equal((source.match(/include \/etc\/nginx\/includes\/proxy-common\.conf;/g) || []).length, 2);
+    assert.equal((source.match(/include \/etc\/nginx\/includes\/proxy-common\.conf;/g) || []).length, 3);
   });
 }

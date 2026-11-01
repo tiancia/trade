@@ -9,12 +9,13 @@
 ```text
 backend/             Spring Boot 后端：交易决策、调度、外部客户端、持久化、HTTP API
 compose.yaml         MySQL、Redis、Prometheus、Grafana 的统一 Docker 入口
-compose.prod.yaml    Ubuntu 生产部署：后端、交易驾驶舱、X 控制台、代理隧道和基础服务
-compose.public.yaml  可选的双域名 HTTPS 公共访问覆盖配置
+compose.prod.yaml    Ubuntu 生产部署：后端、交易驾驶舱、X 控制台、功能控制台、代理隧道和基础服务
+compose.public.yaml  可选的多域名 HTTPS 公共访问覆盖配置
 deploy/              生产配置模板、私有 / 公共网关、构建 / 发布 / 回滚脚本
 docs/                文档总导航、全局交接指南及 backend/ 后端专题文档
 frontend/trading-cockpit/  交易驾驶舱：Node SSR
 frontend/x-console/  X 内容只读控制台：静态站点
+frontend/control-console/  独立功能控制台：统一管理模块开关，React + Vite
 frontend/text-game/  React + Vite 文字游戏前端：浏览器交互和界面状态
 frontend/market/     React + Vite 二手集市前端：商品发布、筛选、会话和图片上传
 tools/polymarket/    Polymarket Python 工具：CLOB 下单桥接、凭证调试、样例 payload
@@ -23,7 +24,9 @@ story/               AI 小说生成输出和素材，属于运行产物
 
 后端 Java 包也按“业务域 + 层职责”拆分。具体规则见 [后端架构说明](docs/backend/ARCHITECTURE.md)。
 
-Ubuntu 首次部署和后续迭代按 [生产部署说明](deploy/README.md) 操作。默认将后端和两个前端一起部署到国内服务器，通过电脑 SSH 隧道访问 `http://127.0.0.1:18080`（交易驾驶舱）和 `http://127.0.0.1:18081`（X 控制台），无需域名或 TLS 证书。原有 `compose.yaml` 继续用于本地基础服务；生产使用独立的 `compose.prod.yaml` 和 Linux 命名卷。后续需要公共 HTTPS 访问时再叠加 `compose.public.yaml`。
+Ubuntu 首次部署和后续迭代按 [生产部署说明](deploy/README.md) 操作。默认将后端和三个前端一起部署到国内服务器，通过电脑 SSH 隧道访问 `http://127.0.0.1:18080`（交易驾驶舱）、`http://127.0.0.1:18081`（X 控制台）和 `http://127.0.0.1:18082`（功能控制台），无需域名或 TLS 证书。原有 `compose.yaml` 继续用于本地基础服务；生产使用独立的 `compose.prod.yaml` 和 Linux 命名卷。后续需要公共 HTTPS 访问时再叠加 `compose.public.yaml`。
+
+功能控制台本地启动与构建见 [frontend/control-console/README.md](frontend/control-console/README.md)，开发入口为 `http://127.0.0.1:5176/`。
 
 ## 常用命令
 

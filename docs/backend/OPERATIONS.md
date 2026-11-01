@@ -122,7 +122,7 @@ Actuator 当前暴露 health、info、metrics 和 prometheus。automation 启停
 
 ## 后台任务操作
 
-交易驾驶舱新增 `/controls`（导航「功能管理」）。`GET /api/automation/modules` 返回六个模块的实际开关、任务状态、持久化选择和执行范围；`PUT /api/automation/modules/{id}` 接收 `{"enabled":true}` 或 `{"enabled":false}`，同时更新模块门禁和后台任务，沿用操作员认证、Origin 与 CSRF 校验。
+独立[功能控制台](../../frontend/control-console/README.md)统一管理模块，本地开发入口 `http://127.0.0.1:5176/`，生产 SSH 入口 `http://127.0.0.1:18082/`。`GET /api/automation/modules` 返回六个模块的实际开关、任务状态、持久化选择和执行范围；`PUT /api/automation/modules/{id}` 接收 `{"enabled":true}` 或 `{"enabled":false}`，同时更新模块门禁和后台任务，沿用操作员认证、Origin 与 CSRF 校验。
 
 选择保存在 `automation_module_switch`，优先于配置文件的模块 `enabled` 和 `auto-start`，在应用启动任务前恢复。没有保存记录的模块保持原配置行为。仅当前后端实例立即生效；本版本不向其他运行中的副本广播变更，多实例运维须逐实例协调，后续重启读取数据库最后保存的选择。保存失败不修改运行状态；配置校验失败不保存；启动失败保留选择但将实际模块关闭并报告错误，可在页面重试或关闭该选择。旧 `/tasks/{id}/start|stop` 仍是临时任务控制，不写持久化选择。
 

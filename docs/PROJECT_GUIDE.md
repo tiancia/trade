@@ -15,20 +15,20 @@
 | 位置 | 运行内容 | 职责 |
 | --- | --- | --- |
 | 开发者电脑，当前为 Windows | 浏览器、SSH 客户端、源码 | 开发代码、手动提交 CNB 任务、访问服务器管理页面 |
-| 国内 Ubuntu 主机 | Docker Engine + Compose、后端、两个前端、Nginx 网关、MySQL、Redis、egress 隧道容器 | 执行策略与内容工作流，保存业务数据，提供管理 API |
+| 国内 Ubuntu 主机 | Docker Engine + Compose、后端、三个前端、Nginx 网关、MySQL、Redis、egress 隧道容器 | 执行策略与内容工作流，保存业务数据，提供管理 API |
 | 德国 VPS | sshd、Squid | 接收国内主机建立的 SSH 隧道，由 Squid 转发外部请求 |
 
 ```mermaid
 flowchart LR
     subgraph PC[开发者电脑]
-        Browser[浏览器 localhost:18080 / 18081]
+        Browser[浏览器 localhost:18080 / 18081 / 18082]
         LocalSSH[SSH 本地端口转发]
         Browser --> LocalSSH
     end
     subgraph CN[国内 Ubuntu]
         CNSSH[sshd]
         Gateway[Nginx gateway]
-        Frontends[cockpit / x-console]
+        Frontends[cockpit / x-console / control-console]
         Backend[Spring Boot backend]
         Data[MySQL / Redis / 持久化卷]
         Egress[egress 容器 HTTP 代理入口 13128]
@@ -67,7 +67,7 @@ flowchart LR
   → 页面走 cockpit:3000，/api/ 走 backend:8080
 ```
 
-X 控制台同理，使用电脑和国内主机上的 18081，进入 gateway 的 8081，再读取 x-console:8080。两个前端的 API 都转发给同一个 backend。
+X 控制台同理，使用电脑和国内主机上的 18081，进入 gateway 的 8081，再读取 x-console:8080。功能控制台使用 18082，进入 gateway 的 8082，再读取 control-console:8080。三个前端的 API 都转发给同一个 backend。
 
 关键命令的含义：
 
@@ -149,9 +149,10 @@ Docker daemon 的代理不会自动成为 Java 客户端代理，也不能保证
 
 | 服务 | 容器内入口 | 国内宿主机入口 | 用途 |
 | --- | --- | --- | --- |
-| gateway | 8080 / 8081 | `127.0.0.1:18080` / `127.0.0.1:18081` | 网关登录、页面与 API 路由 |
+| gateway | 8080 / 8081 / 8082 | `127.0.0.1:18080` / `127.0.0.1:18081` / `127.0.0.1:18082` | 网关登录、页面与 API 路由 |
 | cockpit | 3000 | 不单独发布 | React、Next 兼容 API、vinext Node SSR 交易驾驶舱 |
 | x-console | 8080 | 不单独发布 | Vite + 原生 HTML/CSS/JavaScript 的 X 只读控制台 |
+| control-console | 8080 | 不单独发布 | React + Vite 独立功能控制台，统一管理模块开关 |
 | backend | 8080 | 不单独发布 | 一个 Spring Boot 进程，包含全部后端业务域 |
 | mysql | 3306 | 不发布 | 业务数据库 |
 | redis | 6379 | 不发布 | 可关闭的共享热行情缓存 |
@@ -159,7 +160,7 @@ Docker daemon 的代理不会自动成为 Java 客户端代理，也不能保证
 
 国内和德国主机的 SSH 使用各自配置的端口，示例按 22 编写。德国 Squid 的目标是 `127.0.0.1:3128`，不需要向公网开放 3128。
 
-Docker 网络分三组：`app` 连接网关、两个前端和后端；`data` 连接后端、MySQL、Redis，并设置 `internal: true`；`outbound` 连接后端与 egress。backend 同时加入三组。服务名只在相应 Docker 网络内解析，电脑浏览器不能直接访问 `backend:8080`。
+Docker 网络分三组：`app` 连接网关、三个前端和后端；`data` 连接后端、MySQL、Redis，并设置 `internal: true`；`outbound` 连接后端与 egress。backend 同时加入三组。服务名只在相应 Docker 网络内解析，电脑浏览器不能直接访问 `backend:8080`。
 
 Prometheus、Grafana、Alertmanager 归可选 `monitoring` profile，默认不启动；启用需先配置真实外部通知接收端。宿主机入口绑定回环：9090、3001、9093。公共域名/TLS 模式由 [compose.public.yaml](../compose.public.yaml) 提供，强制客户端证书与 Basic 口令；默认私有模式不叠加该文件。公共模式会替换网关端口，具体操作见部署说明。
 
@@ -185,7 +186,7 @@ Prometheus、Grafana、Alertmanager 归可选 `monitoring` profile，默认不�
 | 国内服务器 SSH 密码或登录密钥 | 电脑 SSH 客户端 | 登录、建立访问隧道、同步运行配置 |
 | gateway 用户 `operator` 与网关密码 | 浏览器弹出的登录框；curl 的 `-u operator` | 进入私有 Web 网关 |
 
-两个前端无需额外的应用令牌，X 控制台打开后自动读取内容。网关与后端分别校验个人 Basic 凭据；Authorization 仅向后端 API 转发，前端服务器不接收口令。后端管理 GET 和写接口均要求认证，未配置 bcrypt 凭据文件时返回 503；后端端口仍仅在容器网络内可达。网关包含限速与 JSON 审计，公网 HTTPS 额外强制受信客户端证书和 CRL；配置与凭据撤销见[部署说明](../deploy/README.md)。
+三个前端无需额外的应用令牌，X 控制台打开后自动读取内容。网关与后端分别校验个人 Basic 凭据；Authorization 仅向后端 API 转发，前端服务器不接收口令。后端管理 GET 和写接口均要求认证，未配置 bcrypt 凭据文件时返回 503；后端端口仍仅在容器网络内可达。网关包含限速与 JSON 审计，公网 HTTPS 额外强制受信客户端证书和 CRL；配置与凭据撤销见[部署说明](../deploy/README.md)。
 
 德国转发密钥只用于国内主机/容器连接德国专用用户，不能拿它当电脑登录国内主机的密钥。OKX 只读凭据、X OAuth 凭据、Telegram Bot Token、DeepSeek Key 均属于后端运行配置，不输入前端、不打进镜像。
 
@@ -210,6 +211,7 @@ Prometheus、Grafana、Alertmanager 归可选 `monitoring` profile，默认不�
 backend/                    Java 21 / Spring Boot 4 / Maven / MyBatis 后端
 frontend/trading-cockpit/    交易驾驶舱
 frontend/x-console/          X 内容只读控制台
+frontend/control-console/    独立功能控制台：模块开关与任务状态
 frontend/text-game/          文字游戏前端
 frontend/market/             集市前端
 deploy/                     镜像构建、发布、代理容器、Nginx、配置模板
@@ -291,7 +293,7 @@ MySQL 是金融状态权威，JSON 不是跨实例共享资金状态。发布应
 
 ### 第一步：打开访问隧道
 
-按[电脑访问隧道](../deploy/README.md#4-建立电脑访问隧道)中的 PowerShell 命令操作，核验主机指纹并保持 SSH 窗口运行。浏览器打开交易驾驶舱 `http://127.0.0.1:18080` 和 X 控制台 `http://127.0.0.1:18081`，使用网关账号密码登录；本地端口冲突和非默认 SSH 端口的调整也见该节。
+按[电脑访问隧道](../deploy/README.md#4-建立电脑访问隧道)中的 PowerShell 命令操作，核验主机指纹并保持 SSH 窗口运行。浏览器打开交易驾驶舱 `http://127.0.0.1:18080`、X 控制台 `http://127.0.0.1:18081` 和功能控制台 `http://127.0.0.1:18082`，使用网关账号密码登录；本地端口冲突和非默认 SSH 端口的调整也见该节。
 
 ### 第二步：只读验收，分清进程健康与业务结果
 

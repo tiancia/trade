@@ -31,7 +31,7 @@ const write = (file, text) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, text, { mode: 0o755 });
 };
-const baseline = ['BACKEND', 'COCKPIT', 'X_CONSOLE', 'EGRESS'].map((key) =>
+const baseline = ['BACKEND', 'COCKPIT', 'X_CONSOLE', 'CONTROL_CONSOLE', 'EGRESS'].map((key) =>
   `${key}_IMAGE=${registry}/${key.toLowerCase().replace('_', '-')}:previous`).join('\n') + '\n';
 
 test('only a successful current build marks its cache eligible for workflow persistence', () => {
@@ -72,7 +72,7 @@ function dockerMock() {
   if (args[args.indexOf('--platform') + 1] !== 'linux/amd64') reject('Unexpected platform');
   const image = args[args.indexOf('--tag') + 1];
   const service = image.split('/').at(-1).split(':')[0];
-  if (!['backend', 'cockpit', 'x-console', 'egress'].includes(service)) reject('Unexpected image service');
+  if (!['backend', 'cockpit', 'x-console', 'control-console', 'egress'].includes(service)) reject('Unexpected image service');
   if (state.failService === service) {
     process.stderr.write('mock build failure\n');
     process.exit(state.buildExit || 17);
@@ -131,14 +131,16 @@ const blob = (service, marker) => createHash('sha256').update(`${service}:${mark
 
 test('without cache-dir the original Docker commands and build-before-push ordering remain intact', () => {
   const current = fixture();
-  const result = run(current, { cache: false, services: ['cockpit', 'x-console'], push: true });
+  const result = run(current, { cache: false, services: ['cockpit', 'x-console', 'control-console'], push: true });
   assert.equal(result.status, 0, result.diagnostic);
-  assert.deepEqual(result.calls.map((call) => call[0]), ['build', 'build', 'push', 'push']);
+  assert.deepEqual(result.calls.map((call) => call[0]), ['build', 'build', 'build', 'push', 'push', 'push']);
   assert.deepEqual(result.calls[0].slice(0, 5), ['build', '--platform', 'linux/amd64', '--tag', registry + '/cockpit:cache-test']);
   assert.equal(result.calls[0].length, 6);
   assert.match(result.calls[0][5], /\/frontend\/trading-cockpit$/);
   assert.match(result.stdout, /phase=build service=cockpit elapsed_seconds=\d+ status=success exit_code=0/);
   assert.match(result.stdout, /phase=push service=x-console elapsed_seconds=\d+ status=success exit_code=0/);
+  assert.match(result.calls[2].at(-1), /\/frontend\/control-console$/);
+  assert.match(result.stdout, /phase=push service=control-console elapsed_seconds=\d+ status=success exit_code=0/);
   assert.ok(!fs.existsSync(current.local('cache')));
 });
 

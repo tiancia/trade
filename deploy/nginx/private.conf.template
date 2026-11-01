@@ -6,7 +6,7 @@ server_tokens off;
 include /etc/nginx/includes/management-controls.conf;
 
 # The browser's Host keeps an explicit SSH/local port even though Docker maps
-# it to 8080/8081. Never reuse a caller-supplied X-Forwarded-Port value.
+# it to 8080/8081/8082. Never reuse a caller-supplied X-Forwarded-Port value.
 map "$scheme:$http_host" $trade_forwarded_port {
     default 80;
     ~:(?<trade_host_port>[0-9]+)$ $trade_host_port;
@@ -45,6 +45,24 @@ server {
 
     location / {
         set $frontend_upstream x-console:8080;
+        proxy_pass http://$frontend_upstream;
+    }
+}
+
+server {
+    listen 8082;
+    listen [::]:8082;
+    server_name _;
+
+    auth_basic "Trade dashboard";
+    auth_basic_user_file /run/secrets/gateway.htpasswd;
+
+    include /etc/nginx/includes/proxy-common.conf;
+    proxy_set_header Authorization "";
+    include /etc/nginx/includes/api.conf;
+
+    location / {
+        set $frontend_upstream control-console:8080;
         proxy_pass http://$frontend_upstream;
     }
 }

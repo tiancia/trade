@@ -87,7 +87,7 @@ function mockTool() {
   record({ environment, credentials, version });
   if (state.produceManifest !== false && environment.CI_ACTION !== 'rollback') {
     let manifest = 'RELEASE_VERSION=' + version + '\n'
-      + Object.entries({ BACKEND_IMAGE: 'backend', COCKPIT_IMAGE: 'cockpit', X_CONSOLE_IMAGE: 'x-console', EGRESS_IMAGE: 'egress' })
+      + Object.entries({ BACKEND_IMAGE: 'backend', COCKPIT_IMAGE: 'cockpit', X_CONSOLE_IMAGE: 'x-console', CONTROL_CONSOLE_IMAGE: 'control-console', EGRESS_IMAGE: 'egress' })
         .map(([key, service]) => `${key}=${state.registry}/${service}:${version}`).join('\n') + '\n';
     if (state.malformed === 'unknown-key') manifest += 'SECRET=' + state.password + '\n';
     if (state.malformed === 'missing-key') manifest = manifest.replace(/^EGRESS_IMAGE=.*\n/m, '');

@@ -5,7 +5,7 @@
 services:
   backend:
     environment:
-      TRADE_TRADING_FRONTEND_ALLOWED_ORIGIN_PATTERNS: https://${COCKPIT_DOMAIN:?Set COCKPIT_DOMAIN for public access}
+      TRADE_TRADING_FRONTEND_ALLOWED_ORIGIN_PATTERNS: https://${COCKPIT_DOMAIN:?Set COCKPIT_DOMAIN for public access},https://${CONTROL_CONSOLE_DOMAIN:?Set CONTROL_CONSOLE_DOMAIN for public access}
 
   gateway:
     ports: !override
@@ -14,6 +14,7 @@ services:
     environment:
       COCKPIT_DOMAIN: ${COCKPIT_DOMAIN:?Set COCKPIT_DOMAIN for public access}
       X_CONSOLE_DOMAIN: ${X_CONSOLE_DOMAIN:?Set X_CONSOLE_DOMAIN for public access}
+      CONTROL_CONSOLE_DOMAIN: ${CONTROL_CONSOLE_DOMAIN:?Set CONTROL_CONSOLE_DOMAIN for public access}
     volumes:
       - ./deploy/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ${TLS_DIRECTORY:-./deploy/secrets/tls}:/etc/nginx/tls:ro

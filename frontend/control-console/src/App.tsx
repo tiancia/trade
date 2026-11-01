@@ -1,9 +1,6 @@
-"use client";
-
-import Link from "next/link";
-import { Activity, ArrowLeft, Bot, BookOpen, CirclePause, MessageSquare, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { Activity, Bot, BookOpen, CirclePause, MessageSquare, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createJsonRequestHeaders, formatTradingTimestamp } from "../lib/trading-api.mjs";
+import { createJsonRequestHeaders, formatTradingTimestamp } from "./api.mjs";
 
 type Loop = { id: string; lastRunCompletedAt?: string | number; nextRunAt?: string | number; lastRunSuccessful?: boolean | null; lastError?: string | null };
 type ModuleStatus = {
@@ -11,7 +8,6 @@ type ModuleStatus = {
   task: { running: boolean; autoStart: boolean; loops: Loop[] };
   notices: string[]; error?: string | null;
 };
-const API_BASE = (process.env.NEXT_PUBLIC_TRADE_API_URL ?? "").replace(/\/$/, "");
 const groups = [
   { name: "交易与分析", ids: ["trading", "trading-ai", "polymarket"] },
   { name: "内容与发布", ids: ["story", "weibo", "x"] },
@@ -20,7 +16,7 @@ const icons = { trading: Activity, "trading-ai": Bot, polymarket: Activity, stor
 const loopNames: Record<string, string> = { decision: "策略决策", "event-scan": "事件扫描", reconciliation: "订单对账", review: "评估 / 审核", generation: "内容生成", publishing: "发布扫描" };
 
 async function request<T>(path: string, init: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(path, {
     ...init, cache: "no-store", headers: createJsonRequestHeaders(init),
     signal: init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
   });
@@ -32,7 +28,7 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
   return response.json();
 }
 
-export default function ModuleControlsPage() {
+export default function App() {
   const [modules, setModules] = useState<ModuleStatus[] | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -101,8 +97,7 @@ export default function ModuleControlsPage() {
   return (
     <main className="module-page">
       <header className="module-topbar">
-        <Link href="/" className="module-back"><ArrowLeft size={17} />交易驾驶舱</Link>
-        <span className="module-brand">ORBIT <span>系统管理</span></span>
+        <span className="module-brand">ORBIT <span>功能控制台</span></span>
         <span className={`module-connection ${connected ? "online" : ""}`}><i />{connected ? "后端已连接" : "等待后端连接"}</span>
       </header>
       <div className="module-body">

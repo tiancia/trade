@@ -27,7 +27,7 @@ const ciSource = fs.readFileSync(path.resolve(__dirname, '../scripts/managed-ci.
 const registry = 'ccr.ccs.tencentyun.com/tiancia-trade';
 const actualSha = 'a'.repeat(40);
 const historicalTag = 'sha-' + 'b'.repeat(40) + '-cn-4-123456abcdef';
-const services = { BACKEND_IMAGE: 'backend', COCKPIT_IMAGE: 'cockpit', X_CONSOLE_IMAGE: 'x-console', EGRESS_IMAGE: 'egress' };
+const services = { BACKEND_IMAGE: 'backend', COCKPIT_IMAGE: 'cockpit', X_CONSOLE_IMAGE: 'x-console', CONTROL_CONSOLE_IMAGE: 'control-console', EGRESS_IMAGE: 'egress' };
 const username = 'synthetic-tcr-user';
 const password = 'synthetic-password $with spaces';
 const privateKey = 'synthetic-private-key-material';
@@ -42,7 +42,7 @@ const put = (file, value) => {
 const serialize = (values) => ['RELEASE_VERSION=' + values.RELEASE_VERSION,
   ...Object.keys(services).map((key) => key + '=' + values[key]), ''].join('\n');
 const baseline = () => ({ RELEASE_VERSION: 'old-release', BACKEND_IMAGE: 'trade/backend:old',
-  COCKPIT_IMAGE: 'old-registry.example/team/cockpit:keep', X_CONSOLE_IMAGE: 'trade/x-console:keep', EGRESS_IMAGE: 'trade/egress:keep' });
+  COCKPIT_IMAGE: 'old-registry.example/team/cockpit:keep', X_CONSOLE_IMAGE: 'trade/x-console:keep', CONTROL_CONSOLE_IMAGE: 'trade/control-console:keep', EGRESS_IMAGE: 'trade/egress:keep' });
 const existing = () => ({ ...baseline(), RELEASE_VERSION: historicalTag, BACKEND_IMAGE: registry + '/backend:' + historicalTag });
 const parse = (text) => Object.fromEntries(text.trim().split(/\r?\n/).filter((line) => line && !line.startsWith('#'))
   .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
@@ -66,7 +66,7 @@ function mockTool() {
   const parseManifest = (text) => Object.fromEntries(text.trim().split(/\r?\n/).filter(Boolean).map((line) => {
     const equal = line.indexOf('='); return [line.slice(0, equal), line.slice(equal + 1)];
   }));
-  const imageServices = { BACKEND_IMAGE: 'backend', COCKPIT_IMAGE: 'cockpit', X_CONSOLE_IMAGE: 'x-console', EGRESS_IMAGE: 'egress' };
+  const imageServices = { BACKEND_IMAGE: 'backend', COCKPIT_IMAGE: 'cockpit', X_CONSOLE_IMAGE: 'x-console', CONTROL_CONSOLE_IMAGE: 'control-console', EGRESS_IMAGE: 'egress' };
   const configPath = process.env.DOCKER_CONFIG || '';
   const buildxConfig = process.env.BUILDX_CONFIG ? local(process.env.BUILDX_CONFIG) : undefined;
   const selectedBuilder = process.env.BUILDX_BUILDER;
@@ -289,7 +289,7 @@ test('partial builds freeze actual HEAD, download the production baseline, and p
   assert.match(build.options.tag, new RegExp('^sha-' + actualSha + '-cn-17-[a-f0-9]{12}$'));
   assert.equal(result.artifact.RELEASE_VERSION, build.options.tag);
   assert.equal(result.artifact.BACKEND_IMAGE, registry + '/backend:' + build.options.tag);
-  for (const key of ['COCKPIT_IMAGE', 'X_CONSOLE_IMAGE', 'EGRESS_IMAGE']) assert.equal(result.artifact[key], baseline()[key]);
+  for (const key of ['COCKPIT_IMAGE', 'X_CONSOLE_IMAGE', 'CONTROL_CONSOLE_IMAGE', 'EGRESS_IMAGE']) assert.equal(result.artifact[key], baseline()[key]);
   assert.equal(result.calls.filter((call) => call.tool === 'scp' && call.transfer === 'baseline').length, 1);
   assert.ok(!result.calls.some((call) => call.tool === 'ssh'));
   const builder = result.calls.find((call) => call.tool === 'docker' && call.args[1] === 'create');
@@ -298,15 +298,16 @@ test('partial builds freeze actual HEAD, download the production baseline, and p
   assert.deepEqual(result.calls.filter((call) => call.tool === 'docker').at(-1).args, ['buildx', 'rm', '--force', builderName]);
 });
 
-test('frontends expands to both web applications while retaining backend and egress references', () => {
+test('frontends expands to all three web applications while retaining backend and egress references', () => {
   const result = run({ service: 'frontends' });
   assert.equal(result.status, 0, result.diagnostic);
   const build = result.calls.find((call) => call.tool === 'build_images');
-  assert.deepEqual(build.targets, ['cockpit', 'x-console']);
+  assert.deepEqual(build.targets, ['cockpit', 'x-console', 'control-console']);
   assert.equal(result.artifact.BACKEND_IMAGE, baseline().BACKEND_IMAGE);
   assert.equal(result.artifact.EGRESS_IMAGE, baseline().EGRESS_IMAGE);
   assert.equal(result.artifact.COCKPIT_IMAGE, registry + '/cockpit:' + result.artifact.RELEASE_VERSION);
   assert.equal(result.artifact.X_CONSOLE_IMAGE, registry + '/x-console:' + result.artifact.RELEASE_VERSION);
+  assert.equal(result.artifact.CONTROL_CONSOLE_IMAGE, registry + '/control-console:' + result.artifact.RELEASE_VERSION);
 });
 
 test('all build-only works with default flags and no production SSH credentials', () => {

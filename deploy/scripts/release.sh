@@ -9,7 +9,7 @@ RECORD_DIR=''
 ACTION=''
 NO_PULL=false
 TARGETS=()
-IMAGE_KEYS=(BACKEND_IMAGE COCKPIT_IMAGE X_CONSOLE_IMAGE EGRESS_IMAGE)
+IMAGE_KEYS=(BACKEND_IMAGE COCKPIT_IMAGE X_CONSOLE_IMAGE CONTROL_CONSOLE_IMAGE EGRESS_IMAGE)
 WAIT_TIMEOUT=${DEPLOY_WAIT_TIMEOUT:-180}
 ACCESS_MODE=${DEPLOY_ACCESS_MODE:-private}
 manifest_tmp=''
@@ -40,7 +40,7 @@ Options:
   --no-pull       Require all needed images already loaded locally; never pull
   --help          Show this help
 
-Services: backend cockpit x-console egress gateway.
+Services: backend cockpit x-console control-console egress gateway.
 Omit services for the initial/full deployment. Full deployment also starts
 mysql/redis with --no-recreate. A selected-service update does not start or
 change dependencies; deploy the full stack before using selected updates.
@@ -57,7 +57,7 @@ the release; never automatically repair history or restore a database backup.
 Older images cannot run against a newer schema. Use a compatible forward fix.
 
 The script never sources or prints runtime config, uses compose down, or removes
-volumes. Image manifests accept only four *_IMAGE
+volumes. Image manifests accept only five *_IMAGE
 keys and an optional RELEASE_VERSION. Successful operations update release.env
 and releases/current.env; rollback swaps current and previous, so it is repeatable.
 If an update fails after stopping containers, inspect schema and application;
@@ -124,12 +124,12 @@ RECORD_DIR="$ROOT_DIR/deploy/releases"
 case "$ACCESS_MODE" in private|public) ;; *) fail 'Access mode must be private or public' ;; esac
 [[ $WAIT_TIMEOUT =~ ^[1-9][0-9]*$ ]] || fail 'DEPLOY_WAIT_TIMEOUT must be a positive number of seconds'
 for service in "${TARGETS[@]}"; do
-  case "$service" in backend|cockpit|x-console|egress|gateway) ;; *) fail "Unsupported application service: $service" ;; esac
+  case "$service" in backend|cockpit|x-console|control-console|egress|gateway) ;; *) fail "Unsupported application service: $service" ;; esac
 done
 FULL_DEPLOY=false
 if ((${#TARGETS[@]} == 0)); then
   FULL_DEPLOY=true
-  TARGETS=(egress backend cockpit x-console gateway)
+  TARGETS=(egress backend cockpit x-console control-console gateway)
 fi
 if [[ -z $RELEASE_FILE ]]; then
   if [[ $ACTION == rollback ]]; then
@@ -156,7 +156,7 @@ read_manifest() {
     [[ $line =~ ^([A-Z_]+)=([A-Za-z0-9][A-Za-z0-9._:/@+-]*)$ ]] || fail "Invalid image manifest line in $file"
     key=${BASH_REMATCH[1]}
     value=${BASH_REMATCH[2]}
-    case "$key" in BACKEND_IMAGE|COCKPIT_IMAGE|X_CONSOLE_IMAGE|EGRESS_IMAGE|RELEASE_VERSION) ;; *) fail "Unexpected manifest key: $key" ;; esac
+    case "$key" in BACKEND_IMAGE|COCKPIT_IMAGE|X_CONSOLE_IMAGE|CONTROL_CONSOLE_IMAGE|EGRESS_IMAGE|RELEASE_VERSION) ;; *) fail "Unexpected manifest key: $key" ;; esac
     [[ ! -v result[$key] ]] || fail "Duplicate manifest key: $key"
     [[ $value != *://* ]] || fail "Image references cannot contain URL schemes: $key"
     if [[ $key == RELEASE_VERSION ]]; then
@@ -165,6 +165,8 @@ read_manifest() {
     result[$key]=$value
   done < "$file"
   for key in "${IMAGE_KEYS[@]}"; do
+    # The previous deployment predates the separate console. Never invent its old image.
+    if [[ ${3:-false} == true && $key == CONTROL_CONSOLE_IMAGE && -z ${result[$key]:-} ]]; then continue; fi
     [[ -n ${result[$key]:-} ]] || fail "Missing manifest key: $key"
   done
 }
@@ -175,6 +177,7 @@ write_manifest() {
   {
     [[ -z ${values[RELEASE_VERSION]:-} ]] || printf 'RELEASE_VERSION=%s\n' "${values[RELEASE_VERSION]}"
     for key in "${IMAGE_KEYS[@]}"; do
+      [[ -n ${values[$key]:-} ]] || continue
       printf '%s=%s\n' "$key" "${values[$key]}"
     done
   } > "$file"
@@ -189,7 +192,10 @@ if [[ $ACTION != validate ]]; then
   flock -n 9 || fail 'Another deployment is already running'
 fi
 if [[ -f $RECORD_DIR/current.env ]]; then
-  read_manifest "$RECORD_DIR/current.env" current
+  read_manifest "$RECORD_DIR/current.env" current true
+  if [[ $FULL_DEPLOY == false && -z ${current[CONTROL_CONSOLE_IMAGE]:-} ]]; then
+    fail 'The control-console service requires an initial full deployment before selected-service updates'
+  fi
 fi
 
 # For a single-service release, preserve the successful images of other services.
@@ -206,6 +212,7 @@ for service in "${TARGETS[@]}"; do
     backend) activated[BACKEND_IMAGE]=${desired[BACKEND_IMAGE]} ;;
     cockpit) activated[COCKPIT_IMAGE]=${desired[COCKPIT_IMAGE]} ;;
     x-console) activated[X_CONSOLE_IMAGE]=${desired[X_CONSOLE_IMAGE]} ;;
+    control-console) activated[CONTROL_CONSOLE_IMAGE]=${desired[CONTROL_CONSOLE_IMAGE]} ;;
     egress) activated[EGRESS_IMAGE]=${desired[EGRESS_IMAGE]} ;;
   esac
 done
