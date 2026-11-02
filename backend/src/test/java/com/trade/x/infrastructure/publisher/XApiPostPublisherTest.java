@@ -70,6 +70,34 @@ class XApiPostPublisherTest {
         assertThrows(XPublishingException.class, () -> publisher.publish(claimed));
         verify(api, never()).publishText(anyString());
     }
+    @Test void liveAuthorizationRevokedDuringAccountCheckStopsPost() {
+        when(api.getMe()).thenAnswer(invocation -> {
+            settings.setLivePublishingEnabled(false);
+            return new XUser("123", "test", "test");
+        });
+        assertThrows(XPublishingException.class, () -> publisher.publish(claimed));
+        verify(api, never()).publishText(anyString());
+    }
+
+    @Test void workflowDisabledDuringAccountCheckStopsPost() {
+        var workflow = new com.trade.x.infrastructure.config.XWorkflowProperties();
+        workflow.setEnabled(true);
+        workflow.setTargetUserId("123");
+        // Use a live draft for the production constructor's clock; no sleeps or timing races.
+        Instant started = Instant.now();
+        var currentDraft = XPost.generating("123", "fixture", started, policy)
+                .generated(new GeneratedXPost("完整审核后的正文。", "一般观点"), started)
+                .review(1, true, "telegram:42", "approved", started, started).claim(started);
+        var dynamicPublisher = new XApiPostPublisher(api, client, settings, workflow);
+        when(api.getMe()).thenAnswer(invocation -> {
+            workflow.setEnabled(false);
+            return new XUser("123", "test", "test");
+        });
+
+        assertThrows(XPublishingException.class, () -> dynamicPublisher.publish(currentDraft));
+        verify(api).getMe();
+        verify(api, never()).publishText(anyString());
+    }
     @Test void missingCredentialsAndLiveGateFailClosed() {
         client.setAccessTokenSecret(""); assertFalse(publisher.credentialsAvailable("123"));
         assertEquals("X OAuth credentials are missing", publisher.unavailableReason("123"));

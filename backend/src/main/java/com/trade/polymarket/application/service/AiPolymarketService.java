@@ -210,6 +210,12 @@ public class AiPolymarketService {
                     decision.getReason()
             );
 
+            // AI responses may arrive after a module stop. Audit the decision without
+            // acquiring live execution ownership or starting another external call.
+            if (!properties.isEnabled()) {
+                result = PolymarketOrderResult.skipped("Polymarket module is disabled");
+                return false;
+            }
             if (properties.getExecution().isEnabled() && decision.getAction() == PolymarketAction.BUY) {
                 if (!executionGuard.reserve(decisionId)) {
                     throw new IllegalStateException("Polymarket has an unresolved live execution; verify it before placing another order");

@@ -29,6 +29,30 @@ import static org.mockito.Mockito.*;
 
 class AiPolymarketServiceTest {
     @Test
+    void disablingModuleDuringAiCallAuditsSkipWithoutReservingOrExecuting() {
+        var properties = new AiPolymarketProperties();
+        properties.setEnabled(true);
+        properties.getExecution().setEnabled(true);
+        var executor = mock(PolymarketOrderExecutor.class);
+        var guard = mock(com.trade.polymarket.port.PolymarketExecutionGuard.class);
+        var audit = new CapturingAuditSink();
+        var service = new AiPolymarketService(prompt -> {
+            properties.setEnabled(false);
+            return """
+                    {"action":"BUY","reason":"fixture","tokenId":"token-1","outcome":"Yes","limitPrice":0.42,
+                     "maxSpendUsdc":5,"winProbability":0.6,"confidence":0.9,"estimatedEdge":0.18}
+                    """;
+        }, new FakeContextCollector(context()), new AiPolymarketPromptBuilder(),
+                new AiPolymarketDecisionParser(), executor, properties, audit, AiResponseParseErrorSink.NOOP, guard);
+
+        assertFalse(service.runDecision());
+        assertEquals("SKIPPED", audit.record.getOrderResult().getStatus());
+        assertEquals("BUY", audit.record.getAiDecision().getAction().name());
+        assertNotNull(audit.record.getCompletedAt());
+        verifyNoInteractions(guard, executor);
+    }
+
+    @Test
     void liveAuditFailureStopsBeforeCollectingOrExecutingAndReleasesDecisionLock() {
         var properties = new AiPolymarketProperties();
         properties.setEnabled(true);

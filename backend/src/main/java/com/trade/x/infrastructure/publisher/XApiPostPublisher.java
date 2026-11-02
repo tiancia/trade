@@ -73,6 +73,11 @@ public class XApiPostPublisher implements XPostPublisher {
             if (!claimed.targetUserId().equals(api.getMe().id())) {
                 throw new XPublishingException("X access token belongs to a different target account");
             }
+            // Account verification can outlive a module stop or authorization change.
+            // Recheck immediately before the external write, still as a pre-send failure.
+            if (!credentialsAvailable(claimed.targetUserId())) {
+                throw new XPublishingException("X publishing gates changed before send");
+            }
             if (!claimed.live(Instant.now(clock))) throw new XPublishingException("X draft expired before send");
         } catch (XPublishingException blocked) { throw blocked; }
         catch (XApiException rejected) {

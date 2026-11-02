@@ -9,6 +9,7 @@ import com.trade.polymarket.domain.model.PolymarketOrderRequest;
 import com.trade.polymarket.domain.model.PolymarketOrderResult;
 import com.trade.polymarket.domain.model.PolymarketOutcomeSnapshot;
 import com.trade.polymarket.infrastructure.config.AiPolymarketProperties;
+import com.trade.polymarket.infrastructure.broker.PolymarketGeoblockService;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -19,11 +20,78 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.*;
 
 class PolymarketOrderExecutorTest {
     @Test
+    void disabledModuleNeverStartsLivePreflightOrSubmits() {
+        var properties = liveProperties();
+        properties.setEnabled(false);
+        var runner = new RecordingRunner();
+        var geoblock = mock(PolymarketGeoblockService.class);
+
+        var result = new PolymarketOrderExecutor(properties, runner, geoblock).execute(buyDecision(), context());
+
+        assertEquals("SKIPPED", result.getStatus());
+        assertFalse(runner.called);
+        verifyNoInteractions(geoblock);
+    }
+
+    @Test
+    void moduleDisabledDuringGeoblockCheckNeverSubmits() {
+        var properties = liveProperties();
+        var runner = new RecordingRunner();
+        var geoblock = mock(PolymarketGeoblockService.class);
+        doAnswer(invocation -> { properties.setEnabled(false); return null; }).when(geoblock).assertAllowed();
+
+        var result = new PolymarketOrderExecutor(properties, runner, geoblock).execute(buyDecision(), context());
+
+        assertEquals("SKIPPED", result.getStatus());
+        assertFalse(runner.called);
+        verify(geoblock).assertAllowed();
+    }
+
+    @Test
+    void executionDisabledDuringGeoblockCheckNeverSubmits() {
+        var properties = liveProperties();
+        var runner = new RecordingRunner();
+        var geoblock = mock(PolymarketGeoblockService.class);
+        doAnswer(invocation -> { properties.getExecution().setEnabled(false); return null; }).when(geoblock).assertAllowed();
+
+        var result = new PolymarketOrderExecutor(properties, runner, geoblock).execute(buyDecision(), context());
+
+        assertEquals("SKIPPED", result.getStatus());
+        assertFalse(runner.called);
+    }
+
+    @Test
+    void enabledLiveExecutionStillSubmitsOnceAfterGeoblockCheck() {
+        var properties = liveProperties();
+        var runner = mock(PolymarketOrderRunner.class);
+        var geoblock = mock(PolymarketGeoblockService.class);
+        when(runner.placeOrder(any())).thenReturn("accepted");
+
+        var result = new PolymarketOrderExecutor(properties, runner, geoblock).execute(buyDecision(), context());
+
+        assertEquals("PLACED", result.getStatus());
+        var calls = inOrder(geoblock, runner);
+        calls.verify(geoblock).assertAllowed();
+        calls.verify(runner).placeOrder(any());
+        verifyNoMoreInteractions(runner, geoblock);
+    }
+
+    private static AiPolymarketProperties liveProperties() {
+        var properties = new AiPolymarketProperties();
+        properties.setEnabled(true);
+        properties.getExecution().setEnabled(true);
+        properties.setMinWinConfidenceScore(new BigDecimal("0.45"));
+        return properties;
+    }
+
+    @Test
     void dryRunBuildsCappedBuyOrderWithoutCallingRunner() {
         AiPolymarketProperties properties = new AiPolymarketProperties();
+        properties.setEnabled(true);
         properties.setMaxOrderUsdc(new BigDecimal("5"));
         properties.setMinOrderSize(new BigDecimal("1"));
         properties.setMinWinConfidenceScore(new BigDecimal("0.45"));
@@ -41,6 +109,7 @@ class PolymarketOrderExecutorTest {
     @Test
     void dryRunRoundsMarketBuyAmountsToPolymarketPrecision() {
         AiPolymarketProperties properties = new AiPolymarketProperties();
+        properties.setEnabled(true);
         properties.setMaxOrderUsdc(new BigDecimal("5.129"));
         properties.setMinOrderSize(new BigDecimal("1"));
         properties.setMinWinConfidenceScore(new BigDecimal("0.45"));
@@ -60,6 +129,7 @@ class PolymarketOrderExecutorTest {
     @Test
     void skipsWhenEdgeIsTooSmall() {
         AiPolymarketProperties properties = new AiPolymarketProperties();
+        properties.setEnabled(true);
         properties.setMinExpectedEdge(new BigDecimal("0.10"));
         properties.setMinWinConfidenceScore(new BigDecimal("0.45"));
         PolymarketOrderExecutor executor = new PolymarketOrderExecutor(properties, new RecordingRunner(), null);
@@ -74,6 +144,7 @@ class PolymarketOrderExecutorTest {
     @Test
     void skipsWhenWinConfidenceScoreIsTooSmall() {
         AiPolymarketProperties properties = new AiPolymarketProperties();
+        properties.setEnabled(true);
         properties.setMinWinConfidenceScore(new BigDecimal("0.50"));
         PolymarketOrderExecutor executor = new PolymarketOrderExecutor(properties, new RecordingRunner(), null);
 
@@ -89,6 +160,7 @@ class PolymarketOrderExecutorTest {
     @Test
     void skipsWhenMarketResolvesBeyondTurnoverWindow() {
         AiPolymarketProperties properties = new AiPolymarketProperties();
+        properties.setEnabled(true);
         properties.setMinWinConfidenceScore(new BigDecimal("0.45"));
         properties.setRequireMarketEndDate(true);
         properties.setMaxTimeToResolutionHours(72);

@@ -53,13 +53,22 @@ public class WeiboPublishingService implements WeiboPostPublisher {
 
     public WeiboPublishResult publishText(String status) {
         String cleanStatus = requiredText(status, "status is required");
+        WeiboAccountToken token;
+        try {
+            requireDirectPublishing();
+            token = tokenRepository.findValid(Instant.now(clock))
+                    .orElseThrow(() -> new WeiboPublishingException("No valid Weibo access token is available"));
+            requireDirectPublishing();
+        } catch (WeiboPublishingException blocked) { throw blocked; }
+        catch (RuntimeException blocked) { throw new WeiboPublishingException("Weibo publishing preflight failed before send"); }
+        return api.publishText(token.accessToken(), cleanStatus);
+    }
+
+    private void requireDirectPublishing() {
         requireLivePublishing();
         if (properties.isReviewRequired() || policySource.get().enabled()) {
             throw new WeiboPublishingException("Direct publishing is disabled; use the reviewed post workflow");
         }
-        WeiboAccountToken token = tokenRepository.findValid(Instant.now(clock))
-                .orElseThrow(() -> new WeiboPublishingException("No valid Weibo access token is available"));
-        return api.publishText(token.accessToken(), cleanStatus);
     }
 
     @Override
@@ -69,20 +78,34 @@ public class WeiboPublishingService implements WeiboPostPublisher {
 
     @Override
     public String publish(WeiboPost claimed) {
+        WeiboAccountToken token;
+        String body;
+        try {
+            requireReviewedPublishing(claimed);
+            token = tokenRepository.findValidForUid(claimed.targetUid(), Instant.now(clock))
+                    .orElseThrow(() -> new WeiboPublishingException("Target Weibo account requires authorization"));
+            // A blocked credential lookup may outlive the module gate, account or draft.
+            requireReviewedPublishing(claimed);
+            claimed.validatePublishingBody(policySource.get().maxBodyChars());
+            body = requiredText(claimed.body(), "status is required");
+        } catch (WeiboPublishingException blocked) { throw blocked; }
+        catch (RuntimeException blocked) { throw new WeiboPublishingException("Weibo publishing preflight failed before send"); }
+        // Keep provider failures outside the preflight catch: a send timeout is uncertain.
+        return api.publishText(token.accessToken(), body).id();
+    }
+
+    private void requireReviewedPublishing(WeiboPost claimed) {
         requireLivePublishing();
-        policySource.get().requirePublishing();
+        WeiboWorkflowPolicy policy = policySource.get();
+        policy.requirePublishing();
+        Instant now = Instant.now(clock);
         if (claimed.status() != WeiboPostStatus.PUBLISHING || claimed.reviewedAt() == null
                 || claimed.reviewer() == null || claimed.attemptId() == null
-                || !claimed.live(Instant.now(clock))
-                || !claimed.event().occurredAt().plus(policySource.get().eventMaxAge()).isAfter(Instant.now(clock))
-                || !policySource.get().targetUid().equals(claimed.targetUid())) {
+                || !claimed.live(now)
+                || !claimed.event().occurredAt().plus(policy.eventMaxAge()).isAfter(now)
+                || !policy.targetUid().equals(claimed.targetUid())) {
             throw new WeiboPublishingException("Post is not eligible for publishing");
         }
-        WeiboAccountToken token = tokenRepository.findValidForUid(claimed.targetUid(), Instant.now(clock))
-                .orElseThrow(() -> new WeiboPublishingException("Target Weibo account requires authorization"));
-        try { claimed.validatePublishingBody(policySource.get().maxBodyChars()); }
-        catch (IllegalArgumentException e) { throw new WeiboPublishingException("Post body no longer meets publishing limits"); }
-        return api.publishText(token.accessToken(), requiredText(claimed.body(), "status is required")).id();
     }
 
     private void requireLivePublishing() {
