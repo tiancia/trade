@@ -53,6 +53,7 @@ class TradingRuntimeSafetyPersistenceTest {
     @Autowired OrderLifecycleService lifecycle;
     @Autowired OrderSettlementService settlement;
     @Autowired TradingProperties properties;
+    @Autowired TradingAiReviewStore reviews;
     @TempDir Path temporary;
 
     @BeforeEach void schema() throws Exception {
@@ -84,6 +85,43 @@ class TradingRuntimeSafetyPersistenceTest {
         assertTrue(record.getSkipReason().contains("stale"));
         assertEquals(0, paper.active("BTC-USDT").version());
         assertTrue(paper.fills("BTC-USDT", account.sessionId(), null, 10).isEmpty());
+    }
+
+    @Test void aiChangeAndAuditCommitTogetherAndAuditFailureRollsBackAllWrites() {
+        var selected = initializeSelection();
+        reviews.claim("live:BTC-USDT", "success", NOW, NOW.plusSeconds(1800), NOW.plusSeconds(300));
+        reviews.proposed("success", "{\"before\":1}", "{\"action\":\"TUNE\"}");
+        maintenance.change(() -> {
+            assertTrue(reviews.beginApplying("success", NOW));
+            configurations.update(1, new StrategyConfigurationVersion("first", "test", "1m", 2,
+                    NOW.toString(), "AI success", Map.of("signal", 2)));
+            selections.select("live", "BTC-USDT", "second", selected.revision());
+            reviews.applied("success", "{\"fromVersion\":1,\"toVersion\":2}", "AI change", NOW);
+            return true;
+        });
+        var applied = reviews.recent("live:BTC-USDT", 1).getFirst();
+        assertEquals("APPLIED", applied.outcome());
+        assertEquals("PENDING", applied.notificationStatus());
+        assertEquals("{\"fromVersion\":1,\"toVersion\":2}", applied.applicationJson());
+        assertEquals(2, configurations.currentOrCreate(baseline()).version());
+        assertEquals("second", selections.currentOrCreate("live", "BTC-USDT", selected).strategyId());
+
+        reviews.claim("live:BTC-USDT", "failure", NOW.plusSeconds(1800), NOW.plusSeconds(3600), NOW.plusSeconds(2100));
+        reviews.proposed("failure", "{}", "{}");
+        assertThrows(IllegalStateException.class, () -> maintenance.change(() -> {
+            assertTrue(reviews.beginApplying("failure", NOW.plusSeconds(1800)));
+            configurations.update(2, new StrategyConfigurationVersion("first", "test", "1m", 3,
+                    NOW.toString(), "must roll back", Map.of("signal", 3)));
+            selections.select("live", "BTC-USDT", "first", selected.revision() + 1);
+            reviews.applied("missing-review", "{}", "audit unavailable", NOW);
+            return true;
+        }));
+        assertEquals(2, configurations.currentOrCreate(baseline()).version());
+        assertEquals(2, configurations.history("first", 0, 10).size());
+        assertEquals("second", selections.currentOrCreate("live", "BTC-USDT", selected).strategyId());
+        var failed = reviews.recent("live:BTC-USDT", 1).getFirst();
+        assertEquals("READY", failed.outcome());
+        assertNull(failed.applicationJson());
     }
 
     @Test void selectionIsSharedEvenWithDifferentCachedLegacyFilesAndRejectsStaleRevision() throws Exception {
@@ -255,6 +293,7 @@ class TradingRuntimeSafetyPersistenceTest {
         @Bean SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
             var factory = new SqlSessionFactoryBean(); factory.setDataSource(dataSource);
             factory.setMapperLocations(new ClassPathResource("mapper/trading/StrategySelectionMapper.xml"),
+                    new ClassPathResource("mapper/trading/TradingAiReviewMapper.xml"),
                     new ClassPathResource("mapper/trading/StrategyConfigurationMapper.xml"),
                     new ClassPathResource("mapper/trading/TradingFinancialStateMapper.xml"),
                     new ClassPathResource("mapper/trading/TradingOrderMapper.xml"),
@@ -266,6 +305,8 @@ class TradingRuntimeSafetyPersistenceTest {
             var mapper = new MapperFactoryBean<>(type); mapper.setSqlSessionFactory(factory); return mapper;
         }
         @Bean MapperFactoryBean<StrategySelectionMapper> selectionMapper(SqlSessionFactory f) { return mapper(StrategySelectionMapper.class, f); }
+        @Bean MapperFactoryBean<TradingAiReviewMapper> aiReviewMapper(SqlSessionFactory f) { return mapper(TradingAiReviewMapper.class, f); }
+        @Bean TradingAiReviewStore reviews(TradingAiReviewMapper m) { return new MyBatisTradingAiReviewStore(m); }
         @Bean MapperFactoryBean<StrategyConfigurationMapper> configurationMapper(SqlSessionFactory f) { return mapper(StrategyConfigurationMapper.class, f); }
         @Bean MapperFactoryBean<TradingFinancialStateMapper> financialMapper(SqlSessionFactory f) { return mapper(TradingFinancialStateMapper.class, f); }
         @Bean MapperFactoryBean<TradingOrderMapper> orderMapper(SqlSessionFactory f) { return mapper(TradingOrderMapper.class, f); }

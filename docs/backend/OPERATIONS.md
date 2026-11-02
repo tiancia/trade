@@ -6,7 +6,7 @@
 
 ## 运行依赖
 
-Trading AI 顾问的配置类及 env 示例默认关闭；当前 `application.yml` 运行模板开启了顾问和模拟自动应用，启动前须核对实际环境覆盖。环境变量、独立 Telegram Bot、数据库新增表及启停验收见 [Trading AI 策略顾问](TRADING_AI.md)。它使用独立的 `trading-ai` 自动任务，不阻塞交易决策和对账任务。默认按交易日统计、每 30 分钟复评，以日内净收益和每天 5–8 笔完整交易为规划目标；`TRADE_TRADING_AI_TARGET_MIN_CLOSED_TRADES_PER_DAY` / `TRADE_TRADING_AI_TARGET_MAX_CLOSED_TRADES_PER_DAY` 可调整范围。部署时若已有 `TRADE_TRADING_AI_REVIEW_INTERVAL_MS`，须改为 `1800000` 才使用新节奏。修改后重启后端；已有数据库冷却窗口不会被重启清除，下一轮按新值预留。驾驶舱显示真实下一窗口、生效策略版本和最近执行原因；评估窗口逾期时检查 `trading-ai` 任务运行结果及交易领导租约。次数不足不会强制下单。
+Trading AI 顾问的配置类及 env 示例默认关闭；当前 `application.yml` 运行模板开启了顾问和当前 PAPER/LIVE 模式内自动应用，启动前须核对实际环境覆盖。环境变量、独立 Telegram Bot、数据库新增表及启停验收见 [Trading AI 策略顾问](TRADING_AI.md)。它使用独立的 `trading-ai` 自动任务，不阻塞交易决策和对账任务。默认按交易日统计、每 30 分钟复评，以日内净收益和每天 5–8 笔完整交易为规划目标；`TRADE_TRADING_AI_TARGET_MIN_CLOSED_TRADES_PER_DAY` / `TRADE_TRADING_AI_TARGET_MAX_CLOSED_TRADES_PER_DAY` 可调整范围。部署时若已有 `TRADE_TRADING_AI_REVIEW_INTERVAL_MS`，须改为 `1800000` 才使用新节奏。修改后重启后端；已有数据库冷却窗口不会被重启清除，下一轮按新值预留。驾驶舱显示真实下一窗口、生效策略版本和最近执行原因；评估窗口逾期时检查 `trading-ai` 任务运行结果及交易领导租约。次数不足不会强制下单。
 
 - JDK 21；
 - MySQL，连接信息通过 `SPRING_DATASOURCE_*` 提供；
@@ -23,7 +23,7 @@ Trading AI 顾问的配置类及 env 示例默认关闭；当前 `application.ym
 | 能力 | 主开关 | 额外授权（按需） |
 | --- | --- | --- |
 | OKX 模拟交易 | `TRADE_TRADING_ENABLED=true` | 实盘选择 `EXECUTION_MODE=live` 并开启 `LIVE_ENABLED`；保留租约、资金停止及风控 |
-| Trading AI 评估 | `TRADE_TRADING_AI_ENABLED=true` | 自动修改模拟策略另设 `TRADE_TRADING_AI_AUTO_APPLY=true` |
+| Trading AI 评估 | `TRADE_TRADING_AI_ENABLED=true` | 自动修改当前 PAPER/LIVE 策略另设 `TRADE_TRADING_AI_AUTO_APPLY=true` |
 | 小说生成 | `TRADE_STORY_ENABLED=true` | 无 |
 | Polymarket 决策 | `TRADE_POLYMARKET_ENABLED=true` | 真实下单另设 `TRADE_POLYMARKET_EXECUTION_ENABLED=true` |
 | X 工作流 | `TRADE_X_WORKFLOW_ENABLED=true` | 真实发布另设 `TRADE_X_LIVE_PUBLISHING_ENABLED=true`，且稿件须审核通过 |

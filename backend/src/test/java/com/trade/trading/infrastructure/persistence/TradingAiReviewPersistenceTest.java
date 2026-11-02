@@ -32,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class TradingAiReviewPersistenceTest {
     @Autowired TradingAiReviewStore store;
     @Autowired DataSource dataSource;
+    @Autowired PlatformTransactionManager transactions;
     private static final Instant NOW = Instant.parse("2026-10-28T10:00:00Z");
 
     @BeforeEach void schema() throws Exception {
@@ -43,6 +44,7 @@ class TradingAiReviewPersistenceTest {
                     "(?i)\\s+ENGINE=InnoDB\\s+DEFAULT CHARSET=utf8mb4\\s+COLLATE=utf8mb4_unicode_ci", "");
             new ResourceDatabasePopulator(new ByteArrayResource(ddl.getBytes(StandardCharsets.UTF_8))).execute(dataSource);
         }
+        new ResourceDatabasePopulator(new ClassPathResource("db/migration/V4__trading_ai_application_audit.sql")).execute(dataSource);
     }
 
     @Test void concurrentWorkersClaimOnlyOnePaidAssessmentAndPersistCooldownAfterFailure() throws Exception {
@@ -86,6 +88,29 @@ class TradingAiReviewPersistenceTest {
         claim("r2", NOW.plusSeconds(3600)); store.complete("r2", "HELD", "new advice", NOW);
         assertFalse(store.claimNotification("r2", NOW.plusSeconds(3600), NOW.plusSeconds(86400)));
         assertEquals("THROTTLED", store.recent("paper:BTC-USDT", 10).getFirst().notificationStatus());
+    }
+
+    @Test void eachAppliedChangeNotifiesDuringSuggestionCooldownAndPendingAuditSurvivesRestart() {
+        claim("suggestion", NOW); store.complete("suggestion", "HELD", "new mode", NOW);
+        assertTrue(store.claimNotification("suggestion", NOW, NOW.plusSeconds(86400)));
+        for (int i = 1; i <= 2; i++) {
+            String id = "change-" + i;
+            Instant at = NOW.plusSeconds(i * 3600L);
+            claim(id, at); store.proposed(id, "{}", "{\"action\":\"TUNE\"}");
+            new org.springframework.transaction.support.TransactionTemplate(transactions).executeWithoutResult(status -> {
+                assertTrue(store.beginApplying(id, at));
+                store.applied(id, "{\"executionMode\":\"PAPER\"}", "change", at);
+            });
+            assertEquals(id, store.pendingNotifications("paper:BTC-USDT").getFirst().reviewId());
+            assertTrue(store.claimNotification(id, at, at.plusSeconds(86400)));
+            assertFalse(store.claimNotification(id, at, at.plusSeconds(86400)));
+            store.notification(id, "SENT");
+            assertTrue(store.pendingNotifications("paper:BTC-USDT").isEmpty());
+        }
+        claim("suggestion2", NOW.plusSeconds(10800)); store.complete("suggestion2", "HELD", "new mode", NOW);
+        assertFalse(store.claimNotification("suggestion2", NOW.plusSeconds(10800), NOW.plusSeconds(86400)));
+        claim("suggestion3", NOW.plusSeconds(86400)); store.complete("suggestion3", "HELD", "new mode", NOW);
+        assertTrue(store.claimNotification("suggestion3", NOW.plusSeconds(86400), NOW.plusSeconds(172800)));
     }
 
     private boolean claim(String id, Instant now) {

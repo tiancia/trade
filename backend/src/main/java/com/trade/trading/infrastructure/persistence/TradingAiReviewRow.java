@@ -12,6 +12,7 @@ public class TradingAiReviewRow {
     private Instant expiresAt;
     private String snapshotJson;
     private String proposalJson;
+    private String applicationJson;
     private String outcome;
     private String detail;
     private String notificationStatus;

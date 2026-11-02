@@ -523,6 +523,7 @@ trade:
   trading:
     ai:
       enabled: ${TRADE_TRADING_AI_ENABLED:true}
+      # 允许当前 PAPER/LIVE 模式下调整策略；不授予切换执行模式或开启实盘的权限。
       auto-apply: ${TRADE_TRADING_AI_AUTO_APPLY:true}
       # 按日统计目标，每 30 分钟复评；沿用风控 daily-zone 的日界线。
       review-interval-ms: ${TRADE_TRADING_AI_REVIEW_INTERVAL_MS:1800000}
@@ -535,6 +536,7 @@ trade:
         # 留空时配置 chat-id 即接入通知；仍使用独立 Bot 凭据。
         enabled: ${TRADE_TRADING_AI_TELEGRAM_ENABLED:}
         chat-id: ${TRADE_TRADING_AI_TELEGRAM_CHAT_ID:}
+        # 仅新增策略逻辑建议使用冷却；已生效变更逐次通知。
         cooldown-ms: ${TRADE_TRADING_AI_TELEGRAM_COOLDOWN_MS:86400000}
         client:
           enabled: ${TRADE_TRADING_AI_TELEGRAM_ENABLED:}

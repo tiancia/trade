@@ -9,9 +9,11 @@ public interface TradingAiReviewStore {
     void capture(String reviewId, String snapshotJson);
     void proposed(String reviewId, String snapshotJson, String proposalJson);
     boolean beginApplying(String reviewId, Instant now);
+    void applied(String reviewId, String applicationJson, String detail, Instant now);
     void complete(String reviewId, String outcome, String detail, Instant now);
     boolean claimNotification(String reviewId, Instant now, Instant nextNotificationAt);
     void notification(String reviewId, String status);
     List<TradingAiReview> recent(String scope, int limit);
+    List<TradingAiReview> pendingNotifications(String scope);
     Instant nextReviewAt(String scope);
 }

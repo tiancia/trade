@@ -9,6 +9,7 @@
         <result property="expiresAt" column="expires_at"/>
         <result property="snapshotJson" column="snapshot_json"/>
         <result property="proposalJson" column="proposal_json"/>
+        <result property="applicationJson" column="application_json"/>
         <result property="outcome" column="outcome"/>
         <result property="detail" column="detail"/>
         <result property="notificationStatus" column="notification_status"/>
@@ -48,12 +49,18 @@
         UPDATE okx_ai_strategy_review SET outcome = #{outcome}, detail = #{detail}, completed_at = #{now}
         WHERE review_id = #{id} AND outcome IN ('ANALYZING', 'READY', 'APPLYING')
     </update>
+    <update id="applied">
+        UPDATE okx_ai_strategy_review
+        SET application_json = #{application}, outcome = 'APPLIED', detail = #{detail},
+            completed_at = #{now}, notification_status = 'PENDING'
+        WHERE review_id = #{id} AND outcome = 'APPLYING'
+    </update>
     <select id="find" resultMap="review">
         SELECT * FROM okx_ai_strategy_review WHERE review_id = #{id}
     </select>
     <update id="reserveNotification">
         UPDATE okx_ai_strategy_review SET notification_status = 'SENDING'
-        WHERE review_id = #{id} AND notification_status = 'NOT_REQUIRED' AND completed_at IS NOT NULL
+        WHERE review_id = #{id} AND notification_status IN ('NOT_REQUIRED', 'PENDING') AND completed_at IS NOT NULL
     </update>
     <update id="advanceNotification">
         UPDATE okx_ai_strategy_guard SET notification_after = #{next}
@@ -61,9 +68,14 @@
     </update>
     <update id="notification">
         UPDATE okx_ai_strategy_review SET notification_status = #{status}
-        WHERE review_id = #{id} AND notification_status IN ('NOT_REQUIRED', 'SENDING')
+        WHERE review_id = #{id} AND notification_status IN ('NOT_REQUIRED', 'PENDING', 'SENDING')
     </update>
     <select id="recent" resultMap="review">
         SELECT * FROM okx_ai_strategy_review WHERE scope_key = #{scope} ORDER BY id DESC LIMIT #{limit}
+    </select>
+    <select id="pendingNotifications" resultMap="review">
+        SELECT * FROM okx_ai_strategy_review
+        WHERE scope_key = #{scope} AND outcome = 'APPLIED' AND notification_status = 'PENDING'
+        ORDER BY id LIMIT 20
     </select>
 </mapper>

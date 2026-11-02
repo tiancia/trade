@@ -50,6 +50,13 @@ public class MyBatisTradingAiReviewStore implements TradingAiReviewStore {
     @Override @Transactional
     public boolean beginApplying(String id, Instant now) { return mapper.beginApplying(id, now) == 1; }
 
+    @Override @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public void applied(String id, String applicationJson, String detail, Instant now) {
+        if (mapper.applied(id, applicationJson, detail, now) != 1) {
+            throw new IllegalStateException("AI application audit could not be committed");
+        }
+    }
+
     @Override @Transactional
     public void complete(String id, String outcome, String detail, Instant now) {
         if (mapper.complete(id, outcome, detail, now) != 1) {
@@ -63,7 +70,9 @@ public class MyBatisTradingAiReviewStore implements TradingAiReviewStore {
         if (row == null) return false;
         mapper.lockGuard(row.getScope());
         if (mapper.reserveNotification(id) != 1) return false;
-        if (mapper.advanceNotification(row.getScope(), now, nextNotificationAt) != 1) {
+        // Applied changes are never suppressed by the suggestion cooldown, nor do they consume it.
+        if (!"APPLIED".equals(row.getOutcome())
+                && mapper.advanceNotification(row.getScope(), now, nextNotificationAt) != 1) {
             mapper.notification(id, "THROTTLED");
             return false;
         }
@@ -79,9 +88,18 @@ public class MyBatisTradingAiReviewStore implements TradingAiReviewStore {
     @Override @Transactional(readOnly = true)
     public List<TradingAiReview> recent(String scope, int limit) {
         if (limit < 1 || limit > 100) throw new IllegalArgumentException("limit must be from 1 to 100");
-        return mapper.recent(scope, limit).stream().map(r -> new TradingAiReview(r.getReviewId(), r.getScope(),
+        return mapper.recent(scope, limit).stream().map(this::snapshot).toList();
+    }
+
+    @Override @Transactional(readOnly = true)
+    public List<TradingAiReview> pendingNotifications(String scope) {
+        return mapper.pendingNotifications(scope).stream().map(this::snapshot).toList();
+    }
+
+    private TradingAiReview snapshot(TradingAiReviewRow r) {
+        return new TradingAiReview(r.getReviewId(), r.getScope(),
                 r.getStartedAt(), r.getExpiresAt(), r.getSnapshotJson(), r.getProposalJson(), r.getOutcome(),
-                r.getDetail(), r.getNotificationStatus(), r.getCompletedAt())).toList();
+                r.getDetail(), r.getNotificationStatus(), r.getCompletedAt(), r.getApplicationJson());
     }
     /** Memoize only committed existence; values and transactional locks remain in MySQL. */
     private void initializeOnce(Object key, Runnable insert, java.util.function.BooleanSupplier exists) {

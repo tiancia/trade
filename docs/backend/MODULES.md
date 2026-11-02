@@ -105,7 +105,7 @@ REST / WebSocket market data
 
 页面参数编辑经 `StrategyConfigurationController → TradingStrategyRegistry` 保存 MySQL 当前配置及不可变版本历史；新决策冻结所用配置版本。`application/paper` 编排独立的 PAPER 初始资金、批次、成交与估值账本，`domain/paper` 负责现金、成本和盈亏演进。具体口径与接口见 [策略参数版本与模拟资金](TRADING_SIMULATION.md)。
 
-`TradingAiScheduler → TradingAiAdvisor` 由独立的 `trading-ai` 任务评估公开行情，复用共享 AI 客户端，结果存入 MySQL 审计表。PAPER 空仓时可受限切换已有策略或调整信号参数；完整校验、配置行锁及模拟会话版本保护人工修改和在途成交。逻辑修改建议使用独立 Telegram Bot，无 X 审核轮询。配置、通知状态与回退步骤见 [Trading AI 策略顾问](TRADING_AI.md)。
+`TradingAiScheduler → TradingAiAdvisor` 由独立的 `trading-ai` 任务评估公开行情，复用共享 AI 客户端。PAPER/LIVE 空仓且无未决订单时可自动切换已有策略或修改支持的策略参数，但 AI 不能切换执行模式。变更与前后审计在同一 MySQL 事务提交，复用完整校验、配置行锁及执行版本保护。已生效变更逐次通过独立 Telegram Bot 通知，新策略模式仅发送建议，无 X 审核轮询。配置、通知状态与回退步骤见 [Trading AI 策略顾问](TRADING_AI.md)。
 
 策略输入显式区分1m、5m、15m。`intraday-technical` 提供趋势回踩、放量突破和震荡回归三种15m现货多头候选，复用纯领域指标；每分钟事件扫描独立评估确认收盘信号，订单及PAPER账本保存每个方向的稳定信号身份。新增实例不自动切换当前策略，不改变LIVE门禁；收益与频率需要独立回测、样本外及PAPER验证。
 

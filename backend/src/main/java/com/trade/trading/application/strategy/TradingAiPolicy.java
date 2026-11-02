@@ -17,7 +17,8 @@ public final class TradingAiPolicy {
             "volume-lookback-candles", "ema-fast-period", "ema-slow-period", "rsi-period", "atr-period",
             "adx-period", "bollinger-period", "breakout-period", "volume-period", "bollinger-deviations",
             "trend-min-adx", "range-max-adx", "entry-rsi-min", "entry-rsi-max", "min-volume-ratio",
-            "max-entry-extension-atr", "min-atr-percent", "max-atr-percent");
+            "max-entry-extension-atr", "min-atr-percent", "max-atr-percent",
+            "floating-loss-trigger-percent", "stop-loss-percent", "take-profit-percent", "min-net-reward-percent");
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
@@ -29,7 +30,7 @@ public final class TradingAiPolicy {
         try {
             if (response == null || response.length() > 16000) throw new IllegalArgumentException();
             TradingAiProposal p = JSON.readValue(response, TradingAiProposal.class);
-            if (p == null || p.action() == null || p.parameters() == null || p.parameters().size() > 6
+            if (p == null || p.action() == null || p.parameters() == null || p.parameters().size() > TUNABLE.size() + 1
                     || p.confidence() == null || p.confidence().signum() < 0
                     || p.confidence().compareTo(BigDecimal.ONE) > 0
                     || p.strategyId() == null || p.strategyId().length() > 128
@@ -49,15 +50,18 @@ public final class TradingAiPolicy {
         Map<String, Object> merged = new LinkedHashMap<>(previous);
         for (var entry : changes.entrySet()) {
             String key = entry.getKey();
+            if ("mode".equals(key) && previous.containsKey(key) && entry.getValue() instanceof String mode) {
+                com.trade.trading.domain.strategy.IntradayTechnicalPolicy.Mode.valueOf(mode);
+                merged.put(key, mode);
+                continue;
+            }
             if (!TUNABLE.contains(key) || !previous.containsKey(key)
                     || !(entry.getValue() instanceof Number) || !(previous.get(key) instanceof Number)) {
                 throw new IllegalArgumentException("AI cannot edit this parameter: " + key);
             }
-            BigDecimal before = new BigDecimal(previous.get(key).toString());
             BigDecimal after = new BigDecimal(entry.getValue().toString());
-            if (before.signum() <= 0 || after.signum() <= 0 || after.scale() > 18
-                    || after.subtract(before).abs().compareTo(before.multiply(new BigDecimal("0.20"))) > 0) {
-                throw new IllegalArgumentException("AI parameter changes must stay within 20 percent: " + key);
+            if (after.signum() <= 0 || after.scale() > 18) {
+                throw new IllegalArgumentException("AI parameters must be positive numbers with at most 18 decimal places: " + key);
             }
             merged.put(key, entry.getValue());
         }

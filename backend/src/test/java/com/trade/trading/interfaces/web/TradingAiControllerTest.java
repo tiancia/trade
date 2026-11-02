@@ -14,7 +14,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class TradingAiControllerTest {
-    @Test void statusNeverExposesCredentialsAndLiveCannotAutoApply() throws Exception {
+    @Test void statusNeverExposesCredentialsAndLiveCanAutoApply() throws Exception {
         var ai = new TradingAiProperties(); ai.setEnabled(true); ai.setAutoApply(true);
         ai.getTelegram().getClient().setBotToken("222:private-test-value");
         var trading = new TradingProperties(); trading.setExecutionMode(ExecutionMode.LIVE);
@@ -25,7 +25,7 @@ class TradingAiControllerTest {
                 "activeStrategyId", "intraday-trend", "activeStrategyConfigVersion", 3));
         var mvc = MockMvcBuilders.standaloneSetup(new TradingAiController(advisor, ai, trading)).build();
         mvc.perform(get("/api/trading/ai/status")).andExpect(status().isOk())
-                .andExpect(jsonPath("$.autoApplyEligible").value(false))
+                .andExpect(jsonPath("$.autoApplyEligible").value(true))
                 .andExpect(jsonPath("$.enabled").value(true))
                 .andExpect(jsonPath("$.daily.targetMinClosedTrades").value(5))
                 .andExpect(jsonPath("$.daily.targetMaxClosedTrades").value(8))

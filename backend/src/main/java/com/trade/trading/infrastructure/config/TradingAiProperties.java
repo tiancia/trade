@@ -10,6 +10,7 @@ import java.math.BigDecimal;
 @ConfigurationProperties(prefix = "trade.trading.ai")
 public class TradingAiProperties {
     private volatile boolean enabled = false;
+    /** Authorizes strategy maintenance in the configured PAPER or LIVE mode, never a mode change. */
     private boolean autoApply = false;
     private long reviewIntervalMs = 1800000;
     private int targetMinClosedTradesPerDay = 5;
@@ -35,6 +36,7 @@ public class TradingAiProperties {
     public static class Telegram {
         private Boolean enabled;
         private String chatId = "";
+        // Only logic suggestions are throttled; committed strategy changes always notify.
         private long cooldownMs = 86400000;
         // A separate transport and bot identity; never inherits trade.telegram credentials.
         private TelegramClientProperties client = new TelegramClientProperties();

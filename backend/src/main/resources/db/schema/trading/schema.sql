@@ -510,6 +510,7 @@ CREATE TABLE IF NOT EXISTS okx_ai_strategy_review (
     expires_at TIMESTAMP(6) NOT NULL,
     snapshot_json LONGTEXT NULL,
     proposal_json LONGTEXT NULL,
+    application_json LONGTEXT NULL,
     outcome VARCHAR(32) NOT NULL,
     detail VARCHAR(1000) NULL,
     notification_status VARCHAR(32) NOT NULL,

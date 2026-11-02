@@ -1215,7 +1215,7 @@ type AiAdvisorStatus = {
     recentDecisionsNewestFirst?: { timestamp: ApiTimestamp; strategyId: string; strategyConfigVersion: number;
       action: string; executionStatus: string; reason?: string; skipReason?: string }[] };
 };
-type AiAdvisorReview = { reviewId: string; startedAt: ApiTimestamp; outcome: string; detail: string; proposalJson?: string; notificationStatus: string };
+type AiAdvisorReview = { reviewId: string; startedAt: ApiTimestamp; outcome: string; detail: string; proposalJson?: string; applicationJson?: string; notificationStatus: string };
 
 function TradingAiPanel({ dataMode, refreshToken, clock }: { dataMode: "live" | "demo"; refreshToken: number; clock: Date | null }) {
   const [status, setStatus] = useState<AiAdvisorStatus | null>(null);
@@ -1269,7 +1269,7 @@ function TradingAiPanel({ dataMode, refreshToken, clock }: { dataMode: "live" | 
     POSITION_NOT_FLAT: "等待空仓模拟会话", CONFLICT: "状态已变化，未调整", STALE: "评估过期，未调整",
     REJECTED: "校验未通过", FAILED: "评估失败", APPLY_UNKNOWN: "调整结果待核对", LEADERSHIP_LOST: "已失去执行租约", CANCELLED: "任务已暂停，未调整",
   };
-  const notifications: Record<string, string> = { NOT_REQUIRED: "无需通知", DISABLED: "通知未启用", THROTTLED: "通知冷却中",
+  const notifications: Record<string, string> = { NOT_REQUIRED: "无需通知", PENDING: "变更已保存，等待通知", DISABLED: "通知未启用", THROTTLED: "建议通知冷却中",
     SENDING: "投递中／中断后需核对", SENT: "已通知", UNKNOWN: "投递结果未知", CONFIG_ERROR: "通知配置错误" };
   const daily = dataMode === "live" ? status?.daily : undefined;
   const tradingZone = daily?.zone ?? "Asia/Shanghai";
@@ -1278,7 +1278,7 @@ function TradingAiPanel({ dataMode, refreshToken, clock }: { dataMode: "live" | 
   const reviewLoop = task?.loops.find(loop => loop.id === "review");
   return <section className="panel ai-advisor-panel">
     <div className="panel-heading">
-      <div><h2>AI 策略顾问</h2><p className="panel-note">{dataMode === "demo" ? "演示模式不调用 AI" : !status ? "正在读取配置" : !status.enabled ? "未启用 · 配置环境变量后可开始评估" : `${task?.running ? "运行中" : "已暂停"} · ${status.autoApplyEligible ? "模拟空仓时自动调整" : "仅生成建议"} · ${status.reviewIntervalMs >= 86400000 ? "每日评估" : `日内复评间隔 ${Math.round(status.reviewIntervalMs / 60000)} 分钟`} · 独立 TG ${status.telegramEnabled ? "已启用" : "未启用"}`}</p></div>
+      <div><h2>AI 策略顾问</h2><p className="panel-note">{dataMode === "demo" ? "演示模式不调用 AI" : !status ? "正在读取配置" : !status.enabled ? "未启用 · 配置环境变量后可开始评估" : `${task?.running ? "运行中" : "已暂停"} · ${status.autoApplyEligible ? "空仓且无未决订单时自动调整" : "仅生成建议"} · ${status.reviewIntervalMs >= 86400000 ? "每日评估" : `日内复评间隔 ${Math.round(status.reviewIntervalMs / 60000)} 分钟`} · 独立 TG ${status.telegramEnabled ? "已启用" : "未启用"}`}</p></div>
       {dataMode === "live" && <div className="ai-advisor-actions">
         <button className="secondary-button" onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} />同步 AI</button>
         <button className="secondary-button" disabled={!task || !status?.enabled || pending || Boolean(error && !task.running)} onClick={() => void toggle()}>{pending ? "处理中…" : task?.running ? "暂停 AI" : "启动 AI"}</button>
@@ -1305,12 +1305,18 @@ function TradingAiPanel({ dataMode, refreshToken, clock }: { dataMode: "live" | 
     {reviews.length === 0 && <p className="panel-note ai-advisor-empty">暂无评估记录。AI 不会修改策略代码；需要补充逻辑时会发送建议。</p>}
     {reviews.map(review => {
       let proposal: { marketRegime?: string; strategyId?: string; parameters?: Record<string, unknown>; logicSuggestion?: string } = {};
+      let application: { executionMode?: string; fromStrategyId?: string; toStrategyId?: string;
+        fromConfiguration?: { version?: number; params?: Record<string, unknown> };
+        toConfiguration?: { version?: number; params?: Record<string, unknown> } } | null = null;
       try { proposal = JSON.parse(review.proposalJson || "{}") ?? {}; } catch { /* Keep the durable outcome visible. */ }
+      try { application = JSON.parse(review.applicationJson || "null"); } catch { /* Older reviews may lack application evidence. */ }
       return <details key={review.reviewId} className="ai-advisor-review">
         <summary><span>{outcomes[review.outcome] ?? review.outcome}</span><span>{formatTradingTimestamp(review.startedAt, tradingZone)} · {notifications[review.notificationStatus] ?? review.notificationStatus}</span></summary>
         {proposal.marketRegime && <p>行情：{proposal.marketRegime}</p>}
         <p>{review.detail || "评估尚未完成；长时间无变化时请核对任务状态。"}</p>
         {proposal.strategyId && <p>目标策略：{proposal.strategyId}</p>}
+        {application && <><p>生效记录（{application.executionMode}）：{application.fromStrategyId} v{application.fromConfiguration?.version} → {application.toStrategyId} v{application.toConfiguration?.version}</p>
+          {application.fromStrategyId === application.toStrategyId && <pre>{Object.keys(proposal.parameters ?? {}).map(key => `${key}: ${String(application?.fromConfiguration?.params?.[key])} → ${String(application?.toConfiguration?.params?.[key])}`).join("\n")}</pre>}</>}
         {proposal.parameters && Object.keys(proposal.parameters).length > 0 && <pre>{JSON.stringify(proposal.parameters, null, 2)}</pre>}
         {proposal.logicSuggestion && <p>逻辑建议：{proposal.logicSuggestion}</p>}
         <small>评估编号：{review.reviewId}</small>

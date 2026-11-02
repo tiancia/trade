@@ -68,9 +68,17 @@ class TradingAiAdvisorTest {
             if (saved.get(next.strategyId()).version() != expected) throw new ConcurrentModificationException();
             saved.put(next.strategyId(), next); return next;
         });
-        when(configs.withUnchangedVersions(anyMap(), any())).thenAnswer(inv -> ((Supplier<?>) inv.getArgument(1)).get());
-        registry = new TradingStrategyRegistry(List.of(new ThresholdEventStrategy()), trading, configs);
+        when(configs.withUnchangedVersions(anyMap(), any())).thenAnswer(inv -> {
+            Map<String, Long> versions = inv.getArgument(0);
+            versions.forEach((id, version) -> {
+                if (saved.get(id).version() != version) throw new ConcurrentModificationException();
+            });
+            return ((Supplier<?>) inv.getArgument(1)).get();
+        });
+        registry = new TradingStrategyRegistry(List.of(new ThresholdEventStrategy(), new IntradayTechnicalStrategy()), trading, configs);
         when(selection.current()).thenReturn(new ActiveStrategySelection(STRATEGY, 1, null));
+        when(selection.activate(anyString(), anyLong())).thenAnswer(inv ->
+                new ActiveStrategySelection(inv.getArgument(0), (Long) inv.getArgument(1) + 1, NOW));
         when(market.getFifteenMinuteCandles()).thenReturn(candles(NOW, 32));
         when(paper.active(anyString())).thenReturn(PaperAccount.start("session", "BTC-USDT", "USDT", new BigDecimal("1000"), NOW));
         when(paper.dailyPerformance(anyString(), anyString(), anyLong(), any(), any()))
@@ -93,7 +101,7 @@ class TradingAiAdvisorTest {
         when(paper.dailyPerformance(eq("BTC-USDT"), eq("session"), eq(0L), eq(day.start()), any()))
                 .thenReturn(new PaperDailyPerformance(12, 6, 6, 6, new BigDecimal("3.25"), new BigDecimal("1.50")));
         var prior = new TradingAiReview("previous", "scope", now.minusSeconds(60), now, "{}",
-                proposal("HOLD", STRATEGY, "{}", "0.9", ""), "HELD", "evidence", "NOT_REQUIRED", now);
+                proposal("HOLD", STRATEGY, "{}", "0.9", ""), "HELD", "evidence", "NOT_REQUIRED", now, null);
         when(reviews.recent(anyString(), eq(4))).thenReturn(List.of(prior));
         advisor.review();
         var snapshot = org.mockito.ArgumentCaptor.forClass(String.class);
@@ -116,7 +124,8 @@ class TradingAiAdvisorTest {
         verify(client).generateJson(argThat(p -> p.contains("never force entries") && p.contains("do not subtract feesQuote")));
         verify(reviews).claim(anyString(), anyString(), any(), eq(now.plusSeconds(1800)), argThat(expiry -> !expiry.isAfter(day.end())));
         // Reaching the frequency target never disables strategy maintenance or risk management.
-        verify(reviews).complete(anyString(), eq("APPLIED"), anyString(), any());
+        verify(reviews).applied(anyString(), contains("\"executionMode\":\"PAPER\""), anyString(), any());
+        verify(reviews, never()).complete(anyString(), eq("APPLIED"), anyString(), any());
     }
 
     @Test void missingSessionOrLivePerformanceIsUnknownRatherThanFabricatedZeroTrades() {
@@ -218,7 +227,7 @@ class TradingAiAdvisorTest {
         assertEquals(2, registry.configuration(STRATEGY).version());
         assertEquals(6, registry.configuration(STRATEGY).params().get("price-move-window-candles"));
         assertTrue(registry.configuration(STRATEGY).reason().startsWith("AI "));
-        verify(reviews).complete(anyString(), eq("APPLIED"), anyString(), any());
+        verify(reviews).applied(anyString(), contains("\"fromRevision\":1"), anyString(), any());
         var order = inOrder(reviews, paper);
         order.verify(reviews).beginApplying(anyString(), any());
         order.verify(paper).changeStrategyWhileFlat(eq("BTC-USDT"), eq("session"), eq(0L), any());
@@ -226,7 +235,10 @@ class TradingAiAdvisorTest {
         verify(market, never()).collect(any());
     }
 
-    @Test void canSwitchToExistingStrategyWithoutInventingOrEditingIt() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = ExecutionMode.class, names = {"PAPER", "LIVE"})
+    void canSwitchToExistingStrategyWithoutInventingOrEditingIt(ExecutionMode mode) {
+        trading.setExecutionMode(mode);
         var second = new TradingProperties.StrategyInstanceProperties();
         second.setId("second"); second.setType("threshold-event"); second.setBar("1m");
         trading.setStrategies(List.of(trading.getStrategies().getFirst(), second));
@@ -234,6 +246,97 @@ class TradingAiAdvisorTest {
         advisor.review();
         verify(selection).activate("second", 1L);
         assertEquals(1, registry.configuration("second").version());
+        verify(reviews).applied(anyString(), argThat(a -> a.contains("\"fromStrategyId\":\"" + STRATEGY + "\"")
+                && a.contains("\"toStrategyId\":\"second\"") && a.contains("\"toRevision\":2")), anyString(), any());
+        assertEquals(mode, trading.getExecutionMode());
+    }
+
+    @Test void tuneBeyondTwentyPercentPersistsBeforeAfterAndNotifiesWithoutLogicSuggestion() throws Exception {
+        when(notifier.enabled()).thenReturn(true);
+        when(client.generateJson(anyString())).thenReturn(proposal("TUNE", STRATEGY,
+                "{\"price-move-window-candles\":20}", "0.9", ""));
+        advisor.review();
+        var audit = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(reviews).applied(anyString(), audit.capture(), eq("test evidence"), eq(NOW));
+        var data = new ObjectMapper().readTree(audit.getValue());
+        assertEquals(5, data.path("fromConfiguration").path("params").path("price-move-window-candles").asInt());
+        assertEquals(20, data.path("toConfiguration").path("params").path("price-move-window-candles").asInt());
+        assertEquals(2, data.path("toConfiguration").path("version").asLong());
+        var ordered = inOrder(reviews, notifier);
+        ordered.verify(reviews).applied(anyString(), anyString(), anyString(), any());
+        ordered.verify(notifier).send(argThat(message -> message.contains("已生效")
+                && message.contains("price-move-window-candles: 5 → 20") && message.contains("PAPER")));
+        verify(reviews).notification(anyString(), eq("SENT"));
+    }
+
+    @Test void canEditExistingIntradayModeAndExitParametersWithMoreThanSixKeys() {
+        var intraday = new TradingProperties.StrategyInstanceProperties();
+        intraday.setId(STRATEGY); intraday.setType("intraday-technical"); intraday.setBar("15m");
+        trading.setStrategies(List.of(intraday));
+        when(client.generateJson(anyString())).thenReturn(proposal("TUNE", STRATEGY,
+                """
+                {"mode":"RANGE_REVERSION","ema-fast-period":8,"ema-slow-period":24,
+                 "rsi-period":12,"atr-period":12,"stop-loss-percent":0.01,"take-profit-percent":0.03,
+                 "min-net-reward-percent":0.004}
+                """, "0.9", ""));
+        advisor.review();
+        var config = registry.configuration(STRATEGY);
+        assertEquals(2, config.version());
+        assertEquals("RANGE_REVERSION", config.params().get("mode"));
+        assertEquals(new BigDecimal("0.01"), config.params().get("stop-loss-percent"));
+        assertEquals(ExecutionMode.PAPER, trading.getExecutionMode());
+    }
+
+    @Test void executionModeAndOtherExecutionSettingsCannotBeEditedByModel() {
+        for (String params : List.of("{\"execution-mode\":\"LIVE\"}", "{\"mode\":\"LIVE\"}",
+                "{\"live-trading-enabled\":true}", "{\"estimated-slippage-rate\":0}",
+                "{\"require-confirmed-candle\":false}", "{\"max-daily-loss-ratio\":1}")) {
+            when(client.generateJson(anyString())).thenReturn(proposal("TUNE", STRATEGY, params, "0.9", ""));
+            assertThrows(IllegalStateException.class, advisor::review);
+        }
+        assertEquals(1, registry.configuration(STRATEGY).version());
+        assertEquals(ExecutionMode.PAPER, trading.getExecutionMode());
+        verifyNoInteractions(engine);
+    }
+
+    @Test void modeChangeDuringAssessmentAndLiveExposurePreventApplication() {
+        when(client.generateJson(anyString())).thenAnswer(inv -> {
+            trading.setExecutionMode(ExecutionMode.LIVE);
+            return proposal("TUNE", STRATEGY, "{\"price-move-window-candles\":6}", "0.9", "");
+        });
+        advisor.review();
+        verify(reviews).complete(anyString(), eq("CONFLICT"), anyString(), any());
+        doThrow(new ConcurrentModificationException("Pending live order")).when(engine).withStrategyMaintenance(any());
+        advisor.review();
+        verify(reviews, times(2)).complete(anyString(), eq("CONFLICT"), anyString(), any());
+        verify(reviews, never()).applied(anyString(), anyString(), anyString(), any());
+        assertEquals(1, registry.configuration(STRATEGY).version());
+    }
+
+    @Test void committedPendingNotificationIsSentBeforeNextAssessmentWithoutReapplying() throws Exception {
+        var before = registry.configuration(STRATEGY);
+        var application = new TradingAiApplication("PAPER", "BTC-USDT", NOW.toString(), STRATEGY, 1, before,
+                STRATEGY, 1, before);
+        when(reviews.pendingNotifications(anyString())).thenReturn(List.of(new TradingAiReview("committed", "scope", NOW, NOW,
+                "{}", proposal("TUNE", STRATEGY, "{\"price-move-window-candles\":6}", "0.9", ""),
+                "APPLIED", "test evidence", "PENDING", NOW, new ObjectMapper().writeValueAsString(application))));
+        when(reviews.claim(anyString(), anyString(), any(), any(), any())).thenReturn(false);
+        when(notifier.enabled()).thenReturn(true);
+        advisor.review();
+        verify(notifier).send(contains("committed"));
+        verify(reviews).notification("committed", "SENT");
+        verifyNoInteractions(engine, client);
+        assertEquals(1, registry.configuration(STRATEGY).version());
+    }
+
+    @Test void notificationFailureKeepsAppliedOutcomeAndDoesNotReplayChange() {
+        when(notifier.enabled()).thenReturn(true);
+        doThrow(new IllegalStateException("secret-token")).when(notifier).send(anyString());
+        assertThrows(IllegalStateException.class, advisor::review);
+        assertEquals(2, registry.configuration(STRATEGY).version());
+        verify(reviews).applied(anyString(), anyString(), anyString(), any());
+        verify(reviews).notification(anyString(), eq("UNKNOWN"));
+        verify(reviews, never()).complete(anyString(), anyString(), anyString(), any());
     }
 
     @Test void disabledAndDurableCooldownDoNotCallAi() {
@@ -245,12 +348,13 @@ class TradingAiAdvisorTest {
         verifyNoInteractions(client, market);
     }
 
-    @Test void liveAndAdvisoryModeNeverApply() {
+    @Test void liveAutoAppliesButAdvisoryModeDoesNot() {
         trading.setExecutionMode(ExecutionMode.LIVE); advisor.review();
-        verify(reviews).complete(anyString(), eq("RECOMMENDED"), anyString(), any());
+        verify(reviews).applied(anyString(), contains("\"executionMode\":\"LIVE\""), anyString(), any());
         verify(paper, never()).active(anyString());
-        verifyNoInteractions(engine);
-        assertEquals(1, registry.configuration(STRATEGY).version());
+        verify(paper, never()).changeStrategyWhileFlat(anyString(), anyString(), anyLong(), any());
+        assertEquals(2, registry.configuration(STRATEGY).version());
+        assertEquals(ExecutionMode.LIVE, trading.getExecutionMode());
         clearInvocations(reviews);
         trading.setExecutionMode(ExecutionMode.PAPER); ai.setAutoApply(false); advisor.review();
         verify(reviews).complete(anyString(), eq("RECOMMENDED"), anyString(), any());
@@ -314,7 +418,7 @@ class TradingAiAdvisorTest {
     @Test void unsafeParametersUnknownStrategiesAndMalformedJsonAreRejected() {
         for (String bad : List.of("not json", proposal("SWITCH", "invented", "{}", "0.9", ""),
                 proposal("TUNE", STRATEGY, "{\"buy-quote-amount\":100}", "0.9", ""),
-                proposal("TUNE", STRATEGY, "{\"price-move-window-candles\":20}", "0.9", ""),
+                proposal("TUNE", STRATEGY, "{\"price-move-window-candles\":2000}", "0.9", ""),
                 proposal("TUNE", STRATEGY, "{\"price-move-window-candles\":5.5}", "0.9", ""))) {
             when(client.generateJson(anyString())).thenReturn(bad);
             assertThrows(IllegalStateException.class, advisor::review);
@@ -340,6 +444,46 @@ class TradingAiAdvisorTest {
         when(reviews.claimNotification(anyString(), any(), any())).thenReturn(false);
         advisor.review();
         verify(notifier, times(1)).send(anyString());
+    }
+
+    @Test void blockedLiveChangeStillNotifiesValidNewModeSuggestion() {
+        trading.setExecutionMode(ExecutionMode.LIVE);
+        when(notifier.enabled()).thenReturn(true);
+        when(client.generateJson(anyString())).thenReturn(proposal("TUNE", STRATEGY,
+                "{\"price-move-window-candles\":6}", "0.9", "建议新增波动率收缩模式并回测"));
+        doThrow(new ConcurrentModificationException("Exposure")).when(engine).withStrategyMaintenance(any());
+        advisor.review();
+        verify(reviews).complete(anyString(), eq("CONFLICT"), anyString(), any());
+        verify(notifier).send(argThat(message -> message.contains("建议新增波动率收缩模式并回测")
+                && message.contains("未实施") && message.contains("CONFLICT")));
+        assertEquals(1, registry.configuration(STRATEGY).version());
+    }
+
+    @Test void longCombinedChangeAndSuggestionMessageStaysWithinTelegramLimit() {
+        String longId = "s".repeat(128);
+        var intraday = new TradingProperties.StrategyInstanceProperties();
+        intraday.setId(longId); intraday.setType("intraday-technical"); intraday.setBar("15m");
+        trading.setStrategies(List.of(intraday));
+        when(selection.current()).thenReturn(new ActiveStrategySelection(longId, 1, null));
+        var config = registry.configuration(longId);
+        Map<String, Object> params = new java.util.LinkedHashMap<>();
+        config.params().forEach((key, value) -> {
+            if (TradingAiPolicy.TUNABLE.contains(key)) params.put(key, value);
+        });
+        params.put("ema-fast-period", 8);
+        params.put("mode", "RANGE_REVERSION");
+        when(client.generateJson(anyString())).thenReturn(writeProposal(longId, params, "证".repeat(1000), "议".repeat(1800)));
+        when(notifier.enabled()).thenReturn(true);
+        advisor.review();
+        verify(notifier).send(argThat(message -> message.length() <= 4096
+                && message.contains("已生效") && message.contains("完整内容见数据库评估")));
+    }
+
+    private String writeProposal(String strategyId, Map<String, Object> params, String reason, String suggestion) {
+        try {
+            return new ObjectMapper().writeValueAsString(new TradingAiProposal(TradingAiProposal.Action.TUNE,
+                    strategyId, params, new BigDecimal("0.9"), "行情".repeat(50), reason, suggestion));
+        } catch (Exception e) { throw new AssertionError(e); }
     }
 
     @Test void providerAndTelegramFailuresAreAuditedWithoutLeakingSecretsOrReplaying() {

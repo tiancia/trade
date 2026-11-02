@@ -28,7 +28,8 @@ public class TradingAiController {
     public Map<String, Object> status() {
         return Map.of("enabled", ai.isEnabled(), "autoApply", ai.isAutoApply(),
                 "autoApplyEligible", ai.isEnabled() && ai.isAutoApply() && trading.isEnabled()
-                        && trading.getExecutionMode() == ExecutionMode.PAPER && "SPOT".equalsIgnoreCase(trading.getInstType()),
+                        && (trading.getExecutionMode() == ExecutionMode.PAPER || trading.getExecutionMode() == ExecutionMode.LIVE)
+                        && trading.isSpotInstrument(),
                 "executionMode", trading.getExecutionMode().name(), "reviewIntervalMs", ai.getReviewIntervalMs(),
                 "minimumConfidence", ai.getMinimumConfidence(), "telegramEnabled", ai.getTelegram().isEnabled(),
                 "daily", advisor.dailyStatus(), "assessment", advisor.assessmentStatus());
