@@ -165,13 +165,25 @@ public class TradingLeadershipService {
 
     /** Admits a new live submission only while this trading runtime is active. */
     public synchronized void requireLiveSubmissionLeadership() {
+        requireRunningTrading();
+        requireLiveLeadership();
+    }
+
+    /** Final local check; atomic/volatile state avoids waiting on a heartbeat or stop's database I/O. */
+    public void requireLiveSubmissionReady() {
+        requireRunningTrading();
+        if (properties.getLeadership().isRequiredForLive() && (!isEnabled() || !isLeader())) {
+            throw new TradingLeadershipUnavailableException("Live OKX order blocked: trading lease no longer valid after preflight");
+        }
+    }
+
+    private void requireRunningTrading() {
         if (!properties.isEnabled()) {
             throw new TradingLeadershipUnavailableException("Live OKX order blocked: trading module disabled");
         }
         if (!running.get()) {
             throw new TradingLeadershipUnavailableException("Live OKX order blocked: trading runtime stopped");
         }
-        requireLiveLeadership();
     }
 
     /** Enforces a fresh lease, also allowing manual recovery while tasks are stopped. */

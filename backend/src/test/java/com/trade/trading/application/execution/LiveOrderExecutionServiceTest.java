@@ -465,6 +465,115 @@ class LiveOrderExecutionServiceTest {
         assertEquals("FILLED", record.getExecutionStatus());
     }
 
+    @Test
+    void stoppingDuringOutstandingOrderReadBlocksSubmission() {
+        TradingProperties properties = liveProperties();
+        TradingLeadershipService leadership = runningLeadership(properties);
+        InMemoryTradingOrderRepository orders = spy(new InMemoryTradingOrderRepository());
+        doAnswer(invocation -> {
+            leadership.stop();
+            return invocation.callRealMethod();
+        }).when(orders).findReconciliationCandidates("BTC-USDT", 2);
+        FakeOkxApi api = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(properties, api, orders, mock(FundSafetyService.class), leadership)
+                .execute(buyDecision(), context("0", "1000"), record);
+
+        assertNull(api.orderReq);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertEquals("REJECTED", record.getOrderStatus());
+        assertTrue(record.getSkipReason().contains("stopped"));
+    }
+
+    @Test
+    void stoppingDuringFinalSafetyReadBlocksSubmission() {
+        TradingProperties properties = liveProperties();
+        TradingLeadershipService leadership = runningLeadership(properties);
+        FundSafetyService safety = mock(FundSafetyService.class);
+        doNothing().doNothing().doAnswer(invocation -> { leadership.stop(); return null; })
+                .when(safety).requireActive();
+        FakeOkxApi api = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(properties, api, new InMemoryTradingOrderRepository(), safety, leadership)
+                .execute(buyDecision(), context("0", "1000"), record);
+
+        assertNull(api.orderReq);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertEquals("REJECTED", record.getOrderStatus());
+        assertTrue(record.getSkipReason().contains("stopped"));
+    }
+
+    @Test
+    void fundStopDuringFinalManagedPositionReadBlocksSubmission() {
+        TradingProperties properties = liveProperties();
+        var repository = spy(new TradingStateRepository(tempDir.resolve("halt-during-position.json")));
+        repository.recordBuy(new BigDecimal("0.2"), new BigDecimal("50000"));
+        FundSafetyService safety = mock(FundSafetyService.class);
+        InMemoryTradingOrderRepository orders = spy(new InMemoryTradingOrderRepository());
+        doAnswer(invocation -> {
+            doAnswer(positionRead -> {
+                Object result = positionRead.callRealMethod();
+                doThrow(new FundSafetyService.TradingFundsHaltedException("Live trading halted: test"))
+                        .when(safety).requireActive();
+                return result;
+            }).when(repository).getState();
+            return invocation.callRealMethod();
+        }).when(orders).findReconciliationCandidates("BTC-USDT", 2);
+        FakeOkxApi api = new FakeOkxApi(filledOrder("sell", "0.2", "50000"));
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(properties, api, orders, safety,
+                mock(TradingLeadershipService.class), repository)
+                .execute(sellDecision("0.2"), context("2", "1000"), record);
+
+        assertNull(api.orderReq);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertEquals("REJECTED", record.getOrderStatus());
+        assertTrue(record.getSkipReason().contains("halted"));
+    }
+
+    @Test
+    void revokingLiveAuthorizationDuringOutstandingOrderReadBlocksSubmission() {
+        TradingProperties properties = liveProperties();
+        InMemoryTradingOrderRepository orders = spy(new InMemoryTradingOrderRepository());
+        doAnswer(invocation -> {
+            properties.setLiveEnabled(false);
+            return invocation.callRealMethod();
+        }).when(orders).findReconciliationCandidates("BTC-USDT", 2);
+        FakeOkxApi api = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        broker(properties, api, orders).execute(buyDecision(), context("0", "1000"), record);
+
+        assertNull(api.orderReq);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertEquals("REJECTED", record.getOrderStatus());
+        assertTrue(record.getSkipReason().contains("authorization"));
+    }
+
+    @Test
+    void safetyReadFailureAfterReservationDoesNotCreateAnUnknownExternalSubmission() {
+        TradingProperties properties = liveProperties();
+        FundSafetyService safety = mock(FundSafetyService.class);
+        doNothing().doThrow(new IllegalStateException("database unavailable"))
+                .when(safety).requireActive();
+        FakeOkxApi api = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        InMemoryTradingOrderRepository orders = new InMemoryTradingOrderRepository();
+        TradingDecisionRecord record = new TradingDecisionRecord();
+
+        assertThrows(IllegalStateException.class, () -> broker(properties, api, orders, safety)
+                .execute(buyDecision(), context("0", "1000"), record));
+
+        assertNull(api.orderReq);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertEquals("REJECTED", record.getOrderStatus());
+        assertEquals("PREFLIGHT_UNAVAILABLE", orders.findByIdempotencyKey(record.getIdempotencyKey())
+                .orElseThrow().getFailureCode());
+        assertTrue(orders.findReconciliationCandidates("BTC-USDT", 2).isEmpty());
+    }
+
     private static TradingLeadershipService runningLeadership(TradingProperties properties) {
         properties.getLeadership().setEnabled(true);
         properties.getLeadership().setInstanceId("offline-runtime-test");

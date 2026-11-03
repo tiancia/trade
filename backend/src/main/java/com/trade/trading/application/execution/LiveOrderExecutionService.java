@@ -295,7 +295,6 @@ public class LiveOrderExecutionService {
             return;
         }
 
-        OrderActionResp actionResp;
         try {
             // Re-check runtime admission, distributed ownership and the persistent stop after
             // acquiring submission ownership. Neither failure may be treated as
@@ -306,7 +305,14 @@ public class LiveOrderExecutionService {
             if (decision.getAction() == TradingAction.SELL) {
                 requireManagedSell(request);
             }
-            actionResp = orderGateway.placeOrder(request);
+            // Order/position reads can block while an operator stops trading.
+            // Read the persistent stop last, then check runtime/lease state without further I/O.
+            fundSafetyService.requireActive();
+            leadershipService.requireLiveSubmissionReady();
+            if (!properties.isLiveExecutionAllowed() || !properties.isSpotInstrument()) {
+                throw new TradingLeadershipService.TradingLeadershipUnavailableException(
+                        "Live OKX order blocked: execution authorization changed during preflight");
+            }
         } catch (OutstandingOrderUnavailableException e) {
             TradingOrder rejected = orderLifecycleService.markSubmissionBlocked(
                     idempotencyKey, "OUTSTANDING_ORDER_UNAVAILABLE", e.getMessage()).order();
@@ -337,6 +343,19 @@ public class LiveOrderExecutionService {
             applyOrder(record, rejected, false);
             record.setExecutionStatus("SKIPPED").setSkipReason(e.getMessage());
             return;
+        } catch (RuntimeException e) {
+            // No exchange call has occurred: an unreadable safety gate is not an unknown submit.
+            String message = "Live order blocked: preflight verification failed before exchange submission";
+            TradingOrder rejected = orderLifecycleService.markSubmissionBlocked(
+                    idempotencyKey, "PREFLIGHT_UNAVAILABLE", message).order();
+            applyOrder(record, rejected, false);
+            record.setExecutionStatus("SKIPPED").setSkipReason(message);
+            throw new IllegalStateException(message);
+        }
+
+        OrderActionResp actionResp;
+        try {
+            actionResp = orderGateway.placeOrder(request);
         } catch (OrderRejectedException e) {
             TradingOrder rejected = orderLifecycleService.markRejected(idempotencyKey, e.getMessage()).order();
             applyOrder(record, rejected, false);

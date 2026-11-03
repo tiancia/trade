@@ -165,6 +165,73 @@ class TradingLeadershipServiceTest {
         assertDoesNotThrow(service::requireLiveSubmissionLeadership);
     }
 
+    @Test
+    void finalSubmissionCheckRejectsAnExpiredLeaseWithoutReacquiring() {
+        TradingProperties properties = leadershipProperties();
+        TradingLeaderLeaseRepository repository = mock(TradingLeaderLeaseRepository.class);
+        TradingLeaderLease lease = mock(TradingLeaderLease.class);
+        when(lease.ownerId()).thenReturn("instance-a");
+        when(lease.leaseUntil()).thenReturn(Instant.now().plusSeconds(60));
+        when(repository.acquireOrRenew(any(), any(), any())).thenReturn(lease);
+        TradingLeadershipService service = service(properties, repository, "instance-a");
+        service.start();
+        assertDoesNotThrow(service::requireLiveSubmissionReady);
+
+        when(lease.leaseUntil()).thenReturn(Instant.EPOCH);
+
+        assertThrows(TradingLeadershipService.TradingLeadershipUnavailableException.class,
+                service::requireLiveSubmissionReady);
+        org.mockito.Mockito.verify(repository, org.mockito.Mockito.times(1))
+                .acquireOrRenew(any(), any(), any());
+    }
+
+    @Test
+    void finalSubmissionCheckStillRequiresRunningEnabledModuleWithoutLeaseRequirement() {
+        TradingProperties properties = leadershipProperties();
+        properties.getLeadership().setRequiredForLive(false);
+        TradingLeadershipService service = service(properties, new InMemoryLeaseRepository());
+        service.start();
+        assertDoesNotThrow(service::requireLiveSubmissionReady);
+        properties.setEnabled(false);
+        assertThrows(TradingLeadershipService.TradingLeadershipUnavailableException.class,
+                service::requireLiveSubmissionReady);
+        properties.setEnabled(true);
+        service.stop();
+        assertThrows(TradingLeadershipService.TradingLeadershipUnavailableException.class,
+                service::requireLiveSubmissionReady);
+    }
+
+    @Test
+    void finalSubmissionCheckDoesNotWaitForStoppedRuntimeToReleaseItsDatabaseLease() throws Exception {
+        TradingProperties properties = leadershipProperties();
+        TradingLeaderLeaseRepository repository = mock(TradingLeaderLeaseRepository.class);
+        when(repository.acquireOrRenew(any(), any(), any())).thenReturn(new TradingLeaderLease(
+                "test", "instance-a", Instant.now().plusSeconds(60), 1, Instant.now()));
+        var releaseStarted = new java.util.concurrent.CountDownLatch(1);
+        var allowRelease = new java.util.concurrent.CountDownLatch(1);
+        when(repository.release(any(), any())).thenAnswer(invocation -> {
+            releaseStarted.countDown();
+            assertTrue(allowRelease.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            return true;
+        });
+        TradingLeadershipService service = service(properties, repository, "instance-a");
+        service.start();
+        var workers = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var stopped = workers.submit(service::stop);
+            assertTrue(releaseStarted.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            var admission = workers.submit(() -> assertThrows(
+                    TradingLeadershipService.TradingLeadershipUnavailableException.class,
+                    service::requireLiveSubmissionReady));
+            assertTrue(admission.get(1, java.util.concurrent.TimeUnit.SECONDS).getMessage().contains("stopped"));
+            allowRelease.countDown();
+            stopped.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            allowRelease.countDown();
+            workers.shutdownNow();
+        }
+    }
+
     private static TradingProperties leadershipProperties() {
         TradingProperties properties = new TradingProperties();
         properties.getLeadership().setEnabled(true);
