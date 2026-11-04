@@ -36,7 +36,8 @@ public class ModuleControlConfiguration {
                         throw new IllegalStateException("AI 行情数量必须小于 15 分钟行情缓存上限。");
                     }
                 }, () -> List.of(trading.isEnabled() ? "交易模块已启用。" : "交易模块关闭，AI 将跳过评估；请先开启 OKX 策略交易。",
-                        properties.isAutoApply() ? "已配置 PAPER 自动应用；仍受持仓、置信度和版本校验限制。" : "自动应用未授权，仅提供建议。"));
+                        properties.isAutoApply() ? "自动应用已授权，仅适用于 PAPER/LIVE；当前模式：" + trading.getExecutionMode()
+                                + "。可调整策略和参数，不切换执行模式，仍受持仓、未决订单、置信度和版本校验限制。" : "自动应用未授权，仅提供建议。"));
     }
 
     @Bean

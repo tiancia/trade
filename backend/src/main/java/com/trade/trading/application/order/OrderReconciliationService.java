@@ -11,7 +11,6 @@ import com.trade.client.okx.dto.OrderInfoResp;
 import com.trade.client.okx.dto.OrderQueryReq;
 import com.trade.client.okx.dto.PositionResp;
 import com.trade.client.okx.dto.PositionsReq;
-import com.trade.common.support.TradingMath;
 import com.trade.trading.port.TradingOrderRepository;
 import com.trade.trading.application.risk.FundSafetyService;
 import com.trade.trading.domain.model.OrderReconciliationStatus;
@@ -98,7 +97,8 @@ public class OrderReconciliationService {
         }
 
         Timer.Sample timer = Timer.start(meterRegistry);
-        lastStartedAt = Instant.now();
+        Instant startedAt = Instant.now();
+        lastStartedAt = startedAt;
         lastError = null;
         lastCandidateCount = 0;
         lastReconciledCount = 0;
@@ -137,8 +137,10 @@ public class OrderReconciliationService {
                 timer.stop(timer("pending"));
                 return;
             }
-            reconcilePosition();
-            recordSuccess();
+            // A response completing after a stop must not make pre-stop observations
+            // eligible for resume. Persist the start of the complete verification pass.
+            reconcilePosition(startedAt);
+            recordSuccess(startedAt);
             counter("completed").increment();
             timer.stop(timer("completed"));
         } catch (RuntimeException e) {
@@ -176,59 +178,74 @@ public class OrderReconciliationService {
                 .setInstId(candidate.getInstId())
                 .setOrdId(candidate.getExchangeOrderId())
                 .setClOrdId(candidate.getClientOrderId()));
-        OkxResponses.requireOk(response, "order reconciliation query");
-        return OkxResponses.first(response)
-                .orElseThrow(() -> new IllegalStateException(
-                        "OKX returned no order for clOrdId=" + candidate.getClientOrderId()
-                ));
+        return requireSingleSnapshot(response, "order reconciliation query");
     }
 
-    private void reconcilePosition() {
+    private void reconcilePosition(Instant startedAt) {
         if (properties.isSpotInstrument()) {
-            reconcileSpotBalance();
+            reconcileSpotBalance(startedAt);
             return;
         }
         OkxResponse<PositionResp> response = okxApi.getPositions(new PositionsReq()
                 .setInstType(properties.getInstType())
                 .setInstId(properties.getInstId()));
         OkxResponses.requireOk(response, "position reconciliation");
-        List<PositionResp> positions = response == null || response.getData() == null
-                ? List.of()
-                : response.getData().stream()
-                .filter(position -> properties.getInstId().equals(position.getInstId()))
-                .filter(position -> TradingMath.decimal(position.getPos()).signum() != 0)
-                .toList();
+        if (response.getData() == null) {
+            throw new IllegalStateException("OKX position reconciliation response has no position data");
+        }
+        List<PositionResp> positions = new ArrayList<>();
+        for (PositionResp position : response.getData()) {
+            if (position == null || !properties.getInstId().equals(position.getInstId())) {
+                throw new IllegalStateException("OKX position reconciliation response has an invalid instrument identity");
+            }
+            if (requiredDecimal(position.getPos(), "position quantity").signum() != 0) {
+                positions.add(position);
+            }
+        }
         ReconciliationPolicy.requireSinglePosition(positions.size());
         PositionResp position = positions.isEmpty() ? null : positions.getFirst();
         BigDecimal exchangeQuantity = position == null
                 ? BigDecimal.ZERO
-                : TradingMath.decimal(position.getPos()).abs();
+                : requiredDecimal(position.getPos(), "position quantity").abs();
         BigDecimal exchangeAverageCost = position == null
                 ? BigDecimal.ZERO
-                : TradingMath.decimal(position.getAvgPx());
-        recordAndCheckPosition(exchangeQuantity, exchangeAverageCost);
+                : requiredDecimal(position.getAvgPx(), "position average price");
+        if (position != null && exchangeAverageCost.signum() <= 0) {
+            throw new IllegalStateException("OKX nonzero position requires a positive average price");
+        }
+        recordAndCheckPosition(exchangeQuantity, exchangeAverageCost, startedAt);
     }
 
-    private void reconcileSpotBalance() {
+    private void reconcileSpotBalance(Instant startedAt) {
         OkxResponse<AccountBalanceResp> response = okxApi.getAccountBalance(new AccountBalanceReq()
                 .setCcy(properties.getBaseCcy()));
-        OkxResponses.requireOk(response, "spot balance reconciliation");
-        AccountBalanceResp account = OkxResponses.first(response)
-                .orElseThrow(() -> new IllegalStateException("OKX spot balance reconciliation response has no account data"));
+        AccountBalanceResp account = requireSingleSnapshot(response, "spot balance reconciliation");
         if (account.getDetails() == null) {
             throw new IllegalStateException("OKX spot balance reconciliation response has no balance details");
         }
-        BalanceDetail base = account.getDetails().stream()
-                .filter(detail -> properties.getBaseCcy().equalsIgnoreCase(detail.getCcy()))
-                .findFirst()
-                .orElse(null);
+        BalanceDetail base = null;
+        for (BalanceDetail detail : account.getDetails()) {
+            if (detail == null || detail.getCcy() == null || detail.getCcy().isBlank()) {
+                throw new IllegalStateException("OKX spot balance response has a missing currency identity");
+            }
+            if (properties.getBaseCcy().equalsIgnoreCase(detail.getCcy())) {
+                if (base != null) {
+                    throw new IllegalStateException("OKX spot balance response has duplicate base currency entries");
+                }
+                base = detail;
+            }
+        }
         BigDecimal exchangeQuantity = base == null
                 ? BigDecimal.ZERO
-                : firstPositive(base.getCashBal(), base.getEq());
-        recordAndCheckPosition(exchangeQuantity, null);
+                : requiredDecimal(base.getCashBal() == null || base.getCashBal().isBlank()
+                        ? base.getEq() : base.getCashBal(), "spot balance");
+        if (exchangeQuantity.signum() < 0) {
+            throw new IllegalStateException("OKX spot balance reconciliation cannot verify a negative balance as owned assets");
+        }
+        recordAndCheckPosition(exchangeQuantity, null, startedAt);
     }
 
-    private void recordAndCheckPosition(BigDecimal exchangeQuantity, BigDecimal exchangeAverageCost) {
+    private void recordAndCheckPosition(BigDecimal exchangeQuantity, BigDecimal exchangeAverageCost, Instant startedAt) {
         TradingState before = stateRepository.getState();
         boolean dedicated = properties.getReconciliation().getPositionOwnership()
                 == TradingProperties.PositionOwnership.DEDICATED_ACCOUNT;
@@ -239,7 +256,7 @@ public class OrderReconciliationService {
                 // fill (or a manual deposit) from a balance snapshot.
                 dedicated && !properties.isSpotInstrument() ? exchangeQuantity : null,
                 dedicated && !properties.isSpotInstrument() ? exchangeAverageCost : null,
-                Instant.now()
+                startedAt
         );
         String reason = ReconciliationPolicy.positionMismatch(dedicated, before.getTrackedBaseAmount(),
                 exchangeQuantity, properties.getReconciliation().getPositionMismatchTolerance());
@@ -249,8 +266,8 @@ public class OrderReconciliationService {
         }
     }
 
-    private void recordSuccess() {
-        TradingRiskState riskState = stateRepository.recordReconciliationSuccess(Instant.now());
+    private void recordSuccess(Instant startedAt) {
+        TradingRiskState riskState = stateRepository.recordReconciliationSuccess(startedAt);
         consecutiveFailures = riskState.getConsecutiveReconciliationFailures();
     }
 
@@ -277,11 +294,24 @@ public class OrderReconciliationService {
                 .register(meterRegistry);
     }
 
-    private static BigDecimal firstPositive(String first, String fallback) {
-        if (first != null && !first.isBlank()) {
-            return TradingMath.decimal(first).max(BigDecimal.ZERO);
+    private static <T> T requireSingleSnapshot(OkxResponse<T> response, String name) {
+        OkxResponses.requireOk(response, name);
+        if (response.getData() == null || response.getData().size() != 1 || response.getData().getFirst() == null) {
+            throw new IllegalStateException("OKX " + name + " requires exactly one snapshot");
         }
-        return TradingMath.decimal(fallback).max(BigDecimal.ZERO);
+        return response.getData().getFirst();
+    }
+
+    private static BigDecimal requiredDecimal(String value, String field) {
+        // Lenient display parsing must never turn unverified exchange state into zero exposure.
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("OKX reconciliation response is missing " + field);
+        }
+        try {
+            return new BigDecimal(value.trim());
+        } catch (NumberFormatException invalid) {
+            throw new IllegalStateException("OKX reconciliation response has invalid " + field);
+        }
     }
 
 }

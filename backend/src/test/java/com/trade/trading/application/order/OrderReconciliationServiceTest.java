@@ -6,24 +6,32 @@ import com.trade.client.okx.dto.BalanceDetail;
 import com.trade.client.okx.dto.OkxResponse;
 import com.trade.client.okx.dto.OrderInfoResp;
 import com.trade.client.okx.dto.OrderQueryReq;
+import com.trade.client.okx.dto.PositionResp;
 import com.trade.trading.application.risk.FundSafetyService;
 import com.trade.trading.application.risk.RiskControlService;
 import com.trade.trading.domain.model.ExecutionMode;
 import com.trade.trading.domain.order.OrderStatus;
 import com.trade.trading.domain.order.OrderSubmission;
+import com.trade.trading.domain.risk.FundSafetyPolicy;
+import com.trade.trading.domain.risk.FundSafetyState;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.infrastructure.config.TradingRiskConfiguration;
 import com.trade.trading.infrastructure.persistence.TradingStateRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -33,6 +41,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
 
 class OrderReconciliationServiceTest {
     @TempDir
@@ -248,6 +258,188 @@ class OrderReconciliationServiceTest {
         assertEquals(1, fixture.service().status().getConsecutiveFailures());
     }
 
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {" ", "invalid", "NaN", "-1"})
+    void invalidSpotBalanceCannotBecomeVerifiedZero(String cashBalance) {
+        Fixture fixture = fixture(null);
+        when(fixture.okx().getAccountBalance(any())).thenReturn(balance(cashBalance, null));
+
+        assertThrows(IllegalStateException.class, fixture.service()::reconcileOnce);
+
+        assertNull(fixture.state().getState().getPositionLastReconciledAt());
+        assertEquals(1, fixture.service().status().getConsecutiveFailures());
+        verify(fixture.okx(), never()).placeOrder(any());
+    }
+
+    @Test
+    void ambiguousBalanceSnapshotsCannotPassReconciliation() {
+        var validAccount = balance("0", null).getData().getFirst();
+        var duplicateCurrency = balance("0", null).getData().getFirst();
+        duplicateCurrency.setDetails(List.of(validAccount.getDetails().getFirst(), validAccount.getDetails().getFirst()));
+        for (var response : List.of(OkxResponse.success(List.of(validAccount, validAccount)),
+                OkxResponse.success(List.of(duplicateCurrency)))) {
+            Fixture fixture = fixture(null);
+            when(fixture.okx().getAccountBalance(any())).thenReturn(response);
+
+            assertThrows(IllegalStateException.class, fixture.service()::reconcileOnce);
+
+            assertNull(fixture.state().getState().getPositionLastReconciledAt());
+        }
+    }
+
+    @Test
+    void explicitZeroEmptyCurrencyListAndEquityFallbackRemainSupported() {
+        AccountBalanceResp emptyAccount = new AccountBalanceResp();
+        emptyAccount.setDetails(List.of());
+        for (var response : List.of(balance("0", null), balance(null, "0"),
+                OkxResponse.success(List.of(emptyAccount)))) {
+            Fixture fixture = fixture(null);
+            when(fixture.okx().getAccountBalance(any())).thenReturn(response);
+
+            assertDoesNotThrow(fixture.service()::reconcileOnce);
+
+            assertEquals(0, fixture.service().status().getConsecutiveFailures());
+            assertDecimal("0", fixture.state().getState().getExchangeBaseAmount());
+        }
+    }
+
+    @Test
+    void missingDerivativePositionDataCannotEraseManagedPosition() {
+        Fixture fixture = fixture(null);
+        fixture.properties().setInstType("SWAP");
+        fixture.state().recordBuy(new BigDecimal("1"), new BigDecimal("50000"));
+        when(fixture.okx().getPositions(any())).thenReturn(OkxResponse.success(null));
+
+        assertThrows(IllegalStateException.class, fixture.service()::reconcileOnce);
+
+        assertNull(fixture.state().getState().getPositionLastReconciledAt());
+        assertDecimal("1", fixture.state().getState().getTrackedBaseAmount());
+        assertDecimal("50000", fixture.state().getState().getAverageCost());
+        assertEquals(1, fixture.service().status().getConsecutiveFailures());
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"invalid", "0", "-1"})
+    void nonzeroDerivativePositionRequiresVerifiedAverageCost(String price) {
+        Fixture fixture = fixture(null);
+        fixture.properties().setInstType("SWAP");
+        fixture.state().recordBuy(BigDecimal.ONE, new BigDecimal("50000"));
+        PositionResp position = new PositionResp();
+        position.setInstId("BTC-USDT");
+        position.setPos("1");
+        position.setAvgPx(price);
+        when(fixture.okx().getPositions(any())).thenReturn(OkxResponse.success(List.of(position)));
+
+        assertThrows(IllegalStateException.class, fixture.service()::reconcileOnce);
+
+        assertNull(fixture.state().getState().getPositionLastReconciledAt());
+        assertDecimal("50000", fixture.state().getState().getAverageCost());
+    }
+
+    @Test
+    void emptyAndExplicitZeroDerivativePositionsRemainSupported() {
+        PositionResp zero = new PositionResp();
+        zero.setInstId("BTC-USDT");
+        zero.setPos("0");
+        for (List<PositionResp> positions : List.of(List.<PositionResp>of(), List.of(zero))) {
+            Fixture fixture = fixture(null);
+            fixture.properties().setInstType("SWAP");
+            when(fixture.okx().getPositions(any())).thenReturn(OkxResponse.success(positions));
+
+            assertDoesNotThrow(fixture.service()::reconcileOnce);
+
+            assertEquals(0, fixture.service().status().getConsecutiveFailures());
+            assertDecimal("0", fixture.state().getState().getExchangeBaseAmount());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"1", "-1"})
+    void validLongAndShortDerivativeQuantitiesKeepTheirAbsoluteExposure(String quantity) {
+        Fixture fixture = fixture(null);
+        fixture.properties().setInstType("SWAP");
+        fixture.state().recordBuy(BigDecimal.ONE, new BigDecimal("50000"));
+        PositionResp position = new PositionResp();
+        position.setInstId("BTC-USDT");
+        position.setPos(quantity);
+        position.setAvgPx("50000");
+        when(fixture.okx().getPositions(any())).thenReturn(OkxResponse.success(List.of(position)));
+
+        assertDoesNotThrow(fixture.service()::reconcileOnce);
+
+        assertDecimal("1", fixture.state().getState().getExchangeBaseAmount());
+        assertDecimal("50000", fixture.state().getState().getAverageCost());
+    }
+
+    @Test
+    void duplicateOrderSnapshotsLeaveTheOrderUnresolved() {
+        Fixture fixture = fixture("duplicate-response");
+        var filled = exchange("filled", "0.001");
+        when(fixture.okx().getOrder(any())).thenReturn(OkxResponse.success(List.of(filled, filled)));
+
+        assertThrows(IllegalStateException.class, fixture.service()::reconcileOnce);
+
+        assertEquals(OrderStatus.SUBMITTING, fixture.lifecycle().find("duplicate-response").orElseThrow().getStatus());
+        verify(fixture.okx(), never()).getAccountBalance(any());
+        verify(fixture.okx(), never()).placeOrder(any());
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {" ", "invalid", "NaN"})
+    void invalidDerivativeQuantityCannotBecomeVerifiedZero(String quantity) {
+        Fixture fixture = fixture(null);
+        fixture.properties().setInstType("SWAP");
+        PositionResp position = new PositionResp();
+        position.setInstId("BTC-USDT");
+        position.setPos(quantity);
+        when(fixture.okx().getPositions(any())).thenReturn(OkxResponse.success(List.of(position)));
+
+        assertThrows(IllegalStateException.class, fixture.service()::reconcileOnce);
+
+        assertNull(fixture.state().getState().getPositionLastReconciledAt());
+        assertEquals(1, fixture.service().status().getConsecutiveFailures());
+    }
+
+    @Test
+    void reconciliationStartedBeforeHaltCannotAuthorizeResumeAfterItsResponseArrives() {
+        Fixture fixture = fixture(null);
+        Instant startedAt = Instant.parse("2026-11-04T00:00:00Z");
+        Instant haltedAt = startedAt.plusSeconds(1);
+        Instant completedAt = startedAt.plusSeconds(2);
+        try (var time = mockStatic(Instant.class, CALLS_REAL_METHODS)) {
+            time.when(Instant::now).thenReturn(startedAt);
+            when(fixture.okx().getAccountBalance(any())).thenAnswer(invocation -> {
+                // The snapshot was requested before the stop and returned two seconds later.
+                time.when(Instant::now).thenReturn(completedAt);
+                return balance("0", null);
+            });
+            fixture.service().reconcileOnce();
+        }
+
+        var state = fixture.state().getState();
+        assertThrows(IllegalStateException.class, () -> FundSafetyPolicy.requireFreshSuccessfulReconciliation(
+                new FundSafetyState().setHaltedAt(haltedAt), state));
+        assertEquals(fixture.service().status().getLastStartedAt(), Instant.parse(state.getPositionLastReconciledAt()));
+        assertEquals(fixture.service().status().getLastStartedAt(), Instant.parse(state.getRiskState().getLastReconciliationAt()));
+        assertThrows(IllegalStateException.class, () -> FundSafetyPolicy.requireFreshSuccessfulReconciliation(
+                new FundSafetyState().setHaltedAt(startedAt), state));
+        assertDoesNotThrow(() -> FundSafetyPolicy.requireFreshSuccessfulReconciliation(
+                new FundSafetyState().setHaltedAt(Instant.EPOCH), state));
+    }
+
+    private static OkxResponse<AccountBalanceResp> balance(String cash, String equity) {
+        BalanceDetail detail = new BalanceDetail();
+        detail.setCcy("BTC");
+        detail.setCashBal(cash);
+        detail.setEq(equity);
+        AccountBalanceResp account = new AccountBalanceResp();
+        account.setDetails(List.of(detail));
+        return OkxResponse.success(List.of(account));
+    }
+
     private Fixture fixture(String key) {
         TradingProperties properties = new TradingProperties();
         properties.setExecutionMode(ExecutionMode.LIVE);
@@ -273,7 +465,7 @@ class OrderReconciliationServiceTest {
         FundSafetyService safety = mock(FundSafetyService.class);
         OrderReconciliationService service = new OrderReconciliationService(okx, orders, settlement,
                 state, safety, properties, new SimpleMeterRegistry());
-        return new Fixture(okx, lifecycle, state, settlement, service, safety);
+        return new Fixture(okx, lifecycle, state, settlement, service, safety, properties);
     }
 
     private static OrderInfoResp exchange(String state, String cumulativeSize) {
@@ -293,5 +485,6 @@ class OrderReconciliationServiceTest {
     }
 
     private record Fixture(OkxApi okx, OrderLifecycleService lifecycle, TradingStateRepository state,
-                           OrderSettlementService settlement, OrderReconciliationService service, FundSafetyService safety) {}
+                           OrderSettlementService settlement, OrderReconciliationService service, FundSafetyService safety,
+                           TradingProperties properties) {}
 }
