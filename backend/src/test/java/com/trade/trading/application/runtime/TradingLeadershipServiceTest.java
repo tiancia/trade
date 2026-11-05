@@ -232,6 +232,56 @@ class TradingLeadershipServiceTest {
         }
     }
 
+    @Test
+    void stopClosesAdmissionWhileWaitingForAnInFlightHeartbeat() throws Exception {
+        TradingProperties properties = leadershipProperties();
+        TradingLeaderLeaseRepository repository = mock(TradingLeaderLeaseRepository.class);
+        TradingLeaderLease lease = new TradingLeaderLease(
+                "test", "instance-a", Instant.now().plusSeconds(60), 1, Instant.now());
+        var renewalStarted = new java.util.concurrent.CountDownLatch(1);
+        var allowRenewal = new java.util.concurrent.CountDownLatch(1);
+        when(repository.acquireOrRenew(any(), any(), any())).thenReturn(lease).thenAnswer(invocation -> {
+            renewalStarted.countDown();
+            assertTrue(allowRenewal.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            return lease;
+        });
+        TaskScheduler scheduler = mock(TaskScheduler.class);
+        List<Runnable> heartbeats = new ArrayList<>();
+        when(scheduler.scheduleWithFixedDelay(any(Runnable.class), any(Duration.class)))
+                .thenAnswer(invocation -> {
+                    heartbeats.add(invocation.getArgument(0));
+                    return mock(java.util.concurrent.ScheduledFuture.class);
+                });
+        TradingLeadershipService service = new TradingLeadershipService(repository, properties,
+                scheduler, new SimpleMeterRegistry(), "instance-a");
+        service.start();
+        var workers = java.util.concurrent.Executors.newSingleThreadExecutor();
+        var stopResult = new java.util.concurrent.FutureTask<Void>(() -> { service.stop(); return null; });
+        Thread stopper = new Thread(stopResult, "leadership-stop-test");
+        try {
+            var renewing = workers.submit(heartbeats.getFirst());
+            assertTrue(renewalStarted.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            stopper.start();
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+            while (stopper.getState() != Thread.State.BLOCKED && System.nanoTime() < deadline) {
+                Thread.sleep(5);
+            }
+            assertEquals(Thread.State.BLOCKED, stopper.getState(), "stop is waiting for heartbeat cleanup");
+            assertThrows(TradingLeadershipService.TradingLeadershipUnavailableException.class,
+                    service::requireLiveSubmissionReady);
+            allowRenewal.countDown();
+            renewing.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            stopResult.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            assertFalse(service.status().running());
+            assertFalse(service.isLeader());
+        } finally {
+            allowRenewal.countDown();
+            stopper.join(5_000);
+            workers.shutdownNow();
+            service.stop();
+        }
+    }
+
     private static TradingProperties leadershipProperties() {
         TradingProperties properties = new TradingProperties();
         properties.getLeadership().setEnabled(true);

@@ -30,19 +30,34 @@ public class TradingMarketDataRuntime implements SmartLifecycle {
             leadershipService.start();
             webSocketFeed.start();
         } catch (RuntimeException e) {
-            leadershipService.stop();
-            running.set(false);
+            try {
+                stop();
+            } catch (RuntimeException cleanupFailure) {
+                if (cleanupFailure != e) e.addSuppressed(cleanupFailure);
+            }
             throw e;
         }
     }
 
     @Override
     public synchronized void stop() {
+        running.set(false);
+        RuntimeException failure = null;
+        // Close live admission before feed shutdown can block on a callback or transport.
+        try {
+            leadershipService.stop();
+        } catch (RuntimeException cleanupFailure) {
+            failure = cleanupFailure;
+        }
         // The event bus is application-scoped because HTTP backtests and REST
         // collectors can publish while the scheduled trading task is stopped.
-        webSocketFeed.stop();
-        leadershipService.stop();
-        running.set(false);
+        try {
+            webSocketFeed.stop();
+        } catch (RuntimeException cleanupFailure) {
+            if (failure == null) failure = cleanupFailure;
+            else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
+        }
+        if (failure != null) throw failure;
     }
 
     @Override

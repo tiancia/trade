@@ -121,9 +121,17 @@ public class AutomationTaskManager implements DisposableBean {
         synchronized (this) {
             snapshot = new ArrayList<>(tasks.values());
         }
+        RuntimeException failure = null;
         for (ManagedTask task : snapshot) {
-            task.stop();
+            try {
+                task.stop();
+            } catch (RuntimeException cleanupFailure) {
+                // One failed domain cleanup must not leave the other tasks running.
+                if (failure == null) failure = cleanupFailure;
+                else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
+            }
         }
+        if (failure != null) throw failure;
     }
 
     private synchronized ManagedTask task(String taskId) {
@@ -178,9 +186,13 @@ public class AutomationTaskManager implements DisposableBean {
                 }
                 log.info("Automation task started: id={}", definition.id());
             } catch (RuntimeException e) {
-                running.set(false);
-                generation.incrementAndGet();
-                cancelLoops();
+                // onStart may already have opened execution gates or allocated resources.
+                // Use the full stop path even when startup only partially completed.
+                try {
+                    stop();
+                } catch (RuntimeException cleanupFailure) {
+                    if (cleanupFailure != e) e.addSuppressed(cleanupFailure);
+                }
                 throw e;
             }
         }
@@ -190,9 +202,12 @@ public class AutomationTaskManager implements DisposableBean {
                 return;
             }
             generation.incrementAndGet();
-            cancelLoops();
-            if (definition.onStop() != null) {
-                definition.onStop().run();
+            try {
+                cancelLoops();
+            } finally {
+                if (definition.onStop() != null) {
+                    definition.onStop().run();
+                }
             }
             log.info("Automation task stopped: id={}", definition.id());
         }

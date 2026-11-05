@@ -107,17 +107,23 @@ public class TradingLeadershipService {
         }
     }
 
-    public synchronized void stop() {
-        if (!running.compareAndSet(true, false)) {
-            return;
+    public void stop() {
+        // A heartbeat or preflight may hold the monitor during database I/O.
+        // Revoke local admission before waiting, so final submission checks fail closed.
+        boolean wasRunning = running.getAndSet(false);
+        synchronized (this) {
+            // Startup may have completed while this stop waited for the monitor.
+            if (!running.getAndSet(false) && !wasRunning) {
+                return;
+            }
+            generation++;
+            if (heartbeat != null) {
+                heartbeat.cancel(false);
+                heartbeat = null;
+            }
+            leader.set(false);
+            releaseQuietly();
         }
-        generation++;
-        if (heartbeat != null) {
-            heartbeat.cancel(false);
-            heartbeat = null;
-        }
-        releaseQuietly();
-        leader.set(false);
     }
 
     /**

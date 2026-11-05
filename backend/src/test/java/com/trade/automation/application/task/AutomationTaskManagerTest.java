@@ -21,10 +21,13 @@ import org.springframework.scheduling.TaskScheduler;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AutomationTaskManagerTest {
@@ -85,6 +88,63 @@ class AutomationTaskManagerTest {
         assertThrows(IllegalArgumentException.class, () -> manager.start("missing"));
         assertThrows(IllegalArgumentException.class, () -> manager.stop("missing"));
         assertThrows(IllegalArgumentException.class, () -> manager.status("missing"));
+    }
+
+    @Test
+    void schedulingFailureStopsStartedRuntimeAndCancelsAlreadyScheduledLoops() {
+        TaskScheduler controlledScheduler = mock(TaskScheduler.class);
+        ScheduledFuture<?> firstLoop = mock(ScheduledFuture.class);
+        RuntimeException failure = new IllegalStateException("scheduler unavailable");
+        when(controlledScheduler.schedule(any(Runnable.class), any(Instant.class)))
+                .thenAnswer(ignored -> firstLoop).thenThrow(failure);
+        AutomationTaskManager controlledManager = new AutomationTaskManager(controlledScheduler);
+        List<String> lifecycle = new CopyOnWriteArrayList<>();
+        controlledManager.register(new AutomationTaskDefinition("sample", "Sample", false,
+                () -> lifecycle.add("start"), () -> lifecycle.add("stop"), List.of(
+                new AutomationLoopDefinition("first", Duration.ZERO, Duration.ofSeconds(10), () -> {}),
+                new AutomationLoopDefinition("second", Duration.ZERO, Duration.ofSeconds(10), () -> {}))));
+
+        assertSame(failure, assertThrows(IllegalStateException.class, () -> controlledManager.start("sample")));
+
+        assertEquals(List.of("start", "stop"), lifecycle);
+        verify(firstLoop).cancel(false);
+        assertFalse(controlledManager.status("sample").running());
+        controlledManager.status("sample").loops().forEach(loop -> assertNull(loop.nextRunAt()));
+        controlledManager.destroy();
+        assertEquals(List.of("start", "stop"), lifecycle);
+    }
+
+    @Test
+    void partialStartupIsCleanedUpWithoutHidingTheOriginalFailure() {
+        RuntimeException startupFailure = new IllegalStateException("partial startup");
+        RuntimeException cleanupFailure = new IllegalArgumentException("cleanup failed");
+        AtomicInteger stops = new AtomicInteger();
+        manager.register(new AutomationTaskDefinition("sample", "Sample", false,
+                () -> { throw startupFailure; }, () -> {
+                    stops.incrementAndGet();
+                    throw cleanupFailure;
+                }, List.of()));
+
+        assertSame(startupFailure, assertThrows(IllegalStateException.class, () -> manager.start("sample")));
+        assertEquals(1, stops.get());
+        assertEquals(List.of(cleanupFailure), List.of(startupFailure.getSuppressed()));
+        assertFalse(manager.status("sample").running());
+    }
+
+    @Test
+    void shutdownStillStopsOtherTasksWhenOneCleanupFails() {
+        RuntimeException failure = new IllegalStateException("first cleanup failed");
+        AtomicInteger stops = new AtomicInteger();
+        manager.register(new AutomationTaskDefinition("first", "First", false, null,
+                () -> { throw failure; }, List.of()));
+        manager.register(new AutomationTaskDefinition("second", "Second", false, null,
+                stops::incrementAndGet, List.of()));
+        manager.start("first");
+        manager.start("second");
+
+        assertSame(failure, assertThrows(IllegalStateException.class, manager::destroy));
+        assertEquals(1, stops.get());
+        assertTrue(manager.statuses().stream().noneMatch(AutomationTaskStatus::running));
     }
 
     @Test
