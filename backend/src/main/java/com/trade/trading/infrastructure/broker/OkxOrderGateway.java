@@ -100,15 +100,18 @@ public class OkxOrderGateway implements ExchangeOrderGateway {
                     .setOrdId(orderId)
                     .setClOrdId(clientOrderId));
             OkxResponses.requireOk(response, "order query");
-            Optional<OrderInfoResp> order = OkxResponses.first(response);
-            if (order.isPresent()) {
-                lastObserved = order.get();
-                String state = lastObserved.getState();
-                if ("filled".equalsIgnoreCase(state)
-                        || "canceled".equalsIgnoreCase(state)
-                        || "mmp_canceled".equalsIgnoreCase(state)) {
-                    return Optional.of(lastObserved);
-                }
+            // A query identifies one order. Never settle an arbitrary first row
+            // from an ambiguous response and thereby release the unresolved-order gate.
+            if (response.getData() == null || response.getData().size() != 1
+                    || response.getData().getFirst() == null) {
+                throw new IllegalStateException("OKX order query requires exactly one order snapshot");
+            }
+            lastObserved = response.getData().getFirst();
+            String state = lastObserved.getState();
+            if ("filled".equalsIgnoreCase(state)
+                    || "canceled".equalsIgnoreCase(state)
+                    || "mmp_canceled".equalsIgnoreCase(state)) {
+                return Optional.of(lastObserved);
             }
             if (i + 1 < properties.getOrderFillQueryAttempts()) {
                 sleepBeforeRetry();

@@ -35,6 +35,8 @@ import com.trade.trading.infrastructure.persistence.TradingStateRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.scheduling.TaskScheduler;
 
 import java.math.BigDecimal;
@@ -280,6 +282,49 @@ class LiveOrderExecutionServiceTest {
         assertEquals(OrderStatus.FILLED.name(), replay.getOrderStatus());
         assertTrue(replay.isIdempotentReplay());
         assertEquals(0, new BigDecimal("0.002").compareTo(state.getState().getTrackedBaseAmount()));
+        verify(okx, times(1)).placeOrder(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"multiple", "missing", "empty", "null-entry"})
+    void malformedQuerySnapshotsCannotSettleAnOrderOrUnblockTheNextSignal(String shape) {
+        OkxApi okx = mock(OkxApi.class);
+        when(okx.placeOrder(any())).thenAnswer(invocation -> {
+            PlaceOrderReq request = invocation.getArgument(0);
+            return orderAcknowledgement("0", "0", request.getClOrdId(), "exchange-1");
+        });
+        when(okx.getOrder(any())).thenAnswer(invocation -> {
+            OrderQueryReq query = invocation.getArgument(0);
+            OrderInfoResp filled = filledOrder("buy", "0.002", "50000");
+            filled.setOrdId(query.getOrdId());
+            filled.setClOrdId(query.getClOrdId());
+            OrderInfoResp conflicting = filledOrder("buy", "0", "0");
+            conflicting.setOrdId(query.getOrdId());
+            conflicting.setClOrdId(query.getClOrdId());
+            conflicting.setState("live");
+            List<OrderInfoResp> snapshots = switch (shape) {
+                case "missing" -> null;
+                case "empty" -> List.of();
+                case "null-entry" -> java.util.Collections.singletonList(null);
+                default -> List.of(filled, conflicting);
+            };
+            return OkxResponse.success(snapshots);
+        });
+        var orders = new InMemoryTradingOrderRepository();
+        var state = new TradingStateRepository(tempDir.resolve("multiple-query-snapshots.json"));
+        var execution = broker(liveProperties(), okx, orders,
+                mock(FundSafetyService.class), mock(TradingLeadershipService.class), state);
+        var first = new TradingDecisionRecord().setDecisionId("multiple-snapshots");
+
+        execution.execute(buyDecision(), context("0", "1000"), first);
+
+        assertEquals("FILL_UNCONFIRMED", first.getExecutionStatus());
+        assertEquals(OrderStatus.ACCEPTED,
+                orders.findByIdempotencyKey(first.getIdempotencyKey()).orElseThrow().getStatus());
+        assertEquals(0, BigDecimal.ZERO.compareTo(state.getState().getTrackedBaseAmount()));
+        var next = new TradingDecisionRecord().setDecisionId("next-signal-after-multiple-snapshots");
+        execution.execute(buyDecision(), context("0", "1000"), next);
+        assertEquals("SKIPPED", next.getExecutionStatus());
         verify(okx, times(1)).placeOrder(any());
     }
 

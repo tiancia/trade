@@ -25,6 +25,16 @@ public final class OrderChange {
     public TradingOrder apply(TradingOrder current, Instant now) {
         TradingOrder updated = current.change(target, next -> {
             mutation.accept(next);
+            // Recheck identity on every CAS attempt: a stale observation must
+            // neither replace nor erase a concurrently confirmed exchange order.
+            if (current.getExchangeOrderId() != null && !current.getExchangeOrderId().isBlank()) {
+                String observedId = next.build().exchangeOrderId();
+                if (observedId != null && !observedId.isBlank()
+                        && !current.getExchangeOrderId().equals(observedId)) {
+                    throw new IllegalStateException("Exchange order identity cannot change once confirmed");
+                }
+                next.exchangeOrderId(current.getExchangeOrderId());
+            }
             if (current.getCompletedAt() != null) { next.completedAt(current.getCompletedAt()); }
         }, now);
         // Recheck after every CAS retry, against the latest persisted order.

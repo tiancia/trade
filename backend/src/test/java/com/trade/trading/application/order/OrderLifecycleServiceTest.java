@@ -7,6 +7,9 @@ import com.trade.trading.domain.order.OrderSubmission;
 import com.trade.trading.domain.order.OrderTransitionResult;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -15,6 +18,11 @@ import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doCallRealMethod;
+import static org.mockito.Mockito.spy;
 
 class OrderLifecycleServiceTest {
     @Test
@@ -79,6 +87,52 @@ class OrderLifecycleServiceTest {
 
         assertEquals(OrderStatus.PARTIALLY_FILLED, service.find(key).orElseThrow().getStatus());
         assertEquals(0, new BigDecimal("0.002").compareTo(service.find(key).orElseThrow().getFilledBaseAmount()));
+    }
+
+    @Test
+    void conflictingExchangeIdentityIsRejectedAfterCompareAndSetRetry() {
+        var repository = spy(new InMemoryTradingOrderRepository());
+        var service = new OrderLifecycleService(repository, new SimpleMeterRegistry());
+        String key = "conflicting-identity";
+        service.reserve(submission(key));
+        confirmExchangeIdentityDuringNextUpdate(repository, service, key);
+
+        assertThrows(IllegalStateException.class, () -> service.markFilled(key, "conflicting-exchange",
+                new OrderFill(BigDecimal.ONE, BigDecimal.TEN, BigDecimal.ZERO, "USDT")));
+
+        var saved = service.find(key).orElseThrow();
+        assertEquals("confirmed-exchange", saved.getExchangeOrderId());
+        assertEquals(OrderStatus.ACCEPTED, saved.getStatus());
+        assertEquals(2, repository.transitionCount());
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"", " "})
+    void missingExchangeIdentityPreservesConcurrentAcknowledgement(String missingId) {
+        var repository = spy(new InMemoryTradingOrderRepository());
+        var service = new OrderLifecycleService(repository, new SimpleMeterRegistry());
+        String key = "missing-identity";
+        service.reserve(submission(key));
+        confirmExchangeIdentityDuringNextUpdate(repository, service, key);
+
+        service.markFilled(key, missingId,
+                new OrderFill(BigDecimal.ONE, BigDecimal.TEN, BigDecimal.ZERO, "USDT"));
+
+        var saved = service.find(key).orElseThrow();
+        assertEquals("confirmed-exchange", saved.getExchangeOrderId());
+        assertEquals(OrderStatus.FILLED, saved.getStatus());
+        assertEquals(3, repository.transitionCount());
+    }
+
+    private static void confirmExchangeIdentityDuringNextUpdate(InMemoryTradingOrderRepository repository,
+            OrderLifecycleService service, String key) {
+        doAnswer(invocation -> {
+            // Another writer acknowledges the order between this writer's read and CAS.
+            doCallRealMethod().when(repository).compareAndSet(any(), any(), anyString());
+            service.markAccepted(key, "confirmed-exchange");
+            return false;
+        }).when(repository).compareAndSet(any(), any(), anyString());
     }
 
     private static OrderSubmission submission(String key) {

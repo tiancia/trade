@@ -235,6 +235,41 @@ class TradingRuntimeSafetyPersistenceTest {
         assertEquals(0, risk().getConsecutiveLosses());
     }
 
+    @Test void staleSnapshotCannotReplaceConfirmedIdentityOrCommitItsFill() {
+        var stale = reserve("stale-identity", "BUY");
+        lifecycle.markAccepted(stale.getIdempotencyKey(), "confirmed-exchange");
+        var conflicting = observation(stale, "1", "100", "0", "filled");
+
+        assertThrows(IllegalStateException.class, () -> settlement.applyExchangeSnapshot(stale, conflicting));
+
+        var saved = lifecycle.find(stale.getIdempotencyKey()).orElseThrow();
+        assertEquals("confirmed-exchange", saved.getExchangeOrderId());
+        assertEquals(OrderStatus.ACCEPTED, saved.getStatus());
+        assertEquals(2, saved.getVersion());
+        assertDecimal("0", financial.getOrCreatePosition("live", "BTC-USDT", BigDecimal.ZERO, BigDecimal.ZERO).getQuantity());
+        var jdbc = new JdbcTemplate(dataSource);
+        assertEquals(0, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM okx_order_fill_ledger WHERE order_id = ?", Integer.class, stale.getId()));
+        assertEquals(2, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM okx_order_status_history WHERE order_id = ?", Integer.class, stale.getId()));
+    }
+
+    @Test void staleSnapshotWithoutExchangeIdRetainsConfirmedIdentityWhenSettling() {
+        var stale = reserve("missing-identity", "BUY");
+        lifecycle.markAccepted(stale.getIdempotencyKey(), "confirmed-exchange");
+        var observed = observation(stale, "1", "100", "0", "filled");
+        observed.setOrdId(null);
+
+        settlement.applyExchangeSnapshot(stale, observed);
+
+        var saved = lifecycle.find(stale.getIdempotencyKey()).orElseThrow();
+        assertEquals("confirmed-exchange", saved.getExchangeOrderId());
+        assertEquals(OrderStatus.FILLED, saved.getStatus());
+        assertDecimal("1", financial.getOrCreatePosition("live", "BTC-USDT", BigDecimal.ZERO, BigDecimal.ZERO).getQuantity());
+        assertEquals(1, new JdbcTemplate(dataSource).queryForObject(
+                "SELECT COUNT(*) FROM okx_order_fill_ledger WHERE order_id = ?", Integer.class, stale.getId()));
+    }
+
     @Test void failedClosedTradeRiskWriteRollsBackOrderFillAndPositionTogether() {
         fill("first-buy", "BUY", "1", "100", "0", "filled");
         fill("first-loss", "SELL", "1", "90", "0", "filled");
