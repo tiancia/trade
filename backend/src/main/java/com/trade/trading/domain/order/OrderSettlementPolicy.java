@@ -88,16 +88,28 @@ public final class OrderSettlementPolicy {
         if (("filled".equals(state) || "partially_filled".equals(state)) && filledSize.signum() <= 0) {
             throw new IllegalStateException("Filled exchange order requires a positive cumulative accFillSz");
         }
+        if ("live".equals(state) && filledSize.signum() != 0) {
+            throw new IllegalStateException("Live exchange order cannot report cumulative fills");
+        }
         // fillSz/fillPx describe the latest trade, not cumulative order totals.
         // Falling back to them can permanently close an under-accounted order.
         BigDecimal averagePrice = decimal(order.getAvgPx(), "avgPx");
         if (filledSize.signum() > 0 && averagePrice.signum() <= 0) {
             throw new IllegalStateException("Exchange cumulative fill requires a positive avgPx");
         }
+        // Closing a filled order with an assumed zero fee can permanently overstate
+        // owned assets or understate costs: terminal orders leave automatic reconciliation.
+        if (filledSize.signum() > 0 && !hasText(order.getFee())) {
+            throw new IllegalStateException("Exchange cumulative fill requires an explicit fee");
+        }
+        BigDecimal fee = decimal(order.getFee(), "fee");
+        if (filledSize.signum() == 0 && fee.signum() != 0) {
+            throw new IllegalStateException("Unfilled exchange order cannot report a nonzero trading fee");
+        }
         return new FillAmounts(
                 filledSize,
                 averagePrice,
-                decimal(order.getFee(), "fee")
+                fee
         );
     }
 

@@ -48,7 +48,8 @@ class OrderSettlementPolicyTest {
     @Test
     void liveObservationDoesNotUndoPendingCancellation() {
         var order = TradingOrder.restore(local("buy").snapshot().toBuilder().status(OrderStatus.CANCEL_PENDING).build());
-        var plan = policy.prepare(order, observed("buy", "live", "0", "USDT"));
+        var plan = policy.prepare(order, new ExchangeOrderObservation("exchange", "client", "BTC-USDT", "buy", "live",
+                "0", "0", "0", "", "", "0", "USDT"));
         assertNull(plan.target());
         assertEquals("FILL_UNCONFIRMED", plan.executionStatus());
     }
@@ -94,6 +95,39 @@ class OrderSettlementPolicyTest {
     void rejectsMalformedFeeInsteadOfSilentlyTreatingItAsFree() {
         assertThrows(IllegalStateException.class,
                 () -> policy.prepare(local("buy"), observed("buy", "filled", "invalid", "USDT")));
+    }
+
+    @Test
+    void anyCumulativeFillRequiresAnExplicitFeeIncludingPartialCancellations() {
+        for (String state : new String[] {"filled", "partially_filled", "canceled", "mmp_canceled"}) {
+            for (String fee : new String[] {null, "", " "}) {
+                assertThrows(IllegalStateException.class,
+                        () -> policy.prepare(local("buy"), observed("buy", state, fee, "USDT")), state);
+            }
+            assertDecimal("0", policy.prepare(local("buy"), observed("buy", state, "0", "USDT")).amounts().fee());
+        }
+    }
+
+    @Test
+    void unfilledOrdersAllowMissingFeeButCannotReportANonzeroFee() {
+        for (String state : new String[] {"live", "canceled", "mmp_canceled"}) {
+            for (String fee : new String[] {null, "", "0"}) {
+                var observation = new ExchangeOrderObservation("exchange", "client", "BTC-USDT", "buy", state,
+                        "0", "0", "0", "", "", fee, "USDT");
+                assertDecimal("0", policy.prepare(local("buy"), observation).amounts().fee());
+            }
+            for (String fee : new String[] {"-1", "1"}) {
+                var observation = new ExchangeOrderObservation("exchange", "client", "BTC-USDT", "buy", state,
+                        "0", "0", "0", "", "", fee, "USDT");
+                assertThrows(IllegalStateException.class, () -> policy.prepare(local("buy"), observation), state);
+            }
+        }
+    }
+
+    @Test
+    void liveStateCannotReportCumulativeFills() {
+        assertThrows(IllegalStateException.class,
+                () -> policy.prepare(local("buy"), observed("buy", "live", "0", "USDT")));
     }
 
     @Test

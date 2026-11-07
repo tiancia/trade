@@ -91,6 +91,7 @@ class OrderReconciliationServiceTest {
         filled.setState("filled");
         filled.setAccFillSz("0.001");
         filled.setAvgPx("50000");
+        filled.setFee("0");
         when(okxApi.getOrder(any(OrderQueryReq.class))).thenReturn(OkxResponse.success(List.of(filled)));
         AccountBalanceResp balance = new AccountBalanceResp();
         BalanceDetail base = new BalanceDetail();
@@ -373,6 +374,32 @@ class OrderReconciliationServiceTest {
         assertDecimal("50000", fixture.state().getState().getAverageCost());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"missing-fee", "live-with-fill", "fee-without-fill"})
+    void invalidFillDetailsDoNotRefreshSuccessfulReconciliation(String shape) {
+        Fixture fixture = fixture("invalid-fill");
+        var observed = exchange("filled", "0.001");
+        switch (shape) {
+            case "missing-fee" -> observed.setFee(null);
+            case "live-with-fill" -> observed.setState("live");
+            default -> {
+                observed.setState("canceled");
+                observed.setAccFillSz("0");
+                observed.setFee("-1");
+            }
+        }
+        when(fixture.okx().getOrder(any())).thenReturn(OkxResponse.success(List.of(observed)));
+
+        assertThrows(IllegalStateException.class, fixture.service()::reconcileOnce);
+
+        assertEquals(OrderStatus.SUBMITTING, fixture.lifecycle().find("invalid-fill").orElseThrow().getStatus());
+        assertEquals(1, fixture.service().status().getConsecutiveFailures());
+        assertNull(fixture.state().getState().getPositionLastReconciledAt());
+        assertDecimal("0", fixture.state().getState().getTrackedBaseAmount());
+        verify(fixture.okx(), never()).getAccountBalance(any());
+        verify(fixture.okx(), never()).placeOrder(any());
+    }
+
     @Test
     void duplicateOrderSnapshotsLeaveTheOrderUnresolved() {
         Fixture fixture = fixture("duplicate-response");
@@ -477,6 +504,7 @@ class OrderReconciliationServiceTest {
         order.setState(state);
         order.setAccFillSz(cumulativeSize);
         order.setAvgPx("50000");
+        order.setFee("0");
         return order;
     }
 

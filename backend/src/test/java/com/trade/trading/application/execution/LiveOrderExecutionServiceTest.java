@@ -165,6 +165,39 @@ class LiveOrderExecutionServiceTest {
         assertEquals(first.getOrderSize(), replay.getOrderSize());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"missing-fee", "live-with-fill"})
+    void invalidFillDetailsBlockNewOrdersAndRecoverByQueryWithoutResubmitting(String shape) {
+        var observed = filledOrder("buy", "0.002", "50000");
+        if ("missing-fee".equals(shape)) observed.setFee(null);
+        else observed.setState("live");
+        var api = new FakeOkxApi(observed);
+        var orders = new InMemoryTradingOrderRepository();
+        var state = new TradingStateRepository(tempDir.resolve("invalid-fill.json"));
+        var execution = broker(liveProperties(), api, orders,
+                mock(FundSafetyService.class), mock(TradingLeadershipService.class), state);
+        var first = new TradingDecisionRecord().setDecisionId("invalid-fill");
+
+        execution.execute(buyDecision(), context("0", "1000"), first);
+
+        assertEquals("FILL_UNCONFIRMED", first.getExecutionStatus());
+        assertEquals(OrderStatus.ACCEPTED.name(), first.getOrderStatus());
+        assertEquals(0, state.getState().getTrackedBaseAmount().signum());
+        var next = new TradingDecisionRecord().setDecisionId("next-signal");
+        execution.execute(buyDecision(), context("0", "1000"), next);
+        assertEquals("SKIPPED", next.getExecutionStatus());
+        assertEquals(1, api.placeOrderCount);
+
+        observed.setFee("0");
+        observed.setState("filled");
+        var replay = new TradingDecisionRecord().setDecisionId("invalid-fill");
+        execution.execute(buyDecision(), context("0", "1000"), replay);
+        assertEquals(OrderStatus.FILLED.name(), replay.getOrderStatus());
+        assertTrue(replay.isIdempotentReplay());
+        assertEquals(0, new BigDecimal("0.002").compareTo(state.getState().getTrackedBaseAmount()));
+        assertEquals(1, api.placeOrderCount);
+    }
+
     @Test
     void incompleteAndTimedOutAcknowledgementsStayUnknownAndBlockTheNextSignal() {
         List<OkxResponse<OrderActionResp>> responses = new ArrayList<>();
@@ -951,6 +984,7 @@ class LiveOrderExecutionServiceTest {
         order.setSide(side);
         order.setAccFillSz(fillSize);
         order.setAvgPx(avgPrice);
+        order.setFee("0");
         order.setState("filled");
         return order;
     }

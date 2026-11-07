@@ -16,6 +16,9 @@ import org.apache.ibatis.session.SqlSessionFactory;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.io.TempDir;
 import org.mybatis.spring.SqlSessionFactoryBean;
 import org.mybatis.spring.mapper.MapperFactoryBean;
@@ -233,6 +236,40 @@ class TradingRuntimeSafetyPersistenceTest {
         fill("next-buy", "BUY", "1", "100", "0", "filled");
         fill("winning-close", "SELL", "1", "110", "-1", "filled");
         assertEquals(0, risk().getConsecutiveLosses());
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {" "})
+    void missingFeeCannotCloseAnOrderOrChangeItsExistingFillLedger(String fee) {
+        var order = reserve("missing-fee", "BUY");
+        settlement.applyExchangeSnapshot(order, observation(order, "0.4", "100", "0", "partially_filled"));
+        var partial = lifecycle.find(order.getIdempotencyKey()).orElseThrow();
+        var jdbc = new JdbcTemplate(dataSource);
+
+        assertThrows(IllegalStateException.class,
+                () -> settlement.applyExchangeSnapshot(partial, observation(partial, "1", "100", fee, "filled")));
+
+        var saved = lifecycle.find(order.getIdempotencyKey()).orElseThrow();
+        assertEquals(OrderStatus.PARTIALLY_FILLED, saved.getStatus());
+        assertEquals(partial.getVersion(), saved.getVersion());
+        assertDecimal("0.4", saved.getFilledBaseAmount());
+        var position = financial.getOrCreatePosition("live", "BTC-USDT", BigDecimal.ZERO, BigDecimal.ZERO);
+        assertDecimal("0.4", position.getQuantity());
+        assertDecimal("100", position.getAverageCost());
+        assertDecimal("0.4", jdbc.queryForObject(
+                "SELECT cumulative_filled_size FROM okx_order_fill_ledger WHERE order_id = ?", BigDecimal.class, order.getId()));
+        assertDecimal("40", jdbc.queryForObject(
+                "SELECT applied_quote_cost FROM okx_order_fill_ledger WHERE order_id = ?", BigDecimal.class, order.getId()));
+        assertEquals(2, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM okx_order_status_history WHERE order_id = ?", Integer.class, order.getId()));
+
+        // A later complete snapshot can finish the original order with its actual fee.
+        settlement.applyExchangeSnapshot(saved, observation(saved, "1", "100", "-2", "filled"));
+        assertEquals(OrderStatus.FILLED, lifecycle.find(order.getIdempotencyKey()).orElseThrow().getStatus());
+        position = financial.getOrCreatePosition("live", "BTC-USDT", BigDecimal.ZERO, BigDecimal.ZERO);
+        assertDecimal("1", position.getQuantity());
+        assertDecimal("102", position.getAverageCost());
     }
 
     @Test void staleSnapshotCannotReplaceConfirmedIdentityOrCommitItsFill() {
