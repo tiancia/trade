@@ -1,6 +1,8 @@
 package com.trade.trading.application.order;
 
 import com.trade.trading.domain.order.OrderFill;
+import com.trade.trading.domain.order.ExchangeOrderObservation;
+import com.trade.trading.domain.order.OrderSettlementPolicy;
 import com.trade.trading.domain.order.OrderReservation;
 import com.trade.trading.domain.order.OrderStatus;
 import com.trade.trading.domain.order.OrderSubmission;
@@ -87,6 +89,30 @@ class OrderLifecycleServiceTest {
 
         assertEquals(OrderStatus.PARTIALLY_FILLED, service.find(key).orElseThrow().getStatus());
         assertEquals(0, new BigDecimal("0.002").compareTo(service.find(key).orElseThrow().getFilledBaseAmount()));
+    }
+
+    @Test
+    void zeroFillCancellationIsRejectedAfterConcurrentFillForcesCompareAndSetRetry() {
+        var repository = spy(new InMemoryTradingOrderRepository());
+        var service = new OrderLifecycleService(repository, new SimpleMeterRegistry());
+        String key = "concurrent-cancellation";
+        var original = service.reserve(submission(key)).order();
+        var plan = new OrderSettlementPolicy("BTC", "USDT").prepare(original,
+                new ExchangeOrderObservation("exchange-1", original.getClientOrderId(), "BTC-USDT", "buy",
+                        "canceled", "0", "0", "0", "", "", "0", "USDT"));
+        doAnswer(invocation -> {
+            doCallRealMethod().when(repository).compareAndSet(any(), any(), anyString());
+            service.markPartiallyFilled(key, "exchange-1",
+                    new OrderFill(new BigDecimal("0.002"), new BigDecimal("50000"), BigDecimal.ZERO, "USDT"));
+            return false;
+        }).when(repository).compareAndSet(any(), any(), anyString());
+
+        assertThrows(IllegalStateException.class, () -> service.markCanceled(key, plan.exchangeOrderId(), plan.fill()));
+
+        var saved = service.find(key).orElseThrow();
+        assertEquals(OrderStatus.PARTIALLY_FILLED, saved.getStatus());
+        assertEquals(0, new BigDecimal("0.002").compareTo(saved.getFilledBaseAmount()));
+        assertEquals(2, repository.transitionCount());
     }
 
     @Test

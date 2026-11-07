@@ -272,6 +272,49 @@ class TradingRuntimeSafetyPersistenceTest {
         assertDecimal("102", position.getAverageCost());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"canceled", "mmp_canceled"})
+    void staleZeroFillCancellationCannotCloseAnOrderWithCommittedFills(String exchangeState) {
+        var stale = reserve("stale-cancellation", "BUY");
+        settlement.applyExchangeSnapshot(stale, observation(stale, "0.4", "100", "-1", "partially_filled"));
+        var partial = lifecycle.find(stale.getIdempotencyKey()).orElseThrow();
+        var jdbc = new JdbcTemplate(dataSource);
+
+        // The caller retained the pre-fill order while another observation committed a fill.
+        assertThrows(IllegalStateException.class, () -> settlement.applyExchangeSnapshot(stale,
+                observation(stale, "0", "", "0", exchangeState)));
+
+        var saved = lifecycle.find(stale.getIdempotencyKey()).orElseThrow();
+        assertEquals(OrderStatus.PARTIALLY_FILLED, saved.getStatus());
+        assertEquals(partial.getVersion(), saved.getVersion());
+        assertNull(saved.getCompletedAt());
+        assertDecimal("0.4", saved.getFilledBaseAmount());
+        assertDecimal("0.4", financial.getOrCreatePosition("live", "BTC-USDT", BigDecimal.ZERO, BigDecimal.ZERO).getQuantity());
+        assertDecimal("0.4", jdbc.queryForObject(
+                "SELECT cumulative_filled_size FROM okx_order_fill_ledger WHERE order_id = ?", BigDecimal.class, stale.getId()));
+        assertDecimal("41", jdbc.queryForObject(
+                "SELECT applied_quote_cost FROM okx_order_fill_ledger WHERE order_id = ?", BigDecimal.class, stale.getId()));
+        assertEquals(2, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM okx_order_status_history WHERE order_id = ?", Integer.class, stale.getId()));
+
+        // A complete cancellation can still finish and account for any additional fills.
+        settlement.applyExchangeSnapshot(saved, observation(saved, "0.6", "100", "-2", exchangeState));
+        assertEquals(OrderStatus.CANCELED, lifecycle.find(stale.getIdempotencyKey()).orElseThrow().getStatus());
+        assertDecimal("0.6", financial.getOrCreatePosition("live", "BTC-USDT", BigDecimal.ZERO, BigDecimal.ZERO).getQuantity());
+        assertDecimal("62", jdbc.queryForObject(
+                "SELECT applied_quote_cost FROM okx_order_fill_ledger WHERE order_id = ?", BigDecimal.class, stale.getId()));
+    }
+
+    @Test void unfilledCancellationClosesWithoutCreatingAFillLedgerOrPosition() {
+        var order = reserve("unfilled-cancellation", "BUY");
+        settlement.applyExchangeSnapshot(order, observation(order, "0", "", null, "canceled"));
+
+        assertEquals(OrderStatus.CANCELED, lifecycle.find(order.getIdempotencyKey()).orElseThrow().getStatus());
+        var jdbc = new JdbcTemplate(dataSource);
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM okx_order_fill_ledger", Integer.class));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM okx_position_state", Integer.class));
+    }
+
     @Test void staleSnapshotCannotReplaceConfirmedIdentityOrCommitItsFill() {
         var stale = reserve("stale-identity", "BUY");
         lifecycle.markAccepted(stale.getIdempotencyKey(), "confirmed-exchange");

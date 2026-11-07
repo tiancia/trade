@@ -20,8 +20,9 @@ public final class OrderSettlementPolicy {
                 && amounts.filledSize().compareTo(local.getFilledBaseAmount()) < 0) {
             throw new IllegalStateException("Exchange cumulative fill regressed below the durable order checkpoint");
         }
-        OrderFill fill = amounts.filledSize().signum() > 0
-                ? new OrderFill(amounts.filledSize(), amounts.averagePrice(), amounts.fee(), observed.getFeeCcy()) : null;
+        // Preserve an explicit zero through CAS retries: null would retain a
+        // concurrent partial fill and let a contradictory cancellation close it.
+        OrderFill fill = new OrderFill(amounts.filledSize(), amounts.averagePrice(), amounts.fee(), observed.getFeeCcy());
         OrderStatus target = switch (state) {
             case "filled" -> OrderStatus.FILLED;
             case "partially_filled" -> OrderStatus.PARTIALLY_FILLED;
