@@ -1,6 +1,7 @@
 package com.trade.trading.application.risk;
 
 import com.trade.client.okx.dto.AccountBalanceResp;
+import com.trade.client.okx.dto.BalanceDetail;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
@@ -14,7 +15,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.math.BigDecimal;
 import java.nio.file.Path;
@@ -82,8 +83,14 @@ class RiskControlServiceTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"RISK_DAILY_LOSS", "RISK_MAX_DRAWDOWN"})
-    void zeroEquityTriggersEachEnabledLossLimitWithoutBlockingExits(String rule) {
+    @CsvSource({
+            "RISK_DAILY_LOSS, 0, 100%",
+            "RISK_MAX_DRAWDOWN, 0, 100%",
+            "RISK_DAILY_LOSS, -100, 110%",
+            "RISK_MAX_DRAWDOWN, -100, 110%"
+    })
+    void nonpositiveReportedEquityTriggersEachLossLimitDespitePositiveBalances(
+            String rule, String equity, String loss) {
         TradingProperties properties = properties();
         properties.getRisk().setMaxDailyLossRatio("RISK_DAILY_LOSS".equals(rule)
                 ? new BigDecimal("0.05") : BigDecimal.ZERO);
@@ -96,16 +103,24 @@ class RiskControlServiceTest {
                 .setDayStartEquity(new BigDecimal("1000"))
                 .setDayStartDate("2026-05-17"));
         RiskControlService service = service(properties, repository, NOW);
+        TradingDecisionContext context = context(equity);
+        BalanceDetail quote = new BalanceDetail();
+        quote.setAvailBal("1000");
+        quote.setCashBal("1000");
+        BalanceDetail base = new BalanceDetail();
+        base.setAvailBal("0.02");
+        base.setCashBal("0.02");
+        context.setQuoteBalance(quote).setBaseBalance(base);
 
-        RiskAssessment buy = service.evaluate(openDecision(TradingAction.BUY), context("0"));
+        RiskAssessment buy = service.evaluate(openDecision(TradingAction.BUY), context);
 
         assertFalse(buy.isAllowed());
         assertTrue(buy.skipReason().startsWith(rule + ":"));
-        assertTrue(buy.skipReason().contains("100%"));
-        assertDecimal("0", repository.getState().getRiskState().getCurrentEquity());
+        assertTrue(buy.skipReason().contains(loss));
+        assertDecimal(equity, repository.getState().getRiskState().getCurrentEquity());
         assertDecimal("1000", repository.getState().getRiskState().getDayStartEquity());
         assertDecimal("1000", repository.getState().getRiskState().getEquityHighWatermark());
-        assertTrue(service.evaluate(closeDecision(TradingAction.SELL), context("0")).isAllowed());
+        assertTrue(service.evaluate(closeDecision(TradingAction.SELL), context).isAllowed());
     }
 
     @Test

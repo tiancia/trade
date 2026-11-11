@@ -8,9 +8,15 @@ class AccountValuationTest {
     @Test
     void reportedEquityWinsAndFallbackMarksBaseAtCurrentPrice() {
         assertEquals(n("1000"), AccountValuation.equity(n("1000"), n("10"), n("2"), n("100")));
-        assertEquals(n("210"), AccountValuation.equity(n("0"), n("10"), n("2"), n("100")));
+        assertEquals(n("210"), AccountValuation.equity(null, n("10"), n("2"), n("100")));
         assertEquals(n("12"), AccountValuation.balance(n("0"), n("12"), n("20")));
         assertEquals(n("20"), AccountValuation.balance(n("0"), n("0"), n("20")));
+    }
+
+    @Test
+    void reportedZeroAndNegativeEquityCannotBeReplacedByPositiveCurrencyBalances() {
+        assertEquals(n("0"), AccountValuation.equity(n("0"), n("10"), n("2"), n("100")));
+        assertEquals(n("-50"), AccountValuation.equity(n("-50"), n("10"), n("2"), n("100")));
     }
 
     @Test

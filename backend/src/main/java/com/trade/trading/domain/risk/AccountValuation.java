@@ -5,8 +5,9 @@ import java.math.BigDecimal;
 /** Equity fallback and single-open exposure limits on resolved account facts. */
 public final class AccountValuation {
     private AccountValuation() {}
+    /** Only an omitted total permits fallback; zero and negative totals are authoritative. */
     public static BigDecimal equity(BigDecimal totalEquity, BigDecimal quote, BigDecimal base, BigDecimal price) {
-        return totalEquity.signum() > 0 ? totalEquity : quote.add(base.multiply(price));
+        return totalEquity != null ? totalEquity : quote.add(base.multiply(price));
     }
     public static BigDecimal available(BigDecimal available, BigDecimal cash) {
         return available.signum() > 0 ? available : cash;

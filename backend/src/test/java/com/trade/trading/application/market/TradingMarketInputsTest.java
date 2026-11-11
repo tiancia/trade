@@ -8,6 +8,9 @@ import com.trade.client.okx.dto.TickerResp;
 import java.math.BigDecimal;
 import java.util.Arrays;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import static org.junit.jupiter.api.Assertions.*;
 
 class TradingMarketInputsTest {
@@ -32,6 +35,42 @@ class TradingMarketInputsTest {
         context.setAccountBalance(account);
         assertEquals(new BigDecimal("456"), TradingMarketInputs.estimatedEquity(context));
         assertEquals(BigDecimal.ZERO, TradingMarketInputs.estimatedEquity(null));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "-50", " 0.00 ", " -50.25 "})
+    void preservesReportedNonpositiveEquityDespitePositiveCurrencyBalances(String reportedEquity) {
+        var context = contextWithPositiveBalances(reportedEquity);
+
+        assertEquals(new BigDecimal(reportedEquity.trim()), TradingMarketInputs.estimatedEquity(context));
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"   "})
+    void onlyMissingReportedEquityUsesCurrencyBalanceFallback(String reportedEquity) {
+        assertEquals(new BigDecimal("140"),
+                TradingMarketInputs.estimatedEquity(contextWithPositiveBalances(reportedEquity)));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"invalid", "NaN", "Infinity"})
+    void malformedReportedEquityCannotFallBackToPositiveCurrencyBalances(String reportedEquity) {
+        assertThrows(IllegalStateException.class,
+                () -> TradingMarketInputs.estimatedEquity(contextWithPositiveBalances(reportedEquity)));
+    }
+
+    private static TradingDecisionContext contextWithPositiveBalances(String reportedEquity) {
+        var account = new AccountBalanceResp();
+        account.setTotalEq(reportedEquity);
+        var quote = new BalanceDetail();
+        quote.setAvailBal("100");
+        var base = new BalanceDetail();
+        base.setAvailBal("2");
+        var ticker = new TickerResp();
+        ticker.setLast("20");
+        return new TradingDecisionContext().setAccountBalance(account)
+                .setQuoteBalance(quote).setBaseBalance(base).setTicker(ticker);
     }
 
     @Test

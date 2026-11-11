@@ -3,6 +3,7 @@ package com.trade.trading.application.execution;
 import com.trade.trading.infrastructure.broker.OkxOrderGateway;
 import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.OkxRestClient;
+import com.trade.client.okx.dto.AccountBalanceResp;
 import com.trade.client.okx.dto.BalanceDetail;
 import com.trade.client.okx.dto.InstrumentInfoResp;
 import com.trade.client.okx.dto.OkxResponse;
@@ -66,6 +67,62 @@ import static org.mockito.ArgumentMatchers.any;
 class LiveOrderExecutionServiceTest {
     @TempDir
     Path tempDir;
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "-100"})
+    void nonpositiveAccountEquityBlocksLiveBuyDespiteAvailableCashAndStillAllowsExit(String equity) {
+        var properties = liveProperties();
+        properties.getRisk().setEnabled(true);
+        properties.getRisk().setMaxDrawdownRatio(new BigDecimal("0.05"));
+        properties.getRisk().setMaxDailyLossRatio(BigDecimal.ZERO);
+        var repository = new TradingStateRepository(tempDir.resolve("depleted-equity.json"));
+        repository.recordBuy(new BigDecimal("0.01"), new BigDecimal("50000"));
+        repository.recordRiskState(new com.trade.trading.domain.model.TradingRiskState()
+                .setCurrentEquity(new BigDecimal("1000")).setEquityHighWatermark(new BigDecimal("1000")));
+        var api = new FakeOkxApi(filledOrder("sell", "0.01", "50000"));
+        var safety = mock(FundSafetyService.class);
+        var orders = new InMemoryTradingOrderRepository();
+        var execution = broker(properties, api, orders, safety,
+                mock(TradingLeadershipService.class), repository);
+        var context = context("0.01", "1000");
+        var account = new AccountBalanceResp();
+        account.setTotalEq(equity);
+        context.setAccountBalance(account);
+
+        var blocked = new TradingDecisionRecord();
+        execution.execute(buyDecision(), context, blocked);
+
+        assertEquals("SKIPPED", blocked.getExecutionStatus());
+        assertTrue(blocked.getSkipReason().startsWith("RISK_MAX_DRAWDOWN"));
+        assertEquals(0, api.placeOrderCount);
+        assertTrue(orders.findReconciliationCandidates(properties.getInstId(), 1).isEmpty());
+        org.mockito.Mockito.verify(safety, org.mockito.Mockito.never()).halt(any(), any());
+
+        var sold = new TradingDecisionRecord().setDecisionId("exit-depleted-equity");
+        execution.execute(sellDecision("0.01"), context, sold);
+        assertEquals("FILLED", sold.getExecutionStatus());
+        assertEquals(1, api.placeOrderCount);
+        assertEquals("sell", api.orderReq.getSide());
+        assertEquals(0, repository.getState().getTrackedBaseAmount().signum());
+    }
+
+    @Test
+    void malformedAccountEquityCannotReserveOrSubmitALiveOrder() {
+        var properties = liveProperties();
+        var api = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        var orders = new InMemoryTradingOrderRepository();
+        var execution = broker(properties, api, orders);
+        var context = context("0", "1000");
+        var account = new AccountBalanceResp();
+        account.setTotalEq("invalid");
+        context.setAccountBalance(account);
+
+        assertThrows(IllegalStateException.class,
+                () -> execution.execute(buyDecision(), context, new TradingDecisionRecord()));
+
+        assertEquals(0, api.placeOrderCount);
+        assertTrue(orders.findReconciliationCandidates(properties.getInstId(), 1).isEmpty());
+    }
 
     @Test void ordinaryDrawdownBlocksBuyingWithoutLatchingTheAllOrdersStopAndSellingStillWorks() {
         TradingProperties properties = liveProperties();

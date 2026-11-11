@@ -33,7 +33,17 @@ public final class TradingMarketInputs {
     public static BigDecimal estimatedEquity(TradingDecisionContext context) {
         if (context == null) { return BigDecimal.ZERO; }
         var account = context.getAccountBalance();
-        return AccountValuation.equity(TradingMath.decimal(account == null ? null : account.getTotalEq()),
+        String reportedEquity = account == null ? null : account.getTotalEq();
+        BigDecimal totalEquity = null;
+        if (reportedEquity != null && !reportedEquity.isBlank()) {
+            try {
+                totalEquity = new BigDecimal(reportedEquity.trim());
+            } catch (NumberFormatException invalid) {
+                // A malformed account total must not become a positive fallback valuation.
+                throw new IllegalStateException("Account snapshot has invalid totalEq", invalid);
+            }
+        }
+        return AccountValuation.equity(totalEquity,
                 balanceAmount(context.getQuoteBalance()), balanceAmount(context.getBaseBalance()), lastPrice(context));
     }
 
