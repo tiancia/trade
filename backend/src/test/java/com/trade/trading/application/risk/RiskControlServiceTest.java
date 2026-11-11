@@ -13,6 +13,8 @@ import com.trade.trading.infrastructure.persistence.TradingStateRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.math.BigDecimal;
 import java.nio.file.Path;
@@ -77,6 +79,33 @@ class RiskControlServiceTest {
 
         assertFalse(assessment.isAllowed());
         assertTrue(assessment.skipReason().startsWith("RISK_MAX_DRAWDOWN:"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"RISK_DAILY_LOSS", "RISK_MAX_DRAWDOWN"})
+    void zeroEquityTriggersEachEnabledLossLimitWithoutBlockingExits(String rule) {
+        TradingProperties properties = properties();
+        properties.getRisk().setMaxDailyLossRatio("RISK_DAILY_LOSS".equals(rule)
+                ? new BigDecimal("0.05") : BigDecimal.ZERO);
+        properties.getRisk().setMaxDrawdownRatio("RISK_MAX_DRAWDOWN".equals(rule)
+                ? new BigDecimal("0.20") : BigDecimal.ZERO);
+        TradingStateRepository repository = repository();
+        repository.recordRiskState(new TradingRiskState()
+                .setCurrentEquity(new BigDecimal("1000"))
+                .setEquityHighWatermark(new BigDecimal("1000"))
+                .setDayStartEquity(new BigDecimal("1000"))
+                .setDayStartDate("2026-05-17"));
+        RiskControlService service = service(properties, repository, NOW);
+
+        RiskAssessment buy = service.evaluate(openDecision(TradingAction.BUY), context("0"));
+
+        assertFalse(buy.isAllowed());
+        assertTrue(buy.skipReason().startsWith(rule + ":"));
+        assertTrue(buy.skipReason().contains("100%"));
+        assertDecimal("0", repository.getState().getRiskState().getCurrentEquity());
+        assertDecimal("1000", repository.getState().getRiskState().getDayStartEquity());
+        assertDecimal("1000", repository.getState().getRiskState().getEquityHighWatermark());
+        assertTrue(service.evaluate(closeDecision(TradingAction.SELL), context("0")).isAllowed());
     }
 
     @Test

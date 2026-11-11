@@ -3,6 +3,8 @@ package com.trade.trading.domain.risk;
 import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.domain.model.TradingRiskState;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import java.math.BigDecimal;
 import java.time.Instant;
 import static org.junit.jupiter.api.Assertions.*;
@@ -12,6 +14,23 @@ class RiskStateTransitionsTest {
             new BigDecimal("0.05"), "Asia/Shanghai", 1000, 2, new BigDecimal("0.1"),
             new BigDecimal("0.001"));
     private final RiskStateTransitions transitions = new RiskStateTransitions(policy);
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "-10"})
+    void nonPositiveEquityRefreshReplacesOldEquityWithoutErasingLossReferences(String equity) {
+        TradingRiskState source = new TradingRiskState().setCurrentEquity(new BigDecimal("100"))
+                .setEquityHighWatermark(new BigDecimal("120")).setDayStartEquity(new BigDecimal("110"))
+                .setDayStartDate("2026-09-26");
+
+        TradingRiskState result = transitions.refresh(source, new BigDecimal(equity),
+                Instant.parse("2026-09-26T16:00:00Z"));
+
+        assertEquals(new BigDecimal(equity), result.getCurrentEquity());
+        assertEquals(new BigDecimal("120"), result.getEquityHighWatermark());
+        assertEquals(new BigDecimal("110"), result.getDayStartEquity());
+        assertEquals("2026-09-26", result.getDayStartDate());
+        assertEquals(new BigDecimal("100"), source.getCurrentEquity());
+    }
 
     @Test
     void dayBoundaryResetsDailyReferenceWithoutResettingDrawdownOrMutatingSource() {

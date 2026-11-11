@@ -19,7 +19,7 @@ public class DailyLossRule implements RiskRule {
         BigDecimal currentEquity = context.getCurrentEquity();
         if (limit == null || limit.signum() <= 0
                 || dayStartEquity == null || dayStartEquity.signum() <= 0
-                || currentEquity == null || currentEquity.signum() <= 0) {
+                || currentEquity == null) {
             return Optional.empty();
         }
 

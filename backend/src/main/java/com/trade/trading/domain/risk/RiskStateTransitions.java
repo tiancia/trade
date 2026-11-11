@@ -24,7 +24,11 @@ public final class RiskStateTransitions {
         if (cooldown != null && !now.isBefore(cooldown)) {
             state.setLossCooldownUntil(null).setConsecutiveLosses(0);
         }
+        // Refresh receives an equity estimate, including a depleted account.
+        // Unlike fill callbacks, zero here must not retain an older valuation.
+        state.setCurrentEquity(equity);
         if (equity.signum() <= 0) {
+            // Keep positive loss references so a zero balance cannot erase its loss.
             return state;
         }
         applyDailyBoundary(state, equity, now);

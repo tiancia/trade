@@ -208,6 +208,8 @@ $env:TRADE_TRADING_LEADERSHIP_HEARTBEAT_INTERVAL_MS="5000"
 
 同库存在受管理 LIVE 持仓、未决订单或当前 PAPER 会话持仓时，策略切换和参数修改返回 409；先完成退出和对账。普通日亏损、回撤及连亏冷却仅阻止加仓，允许已核实持仓减仓。HALTED 专用于人工或对账事故停止，仍禁止所有真实下单，包括卖出，不会自动市价平仓。
 
+风控刷新时，零或负权益会替换旧权益，并保留已有的正数日初权益和历史高水位；不能因权益耗尽而跳过日亏损或回撤限制。实盘成交回报不含新的账户权益时，仍保留上次估值，等待账户快照刷新。
+
 ```powershell
 # expectedRevision 使用 GET /api/trading/runtime/status 返回的 activeStrategyRevision。
 Invoke-RestMethod -Method Put -Headers @{'X-Trade-CSRF'='1'} `
