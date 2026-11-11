@@ -838,9 +838,9 @@ trade:
       batch-size: ${TRADE_TRADING_RECONCILIATION_BATCH_SIZE:100}
       # 连续对账失败达到该次数时触发持久化资金停止。
       max-consecutive-failures: ${TRADE_TRADING_RECONCILIATION_MAX_FAILURES:3}
-      # managed-only 允许同账户存在人工仓位；dedicated-account 要求交易所总仓位与本进程账本完全一致。
+      # managed-only 允许额外人工仓位，但交易所总量不得低于受管理仓位；dedicated-account 要求两者一致。
       position-ownership: ${TRADE_TRADING_POSITION_OWNERSHIP:managed-only}
-      # dedicated-account 模式允许的仓位数量误差，按基础币种 / 合约数量计。
+      # 受管理仓位缺口及 dedicated-account 双向差异的允许误差，按基础币种 / 合约数量计。
       position-mismatch-tolerance: ${TRADE_TRADING_POSITION_MISMATCH_TOLERANCE:0.00000001}
     # 多实例单写租约；旧库先执行 db/upgrade/trading/ 中对应的租约升级脚本，再显式启用。
     # PAPER 可保持关闭；LIVE 下单默认强制要求本实例持有有效租约。

@@ -1,7 +1,16 @@
 package com.trade.trading.infrastructure.persistence;
 
+import com.trade.client.okx.OkxApi;
+import com.trade.client.okx.dto.AccountBalanceResp;
+import com.trade.client.okx.dto.BalanceDetail;
+import com.trade.client.okx.dto.CancelAllAfterResp;
+import com.trade.client.okx.dto.OkxResponse;
+import com.trade.trading.application.order.OrderReconciliationService;
+import com.trade.trading.application.order.OrderSettlementService;
+import com.trade.trading.application.risk.FundSafetyService;
 import com.trade.trading.port.FundSafetyRepository;
 import com.trade.trading.port.TradingFinancialStateStore;
+import com.trade.trading.port.TradingOrderRepository;
 import com.trade.trading.application.risk.RiskControlService;
 import com.trade.trading.domain.model.ExecutionMode;
 import com.trade.trading.domain.model.TradingAction;
@@ -11,6 +20,7 @@ import com.trade.trading.domain.order.SpotFillApplication;
 import com.trade.trading.domain.risk.FundSafetyStatus;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.infrastructure.config.TradingRiskConfiguration;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.Test;
@@ -35,6 +45,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.nio.file.Path;
 import java.util.ConcurrentModificationException;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -49,6 +60,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @SpringJUnitConfig(MyBatisTradingFinancialStateStoreTest.PersistenceTestConfiguration.class)
 @Sql(statements = {
@@ -109,6 +123,51 @@ class MyBatisTradingFinancialStateStoreTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void sharedAccountShortfallPersistsStopAndFailedReconciliationAcrossServiceInstances() {
+        TradingProperties properties = new TradingProperties();
+        properties.setExecutionMode(ExecutionMode.LIVE);
+        var state = new TradingStateRepository(tempDir.resolve("shortfall.json"), store, "live", "BTC-USDT");
+        state.recordBuy(new BigDecimal("0.001"), new BigDecimal("50000"));
+        // Begin with an active account so a bootstrap stop cannot mask this regression.
+        var initial = fundSafetyRepository.getOrCreate("live");
+        fundSafetyRepository.resume("live", initial.getVersion(), "test fixture", Instant.now());
+        TradingOrderRepository orders = mock(TradingOrderRepository.class);
+        OkxApi okx = mock(OkxApi.class);
+        BalanceDetail base = new BalanceDetail();
+        base.setCcy("BTC");
+        base.setCashBal("0.0005");
+        AccountBalanceResp account = new AccountBalanceResp();
+        account.setDetails(List.of(base));
+        when(okx.getAccountBalance(any())).thenReturn(OkxResponse.success(List.of(account)));
+        when(okx.getPendingOrders(any())).thenReturn(OkxResponse.success(List.of()));
+        CancelAllAfterResp timer = new CancelAllAfterResp();
+        timer.setTs("100");
+        timer.setTriggerTime("110");
+        when(okx.cancelAllAfter(any())).thenReturn(OkxResponse.success(List.of(timer)));
+        var safety = new FundSafetyService(fundSafetyRepository, orders, state, okx, properties, new SimpleMeterRegistry());
+        var reconciliation = new OrderReconciliationService(okx, orders, mock(OrderSettlementService.class),
+                state, safety, properties, new SimpleMeterRegistry());
+
+        assertThrows(IllegalStateException.class, reconciliation::reconcileOnce);
+
+        var restoredState = new TradingStateRepository(tempDir.resolve("restored.json"), store, "live", "BTC-USDT");
+        var restoredSafety = new FundSafetyService(fundSafetyRepository, orders, restoredState, okx,
+                properties, new SimpleMeterRegistry());
+        var halted = restoredSafety.state();
+        assertEquals(FundSafetyStatus.HALTED, halted.getStatus());
+        assertEquals("position-reconciliation", halted.getSource());
+        assertDecimal("0.001", restoredState.getState().getTrackedBaseAmount());
+        assertDecimal("50000", restoredState.getState().getAverageCost());
+        assertDecimal("0.0005", restoredState.getState().getExchangeBaseAmount());
+        assertEquals(1, restoredState.getState().getRiskState().getConsecutiveReconciliationFailures());
+        assertThrows(FundSafetyService.TradingFundsHaltedException.class, restoredSafety::requireActive);
+        assertThrows(IllegalStateException.class,
+                () -> restoredSafety.resume(halted.getVersion(), "still missing assets", "RESUME_LIVE_TRADING"));
+        assertEquals(FundSafetyStatus.HALTED, fundSafetyRepository.getOrCreate("live").getStatus());
+        verify(okx, never()).placeOrder(any());
+    }
 
     @Test
     void positionCostRiskAndCumulativeFillAreDurableAndIdempotent() {

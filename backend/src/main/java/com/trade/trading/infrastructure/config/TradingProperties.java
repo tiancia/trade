@@ -303,7 +303,7 @@ public class TradingProperties {
         private int maxConsecutiveFailures = 3;
         /** Defines whether this process owns the entire configured exchange position. */
         private PositionOwnership positionOwnership = PositionOwnership.MANAGED_ONLY;
-        /** Allowed dedicated-account position drift before the fund stop activates. */
+        /** Allowed managed shortfall or dedicated-account position drift before the fund stop activates. */
         private BigDecimal positionMismatchTolerance = new BigDecimal("0.00000001");
     }
 

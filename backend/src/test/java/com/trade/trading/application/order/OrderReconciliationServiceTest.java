@@ -187,6 +187,50 @@ class OrderReconciliationServiceTest {
         verify(fixture.safety()).halt(org.mockito.ArgumentMatchers.eq("position-reconciliation"), any());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "0.0005", "0.00099998", "absent"})
+    void sharedAccountShortfallHaltsAndInvalidatesEarlierSuccessfulReconciliation(String cashBalance) {
+        Fixture fixture = fixture(null);
+        fixture.properties().getReconciliation().setPositionOwnership(TradingProperties.PositionOwnership.MANAGED_ONLY);
+        fixture.state().recordBuy(new BigDecimal("0.001"), new BigDecimal("50000"));
+        fixture.service().reconcileOnce();
+        var stop = new FundSafetyState().setHaltedAt(Instant.EPOCH);
+        assertDoesNotThrow(() -> FundSafetyPolicy.requireFreshSuccessfulReconciliation(stop, fixture.state().getState()));
+
+        var response = balance("absent".equals(cashBalance) ? "0" : cashBalance, null);
+        if ("absent".equals(cashBalance)) response.getData().getFirst().setDetails(List.of());
+        when(fixture.okx().getAccountBalance(any())).thenReturn(response);
+
+        assertThrows(IllegalStateException.class, fixture.service()::reconcileOnce);
+
+        assertDecimal("0.001", fixture.state().getState().getTrackedBaseAmount());
+        assertDecimal("50000", fixture.state().getState().getAverageCost());
+        assertDecimal("absent".equals(cashBalance) ? "0" : cashBalance,
+                fixture.state().getState().getExchangeBaseAmount());
+        assertEquals(1, fixture.service().status().getConsecutiveFailures());
+        verify(fixture.safety()).halt(org.mockito.ArgumentMatchers.eq("position-reconciliation"), any());
+        assertThrows(IllegalStateException.class,
+                () -> FundSafetyPolicy.requireFreshSuccessfulReconciliation(stop, fixture.state().getState()));
+        verify(fixture.okx(), never()).placeOrder(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0.001", "0.002", "0.00099999"})
+    void sharedAccountAllowsExtraHoldingsAndRoundingToleranceWithoutAdoptingThem(String cashBalance) {
+        Fixture fixture = fixture(null);
+        fixture.properties().getReconciliation().setPositionOwnership(TradingProperties.PositionOwnership.MANAGED_ONLY);
+        fixture.state().recordBuy(new BigDecimal("0.001"), new BigDecimal("50000"));
+        when(fixture.okx().getAccountBalance(any())).thenReturn(balance(cashBalance, null));
+
+        assertDoesNotThrow(fixture.service()::reconcileOnce);
+
+        assertDecimal("0.001", fixture.state().getState().getTrackedBaseAmount());
+        assertDecimal("50000", fixture.state().getState().getAverageCost());
+        assertDecimal(cashBalance, fixture.state().getState().getExchangeBaseAmount());
+        assertEquals(0, fixture.service().status().getConsecutiveFailures());
+        verify(fixture.safety(), never()).halt(any(), any());
+    }
+
     @Test
     void malformedFilledOrderRemainsUnresolvedAndDoesNotPassReconciliation() {
         Fixture fixture = fixture("missing-total");

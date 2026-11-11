@@ -276,6 +276,8 @@ LIVE 订单在未决订单和托管仓位检查完成后，再读取持久化资
 
 恢复前必须完成订单和仓位对账，确认交易所无挂单、本地无中间态订单，并使用 GET 返回的当前 `version`：
 
+默认 `managed-only` 允许账户内存在额外人工仓位，但交易所总余额低于受管理仓位且超过 `trade.trading.reconciliation.position-mismatch-tolerance` 时，会立即触发资金停止并将本轮对账记为失败。`dedicated-account` 对超过容差的双向差异均停止；两种模式都保留现货账本仓位和成本，不能把资产缺口静默改成零仓位或作为恢复交易的依据。先核查手动交易、转出和成交记录，差异解决后重新对账，再显式恢复。
+
 ```powershell
 Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} `
   -Uri http://127.0.0.1:8080/api/trading/reconciliation/run
