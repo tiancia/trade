@@ -1,6 +1,7 @@
 package com.trade.trading.application.execution;
 
 import com.trade.client.okx.dto.BalanceDetail;
+import com.trade.client.okx.dto.AccountBalanceResp;
 import com.trade.client.okx.dto.InstrumentInfoResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.domain.model.OrderSizing;
@@ -9,6 +10,9 @@ import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.math.BigDecimal;
 
@@ -118,6 +122,58 @@ class OrderSizingServiceTest {
 
         assertTrue(sizing.isExecutable());
         assertEquals("80", sizing.getSize());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "-100"})
+    void nonpositiveEquityProvidesNoBuyAllowanceButDoesNotBlockSelling(String equity) {
+        TradingProperties properties = new TradingProperties();
+        properties.getRisk().setMaxSingleOpenEquityRatio(new BigDecimal("0.10"));
+        TradingDecisionContext context = context("50000", "0.01", "1000", "0.00001", "0.0001");
+        AccountBalanceResp account = new AccountBalanceResp();
+        account.setTotalEq(equity);
+        context.setAccountBalance(account);
+        OrderSizingService sizingService = new OrderSizingService(properties);
+
+        OrderSizing buy = sizingService.buySize(StrategyDecision.buy("test", new BigDecimal("100"), "entry"), context);
+        OrderSizing sell = sizingService.sellSize(StrategyDecision.sell("test", new BigDecimal("0.01"), "exit"), context);
+
+        assertFalse(buy.isExecutable());
+        assertEquals("BUY skipped: amount is zero after caps", buy.getSkipReason());
+        assertTrue(sell.isExecutable());
+        assertEquals("0.01", sell.getSize());
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"0", "-1"})
+    void equityRatioCapStillAppliesWithoutAnAbsoluteBuyCap(String absoluteCap) {
+        TradingProperties properties = new TradingProperties();
+        properties.setMaxBuyQuoteAmount(absoluteCap == null ? null : new BigDecimal(absoluteCap));
+        properties.getRisk().setMaxSingleOpenEquityRatio(new BigDecimal("0.10"));
+
+        OrderSizing sizing = new OrderSizingService(properties).buySize(
+                StrategyDecision.buy("test", new BigDecimal("500"), "entry"),
+                context("50000", "0", "800", "0.00001", "0.00000001"));
+
+        assertTrue(sizing.isExecutable());
+        assertEquals("80", sizing.getSize());
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"0", "-0.1"})
+    void disabledEquityRatioStillUsesTheAbsoluteBuyCap(String ratio) {
+        TradingProperties properties = new TradingProperties();
+        properties.setMaxBuyQuoteAmount(new BigDecimal("100"));
+        properties.getRisk().setMaxSingleOpenEquityRatio(ratio == null ? null : new BigDecimal(ratio));
+
+        OrderSizing sizing = new OrderSizingService(properties).buySize(
+                StrategyDecision.buy("test", new BigDecimal("500"), "entry"),
+                context("50000", "0", "800", "0.00001", "0.00000001"));
+
+        assertTrue(sizing.isExecutable());
+        assertEquals("100", sizing.getSize());
     }
 
     private static TradingDecisionContext context(

@@ -44,7 +44,7 @@ public class OrderSizingService {
 
     private BigDecimal maxSingleOpenQuoteAmount(TradingDecisionContext context) {
         TradingProperties.RiskProperties risk = properties.getRisk();
-        return risk == null ? BigDecimal.ZERO : AccountValuation.singleOpenLimit(
+        return risk == null ? null : AccountValuation.singleOpenLimit(
                 risk.isEnabled(), risk.getMaxSingleOpenEquityRatio(), TradingMarketInputs.estimatedEquity(context));
     }
 }

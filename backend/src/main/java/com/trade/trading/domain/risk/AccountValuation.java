@@ -16,10 +16,11 @@ public final class AccountValuation {
         BigDecimal amount = available(available, cash);
         return amount.signum() > 0 ? amount : equity;
     }
+    /** Null disables the cap; an enabled cap can be zero when equity is depleted. */
     public static BigDecimal singleOpenLimit(boolean enabled, BigDecimal ratio, BigDecimal equity) {
-        if (!enabled || ratio == null || ratio.signum() <= 0 || equity.signum() <= 0) {
-            return BigDecimal.ZERO;
+        if (!enabled || ratio == null || ratio.signum() <= 0) {
+            return null;
         }
-        return equity.multiply(ratio);
+        return equity.max(BigDecimal.ZERO).multiply(ratio);
     }
 }

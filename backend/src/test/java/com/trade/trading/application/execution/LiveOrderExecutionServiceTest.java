@@ -106,6 +106,42 @@ class LiveOrderExecutionServiceTest {
         assertEquals(0, repository.getState().getTrackedBaseAmount().signum());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "-100"})
+    void equityCapBlocksLiveBuyWithoutHistoricalLossReferencesAndStillAllowsExit(String equity) {
+        var properties = liveProperties();
+        properties.getRisk().setEnabled(true);
+        var repository = new TradingStateRepository(tempDir.resolve("equity-without-history.json"));
+        repository.recordBuy(new BigDecimal("0.01"), new BigDecimal("50000"));
+        var api = new FakeOkxApi(filledOrder("sell", "0.01", "50000"));
+        var orders = new InMemoryTradingOrderRepository();
+        var safety = mock(FundSafetyService.class);
+        var execution = broker(properties, api, orders, safety,
+                mock(TradingLeadershipService.class), repository);
+        var context = context("0.01", "1000");
+        var account = new AccountBalanceResp();
+        account.setTotalEq(equity);
+        context.setAccountBalance(account);
+
+        var blocked = new TradingDecisionRecord();
+        execution.execute(buyDecision(), context, blocked);
+
+        assertEquals("SKIPPED", blocked.getExecutionStatus());
+        assertEquals("BUY skipped: amount is zero after caps", blocked.getSkipReason());
+        assertEquals(0, api.placeOrderCount);
+        assertNull(blocked.getIdempotencyKey());
+        assertTrue(orders.findReconciliationCandidates(properties.getInstId(), 1).isEmpty());
+        verify(safety, org.mockito.Mockito.never()).halt(any(), any());
+
+        var sold = new TradingDecisionRecord().setDecisionId("exit-without-equity-history");
+        execution.execute(sellDecision("0.01"), context, sold);
+
+        assertEquals("FILLED", sold.getExecutionStatus());
+        assertEquals(1, api.placeOrderCount);
+        assertEquals("sell", api.orderReq.getSide());
+        assertEquals(0, repository.getState().getTrackedBaseAmount().signum());
+    }
+
     @Test
     void malformedAccountEquityCannotReserveOrSubmitALiveOrder() {
         var properties = liveProperties();

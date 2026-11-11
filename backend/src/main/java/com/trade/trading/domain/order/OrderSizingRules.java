@@ -14,6 +14,7 @@ public final class OrderSizingRules {
         this.limits = limits;
     }
 
+    /** maxSingleOpenQuoteAmount is null when disabled; zero is a hard allowance. */
     public record Limits(BigDecimal maxBuyQuoteAmount, int quoteAmountScale,
                          BigDecimal maxSellPositionRatio, BigDecimal maxDerivativeOrderSize,
                          BigDecimal maxSingleOpenQuoteAmount) {}
@@ -40,13 +41,14 @@ public final class OrderSizingRules {
         if (availableQuote == null || availableQuote.signum() <= 0) {
             return OrderSizing.skipped("BUY skipped: no available quote balance");
         }
-        BigDecimal maxAmount = limits.maxBuyQuoteAmount();
-        // Optional equity-ratio cap limits a single new open even if the AI
-        // asks for less than the absolute maxBuyQuoteAmount.
-        maxAmount = TradingMath.clamp(maxAmount, limits.maxSingleOpenQuoteAmount());
         // Account funds are a hard bound; unlike optional configuration caps,
         // zero available funds must never mean unlimited buying power.
-        BigDecimal amount = TradingMath.clamp(requestedAmount, maxAmount).min(availableQuote);
+        BigDecimal amount = TradingMath.clamp(requestedAmount, limits.maxBuyQuoteAmount()).min(availableQuote);
+        // Apply the computed equity allowance independently of the optional
+        // absolute cap. Zero equity permits no buy, rather than disabling the cap.
+        if (limits.maxSingleOpenQuoteAmount() != null) {
+            amount = amount.min(limits.maxSingleOpenQuoteAmount());
+        }
         amount = amount.setScale(limits.quoteAmountScale(), RoundingMode.DOWN);
 
         InstrumentLimits instrument = context.instrument();

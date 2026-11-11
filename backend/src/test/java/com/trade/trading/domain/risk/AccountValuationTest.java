@@ -21,9 +21,16 @@ class AccountValuationTest {
 
     @Test
     void disabledOrNonpositiveLimitDoesNotCapOrders() {
-        assertEquals(BigDecimal.ZERO, AccountValuation.singleOpenLimit(false, n("0.1"), n("100")));
-        assertEquals(BigDecimal.ZERO, AccountValuation.singleOpenLimit(true, null, n("100")));
-        assertEquals(BigDecimal.ZERO, AccountValuation.singleOpenLimit(true, n("0.1"), n("0")));
+        assertNull(AccountValuation.singleOpenLimit(false, n("0.1"), n("100")));
+        assertNull(AccountValuation.singleOpenLimit(true, null, n("100")));
+        assertNull(AccountValuation.singleOpenLimit(true, n("0"), n("100")));
+        assertNull(AccountValuation.singleOpenLimit(true, n("-0.1"), n("100")));
+    }
+
+    @Test
+    void enabledEquityCapIsZeroForDepletedAccounts() {
+        assertEquals(0, AccountValuation.singleOpenLimit(true, n("0.1"), n("0")).signum());
+        assertEquals(0, AccountValuation.singleOpenLimit(true, n("0.1"), n("-100")).signum());
         assertEquals(n("10.0"), AccountValuation.singleOpenLimit(true, n("0.1"), n("100")));
     }
 
