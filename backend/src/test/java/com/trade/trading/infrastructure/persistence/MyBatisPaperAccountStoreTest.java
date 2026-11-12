@@ -9,6 +9,16 @@ import com.trade.trading.application.execution.PaperOrderExecutionService;
 import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.application.market.TradingMarketInputs;
 import com.trade.trading.application.paper.PaperAccountService;
+import com.trade.trading.application.strategy.TradingStrategyEngine;
+import com.trade.trading.application.strategy.TradingStrategyRegistry;
+import com.trade.trading.application.strategy.TradingStrategySelectionService;
+import com.trade.trading.application.strategy.ThresholdEventStrategy;
+import com.trade.trading.application.order.OrderReconciliationService;
+import com.trade.trading.application.risk.FundSafetyService;
+import com.trade.trading.application.runtime.TradingLeadershipService;
+import com.trade.trading.port.TradingBroker;
+import com.trade.trading.port.TradingMarketSource;
+import com.trade.trading.port.TradingMarketFeed;
 import com.trade.trading.port.PaperAccountStore;
 import com.trade.trading.port.TradingStateStore;
 import com.trade.trading.application.risk.RiskControlService;
@@ -17,6 +27,8 @@ import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.domain.model.TradingDecisionRecord;
 import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.domain.model.ExecutionMode;
+import com.trade.trading.domain.model.ActiveStrategySelection;
+import com.trade.trading.domain.model.TradingTrigger;
 import com.trade.trading.domain.paper.PaperAccount;
 import com.trade.trading.domain.risk.RiskAssessment;
 import com.trade.trading.domain.risk.RiskStateTransitions;
@@ -26,6 +38,7 @@ import org.apache.ibatis.session.SqlSessionFactory;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.mybatis.spring.SqlSessionFactoryBean;
 import org.mybatis.spring.mapper.MapperFactoryBean;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -103,6 +116,50 @@ class MyBatisPaperAccountStoreTest {
         assertEquals(1L, fills.getFirst().strategyConfigVersion());
         assertEquals("{\"params\":{\"lookback\":5}}", fills.getFirst().strategyConfigSnapshotJson());
         assertEquals(4, store.equity("BTC-USDT", a.sessionId(), null, 100).size());
+    }
+
+    @Test void holdDecisionPersistsPaperEquityPeakWithoutChangingFillsOrLiveRisk() {
+        TradingProperties props = new TradingProperties();
+        props.setExecutionMode(ExecutionMode.PAPER);
+        props.getRisk().setMaxDrawdownRatio(new BigDecimal("0.05"));
+        props.getRisk().setMaxDailyLossRatio(BigDecimal.ZERO);
+        props.getRisk().setMinOpenIntervalMs(0);
+        props.getRisk().setMaxConsecutiveOpenActions(0);
+        PaperAccount initial = start("1000");
+        PaperAccount bought = store.fill(command(initial, "entry", "BUY", "100", "10", "0")).account();
+        var clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        var accounts = new PaperAccountService(store, props, clock);
+        TradingDecisionContext context = context();
+        context.getTicker().setLast("30");
+        accounts.enrichContext(context); // 900 cash + 10 base * 30 = 1200 equity.
+        var legacy = mock(TradingStateStore.class);
+        var risk = new RiskControlService(props, legacy, clock, new TradingRiskConfiguration().tradingRiskRules(), accounts);
+        var registry = new TradingStrategyRegistry(List.of(new ThresholdEventStrategy()), props);
+        var selection = mock(TradingStrategySelectionService.class);
+        when(selection.activeStrategies()).thenReturn(registry.configuredStrategies());
+        when(selection.current()).thenReturn(new ActiveStrategySelection(registry.configuredStrategies().getFirst().id(), 0, null));
+        var market = mock(TradingMarketSource.class);
+        when(market.collect(any(), anyString())).thenReturn(context);
+        var broker = mock(TradingBroker.class);
+        var engine = new TradingStrategyEngine(market, selection, broker, legacy, props, mock(TradingMarketFeed.class),
+                mock(FundSafetyService.class), mock(OrderReconciliationService.class), mock(TradingLeadershipService.class),
+                new SimpleMeterRegistry(), accounts, risk);
+
+        assertTrue(engine.runDecision(TradingTrigger.scheduled()));
+
+        decimal("1200", store.risk("BTC-USDT", initial.sessionId()).getEquityHighWatermark());
+        assertEquals(NOW.toString(), store.risk("BTC-USDT", initial.sessionId()).getLastTradeTime());
+        assertEquals(1, store.risk("BTC-USDT", initial.sessionId()).getConsecutiveOpenActions());
+        assertEquals(bought.version(), store.active("BTC-USDT").version());
+        assertEquals(1, store.fills("BTC-USDT", initial.sessionId(), null, 100).size());
+        context.getTicker().setLast("20");
+        accounts.enrichContext(context);
+        var assessment = risk.evaluate(StrategyDecision.buy("threshold", BigDecimal.TEN, "add"), context);
+        assertFalse(assessment.isAllowed());
+        assertTrue(assessment.skipReason().startsWith("RISK_MAX_DRAWDOWN:"));
+        assertTrue(risk.evaluate(new StrategyDecision().setAction(TradingAction.SELL), context).isAllowed());
+        verifyNoInteractions(broker);
+        verify(legacy, never()).updateRiskState(any());
     }
 
     @Test void dailyStatisticsCountCompleteRoundTripsAcrossMidnightAndFenceSessionVersion() {

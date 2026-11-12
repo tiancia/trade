@@ -3,6 +3,7 @@ package com.trade.trading.application.strategy;
 import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.OkxRestClient;
 import com.trade.client.okx.dto.OkxResponse;
+import com.trade.client.okx.dto.AccountBalanceResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.application.event.TradingEventPublishResult;
 import com.trade.trading.application.order.OrderReconciliationService;
@@ -13,6 +14,9 @@ import com.trade.trading.port.TradingStateStore;
 import com.trade.trading.application.paper.PaperAccountService;
 import com.trade.trading.domain.model.ExecutionMode;
 import com.trade.trading.application.risk.FundSafetyService;
+import com.trade.trading.application.risk.RiskControlService;
+import com.trade.trading.domain.risk.RiskRule;
+import com.trade.trading.domain.model.TradingRiskState;
 import com.trade.trading.application.runtime.TradingLeadershipService;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
@@ -28,17 +32,26 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import lombok.Data;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import java.math.BigDecimal;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 class TradingStrategyEngineTest {
+    private static final Clock RISK_CLOCK = Clock.fixed(Instant.parse("2026-05-18T00:00:00Z"), ZoneOffset.UTC);
+
     @TempDir
     Path tempDir;
 
@@ -51,7 +64,7 @@ class TradingStrategyEngineTest {
         TradingStrategyEngine engine = new TradingStrategyEngine(mock(TradingMarketSource.class),
                 mock(TradingStrategySelectionService.class), mock(TradingBroker.class), mock(TradingStateStore.class),
                 properties, mock(TradingMarketFeed.class), mock(FundSafetyService.class), mock(OrderReconciliationService.class),
-                mock(TradingLeadershipService.class), new SimpleMeterRegistry(), mock(PaperAccountService.class));
+                mock(TradingLeadershipService.class), new SimpleMeterRegistry(), mock(PaperAccountService.class), mock(RiskControlService.class));
         var status = engine.status();
         assertEquals("ETH-USDC", status.getInstId());
         assertEquals("ETH", status.getBaseCcy());
@@ -70,7 +83,7 @@ class TradingStrategyEngineTest {
         TradingStrategyEngine engine = new TradingStrategyEngine(
                 market, selection, broker, state, properties, mock(TradingMarketFeed.class),
                 mock(FundSafetyService.class), mock(OrderReconciliationService.class),
-                mock(TradingLeadershipService.class), metrics, mock(PaperAccountService.class));
+                mock(TradingLeadershipService.class), metrics, mock(PaperAccountService.class), mock(RiskControlService.class));
 
         assertFalse(engine.runDecision(TradingTrigger.scheduled()));
 
@@ -139,6 +152,42 @@ class TradingStrategyEngineTest {
         assertEquals(0.0, meterRegistry.get("trade.trading.decisions.running").gauge().value());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"RISK_MAX_DRAWDOWN", "RISK_DAILY_LOSS"})
+    void holdSamplesEquityBeforeTheNextOpeningDecision(String rule) {
+        TradingProperties properties = properties(List.of(strategyConfig("first", "hold")));
+        properties.setExecutionMode(ExecutionMode.LIVE);
+        properties.getRisk().setMaxDrawdownRatio("RISK_MAX_DRAWDOWN".equals(rule)
+                ? new BigDecimal("0.05") : BigDecimal.ZERO);
+        properties.getRisk().setMaxDailyLossRatio("RISK_DAILY_LOSS".equals(rule)
+                ? new BigDecimal("0.05") : BigDecimal.ZERO);
+        TradingStateRepository repository = new TradingStateRepository(tempDir.resolve("hold-risk.json"));
+        repository.recordRiskState(new TradingRiskState()
+                .setCurrentEquity(new BigDecimal("1000"))
+                .setEquityHighWatermark(new BigDecimal("1000"))
+                .setDayStartEquity(new BigDecimal("1000"))
+                .setDayStartDate("2026-05-17"));
+        AccountBalanceResp account = new AccountBalanceResp();
+        account.setTotalEq("1200");
+        TradingDecisionContext context = context().setAccountBalance(account);
+        CapturingBroker broker = new CapturingBroker();
+
+        assertTrue(engine(properties, broker, repository, new SimpleMeterRegistry(), context)
+                .runDecision(TradingTrigger.scheduled()));
+
+        assertEquals(0, broker.executeCount);
+        assertEquals("HELD", repository.getState().getRecentDecisions().getFirst().getExecutionStatus());
+        RiskControlService risk = new RiskControlService(properties, repository, RISK_CLOCK, RiskRule.standardRules());
+        account.setTotalEq("1080");
+        var buy = risk.evaluate(StrategyDecision.buy("first", BigDecimal.TEN, "add"), context);
+        assertFalse(buy.isAllowed());
+        assertTrue(buy.skipReason().startsWith(rule + ":"), buy.skipReason());
+        assertTrue(risk.evaluate(new StrategyDecision().setAction(TradingAction.SELL), context).isAllowed());
+        assertEquals(0, new BigDecimal("1200").compareTo(repository.getState().getRiskState().getEquityHighWatermark()));
+        assertEquals("2026-05-18", repository.getState().getRiskState().getDayStartDate());
+        assertEquals(0, repository.getState().getRiskState().getConsecutiveOpenActions());
+    }
+
     private TradingStrategyEngine engine(
             TradingProperties properties,
             CapturingBroker broker,
@@ -153,10 +202,20 @@ class TradingStrategyEngineTest {
             TradingStateRepository repository,
             MeterRegistry meterRegistry
     ) {
+        return engine(properties, broker, repository, meterRegistry, context());
+    }
+
+    private TradingStrategyEngine engine(
+            TradingProperties properties,
+            CapturingBroker broker,
+            TradingStateRepository repository,
+            MeterRegistry meterRegistry,
+            TradingDecisionContext marketContext
+    ) {
         TradingStrategyRegistry registry = new TradingStrategyRegistry(List.of(new TestStrategy()), properties);
         TradingStrategySelectionService selectionService = new TradingStrategySelectionService(registry, repository);
         return new TradingStrategyEngine(
-                new FakeMarketContextCollector(context()),
+                new FakeMarketContextCollector(marketContext),
                 selectionService,
                 broker,
                 repository,
@@ -170,7 +229,8 @@ class TradingStrategyEngineTest {
                 mock(OrderReconciliationService.class),
                 mock(TradingLeadershipService.class),
                 meterRegistry,
-                mock(PaperAccountService.class)
+                mock(PaperAccountService.class),
+                new RiskControlService(properties, repository, RISK_CLOCK, RiskRule.standardRules())
         );
     }
 

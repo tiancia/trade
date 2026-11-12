@@ -167,7 +167,8 @@ public class RiskControlService {
                 executedAt == null ? Instant.now(clock) : executedAt, fill.firstApplication()));
     }
 
-    private TradingRiskState refreshRiskState(TradingDecisionContext decisionContext) {
+    /** Sample observed equity on HOLD too, without recording an executed action. */
+    public TradingRiskState refreshRiskState(TradingDecisionContext decisionContext) {
         BigDecimal equity = TradingMarketInputs.estimatedEquity(decisionContext);
         Instant now = Instant.now(clock);
         return updateRiskState(decisionContext, current -> transitions().refresh(current, equity, now));

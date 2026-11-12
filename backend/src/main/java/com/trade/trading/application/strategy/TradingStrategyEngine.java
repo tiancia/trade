@@ -5,6 +5,7 @@ import com.trade.trading.application.paper.PaperAccountService;
 import com.trade.trading.application.order.OrderReconciliationService;
 import com.trade.trading.port.TradingBroker;
 import com.trade.trading.application.risk.FundSafetyService;
+import com.trade.trading.application.risk.RiskControlService;
 import com.trade.trading.application.runtime.TradingLeadershipService;
 import com.trade.trading.domain.model.ActiveStrategySelection;
 import com.trade.trading.domain.model.ExecutionMode;
@@ -55,6 +56,7 @@ public class TradingStrategyEngine {
     private final OrderReconciliationService orderReconciliationService;
     private final TradingLeadershipService leadershipService;
     private final PaperAccountService paperAccountService;
+    private final RiskControlService riskControlService;
     private final ReentrantLock decisionLock = new ReentrantLock();
     private volatile TradingDecisionRecord lastDecision;
     private volatile String lastError;
@@ -85,7 +87,8 @@ public class TradingStrategyEngine {
             OrderReconciliationService orderReconciliationService,
             TradingLeadershipService leadershipService,
             MeterRegistry meterRegistry,
-            PaperAccountService paperAccountService
+            PaperAccountService paperAccountService,
+            RiskControlService riskControlService
     ) {
         this.contextCollector = contextCollector;
         this.strategySelectionService = strategySelectionService;
@@ -98,6 +101,7 @@ public class TradingStrategyEngine {
         this.leadershipService = leadershipService;
         this.meterRegistry = meterRegistry;
         this.paperAccountService = paperAccountService;
+        this.riskControlService = riskControlService;
         Gauge.builder("trade.trading.decisions.running", decisionLock, lock -> lock.isLocked() ? 1 : 0)
                 .description("Whether a trading strategy decision is currently running")
                 .register(meterRegistry);
@@ -144,6 +148,9 @@ public class TradingStrategyEngine {
                 }
                 finalRecord = record;
                 if (decision == null || decision.isHold()) {
+                    // Holding still observes equity peaks and the first sample of a
+                    // new risk day. Otherwise a later BUY can miss loss limits.
+                    riskControlService.refreshRiskState(marketContext);
                     record.setExecutionStatus("HELD");
                     recordDecision(decision, record);
                     continue;

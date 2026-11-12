@@ -16,6 +16,8 @@ import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.port.HistoricalCandleSource;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -39,6 +41,48 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class BacktestServiceTest {
+    @ParameterizedTest
+    @ValueSource(strings = {"drawdown", "daily-loss"})
+    void holdSamplesPeakAndNewRiskDayWithoutBlockingTheLaterExit(String guard) {
+        var strategy = new TradingStrategy<TestConfig>() {
+            private int evaluations;
+            @Override public String type() { return "hold-risk"; }
+            @Override public Class<TestConfig> configType() { return TestConfig.class; }
+            @Override public StrategyDecision evaluate(StrategyEvaluationContext c, TestConfig config) {
+                return switch (++evaluations) {
+                    case 1, 3 -> StrategyDecision.buy(c.getStrategyId(), new BigDecimal("100"), "enter or add");
+                    case 4 -> new StrategyDecision().setStrategyId(c.getStrategyId()).setAction(TradingAction.SELL)
+                            .setSellBaseAmount(c.tradingState().getTrackedBaseAmount());
+                    default -> StrategyDecision.hold(c.getStrategyId(), "hold at equity peak");
+                };
+            }
+        };
+        TradingProperties properties = properties(strategy.type());
+        properties.getRisk().setEnabled(true);
+        properties.getRisk().setDailyZone("Asia/Shanghai");
+        properties.getRisk().setMinOpenIntervalMs(0);
+        properties.getRisk().setMaxConsecutiveOpenActions(0);
+        properties.getRisk().setMaxSingleOpenEquityRatio(BigDecimal.ZERO);
+        properties.getRisk().setMaxDrawdownRatio("drawdown".equals(guard) ? new BigDecimal("0.05") : BigDecimal.ZERO);
+        properties.getRisk().setMaxDailyLossRatio("daily-loss".equals(guard) ? new BigDecimal("0.05") : BigDecimal.ZERO);
+        // The HOLD signal closes at midnight in the configured risk timezone.
+        HistoricalCandleSource history = (inst, bar, from, to, limit) -> List.of(
+                candle("2026-05-17T15:58:00Z", "100", "100", "1"),
+                candle("2026-05-17T15:59:00Z", "100", "200", "1"),
+                candle("2026-05-17T16:00:00Z", "200", "100", "1"),
+                candle("2026-05-17T16:01:00Z", "100", "100", "1"),
+                candle("2026-05-17T16:02:00Z", "100", "100", "1"));
+        var service = new BacktestService(history, new TradingStrategyRegistry(List.of(strategy), properties), properties, Runnable::run);
+
+        var run = service.start(request().setFrom(Instant.parse("2026-05-17T15:58:00Z"))
+                .setTo(Instant.parse("2026-05-17T16:03:00Z")).setForceCloseAtEnd(false));
+
+        assertEquals(BacktestStatus.SUCCEEDED, run.getStatus(), run.getError());
+        assertEquals(List.of(TradingAction.BUY, TradingAction.SELL), run.getTrades().stream().map(t -> t.action()).toList(), guard);
+        assertEquals(0, BigDecimal.ONE.compareTo(run.getTrades().getLast().baseAmount()));
+        assertEquals(0, run.getFinalBaseAmount().signum());
+    }
+
     @Test
     void replayAppliesTheSameBuyCapsAndOpeningGuardsAsPaperAndLive() {
         for (String guard : List.of("interval", "action-count", "daily-loss")) {

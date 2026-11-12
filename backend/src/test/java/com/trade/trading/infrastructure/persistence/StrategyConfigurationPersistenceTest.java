@@ -240,7 +240,8 @@ class StrategyConfigurationPersistenceTest {
         TradingStrategyEngine engine = new TradingStrategyEngine(market,
                 new TradingStrategySelectionService(registry, state), mock(TradingBroker.class), state, properties,
                 mock(TradingMarketFeed.class), mock(FundSafetyService.class), mock(OrderReconciliationService.class),
-                mock(TradingLeadershipService.class), new SimpleMeterRegistry(), mock(PaperAccountService.class));
+                mock(TradingLeadershipService.class), new SimpleMeterRegistry(), mock(PaperAccountService.class),
+                mock(com.trade.trading.application.risk.RiskControlService.class));
         assertTrue(engine.runDecision(TradingTrigger.scheduled()));
         assertTrue(engine.runDecision(TradingTrigger.scheduled()));
         var decisions = new TradingStateRepository(temporary.resolve("decisions.json")).getState().getRecentDecisions();

@@ -175,10 +175,12 @@ public class BacktestService {
                         request.getBar(),
                         evaluatedAt
                 );
+                // Sample every signal bar, including HOLD, so peaks and daily
+                // loss references are not limited to bars that submit orders.
+                riskState = riskTransitions.refresh(riskState, TradingMarketInputs.estimatedEquity(decisionContext), evaluatedAt);
                 decisionContext.getTradingState().setRiskState(riskState);
                 StrategyDecision decision = evaluate(configured, request, decisionContext, evaluatedAt);
                 if (decision != null && !decision.isHold()) {
-                    riskState = riskTransitions.refresh(riskState, broker.equity(price(signalCandle.getClose(), "close", signalCandle)), evaluatedAt);
                     RiskContext riskContext = new RiskContext().setDecision(decision)
                             .setPolicy(RiskInputs.policy(properties.getRisk())).setRiskState(riskState)
                             .setSpotInstrument(true).setCurrentEquity(riskState.getCurrentEquity())
