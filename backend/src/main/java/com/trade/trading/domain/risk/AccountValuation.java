@@ -9,12 +9,11 @@ public final class AccountValuation {
     public static BigDecimal equity(BigDecimal totalEquity, BigDecimal quote, BigDecimal base, BigDecimal price) {
         return totalEquity != null ? totalEquity : quote.add(base.multiply(price));
     }
-    public static BigDecimal available(BigDecimal available, BigDecimal cash) {
-        return available.signum() > 0 ? available : cash;
-    }
+    /** Null means omitted; frozen funds and reported liabilities remain part of equity. */
     public static BigDecimal balance(BigDecimal available, BigDecimal cash, BigDecimal equity) {
-        BigDecimal amount = available(available, cash);
-        return amount.signum() > 0 ? amount : equity;
+        if (equity != null) return equity;
+        if (cash != null) return cash;
+        return available == null ? BigDecimal.ZERO : available;
     }
     /** Null disables the cap; an enabled cap can be zero when equity is depleted. */
     public static BigDecimal singleOpenLimit(boolean enabled, BigDecimal ratio, BigDecimal equity) {

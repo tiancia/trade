@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class TradingMarketInputsTest {
     @Test
-    void preservesCashAndEquityFallbacksAndPrefersReportedAccountEquity() {
+    void prefersCurrencyEquityForFallbackAndReportedAccountEquityOverall() {
         var ticker = new TickerResp();
         ticker.setLast("20");
         var quote = new BalanceDetail();
@@ -29,7 +29,7 @@ class TradingMarketInputsTest {
         var context = new TradingDecisionContext().setTicker(ticker).setQuoteBalance(quote).setBaseBalance(base);
         assertEquals(BigDecimal.ZERO, TradingMarketInputs.availableBalance(context.getQuoteBalance()));
         assertEquals(BigDecimal.ZERO, TradingMarketInputs.availableBalance(context.getBaseBalance()));
-        assertEquals(new BigDecimal("140"), TradingMarketInputs.estimatedEquity(context));
+        assertEquals(new BigDecimal("1039"), TradingMarketInputs.estimatedEquity(context));
         var account = new AccountBalanceResp();
         account.setTotalEq("456");
         context.setAccountBalance(account);
@@ -58,6 +58,68 @@ class TradingMarketInputsTest {
     void malformedReportedEquityCannotFallBackToPositiveCurrencyBalances(String reportedEquity) {
         assertThrows(IllegalStateException.class,
                 () -> TradingMarketInputs.estimatedEquity(contextWithPositiveBalances(reportedEquity)));
+    }
+
+    @Test
+    void frozenFundsRemainPartOfFallbackEquityButAreNotSpendable() {
+        var context = contextWithPositiveBalances(null);
+        context.getQuoteBalance().setAvailBal("10");
+        context.getQuoteBalance().setCashBal("100");
+        context.getBaseBalance().setAvailBal("0.5");
+        context.getBaseBalance().setCashBal("2");
+
+        assertEquals(new BigDecimal("140"), TradingMarketInputs.estimatedEquity(context));
+        assertEquals(new BigDecimal("10"), TradingMarketInputs.availableBalance(context.getQuoteBalance()));
+        assertEquals(new BigDecimal("0.5"), TradingMarketInputs.availableBalance(context.getBaseBalance()));
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"   "})
+    void missingCurrencyEquityUsesCashThenAvailableBalance(String missing) {
+        var context = contextWithPositiveBalances(null);
+        context.getQuoteBalance().setEq(missing);
+        context.getQuoteBalance().setCashBal("200");
+        context.getBaseBalance().setEq(missing);
+        context.getBaseBalance().setCashBal(missing);
+
+        assertEquals(new BigDecimal("240"), TradingMarketInputs.estimatedEquity(context));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "-50"})
+    void fallbackPreservesCurrencyEquityIncludingLiabilities(String equity) {
+        var context = contextWithPositiveBalances(null).setBaseBalance(null);
+        context.getQuoteBalance().setCashBal("100");
+        context.getQuoteBalance().setEq(equity);
+
+        assertEquals(new BigDecimal(equity), TradingMarketInputs.estimatedEquity(context));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "-50"})
+    void fallbackPreservesCashWhenCurrencyEquityIsMissing(String cash) {
+        var context = contextWithPositiveBalances(null).setBaseBalance(null);
+        context.getQuoteBalance().setCashBal(cash);
+
+        assertEquals(new BigDecimal(cash), TradingMarketInputs.estimatedEquity(context));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"eq", "cashBal", "availBal"})
+    void malformedCurrencyBalancesCannotBecomePositiveFallbackEquity(String field) {
+        var context = contextWithPositiveBalances(null);
+        var quote = context.getQuoteBalance();
+        switch (field) {
+            case "eq" -> quote.setEq("invalid");
+            case "cashBal" -> quote.setCashBal("invalid");
+            case "availBal" -> quote.setAvailBal("invalid");
+            default -> fail("Unknown balance field");
+        }
+
+        assertThrows(IllegalStateException.class, () -> TradingMarketInputs.estimatedEquity(context));
+        context.getAccountBalance().setTotalEq("456");
+        assertEquals(new BigDecimal("456"), TradingMarketInputs.estimatedEquity(context));
     }
 
     private static TradingDecisionContext contextWithPositiveBalances(String reportedEquity) {

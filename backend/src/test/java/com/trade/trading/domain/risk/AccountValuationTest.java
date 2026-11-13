@@ -9,8 +9,18 @@ class AccountValuationTest {
     void reportedEquityWinsAndFallbackMarksBaseAtCurrentPrice() {
         assertEquals(n("1000"), AccountValuation.equity(n("1000"), n("10"), n("2"), n("100")));
         assertEquals(n("210"), AccountValuation.equity(null, n("10"), n("2"), n("100")));
-        assertEquals(n("12"), AccountValuation.balance(n("0"), n("12"), n("20")));
+        assertEquals(n("20"), AccountValuation.balance(n("0"), n("12"), n("20")));
         assertEquals(n("20"), AccountValuation.balance(n("0"), n("0"), n("20")));
+    }
+
+    @Test
+    void currencyEquityAndCashTakePrecedenceOverAvailableFundsEvenWhenNonpositive() {
+        for (String value : new String[] {"20", "0", "-20"}) {
+            assertEquals(n(value), AccountValuation.balance(n("100"), n("200"), n(value)));
+            assertEquals(n(value), AccountValuation.balance(n("100"), n(value), null));
+            assertEquals(n(value), AccountValuation.balance(n(value), null, null));
+        }
+        assertEquals(BigDecimal.ZERO, AccountValuation.balance(null, null, null));
     }
 
     @Test

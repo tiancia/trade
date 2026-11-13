@@ -33,17 +33,10 @@ public final class TradingMarketInputs {
     public static BigDecimal estimatedEquity(TradingDecisionContext context) {
         if (context == null) { return BigDecimal.ZERO; }
         var account = context.getAccountBalance();
-        String reportedEquity = account == null ? null : account.getTotalEq();
-        BigDecimal totalEquity = null;
-        if (reportedEquity != null && !reportedEquity.isBlank()) {
-            try {
-                totalEquity = new BigDecimal(reportedEquity.trim());
-            } catch (NumberFormatException invalid) {
-                // A malformed account total must not become a positive fallback valuation.
-                throw new IllegalStateException("Account snapshot has invalid totalEq", invalid);
-            }
-        }
-        return AccountValuation.equity(totalEquity,
+        BigDecimal totalEquity = reportedDecimal(account == null ? null : account.getTotalEq(), "totalEq");
+        // An authoritative total does not depend on the optional fallback fields.
+        if (totalEquity != null) return totalEquity;
+        return AccountValuation.equity(null,
                 balanceAmount(context.getQuoteBalance()), balanceAmount(context.getBaseBalance()), lastPrice(context));
     }
 
@@ -66,7 +59,17 @@ public final class TradingMarketInputs {
 
     private static BigDecimal balanceAmount(BalanceDetail detail) {
         return detail == null ? BigDecimal.ZERO : AccountValuation.balance(
-                TradingMath.decimal(detail.getAvailBal()), TradingMath.decimal(detail.getCashBal()),
-                TradingMath.decimal(detail.getEq()));
+                reportedDecimal(detail.getAvailBal(), "availBal"), reportedDecimal(detail.getCashBal(), "cashBal"),
+                reportedDecimal(detail.getEq(), "eq"));
+    }
+
+    private static BigDecimal reportedDecimal(String value, String field) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return new BigDecimal(value.trim());
+        } catch (NumberFormatException invalid) {
+            // Invalid financial data cannot silently become a zero or positive fallback.
+            throw new IllegalStateException("Account snapshot has invalid " + field, invalid);
+        }
     }
 }

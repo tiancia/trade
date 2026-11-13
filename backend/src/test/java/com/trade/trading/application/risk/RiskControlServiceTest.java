@@ -82,6 +82,27 @@ class RiskControlServiceTest {
         assertTrue(assessment.skipReason().startsWith("RISK_MAX_DRAWDOWN:"));
     }
 
+    @Test
+    void freezingFundsDoesNotTriggerLossLimitsWhenTotalEquityIsMissing() {
+        TradingProperties properties = properties();
+        TradingStateRepository repository = repository();
+        RiskControlService service = service(properties, repository, NOW);
+        TradingDecisionContext context = context(null);
+        BalanceDetail quote = new BalanceDetail();
+        quote.setAvailBal("1000");
+        quote.setCashBal("1000");
+        context.setQuoteBalance(quote);
+        service.refreshRiskState(context);
+
+        quote.setAvailBal("100");
+        RiskAssessment assessment = service.evaluate(openDecision(TradingAction.BUY), context);
+
+        assertTrue(assessment.isAllowed(), assessment.skipReason());
+        assertDecimal("1000", repository.getState().getRiskState().getCurrentEquity());
+        assertDecimal("1000", repository.getState().getRiskState().getEquityHighWatermark());
+        assertDecimal("1000", repository.getState().getRiskState().getDayStartEquity());
+    }
+
     @ParameterizedTest
     @CsvSource({
             "RISK_DAILY_LOSS, 0, 100%",

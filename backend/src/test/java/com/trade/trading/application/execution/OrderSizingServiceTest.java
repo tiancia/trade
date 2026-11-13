@@ -55,6 +55,23 @@ class OrderSizingServiceTest {
     }
 
     @Test
+    void fallbackEquityIncludesFrozenCashButBuyStillCannotSpendIt() {
+        TradingProperties properties = new TradingProperties();
+        properties.setMaxBuyQuoteAmount(new BigDecimal("1000"));
+        properties.getRisk().setMaxSingleOpenEquityRatio(new BigDecimal("0.10"));
+        TradingDecisionContext context = context("50000", "0", "200", "0.00001", "0.00000001");
+        context.getQuoteBalance().setCashBal("1000");
+        OrderSizingService sizing = new OrderSizingService(properties);
+        StrategyDecision decision = StrategyDecision.buy("test", new BigDecimal("500"), "entry");
+
+        assertEquals("100", sizing.buySize(decision, context).getSize());
+        context.getQuoteBalance().setAvailBal("50");
+        assertEquals("50", sizing.buySize(decision, context).getSize());
+        context.getQuoteBalance().setAvailBal("0");
+        assertFalse(sizing.buySize(decision, context).isExecutable());
+    }
+
+    @Test
     void buySizeSkipsWhenEstimatedBaseIsBelowMinSize() {
         TradingProperties properties = new TradingProperties();
         properties.getRisk().setEnabled(false);

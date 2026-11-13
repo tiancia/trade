@@ -216,6 +216,8 @@ $env:TRADE_TRADING_LEADERSHIP_HEARTBEAT_INTERVAL_MS="5000"
 
 账户快照明确提供 `totalEq` 时保留其原值，包括零和负数，不得用正数币种余额重新估值并覆盖它。只有该字段缺失或为空白时才沿用币种余额回退估值；非空但数值格式非法时，本次风控或下单流程报错并停止提交。字段含义见 [OKX 账户余额接口](https://www.okx.com/docs-v5/en/#trading-account-rest-api-get-balance)。
 
+回退估值按各币种 `eq` → `cashBal` → `availBal` 的顺序取首个非空值，保留零和负数；不能用可用余额代替已报告的权益或现金余额，否则冻结资金会被误计为亏损。回退所需币种余额中的非空非法数值会使本次流程报错，不按零处理；已提供合法 `totalEq` 时不读取这些回退字段。买卖数量仍按可用余额限制，冻结资产计入估值不代表可以下单使用。
+
 ```powershell
 # expectedRevision 使用 GET /api/trading/runtime/status 返回的 activeStrategyRevision。
 Invoke-RestMethod -Method Put -Headers @{'X-Trade-CSRF'='1'} `
