@@ -111,6 +111,8 @@ REST / WebSocket market data
 
 固定价格止损止盈只依赖最新有效确认收盘价，指标暖机故障不阻止该保护；产品精度以下的受管理零碎资产保留账本。`lastTradeTime` 随LIVE累计成交和PAPER成交事务持久化并保持单调，不依赖风险计数开关。历史回测校验完整、连续且对齐的半开请求区间，适配OKX排他分页边界；运行状态返回实际标的和币种供驾驶舱使用。
 
+`threshold-event` 不把缺失、格式错误或非正数收盘价当作暴跌信号：最新参与评估的收盘价无效时返回 HOLD；价格比较窗口中有无效收盘价时，不触发涨跌幅入场或反向退出，但最新有效价格仍可触发受管理持仓的浮亏止损。
+
 ### polymarket 与 story
 
 两个域共享 `client.ai.AiTextClient`，但 Prompt、解析器、业务校验和审计仍归各自领域。Polymarket 的真实执行还必须经过 execution 开关、市场约束和 geoblock 检查；story 的输出由 `StoryFileRepository` 写入配置目录。

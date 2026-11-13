@@ -4,6 +4,7 @@ import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.OkxRestClient;
 import com.trade.client.okx.dto.OkxResponse;
 import com.trade.client.okx.dto.AccountBalanceResp;
+import com.trade.client.okx.dto.CandleResp;
 import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.application.event.TradingEventPublishResult;
 import com.trade.trading.application.order.OrderReconciliationService;
@@ -17,6 +18,7 @@ import com.trade.trading.application.risk.FundSafetyService;
 import com.trade.trading.application.risk.RiskControlService;
 import com.trade.trading.domain.risk.RiskRule;
 import com.trade.trading.domain.model.TradingRiskState;
+import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.application.runtime.TradingLeadershipService;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
@@ -150,6 +152,42 @@ class TradingStrategyEngineTest {
                 .timer()
                 .count());
         assertEquals(0.0, meterRegistry.get("trade.trading.decisions.running").gauge().value());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"PAPER", "LIVE"})
+    void malformedThresholdCloseNeverReachesExecution(String mode) {
+        var configured = new TradingProperties.StrategyInstanceProperties();
+        configured.setId("threshold");
+        configured.setType(ThresholdEventStrategy.TYPE);
+        configured.setBar("1m");
+        TradingProperties properties = properties(List.of(configured));
+        properties.setExecutionMode(ExecutionMode.valueOf(mode));
+        var repository = new TradingStateRepository(tempDir.resolve("invalid-close-state.json"));
+        var registry = new TradingStrategyRegistry(List.of(new ThresholdEventStrategy()), properties);
+        var selection = new TradingStrategySelectionService(registry, repository);
+        CandleResp candle = new CandleResp();
+        candle.setClose("invalid");
+        candle.setConfirm("1");
+        AccountBalanceResp account = new AccountBalanceResp();
+        account.setTotalEq("1000");
+        var marketContext = context().setOneMinuteCandles(List.of(candle)).setAccountBalance(account)
+                .setTradingState(new TradingState().setTrackedBaseAmount(new BigDecimal("0.1"))
+                        .setAverageCost(new BigDecimal("100")));
+        CapturingBroker broker = new CapturingBroker();
+        var engine = new TradingStrategyEngine(new FakeMarketContextCollector(marketContext), selection,
+                broker, repository, properties, mock(TradingMarketFeed.class), mock(FundSafetyService.class),
+                mock(OrderReconciliationService.class), mock(TradingLeadershipService.class), new SimpleMeterRegistry(),
+                mock(PaperAccountService.class),
+                new RiskControlService(properties, repository, RISK_CLOCK, RiskRule.standardRules()));
+
+        assertTrue(engine.runDecision(TradingTrigger.scheduled()));
+
+        assertEquals(0, broker.executeCount);
+        var recorded = repository.getState().getRecentDecisions().getFirst();
+        assertEquals(TradingAction.HOLD, recorded.getAction());
+        assertEquals("HELD", recorded.getExecutionStatus());
+        assertTrue(recorded.getReason().contains("Invalid"));
     }
 
     @ParameterizedTest

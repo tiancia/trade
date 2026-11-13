@@ -5,6 +5,8 @@ import com.trade.trading.domain.model.TradingState;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import java.math.BigDecimal;
 import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
@@ -75,6 +77,18 @@ class ThresholdDecisionPolicyTest {
 
         assertEquals(TradingAction.SELL, result.getAction());
         assertEquals(new BigDecimal("0.4"), result.getSellBaseAmount());
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"0", "-100"})
+    void missingOrNonpositiveLatestCloseDoesNotRepresentALoss(String close) {
+        var latest = new ThresholdDecisionPolicy.Candle(close == null ? null : new BigDecimal(close),
+                BigDecimal.TEN, BigDecimal.ZERO, true);
+        var state = new TradingState().setTrackedBaseAmount(BigDecimal.ONE).setAverageCost(new BigDecimal("100"));
+
+        assertEquals(TradingAction.HOLD, policy.evaluate(facts(List.of(latest, candle("100", "100", true)),
+                state, false), settings).getAction());
     }
 
     private static ThresholdDecisionPolicy.Candle candle(String close, String volume, boolean confirmed) {

@@ -9,6 +9,9 @@ import com.trade.trading.application.market.TradingDecisionContext;
 import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -46,6 +49,58 @@ class ThresholdEventStrategyTest {
         StrategyDecision decision = strategy.evaluate(context(candles("89", "100", "100"), state), config());
 
         assertEquals(TradingAction.SELL, decision.getAction());
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {" ", "invalid", "NaN", "0", "-1"})
+    void invalidLatestCloseCannotTriggerAFalseLossExit(String close) {
+        TradingState state = new TradingState()
+                .setTrackedBaseAmount(new BigDecimal("0.1"))
+                .setAverageCost(new BigDecimal("100"));
+
+        StrategyDecision decision = strategy.evaluate(context(candles(close, "100", "100"), state), config());
+
+        assertEquals(TradingAction.HOLD, decision.getAction());
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"invalid", "0", "-100"})
+    void invalidComparisonCloseCannotTriggerAReverseMoveExit(String close) {
+        TradingState state = new TradingState()
+                .setTrackedBaseAmount(new BigDecimal("0.1"))
+                .setAverageCost(new BigDecimal("100"));
+        List<CandleResp> candles = candles("100", "100", "100");
+        candles.get(4).setClose(close);
+
+        StrategyDecision decision = strategy.evaluate(context(candles, state), config());
+
+        assertEquals(TradingAction.HOLD, decision.getAction());
+    }
+
+    @Test
+    void brokenPriceWindowCannotTriggerEntryButStillAllowsVerifiedLossExit() {
+        List<CandleResp> candles = candles("110", "100", "3000");
+        candles.get(2).setClose("invalid");
+
+        assertEquals(TradingAction.HOLD, strategy.evaluate(context(candles, null), config()).getAction());
+
+        candles.getFirst().setClose("89");
+        TradingState state = new TradingState()
+                .setTrackedBaseAmount(new BigDecimal("0.1"))
+                .setAverageCost(new BigDecimal("100"));
+        assertEquals(TradingAction.SELL, strategy.evaluate(context(candles, state), config()).getAction());
+    }
+
+    @Test
+    void invalidUnconfirmedCloseDoesNotInvalidateConfirmedSignal() {
+        List<CandleResp> candles = candles("110", "100", "3000");
+        CandleResp unconfirmed = candle("invalid", "100");
+        unconfirmed.setConfirm("0");
+        candles.addFirst(unconfirmed);
+
+        assertEquals(TradingAction.BUY, strategy.evaluate(context(candles, null), config()).getAction());
     }
 
     @Test

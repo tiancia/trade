@@ -46,6 +46,11 @@ public final class ThresholdDecisionPolicy {
         if (candles.isEmpty()) {
             return StrategyDecision.hold(context.getStrategyId(), "No usable candles available");
         }
+        // Missing/malformed provider prices can arrive as zero from the input
+        // adapter. They cannot establish a price collapse or a stop-loss exit.
+        if (!hasValidClose(candles.getFirst())) {
+            return StrategyDecision.hold(context.getStrategyId(), "Invalid latest candle close; threshold decision deferred");
+        }
 
         Map<String, Object> metadata = new LinkedHashMap<>();
         PriceMove priceMove = priceMove(candles, normalized.getPriceMoveWindowCandles());
@@ -142,9 +147,18 @@ public final class ThresholdDecisionPolicy {
         if (confirmed.size() < window) {
             return new PriceMove(BigDecimal.ZERO);
         }
+        // Do not infer a move across a broken window. A verified latest-price
+        // loss exit remains available independently of historical comparisons.
+        if (confirmed.subList(0, window).stream().anyMatch(candle -> !hasValidClose(candle))) {
+            return new PriceMove(BigDecimal.ZERO);
+        }
         BigDecimal current = confirmed.getFirst().close();
         BigDecimal base = confirmed.get(window - 1).close();
         return new PriceMove(TradingMath.percentChange(current, base));
+    }
+
+    private static boolean hasValidClose(Candle candle) {
+        return candle.close() != null && candle.close().signum() > 0;
     }
 
     private static VolumeSpike volumeSpike(List<Candle> confirmed, int lookbackCandles) {
