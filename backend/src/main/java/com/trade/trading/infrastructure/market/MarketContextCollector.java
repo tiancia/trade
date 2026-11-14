@@ -84,14 +84,11 @@ public class MarketContextCollector implements TradingMarketSource {
         if (requiredBar != null && !List.of("1m", "5m", "15m").contains(requiredBar)) {
             throw new IllegalArgumentException("Unsupported deterministic decision interval: " + requiredBar);
         }
-        TickerResp ticker = OkxResponses.requireFirst(
-                okxApi.getTicker(new TickerReq().setInstId(properties.getInstId())),
-                "ticker"
-        );
+        TickerResp ticker = fetchTicker();
         // The full context remains available for explicit audit consumers. Live
         // deterministic decisions never wait for unrelated history or intervals.
         boolean full = requiredBar == null;
-        OrderBookResp orderBook = full ? OkxResponses.requireFirst(
+        OrderBookResp orderBook = full ? OkxResponses.requireSingleSnapshot(
                 okxApi.getOrderBook(new OrderBookReq()
                         .setInstId(properties.getInstId())
                         .setSz(String.valueOf(properties.getOrderBookDepth()))),
@@ -122,11 +119,13 @@ public class MarketContextCollector implements TradingMarketSource {
         // PAPER uses its own persisted cash and position. Private account data
         // must neither gate simulation nor leak into its sizing and risk inputs.
         boolean paper = properties.getExecutionMode() == ExecutionMode.PAPER;
-        AccountBalanceResp balance = paper ? null : OkxResponses.requireFirst(
+        AccountBalanceResp balance = paper ? null : OkxResponses.requireSingleSnapshot(
                 okxApi.getAccountBalance(new AccountBalanceReq()
                         .setCcy(properties.getBaseCcy() + "," + properties.getQuoteCcy())),
                 "account balance"
         );
+        BalanceDetail baseBalance = paper ? null : OkxResponses.findBalance(balance, properties.getBaseCcy());
+        BalanceDetail quoteBalance = paper ? null : OkxResponses.findBalance(balance, properties.getQuoteCcy());
         List<OrderInfoResp> pendingOrders = paper || !full ? List.of() : OkxResponses.data(
                 okxApi.getPendingOrders(new PendingOrdersReq()
                         .setInstType(properties.getInstType())
@@ -152,8 +151,6 @@ public class MarketContextCollector implements TradingMarketSource {
 
         InstrumentInfoResp instrument = getInstrument();
         TradingState tradingState = stateRepository.getState();
-        BalanceDetail baseBalance = findBalance(balance, properties.getBaseCcy());
-        BalanceDetail quoteBalance = findBalance(balance, properties.getQuoteCcy());
 
         TradingDecisionContext context = new TradingDecisionContext()
                 .setTicker(ticker)
@@ -193,10 +190,7 @@ public class MarketContextCollector implements TradingMarketSource {
     }
 
     public TickerResp getTicker() {
-        TickerResp ticker = OkxResponses.requireFirst(
-                okxApi.getTicker(new TickerReq().setInstId(properties.getInstId())),
-                "ticker"
-        );
+        TickerResp ticker = fetchTicker();
         eventPublisher.publish(TradingEvent.marketSnapshot(
                 properties.getInstId(),
                 TradingEventSource.OKX_REST_EVENT_FALLBACK,
@@ -204,6 +198,16 @@ public class MarketContextCollector implements TradingMarketSource {
                 ticker,
                 null
         ));
+        return ticker;
+    }
+
+    private TickerResp fetchTicker() {
+        String instrument = properties.getInstId();
+        TickerResp ticker = OkxResponses.requireSingleSnapshot(
+                okxApi.getTicker(new TickerReq().setInstId(instrument)), "ticker");
+        if (!instrument.equals(ticker.getInstId()) || TradingMath.decimal(ticker.getLast()).signum() <= 0) {
+            throw new IllegalStateException("OKX ticker requires the requested instrument and a positive last price");
+        }
         return ticker;
     }
 
@@ -263,11 +267,15 @@ public class MarketContextCollector implements TradingMarketSource {
 
         InstrumentInfoReq request = new InstrumentInfoReq()
                 .setInstType(properties.getInstType()).setInstId(properties.getInstId());
-        instrument = OkxResponses.requireFirst(
+        instrument = OkxResponses.requireSingleSnapshot(
                 properties.getExecutionMode() == ExecutionMode.PAPER
                         ? okxApi.getPublicInstrumentInfo(request) : okxApi.getInstrumentInfo(request),
                 "instrument"
         );
+        if (!request.getInstId().equals(instrument.getInstId())
+                || !request.getInstType().equalsIgnoreCase(instrument.getInstType())) {
+            throw new IllegalStateException("OKX instrument rules do not match the requested instrument");
+        }
         cachedInstrument = instrument;
         return instrument;
     }
@@ -478,18 +486,6 @@ public class MarketContextCollector implements TradingMarketSource {
             }
         }
         return derived;
-    }
-
-    private BalanceDetail findBalance(AccountBalanceResp balance, String ccy) {
-        if (balance == null || balance.getDetails() == null) {
-            return null;
-        }
-        for (BalanceDetail detail : balance.getDetails()) {
-            if (ccy.equalsIgnoreCase(detail.getCcy())) {
-                return detail;
-            }
-        }
-        return null;
     }
 
     private String toJson(Map<String, Object> parameters) {

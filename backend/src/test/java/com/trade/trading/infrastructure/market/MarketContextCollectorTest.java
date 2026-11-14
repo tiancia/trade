@@ -13,6 +13,9 @@ import com.trade.trading.domain.model.TradingTrigger;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.infrastructure.persistence.TradingStateRepository;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -37,7 +40,7 @@ class MarketContextCollectorTest {
             if (!"15m".equals(request.getBar())) throw new IllegalStateException("unrelated candle service down");
             return OkxResponse.success(List.of(candle("900000")));
         });
-        when(api.getAccountBalance(any())).thenReturn(OkxResponse.success(List.of(new AccountBalanceResp())));
+        when(api.getAccountBalance(any())).thenReturn(OkxResponse.success(List.of(account(List.of()))));
         TradingStateRepository state = mock(TradingStateRepository.class);
         when(state.getState()).thenReturn(new TradingState());
         var collector = new MarketContextCollector(api, properties, state,
@@ -158,7 +161,8 @@ class MarketContextCollectorTest {
         TradingProperties properties = new TradingProperties();
         properties.setExecutionMode(ExecutionMode.LIVE);
         OkxApi api = marketApi();
-        var account = new AccountBalanceResp();
+        var cash = balance("usdt", "400");
+        var account = account(List.of(cash));
         account.setTotalEq("50000");
         when(api.getAccountBalance(any())).thenReturn(OkxResponse.success(List.of(account)));
         when(api.getPendingOrders(any())).thenReturn(OkxResponse.success(List.of()));
@@ -173,20 +177,109 @@ class MarketContextCollectorTest {
         var context = collector.collect(TradingTrigger.scheduled());
 
         assertSame(account, context.getAccountBalance());
+        assertSame(cash, context.getQuoteBalance());
+        assertNull(context.getBaseBalance());
         verify(api).getInstrumentInfo(any());
         verify(api, never()).getPublicInstrumentInfo(any());
         verifyNoInteractions(paper);
     }
 
+    @Test
+    void liveDecisionRejectsAmbiguousOrIncompleteAccountData() {
+        var properties = new TradingProperties();
+        properties.setExecutionMode(ExecutionMode.LIVE);
+        OkxApi api = marketApi();
+        var collector = new MarketContextCollector(api, properties, mock(TradingStateRepository.class),
+                event -> TradingEventPublishResult.ACCEPTED, mock(PaperAccountService.class));
+        var funded = account(List.of(balance("USDT", "1000")));
+        for (var accounts : List.of(List.of(funded, account(List.of())), List.of(new AccountBalanceResp()),
+                List.of(account(List.of(balance("USDT", "1000"), balance("usdt", "0")))),
+                List.of(account(List.of(balance("BTC", "2"), balance("btc", "0")))),
+                List.of(account(List.of(balance(null, "1000")))))) {
+            when(api.getAccountBalance(any())).thenReturn(OkxResponse.success(accounts));
+            assertThrows(IllegalStateException.class, () -> collector.collect(TradingTrigger.scheduled(), "15m"));
+        }
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {" ", "invalid", "0", "-1"})
+    void invalidTickerPriceCannotReachDecisionOrMarketEvents(String price) {
+        var api = marketApi();
+        when(api.getTicker(any())).thenReturn(OkxResponse.success(List.of(ticker("BTC-USDT", price))));
+        List<TradingEvent> events = new ArrayList<>();
+        var collector = new MarketContextCollector(api, new TradingProperties(), mock(TradingStateRepository.class), event -> {
+            events.add(event);
+            return TradingEventPublishResult.ACCEPTED;
+        }, mock(PaperAccountService.class));
+        assertThrows(IllegalStateException.class, () -> collector.collect(TradingTrigger.scheduled(), "15m"));
+        assertThrows(IllegalStateException.class, collector::getTicker);
+        assertTrue(events.isEmpty());
+    }
+
+    @Test
+    void tickerMustUniquelyIdentifyTheRequestedInstrument() {
+        var api = marketApi();
+        var collector = new MarketContextCollector(api, new TradingProperties(), mock(TradingStateRepository.class),
+                event -> TradingEventPublishResult.ACCEPTED, mock(PaperAccountService.class));
+        var expected = ticker("BTC-USDT", "100");
+        for (var rows : List.of(List.of(expected, expected), List.of(ticker(null, "100")),
+                List.of(ticker("ETH-USDT", "100")))) {
+            when(api.getTicker(any())).thenReturn(OkxResponse.success(rows));
+            assertThrows(IllegalStateException.class, collector::getTicker);
+        }
+    }
+
+    @Test
+    void mismatchedOrDuplicateInstrumentRulesCannotPopulateTheCache() {
+        var api = marketApi();
+        var collector = new MarketContextCollector(api, new TradingProperties(), mock(TradingStateRepository.class),
+                event -> TradingEventPublishResult.ACCEPTED, mock(PaperAccountService.class));
+        var valid = instrument("BTC-USDT");
+        var wrongType = instrument("BTC-USDT");
+        wrongType.setInstType("MARGIN");
+        for (var rows : List.of(List.of(valid, valid), List.of(instrument("ETH-USDT")), List.of(wrongType))) {
+            when(api.getPublicInstrumentInfo(any())).thenReturn(OkxResponse.success(rows));
+            assertThrows(IllegalStateException.class, () -> collector.collect(TradingTrigger.scheduled(), "15m"));
+        }
+        when(api.getPublicInstrumentInfo(any())).thenReturn(OkxResponse.success(List.of(valid)));
+        assertSame(valid, collector.collect(TradingTrigger.scheduled(), "15m").getInstrument());
+    }
+
+    private static AccountBalanceResp account(List<BalanceDetail> balances) {
+        var account = new AccountBalanceResp();
+        account.setDetails(balances);
+        return account;
+    }
+
+    private static BalanceDetail balance(String currency, String available) {
+        var detail = new BalanceDetail();
+        detail.setCcy(currency);
+        detail.setAvailBal(available);
+        return detail;
+    }
+
+    private static TickerResp ticker(String instrument, String price) {
+        var ticker = new TickerResp();
+        ticker.setInstId(instrument);
+        ticker.setLast(price);
+        return ticker;
+    }
+
+    private static InstrumentInfoResp instrument(String id) {
+        var instrument = new InstrumentInfoResp();
+        instrument.setInstId(id);
+        instrument.setInstType("SPOT");
+        return instrument;
+    }
+
     private static OkxApi marketApi() {
         OkxApi api = mock(OkxApi.class);
-        var ticker = new TickerResp();
-        ticker.setLast("100");
-        when(api.getTicker(any())).thenReturn(OkxResponse.success(List.of(ticker)));
+        when(api.getTicker(any())).thenReturn(OkxResponse.success(List.of(ticker("BTC-USDT", "100"))));
         when(api.getOrderBook(any())).thenReturn(OkxResponse.success(List.of(new OrderBookResp())));
         when(api.getCandles(any())).thenReturn(OkxResponse.success(List.of()));
-        when(api.getInstrumentInfo(any())).thenReturn(OkxResponse.success(List.of(new InstrumentInfoResp())));
-        when(api.getPublicInstrumentInfo(any())).thenReturn(OkxResponse.success(List.of(new InstrumentInfoResp())));
+        when(api.getInstrumentInfo(any())).thenReturn(OkxResponse.success(List.of(instrument("BTC-USDT"))));
+        when(api.getPublicInstrumentInfo(any())).thenReturn(OkxResponse.success(List.of(instrument("BTC-USDT"))));
         return api;
     }
 

@@ -178,7 +178,7 @@ public class OrderReconciliationService {
                 .setInstId(candidate.getInstId())
                 .setOrdId(candidate.getExchangeOrderId())
                 .setClOrdId(candidate.getClientOrderId()));
-        return requireSingleSnapshot(response, "order reconciliation query");
+        return OkxResponses.requireSingleSnapshot(response, "order reconciliation query");
     }
 
     private void reconcilePosition(Instant startedAt) {
@@ -219,22 +219,8 @@ public class OrderReconciliationService {
     private void reconcileSpotBalance(Instant startedAt) {
         OkxResponse<AccountBalanceResp> response = okxApi.getAccountBalance(new AccountBalanceReq()
                 .setCcy(properties.getBaseCcy()));
-        AccountBalanceResp account = requireSingleSnapshot(response, "spot balance reconciliation");
-        if (account.getDetails() == null) {
-            throw new IllegalStateException("OKX spot balance reconciliation response has no balance details");
-        }
-        BalanceDetail base = null;
-        for (BalanceDetail detail : account.getDetails()) {
-            if (detail == null || detail.getCcy() == null || detail.getCcy().isBlank()) {
-                throw new IllegalStateException("OKX spot balance response has a missing currency identity");
-            }
-            if (properties.getBaseCcy().equalsIgnoreCase(detail.getCcy())) {
-                if (base != null) {
-                    throw new IllegalStateException("OKX spot balance response has duplicate base currency entries");
-                }
-                base = detail;
-            }
-        }
+        AccountBalanceResp account = OkxResponses.requireSingleSnapshot(response, "spot balance reconciliation");
+        BalanceDetail base = OkxResponses.findBalance(account, properties.getBaseCcy());
         BigDecimal exchangeQuantity = base == null
                 ? BigDecimal.ZERO
                 : requiredDecimal(base.getCashBal() == null || base.getCashBal().isBlank()
@@ -292,14 +278,6 @@ public class OrderReconciliationService {
                 .description("Order reconciliation pass duration")
                 .tag("outcome", outcome)
                 .register(meterRegistry);
-    }
-
-    private static <T> T requireSingleSnapshot(OkxResponse<T> response, String name) {
-        OkxResponses.requireOk(response, name);
-        if (response.getData() == null || response.getData().size() != 1 || response.getData().getFirst() == null) {
-            throw new IllegalStateException("OKX " + name + " requires exactly one snapshot");
-        }
-        return response.getData().getFirst();
     }
 
     private static BigDecimal requiredDecimal(String value, String field) {

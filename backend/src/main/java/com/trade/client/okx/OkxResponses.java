@@ -1,5 +1,7 @@
 package com.trade.client.okx;
 
+import com.trade.client.okx.dto.AccountBalanceResp;
+import com.trade.client.okx.dto.BalanceDetail;
 import com.trade.client.okx.dto.OkxResponse;
 
 import java.util.List;
@@ -36,6 +38,35 @@ public final class OkxResponses {
         if (!isOk(response)) {
             throw new IllegalStateException(failureMessage(response, name));
         }
+    }
+
+    public static <T> T requireSingleSnapshot(OkxResponse<T> response, String name) {
+        requireOk(response, name);
+        List<T> data = response.getData();
+        if (data == null || data.size() != 1 || data.getFirst() == null) {
+            throw new IllegalStateException("OKX " + name + " requires exactly one snapshot");
+        }
+        return data.getFirst();
+    }
+
+    /** An omitted currency is valid in an explicit list of balances. */
+    public static BalanceDetail findBalance(AccountBalanceResp account, String currency) {
+        if (account.getDetails() == null) {
+            throw new IllegalStateException("OKX account snapshot has no balance details");
+        }
+        BalanceDetail result = null;
+        for (BalanceDetail detail : account.getDetails()) {
+            if (detail == null || detail.getCcy() == null || detail.getCcy().isBlank()) {
+                throw new IllegalStateException("OKX balance response has a missing currency identity");
+            }
+            if (currency.equalsIgnoreCase(detail.getCcy())) {
+                if (result != null) {
+                    throw new IllegalStateException("OKX balance response has duplicate entries for " + currency);
+                }
+                result = detail;
+            }
+        }
+        return result;
     }
 
     public static boolean isOk(OkxResponse<?> response) {

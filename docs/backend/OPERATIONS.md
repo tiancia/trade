@@ -218,6 +218,8 @@ $env:TRADE_TRADING_LEADERSHIP_HEARTBEAT_INTERVAL_MS="5000"
 
 回退估值按各币种 `eq` → `cashBal` → `availBal` 的顺序取首个非空值，保留零和负数；不能用可用余额代替已报告的权益或现金余额，否则冻结资金会被误计为亏损。回退所需币种余额中的非空非法数值会使本次流程报错，不按零处理；已提供合法 `totalEq` 时不读取这些回退字段。买卖数量仍按可用余额限制，冻结资产计入估值不代表可以下单使用。
 
+LIVE 决策读取账户时要求一份快照和明确的币种明细列表。空列表有效，缺失列表、缺少币种标识或基础币、计价币出现重复都会中止本轮决策。PAPER 与 LIVE 读取 REST 最新价时都要求唯一快照、匹配的交易标的和正数价格。交易规格也须匹配请求的标的和类型才会写入缓存。[OKX 最新行情接口](https://www.okx.com/docs-v5/en/#order-book-trading-market-data-get-ticker)
+
 ```powershell
 # expectedRevision 使用 GET /api/trading/runtime/status 返回的 activeStrategyRevision。
 Invoke-RestMethod -Method Put -Headers @{'X-Trade-CSRF'='1'} `
