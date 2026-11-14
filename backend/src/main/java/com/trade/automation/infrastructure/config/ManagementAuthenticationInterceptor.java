@@ -101,11 +101,14 @@ final class ManagementAuthenticationInterceptor implements HandlerInterceptor {
             String decoded = new String(Base64.getDecoder().decode(encoded), StandardCharsets.UTF_8);
             int colon = decoded.indexOf(':');
             if (colon < 1) return null;
+            String password = decoded.substring(colon + 1);
+            // BCrypt only verifies the first 72 bytes of an overlong input.
+            if (password.getBytes(StandardCharsets.UTF_8).length > 72) return null;
             String user = decoded.substring(0, colon);
             String hash = credentials.get(user);
             // An unknown user still consumes one bcrypt operation and the same bounded budget.
             String candidate = hash == null ? credentials.values().iterator().next() : hash;
-            boolean matches = encoder.matches(decoded.substring(colon + 1), candidate);
+            boolean matches = encoder.matches(password, candidate);
             return hash != null && matches ? user : null;
         } catch (IllegalArgumentException malformed) {
             return null;

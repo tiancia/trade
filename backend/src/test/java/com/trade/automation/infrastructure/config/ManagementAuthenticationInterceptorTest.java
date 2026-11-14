@@ -50,6 +50,22 @@ class ManagementAuthenticationInterceptorTest {
     }
 
     @Test
+    void credentialsCannotMatchByTruncationAtTheBcryptByteLimit() throws Exception {
+        String password = "密".repeat(24);
+        Files.writeString(Path.of(properties.getCredentialsFile()), "operator:" + new BCryptPasswordEncoder(4).encode(password));
+        interceptor = new ManagementAuthenticationInterceptor(properties);
+        var valid = request("GET");
+        valid.addHeader("Authorization", basic("operator", password));
+        assertTrue(interceptor.preHandle(valid, new MockHttpServletResponse(), new Object()));
+
+        var overlong = request("GET");
+        overlong.addHeader("Authorization", basic("operator", password + "x"));
+        var response = new MockHttpServletResponse();
+        assertFalse(interceptor.preHandle(overlong, response, new Object()));
+        assertEquals(401, response.getStatus());
+    }
+
+    @Test
     void invalidPasswordsUsersAndEncodingsAreDenied() throws Exception {
         for (String header : new String[]{basic("operator", "wrong"), basic("someone", "test-password"),
                 "Basic !!!!", "Basic ", "Bearer test-password", basic("operator", "test-password:")}) {

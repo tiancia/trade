@@ -95,6 +95,8 @@ chmod 600 deploy/.env deploy/backend.env
 
 页面通过 Basic Auth 登录；管理 API 由后端独立校验同一份 bcrypt `gateway.htpasswd`，包括 GET。后端缺少认证配置时返回 503，非法或缺少凭据返回 401。Compose 强制开启认证并只读挂载哈希文件；保持后端端口仅在容器网络内可达。凭据只向后端 API 转发，前端服务器不接收口令。
 
+管理员口令最多 72 个 UTF-8 字节。后端对超长口令返回 401。已有超长口令的操作者需要用 `htpasswd -B` 重新设置口令，并按下文步骤重建服务。
+
 管理写接口还要求 `X-Trade-CSRF: 1`，浏览器请求校验同源或配置允许的 Origin；驾驶舱和功能控制台自动附加该头。命令行需同时携带 Basic 凭据及 CSRF 头，例如 `curl --user operator -H 'X-Trade-CSRF: 1' ...`（交互输入口令）。原有微博和文字游戏业务令牌仍须携带。后端与网关须一起更新，旧网关会剥除 Authorization。原生开发运行需要配置 `TRADE_MANAGEMENT_AUTH_CREDENTIALS_FILE`；仅隔离开发环境可显式设置 `TRADE_MANAGEMENT_AUTH_ENABLED=false`。
 
 每位操作者使用独立账号，新增使用 `htpasswd -B deploy/secrets/gateway.htpasswd alice`，已有文件勿加 `-c`。使用 bcrypt cost 4–14，生产建议 cost 10–12。更新或撤销后重建 backend 与 gateway，使只读挂载和后端快照同时更新；后端只缓存成功凭据的 SHA256 30 秒，不保存明文，重建后立即清空。后端限制每分钟 30 次未缓存的口令验证，网关每来源 IP 限制平均 10 请求/秒、突发 100；收到 429 后按 Retry-After 等待。网关 JSON 审计保留来源 IP、账号、客户端证书序列号、方法、路径、结果与 request_id；应用审计记录写操作及拒绝的操作者、路径和状态。均不记录 Authorization、请求体或查询参数。容器日志仍在本机，外部收集与保留期限需另行配置。
