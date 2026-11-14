@@ -133,7 +133,7 @@ public class MarketplaceAuthService {
         Instant now = Instant.now(clock);
         String hash = hashToken(token);
         MarketplaceSessionRow session = mapper.findSessionByTokenHash(hash);
-        if (session == null || session.getRevokedAt() != null || session.getExpiresAt().toInstant().isBefore(now)) {
+        if (session == null || session.getRevokedAt() != null || !now.isBefore(session.getExpiresAt().toInstant())) {
             throw new MarketplaceUnauthorizedException("marketplace session is invalid or expired");
         }
         MarketplaceUserRow user = mapper.findUserById(session.getUserId());

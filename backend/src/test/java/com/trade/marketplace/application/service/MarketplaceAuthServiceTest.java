@@ -74,13 +74,11 @@ class MarketplaceAuthServiceTest {
         assertThrows(MarketplaceUnauthorizedException.class, () -> service.me("Bearer " + registered.token()));
 
         MarketplaceApi.AuthResponse shortLived = service.login(new MarketplaceApi.LoginRequest("carol", "password-123"));
-        MarketplaceAuthService afterExpiry = new MarketplaceAuthService(
-                mapper,
-                new BCryptPasswordEncoder(),
-                properties,
-                Clock.fixed(clock.instant().plusSeconds(31L * 24 * 60 * 60), ZoneOffset.UTC)
-        );
-        assertThrows(MarketplaceUnauthorizedException.class, () -> afterExpiry.me("Bearer " + shortLived.token()));
+        for (Instant expiredAt : new Instant[] {shortLived.expiresAt(), shortLived.expiresAt().plusSeconds(1)}) {
+            var expired = new MarketplaceAuthService(mapper, new BCryptPasswordEncoder(), properties,
+                    Clock.fixed(expiredAt, ZoneOffset.UTC));
+            assertThrows(MarketplaceUnauthorizedException.class, () -> expired.me("Bearer " + shortLived.token()));
+        }
     }
 
     @Test
