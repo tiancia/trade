@@ -23,6 +23,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class OrderSizingServiceTest {
 
     @Test
+    void zeroSellRatioCannotAuthorizeEvenASmallSale() {
+        TradingProperties properties = new TradingProperties();
+        properties.setMaxSellPositionRatio(BigDecimal.ZERO);
+        var sizing = new OrderSizingService(properties);
+        var context = context("50000", "1", "0", "0.0001", "0.0001");
+        var sell = StrategyDecision.sell("test", new BigDecimal("0.01"), "exit");
+
+        assertFalse(sizing.sellSize(sell, context).isExecutable());
+        assertFalse(sizing.sellSize(sell, context, BigDecimal.ONE).isExecutable());
+    }
+
+    @Test
     void buySizeIsCappedBySystemAndAvailableQuote() {
         TradingProperties properties = new TradingProperties();
         properties.getRisk().setEnabled(false);

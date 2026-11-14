@@ -84,7 +84,7 @@ public final class OrderSizingRules {
             return OrderSizing.skipped("SELL skipped: no available managed position");
         }
         BigDecimal maxByRatio = availableBase.multiply(limits.maxSellPositionRatio());
-        BigDecimal amount = TradingMath.clamp(TradingMath.clamp(requestedAmount, maxByRatio), availableBase);
+        BigDecimal amount = TradingMath.clamp(requestedAmount, availableBase).min(maxByRatio);
 
         InstrumentLimits instrument = context.instrument();
         BigDecimal lotSize = instrument.lotSize();

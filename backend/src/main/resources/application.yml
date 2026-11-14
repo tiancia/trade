@@ -570,7 +570,7 @@ trade:
     frontend-allowed-origin-patterns: ${TRADE_TRADING_FRONTEND_ALLOWED_ORIGIN_PATTERNS:http://localhost:*}
     # 单次买入最多使用多少计价币种金额。
     max-buy-quote-amount: 10
-    # 单次卖出最多占可用基础币种持仓的比例，1 表示最多全部卖出。
+    # 单次卖出最多占可用受管理基础币种持仓的比例。0 表示禁止策略卖出，1 表示最多全部卖出。
     max-sell-position-ratio: 1
     # 单次合约/永续下单的最大 OKX sz。
     max-derivative-order-size: 10
