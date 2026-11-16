@@ -7,6 +7,10 @@ import java.net.URI;
 
 /** Listing ownership, price, and uploaded-image invariants. */
 public final class MarketplaceItemRules {
+    private static final BigDecimal HALF_CENT = new BigDecimal("0.005");
+    // First price that rounds beyond the DECIMAL(12,2) column.
+    private static final BigDecimal PRICE_OVERFLOW_THRESHOLD = new BigDecimal("9999999999.995");
+
     private MarketplaceItemRules() {}
 
     public static boolean isSeller(Long sellerId, Long userId) {
@@ -29,6 +33,13 @@ public final class MarketplaceItemRules {
         }
         if (price.signum() < 0) {
             throw new IllegalArgumentException("price cannot be negative");
+        }
+        if (price.compareTo(PRICE_OVERFLOW_THRESHOLD) >= 0) {
+            throw new IllegalArgumentException("price cannot exceed 9999999999.99 after rounding");
+        }
+        // Compare before rescaling: a short exponent can otherwise expand to millions of digits.
+        if (price.compareTo(HALF_CENT) < 0) {
+            return BigDecimal.ZERO.setScale(2);
         }
         return price.scale() > 2 ? price.setScale(2, RoundingMode.HALF_UP) : price;
     }

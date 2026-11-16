@@ -28,6 +28,19 @@ class MarketplaceRulesTest {
     }
 
     @Test
+    void listingPricesRoundWithinTheColumnBoundsEvenWithExtremeExponents() {
+        for (String price : new String[] {"1e-2147483647", "0e2147483647", "0.004999"}) {
+            assertEquals(new BigDecimal("0.00"), MarketplaceItemRules.normalizePrice(new BigDecimal(price)));
+        }
+        assertEquals(new BigDecimal("0.01"), MarketplaceItemRules.normalizePrice(new BigDecimal("0.005")));
+        assertEquals(new BigDecimal("9999999999.99"),
+                MarketplaceItemRules.normalizePrice(new BigDecimal("9999999999.9949")));
+        for (String price : new String[] {"9999999999.995", "1e2147483647"}) {
+            assertThrows(IllegalArgumentException.class, () -> MarketplaceItemRules.normalizePrice(new BigDecimal(price)));
+        }
+    }
+
+    @Test
     void uploadedImageCannotEscapeTheSellersObjectPrefix() {
         String prefix = "https://images.example/items/users/1/";
         for (String suffix : new String[] {"../2/a.jpg", "%2e%2e/2/a.jpg", ".%2e/2/a.jpg",
