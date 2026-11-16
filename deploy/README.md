@@ -99,7 +99,9 @@ chmod 600 deploy/.env deploy/backend.env
 
 管理写接口还要求 `X-Trade-CSRF: 1`，浏览器请求校验同源或配置允许的 Origin；驾驶舱和功能控制台自动附加该头。命令行需同时携带 Basic 凭据及 CSRF 头，例如 `curl --user operator -H 'X-Trade-CSRF: 1' ...`（交互输入口令）。原有微博和文字游戏业务令牌仍须携带。后端与网关须一起更新，旧网关会剥除 Authorization。原生开发运行需要配置 `TRADE_MANAGEMENT_AUTH_CREDENTIALS_FILE`；仅隔离开发环境可显式设置 `TRADE_MANAGEMENT_AUTH_ENABLED=false`。
 
-每位操作者使用独立账号，新增使用 `htpasswd -B deploy/secrets/gateway.htpasswd alice`，已有文件勿加 `-c`。使用 bcrypt cost 4–14，生产建议 cost 10–12。更新或撤销后重建 backend 与 gateway，使只读挂载和后端快照同时更新；后端只缓存成功凭据的 SHA256 30 秒，不保存明文，重建后立即清空。后端限制每分钟 30 次未缓存的口令验证，网关每来源 IP 限制平均 10 请求/秒、突发 100；收到 429 后按 Retry-After 等待。网关 JSON 审计保留来源 IP、账号、客户端证书序列号、方法、路径、结果与 request_id；应用审计记录写操作及拒绝的操作者、路径和状态。均不记录 Authorization、请求体或查询参数。容器日志仍在本机，外部收集与保留期限需另行配置。
+每位操作者使用独立账号，新增使用 `htpasswd -B deploy/secrets/gateway.htpasswd alice`，已有文件勿加 `-c`。使用 bcrypt cost 4–14，生产建议 cost 10–12。更新或撤销后重建 backend 与 gateway，使只读挂载和后端快照同时更新；后端只缓存成功凭据的 SHA256 30 秒，不保存明文，重建后立即清空。后端限制每分钟 30 次未缓存的口令验证，网关每来源 IP 限制平均 10 请求/秒、突发 100；收到 429 后按 Retry-After 等待。网关 JSON 审计保留来源 IP、账号、客户端证书序列号、方法、路径、结果与 request_id；应用审计记录写操作及拒绝的操作者、路径和状态。均不记录 Authorization、请求体或查询参数。
+
+网关访问日志将文字游戏存档路径统一记作 `/api/text-game/sessions/[redacted]`。存档 ID 可用于读取、修改或删除存档，旧版网关日志可能含有仍有效的 ID 或微博 OAuth 回调参数。存档和 OAuth 回调请求排障时，按访问日志中的状态码和 request_id 定位。网关对这两个端点关闭会附带原始请求行的错误日志。容器日志仍在本机，外部收集与保留期限需另行配置。
 
 `backend.env` 使用 **raw** 格式：每行 `KEY=value`，不要给值额外加引号，不要 `source`，也不要放 shell 命令。它只在运行时注入后端，不参与镜像构建。
 

@@ -38,7 +38,7 @@ test('framework forwarding metadata cannot bypass gateway values with standard o
 test('only backend API locations receive Basic credentials and retain all sanitized forwarding headers', () => {
   const api = fs.readFileSync(path.join(nginx, 'includes/api.conf'), 'utf8');
   const backend = fs.readFileSync(path.join(nginx, 'includes/backend-proxy.conf'), 'utf8');
-  assert.equal((api.match(/include \/etc\/nginx\/includes\/backend-proxy\.conf;/g) || []).length, 2);
+  assert.equal((api.match(/include \/etc\/nginx\/includes\/backend-proxy\.conf;/g) || []).length, 3);
   assert.match(backend, /include \/etc\/nginx\/includes\/proxy-common\.conf;/);
   assert.match(backend, /proxy_set_header Authorization \$http_authorization;/);
   for (const template of ['private.conf.template', 'default.conf.template']) {
@@ -59,6 +59,39 @@ test('every public TLS server requires a client certificate and a revocation lis
   assert.match(controls, /limit_req_status 429;/);
   assert.match(controls, /log_format trade_audit escape=json/);
   assert.doesNotMatch(controls, /\$(request_uri|http_authorization|request_body)\b/);
+});
+
+test('gateway access logs omit game save IDs and override the inherited request log', () => {
+  const controls = fs.readFileSync(path.join(nginx, 'includes/management-controls.conf'), 'utf8');
+  const map = /map \$uri \$trade_audit_path\s*\{([^}]+)\}/.exec(controls)[1];
+  assert.match(map, /default \$uri;/);
+  const [, pattern, replacement] = /^\s*"~([^"]+)"\s+(\S+);$/m.exec(map);
+  const sensitive = new RegExp(pattern);
+  const logPath = (uri) => sensitive.test(uri) ? replacement : uri;
+  for (const suffix of ['', '/choices', '/continue']) {
+    assert.equal(logPath('/api/text-game/sessions/save-id' + suffix), '/api/text-game/sessions/[redacted]');
+  }
+  assert.equal(logPath('/api/text-game;v=1/sessions;v=1/save-id'), '/api/text-game/sessions/[redacted]');
+  assert.equal(logPath('/api/text-game/sessions'), '/api/text-game/sessions');
+  assert.equal(logPath('/api/trading/runtime'), '/api/trading/runtime');
+  assert.match(controls, /"path":"\$trade_audit_path"/);
+  const api = fs.readFileSync(path.join(nginx, 'includes/api.conf'), 'utf8');
+  const [, errorPattern, location] = /location ~ "([^"]+)"\s*\{([^}]+)\}/.exec(api);
+  const hidesRawErrors = new RegExp(errorPattern);
+  for (const uri of ['/api/text-game/sessions/save-id/choices', '/api/weibo/oauth/callback',
+    '/api/text-game;v=1/sessions;v=1/save-id']) {
+    assert.ok(hidesRawErrors.test(uri));
+  }
+  assert.equal(hidesRawErrors.test('/api/trading/runtime'), false);
+  assert.match(location, /error_log \/dev\/null;/);
+  assert.match(location, /include \/etc\/nginx\/includes\/backend-proxy\.conf;/);
+  for (const template of ['private.conf.template', 'default.conf.template']) {
+    const servers = fs.readFileSync(path.join(nginx, template), 'utf8').split(/^server \{/m).slice(1);
+    assert.ok(servers.length > 0);
+    for (const server of servers) {
+      assert.match(server.split(/\blocation\s/)[0], /^    access_log \/dev\/stdout trade_audit;$/m);
+    }
+  }
 });
 
 // Read the actual map's regex order and replacement, then exercise the port

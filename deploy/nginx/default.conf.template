@@ -9,6 +9,7 @@ include /etc/nginx/includes/proxy-defaults.conf;
 # Container-local liveness probe; the public TLS listeners always require a client certificate.
 server {
     listen 127.0.0.1:8082;
+    access_log /dev/stdout trade_audit;
     location = /healthz { access_log off; return 200 "gateway ok\n"; }
     location / { return 404; }
 }
@@ -24,6 +25,7 @@ server {
     listen 80;
     listen [::]:80;
     server_name ${COCKPIT_DOMAIN} ${X_CONSOLE_DOMAIN} ${CONTROL_CONSOLE_DOMAIN};
+    access_log /dev/stdout trade_audit;
 
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/acme;
@@ -39,6 +41,7 @@ server {
     listen 443 ssl;
     listen [::]:443 ssl;
     server_name ${COCKPIT_DOMAIN};
+    access_log /dev/stdout trade_audit;
 
     ssl_certificate /etc/nginx/tls/fullchain.pem;
     ssl_certificate_key /etc/nginx/tls/privkey.pem;
@@ -65,6 +68,7 @@ server {
     listen 443 ssl;
     listen [::]:443 ssl;
     server_name ${X_CONSOLE_DOMAIN};
+    access_log /dev/stdout trade_audit;
 
     ssl_certificate /etc/nginx/tls/fullchain.pem;
     ssl_certificate_key /etc/nginx/tls/privkey.pem;
@@ -91,6 +95,7 @@ server {
     listen 443 ssl;
     listen [::]:443 ssl;
     server_name ${CONTROL_CONSOLE_DOMAIN};
+    access_log /dev/stdout trade_audit;
 
     ssl_certificate /etc/nginx/tls/fullchain.pem;
     ssl_certificate_key /etc/nginx/tls/privkey.pem;
