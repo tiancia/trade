@@ -13,6 +13,7 @@ import com.trade.polymarket.infrastructure.config.AiPolymarketProperties;
 import com.trade.polymarket.infrastructure.broker.PolymarketGeoblockService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.math.BigDecimal;
@@ -150,12 +151,70 @@ class PolymarketOrderExecutorTest {
 
         AiPolymarketDecision decision = buyDecision()
                 .setLimitPrice(new BigDecimal("0.93"))
+                .setWinProbability(new BigDecimal("0.98"))
+                .setEstimatedProbability(new BigDecimal("0.98"))
+                .setEstimatedEdge(new BigDecimal("0.05"))
                 .setMaxSpendUsdc(new BigDecimal("8"));
         PolymarketOrderResult result = executor.execute(decision, context());
 
         assertTrue(result.isDryRun());
         assertTrue(result.getResponseBody().contains("spendUsdc=5.12"));
         assertTrue(result.getResponseBody().contains("size=5.5053"));
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"0", "-1", "0.009"})
+    void unusableSpendingCapStopsBeforeLiveSubmission(BigDecimal cap) {
+        var properties = liveProperties();
+        properties.setMaxOrderUsdc(cap);
+        properties.setMinOrderSize(BigDecimal.ZERO);
+        var context = context();
+        context.getMarkets().getFirst().getOutcomes().getFirst().setMinOrderSize(null);
+        var runner = mock(PolymarketOrderRunner.class);
+        var geoblock = mock(PolymarketGeoblockService.class);
+
+        var result = new PolymarketOrderExecutor(properties, runner, geoblock).execute(buyDecision(), context);
+
+        assertEquals("SKIPPED", result.getStatus());
+        verifyNoInteractions(geoblock, runner);
+    }
+
+    @Test
+    void checksTheEdgeAtTheRequestedPriceEvenWhenTheModelReportsEnoughEdge() {
+        var properties = liveProperties();
+        var runner = mock(PolymarketOrderRunner.class);
+        var geoblock = mock(PolymarketGeoblockService.class);
+        var executor = new PolymarketOrderExecutor(properties, runner, geoblock);
+        var decision = buyDecision().setLimitPrice(new BigDecimal("0.58"));
+
+        var result = executor.execute(decision, context());
+
+        assertEquals("SKIPPED", result.getStatus());
+        assertEquals("winProbability minus limitPrice below configured minimum", result.getSkipReason());
+        verifyNoInteractions(geoblock, runner);
+
+        decision.setLimitPrice(new BigDecimal("0.57")).setEstimatedEdge(new BigDecimal("0.03"));
+        assertEquals("PLACED", executor.execute(decision, context()).getStatus());
+        verify(runner).placeOrder(any());
+    }
+
+    @Test
+    void contradictorySelectionCannotSubmitAnotherOutcomesToken() {
+        var runner = mock(PolymarketOrderRunner.class);
+        var geoblock = mock(PolymarketGeoblockService.class);
+        var executor = new PolymarketOrderExecutor(liveProperties(), runner, geoblock);
+        var context = context();
+        context.getMarkets().getFirst().setId("market-1");
+
+        assertEquals("SKIPPED", executor.execute(buyDecision().setOutcome("No"), context).getStatus());
+        assertEquals("SKIPPED", executor.execute(buyDecision().setMarketId("market-2"), context).getStatus());
+        assertEquals("SKIPPED", executor.execute(buyDecision().setMarketSlug("other-market"), context).getStatus());
+        verifyNoInteractions(geoblock, runner);
+
+        var matching = buyDecision().setOutcome("YES").setMarketId("market-1").setMarketSlug("market");
+        assertEquals("PLACED", executor.execute(matching, context).getStatus());
+        verify(runner).placeOrder(any());
     }
 
     @Test

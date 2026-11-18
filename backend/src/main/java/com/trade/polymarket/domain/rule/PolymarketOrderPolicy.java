@@ -8,7 +8,7 @@ import java.time.Instant;
 
 /** Final trading eligibility, spend caps, precision, and order intent construction. */
 public final class PolymarketOrderPolicy {
-    private static final int MARKET_BUY_SPEND_SCALE = 2;
+    private static final BigDecimal ONE_CENT = new BigDecimal("0.01");
     private static final int MARKET_BUY_SIZE_SCALE = 4;
     public record Limits(BigDecimal minLimitPrice, BigDecimal maxLimitPrice,
                          BigDecimal minWinConfidenceScore, BigDecimal minExpectedEdge,
@@ -26,7 +26,10 @@ public final class PolymarketOrderPolicy {
         BigDecimal price = decision.getLimitPrice();
         // Clamp spend before calculating shares so both dry-run and live orders
         // use the exact risk-capped value.
-        BigDecimal spendUsdc = marketBuySpend(TradingMath.clamp(decision.getMaxSpendUsdc(), properties.maxOrderUsdc()));
+        BigDecimal spendUsdc = marketBuySpend(decision.getMaxSpendUsdc());
+        if (spendUsdc.signum() == 0) {
+            return new Preparation(null, "Spend after applying maxOrderUsdc is below 0.01 USDC");
+        }
         BigDecimal size = sharesForSpend(spendUsdc, price);
         BigDecimal minOrderSize = minOrderSize(market, outcome);
         if (size.compareTo(minOrderSize) < 0) {
@@ -62,6 +65,9 @@ public final class PolymarketOrderPolicy {
         if (decision.getEstimatedEdge().compareTo(properties.minExpectedEdge()) < 0) {
             return "estimatedEdge below configured minimum";
         }
+        if (decision.getWinProbability().compareTo(decision.getLimitPrice().add(properties.minExpectedEdge())) < 0) {
+            return "winProbability minus limitPrice below configured minimum";
+        }
         PolymarketOutcomeSnapshot outcome = context.findOutcomeByTokenId(decision.getTokenId()).orElse(null);
         if (outcome == null) {
             return "tokenId is not present in collected Polymarket context";
@@ -69,6 +75,13 @@ public final class PolymarketOrderPolicy {
         PolymarketMarketSnapshot market = context.findMarketByTokenId(decision.getTokenId()).orElse(null);
         if (market == null) {
             return "market is not present in collected Polymarket context";
+        }
+        if (outcome.getOutcome() == null || !outcome.getOutcome().strip().equalsIgnoreCase(decision.getOutcome())) {
+            return "selected outcome does not match tokenId";
+        }
+        if (conflictingIdentifier(decision.getMarketId(), market.getId())
+                || conflictingIdentifier(decision.getMarketSlug(), market.getSlug())) {
+            return "selected market does not match tokenId";
         }
         if (Boolean.TRUE.equals(market.getClosed())
                 || Boolean.TRUE.equals(market.getArchived())) {
@@ -115,11 +128,20 @@ public final class PolymarketOrderPolicy {
         return spendUsdc.divide(price, MARKET_BUY_SIZE_SCALE, RoundingMode.DOWN).stripTrailingZeros();
     }
 
-    private static BigDecimal marketBuySpend(BigDecimal spendUsdc) {
-        if (spendUsdc == null || spendUsdc.signum() <= 0) {
+    private BigDecimal marketBuySpend(BigDecimal requestedSpend) {
+        if (requestedSpend == null || properties.maxOrderUsdc() == null) {
             return BigDecimal.ZERO;
         }
-        return spendUsdc.setScale(MARKET_BUY_SPEND_SCALE, RoundingMode.DOWN).stripTrailingZeros();
+        BigDecimal allowed = requestedSpend.min(properties.maxOrderUsdc());
+        if (allowed.compareTo(ONE_CENT) < 0) {
+            return BigDecimal.ZERO;
+        }
+        return allowed.setScale(ONE_CENT.scale(), RoundingMode.DOWN).stripTrailingZeros();
+    }
+
+    private static boolean conflictingIdentifier(String selected, String observed) {
+        return selected != null && !selected.isBlank() && observed != null && !observed.isBlank()
+                && !selected.equals(observed);
     }
 
     public static BigDecimal winConfidenceScore(AiPolymarketDecision decision) {
