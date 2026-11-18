@@ -83,14 +83,10 @@ public final class PolymarketOrderPolicy {
                 || conflictingIdentifier(decision.getMarketSlug(), market.getSlug())) {
             return "selected market does not match tokenId";
         }
-        if (Boolean.TRUE.equals(market.getClosed())
-                || Boolean.TRUE.equals(market.getArchived())) {
-            return "market is closed or archived";
-        }
-        if (properties.requireAcceptingOrders()
-                && (Boolean.FALSE.equals(market.getAcceptingOrders())
-                || Boolean.FALSE.equals(market.getEnableOrderBook()))) {
-            return "market is not accepting orders";
+        String statusSkipReason = PolymarketMarketFilters.marketStatusSkipReason(properties.requireAcceptingOrders(),
+                market.getClosed(), market.getArchived(), market.getAcceptingOrders(), market.getEnableOrderBook());
+        if (statusSkipReason != null) {
+            return statusSkipReason;
         }
         String turnoverSkipReason = PolymarketMarketFilters.marketTurnoverSkipReason(
                 properties.marketEligibilityPolicy(),

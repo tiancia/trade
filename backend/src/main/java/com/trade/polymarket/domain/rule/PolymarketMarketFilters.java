@@ -18,6 +18,22 @@ public final class PolymarketMarketFilters {
     private PolymarketMarketFilters() {
     }
 
+    public static String marketStatusSkipReason(
+            boolean requireAcceptingOrders, Boolean closed, Boolean archived,
+            Boolean acceptingOrders, Boolean enableOrderBook
+    ) {
+        if (Boolean.TRUE.equals(closed) || Boolean.TRUE.equals(archived)) {
+            return "market is closed or archived";
+        }
+        if (requireAcceptingOrders && !Boolean.TRUE.equals(acceptingOrders)) {
+            return "market has not confirmed it is accepting orders";
+        }
+        if (requireAcceptingOrders && !Boolean.TRUE.equals(enableOrderBook)) {
+            return "market has not confirmed its order book is enabled";
+        }
+        return null;
+    }
+
     public static String marketTurnoverSkipReason(
             MarketEligibilityPolicy properties,
             String endDate,

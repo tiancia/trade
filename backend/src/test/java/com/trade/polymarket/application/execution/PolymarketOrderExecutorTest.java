@@ -266,6 +266,21 @@ class PolymarketOrderExecutorTest {
         assertEquals("market resolves beyond configured short-term window", result.getSkipReason());
     }
 
+    @Test
+    void finalOrderCheckAlsoRequiresConfirmedMarketAndBookStatus() {
+        var runner = mock(PolymarketOrderRunner.class);
+        var geoblock = mock(PolymarketGeoblockService.class);
+        var executor = new PolymarketOrderExecutor(liveProperties(), runner, geoblock);
+        var context = context();
+        var market = context.getMarkets().getFirst();
+
+        market.setAcceptingOrders(null);
+        assertEquals("SKIPPED", executor.execute(buyDecision(), context).getStatus());
+        market.setAcceptingOrders(true).setEnableOrderBook(null);
+        assertEquals("SKIPPED", executor.execute(buyDecision(), context).getStatus());
+        verifyNoInteractions(geoblock, runner);
+    }
+
     private static AiPolymarketDecision buyDecision() {
         return new AiPolymarketDecision()
                 .setAction(PolymarketAction.BUY)

@@ -136,7 +136,8 @@ public class PolymarketMarketContextCollector {
             }
         }
 
-        if (snapshots.isEmpty() && !properties.getClobTokenIds().isEmpty()) {
+        // The token-only fallback has no market metadata. Never use it to revive a rejected candidate.
+        if (gammaMarkets.isEmpty() && canUseTokenOnlyFallback()) {
             log.info(
                     "No Gamma market matched configured token ids; building token-only Polymarket context: tokenCount={}",
                     properties.getClobTokenIds().size()
@@ -269,6 +270,14 @@ public class PolymarketMarketContextCollector {
                 || !properties.getClobTokenIds().isEmpty();
     }
 
+    private boolean canUseTokenOnlyFallback() {
+        return !properties.getClobTokenIds().isEmpty()
+                && properties.getMarketSlugs().isEmpty() && properties.getMarketIds().isEmpty()
+                && !properties.isRequireAcceptingOrders()
+                && PolymarketMarketFilters.marketTurnoverSkipReason(
+                        properties.marketEligibilityPolicy(), null, null, null, Instant.now()) == null;
+    }
+
     private String samplingCursorForRequest() {
         String cursor = samplingMarketsCursor.get();
         if (hasText(cursor)) {
@@ -290,22 +299,15 @@ public class PolymarketMarketContextCollector {
         if (market == null) {
             return "market is null";
         }
-        if (Boolean.TRUE.equals(market.getClosed())
-                || Boolean.TRUE.equals(market.getArchived())) {
-            return "market is closed or archived";
-        }
-        if (properties.isRequireAcceptingOrders()) {
-            if (Boolean.FALSE.equals(market.getAcceptingOrders())) {
-                return "market is not accepting orders";
-            }
-            if (Boolean.FALSE.equals(market.getEnableOrderBook())) {
-                return "market order book is disabled";
-            }
+        String statusSkipReason = PolymarketMarketFilters.marketStatusSkipReason(properties.isRequireAcceptingOrders(),
+                market.getClosed(), market.getArchived(), market.getAcceptingOrders(), market.getEnableOrderBook());
+        if (statusSkipReason != null) {
+            return statusSkipReason;
         }
         return PolymarketMarketFilters.marketTurnoverSkipReason(
                 properties.marketEligibilityPolicy(),
                 market.getEndDate(),
-                firstText(market.getVolume24hr(), market.getVolumeNum(), market.getVolume()),
+                market.getVolume24hr(),
                 firstText(market.getLiquidityNum(), market.getLiquidity()),
                 Instant.now()
         );
@@ -315,17 +317,10 @@ public class PolymarketMarketContextCollector {
         if (market == null) {
             return "market is null";
         }
-        if (Boolean.TRUE.equals(market.getClosed())
-                || Boolean.TRUE.equals(market.getArchived())) {
-            return "market is closed or archived";
-        }
-        if (properties.isRequireAcceptingOrders()) {
-            if (Boolean.FALSE.equals(market.getAcceptingOrders())) {
-                return "market is not accepting orders";
-            }
-            if (Boolean.FALSE.equals(market.getEnableOrderBook())) {
-                return "market order book is disabled";
-            }
+        String statusSkipReason = PolymarketMarketFilters.marketStatusSkipReason(properties.isRequireAcceptingOrders(),
+                market.getClosed(), market.getArchived(), market.getAcceptingOrders(), market.getEnableOrderBook());
+        if (statusSkipReason != null) {
+            return statusSkipReason;
         }
         return PolymarketMarketFilters.marketTurnoverSkipReason(
                 properties.marketEligibilityPolicy(),
@@ -376,7 +371,7 @@ public class PolymarketMarketContextCollector {
                 .setRestricted(market.getRestricted())
                 .setEnableOrderBook(market.getEnableOrderBook())
                 .setAcceptingOrders(market.getAcceptingOrders())
-                .setVolume24hr(firstText(market.getVolume24hr(), market.getVolumeNum(), market.getVolume()))
+                .setVolume24hr(market.getVolume24hr())
                 .setLiquidity(firstText(market.getLiquidityNum(), market.getLiquidity()))
                 .setOrderMinSize(market.getOrderMinSize())
                 .setOrderPriceMinTickSize(market.getOrderPriceMinTickSize())
@@ -427,8 +422,6 @@ public class PolymarketMarketContextCollector {
                 .forEach(outcome -> addOutcomeIfEligible(outcomes, "configured-token", outcome));
         return new PolymarketMarketSnapshot()
                 .setQuestion("Configured Polymarket CLOB tokens")
-                .setAcceptingOrders(true)
-                .setEnableOrderBook(true)
                 .setOutcomes(outcomes);
     }
 

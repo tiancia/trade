@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PolymarketMarketContextCollectorTest {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -41,6 +43,68 @@ class PolymarketMarketContextCollectorTest {
         assertEquals(1, context.getMarkets().size());
         assertEquals("restricted-but-tradable", context.getMarkets().getFirst().getSlug());
         assertEquals(2, context.getMarkets().getFirst().getOutcomes().size());
+    }
+
+    @Test
+    void samplingAndGammaBothRequireConfirmedMarketStatus() {
+        var properties = new AiPolymarketProperties();
+        properties.setMarketDiscoverySource(AiPolymarketProperties.MarketDiscoverySource.CLOB_SAMPLING);
+        var api = new FakePolymarketApi(List.of(restrictedTradableMarket().setAcceptingOrders(null))) {
+            @Override
+            public PolymarketSamplingMarketsPage listSamplingMarkets(Map<String, ?> queryParams) {
+                var page = SamplingAwarePolymarketApi.samplingPage("sample", "sample-yes", "sample-no", null);
+                page.getData().getFirst().setEnableOrderBook(null);
+                return page;
+            }
+        };
+
+        assertTrue(new PolymarketMarketContextCollector(api, properties).collect().getMarkets().isEmpty());
+        assertEquals(1, api.queries().size());
+    }
+
+    @Test
+    void configuredTokenCannotReviveARejectedMarket() {
+        var properties = new AiPolymarketProperties();
+        properties.setClobTokenIds(List.of("token-yes"));
+        var closedMarket = restrictedTradableMarket().setClosed(true);
+        var collector = new PolymarketMarketContextCollector(new FakePolymarketApi(List.of(closedMarket)), properties);
+
+        assertTrue(collector.collect().getMarkets().isEmpty());
+        properties.setRequireAcceptingOrders(false);
+        assertTrue(collector.collect().getMarkets().isEmpty());
+    }
+
+    @Test
+    void tokenOnlyFallbackPreservesUnknownStatusAndHonorsRequiredMetadata() {
+        var properties = new AiPolymarketProperties();
+        properties.setClobTokenIds(List.of("token-yes"));
+        var collector = new PolymarketMarketContextCollector(new FakePolymarketApi(List.of()), properties);
+        assertTrue(collector.collect().getMarkets().isEmpty());
+
+        properties.setRequireAcceptingOrders(false);
+        var fallback = collector.collect().getMarkets().getFirst();
+        assertNull(fallback.getAcceptingOrders());
+        assertNull(fallback.getEnableOrderBook());
+        assertEquals("token-yes", fallback.getOutcomes().getFirst().getTokenId());
+
+        properties.setRequireMarketEndDate(true);
+        assertTrue(collector.collect().getMarkets().isEmpty());
+        properties.setRequireMarketEndDate(false);
+        properties.setMarketSlugs(List.of("specified-market"));
+        assertTrue(collector.collect().getMarkets().isEmpty());
+    }
+
+    @Test
+    void lifetimeVolumeCannotStandInForMissingDailyVolume() {
+        var properties = new AiPolymarketProperties();
+        var market = restrictedTradableMarket().setVolume24hr(null).setVolume("5000").setVolumeNum("5000");
+        var collector = new PolymarketMarketContextCollector(new FakePolymarketApi(List.of(market)), properties);
+        assertNull(collector.collect().getMarkets().getFirst().getVolume24hr());
+
+        properties.setMinMarketVolume24hr(new BigDecimal("100"));
+        assertTrue(collector.collect().getMarkets().isEmpty());
+        market.setVolume24hr("100");
+        assertEquals("100", collector.collect().getMarkets().getFirst().getVolume24hr());
     }
 
     @Test
