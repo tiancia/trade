@@ -1,5 +1,6 @@
 package com.trade.polymarket.application.execution;
 
+import com.trade.client.polymarket.PolymarketApi;
 import com.trade.polymarket.port.PolymarketOrderRunner;
 import com.trade.polymarket.domain.model.AiPolymarketDecision;
 import com.trade.polymarket.domain.model.PolymarketAction;
@@ -11,6 +12,8 @@ import com.trade.polymarket.domain.model.PolymarketOutcomeSnapshot;
 import com.trade.polymarket.infrastructure.config.AiPolymarketProperties;
 import com.trade.polymarket.infrastructure.broker.PolymarketGeoblockService;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -19,6 +22,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
@@ -78,6 +82,34 @@ class PolymarketOrderExecutorTest {
         calls.verify(geoblock).assertAllowed();
         calls.verify(runner).placeOrder(any());
         verifyNoMoreInteractions(runner, geoblock);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"{}", "null", "[]", "{\"blocked\":null}", "{\"blocked\":\"false\"}",
+            "{\"blocked\":false,\"restricted\":true}", "{\"restricted\":0,\"blocked\":false}",
+            "{\"blocked\":true,\"blocked\":false}", "{\"blocked\":false} {}"})
+    void missingInvalidOrRestrictedRegionalDecisionStopsBeforeOrderSubmission(String response) {
+        var properties = liveProperties();
+        var runner = mock(PolymarketOrderRunner.class);
+        var api = mock(PolymarketApi.class);
+        when(api.getRawUrl(properties.getExecution().getGeoblockUrl())).thenReturn(response);
+        var executor = new PolymarketOrderExecutor(properties, runner, new PolymarketGeoblockService(api, properties));
+
+        assertThrows(IllegalStateException.class, () -> executor.execute(buyDecision(), context()));
+        verifyNoInteractions(runner);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"{\"blocked\":false,\"country\":\"XX\"}", "{\"geoblocked\":false}", "{\"restricted\":false}"})
+    void explicitRegionalClearanceAllowsOrderSubmission(String response) {
+        var properties = liveProperties();
+        var runner = new RecordingRunner();
+        var api = mock(PolymarketApi.class);
+        when(api.getRawUrl(properties.getExecution().getGeoblockUrl())).thenReturn(response);
+        var executor = new PolymarketOrderExecutor(properties, runner, new PolymarketGeoblockService(api, properties));
+
+        assertEquals("PLACED", executor.execute(buyDecision(), context()).getStatus());
+        assertTrue(runner.called);
     }
 
     private static AiPolymarketProperties liveProperties() {
