@@ -3,6 +3,7 @@ package com.trade.trading.infrastructure.persistence;
 import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.dto.AccountBalanceResp;
 import com.trade.client.okx.dto.BalanceDetail;
+import com.trade.client.okx.dto.CancelAllAfterReq;
 import com.trade.client.okx.dto.CancelAllAfterResp;
 import com.trade.client.okx.dto.OkxResponse;
 import com.trade.trading.application.order.OrderReconciliationService;
@@ -44,6 +45,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.ConcurrentModificationException;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -123,6 +125,42 @@ class MyBatisTradingFinancialStateStoreTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void newerCommittedStopKeepsItsRevisionAndTimerDuringLiveResume() {
+        var properties = new TradingProperties();
+        properties.setExecutionMode(ExecutionMode.LIVE);
+        var state = new TradingStateRepository(tempDir.resolve("fund-recovery.json"), store, "live", properties.getInstId());
+        var stoppedAt = Instant.now().minusSeconds(60);
+        var firstStop = fundSafetyRepository.halt("live", "operator", "first stop", stoppedAt);
+        state.recordExchangePosition(BigDecimal.ZERO, null, null, stoppedAt.plusSeconds(30));
+        state.recordReconciliationSuccess(stoppedAt.plusSeconds(30));
+        var okx = mock(OkxApi.class);
+        var timeouts = new ArrayList<String>();
+        when(okx.getPendingOrders(any())).thenReturn(OkxResponse.success(List.of()));
+        when(okx.cancelAllAfter(any())).thenAnswer(call -> {
+            String timeout = call.getArgument(0, CancelAllAfterReq.class).getTimeOut();
+            timeouts.add(timeout);
+            var acknowledgement = new CancelAllAfterResp();
+            acknowledgement.setTs("100");
+            acknowledgement.setTriggerTime("0".equals(timeout) ? "0" : "110");
+            if ("0".equals(timeout)) {
+                fundSafetyRepository.halt("live", "operator", "second stop", Instant.now());
+            }
+            return OkxResponse.success(List.of(acknowledgement));
+        });
+        var service = new FundSafetyService(fundSafetyRepository, mock(TradingOrderRepository.class), state, okx,
+                properties, new SimpleMeterRegistry());
+        assertThrows(ConcurrentModificationException.class,
+                () -> service.resume(firstStop.getVersion(), "reconciled", "RESUME_LIVE_TRADING"));
+
+        var current = fundSafetyRepository.getOrCreate("live");
+        assertEquals(FundSafetyStatus.HALTED, current.getStatus());
+        assertEquals(firstStop.getVersion() + 1, current.getVersion());
+        assertEquals("second stop", current.getReason());
+        assertEquals(List.of("0", "10"), timeouts);
+        verify(okx, never()).placeOrder(any());
+    }
 
     @Test
     void sharedAccountShortfallPersistsStopAndFailedReconciliationAcrossServiceInstances() {

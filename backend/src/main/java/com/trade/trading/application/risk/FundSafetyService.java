@@ -148,13 +148,28 @@ public class FundSafetyService {
                     properties.getReconciliation().getBatchSize()
             ).isEmpty());
             FundSafetyPolicy.requireFreshSuccessfulReconciliation(current, stateRepository.getState());
-            // Disarm the exchange timer before reopening local submissions. If
-            // this call fails, the database row remains HALTED.
-            requireTimerAcknowledgement(
-                    okxApi.cancelAllAfter(new CancelAllAfterReq().setTimeOut("0")),
-                    false
-            );
+            // The pending-order query can outlive the stop this operator inspected.
+            FundSafetyPolicy.requireResumeState(state(), expectedVersion);
+            try {
+                requireTimerAcknowledgement(okxApi.cancelAllAfter(new CancelAllAfterReq().setTimeOut("0")), false);
+                FundSafetyPolicy.requireFreshSuccessfulReconciliation(current, stateRepository.getState());
+                return commitResume(expectedVersion, reason);
+            } catch (RuntimeException failure) {
+                // The exchange may have disarmed even if its reply or the local commit was lost.
+                try {
+                    if (state().isHalted()) armExchangeTimer();
+                } catch (RuntimeException recoveryFailure) {
+                    counter("timer_rearm_failed").increment();
+                    log.error("Could not verify or restore the OKX cancel-all-after timer after failed resume", recoveryFailure);
+                    if (recoveryFailure != failure) failure.addSuppressed(recoveryFailure);
+                }
+                throw failure;
+            }
         }
+        return commitResume(expectedVersion, reason);
+    }
+
+    private FundSafetyState commitResume(long expectedVersion, String reason) {
         FundSafetyState state = repository.resume(
                 properties.financialAccountScope(),
                 expectedVersion,
@@ -169,14 +184,7 @@ public class FundSafetyService {
     private void cancelOutstandingOrders() {
         List<String> errors = new ArrayList<>();
         try {
-            int timeout = properties.getFundSafety().getDeadManTimeoutSeconds();
-            if (timeout < 10 || timeout > 120) {
-                throw new IllegalStateException("Cancel-all-after timeout must be between 10 and 120 seconds");
-            }
-            requireTimerAcknowledgement(
-                    okxApi.cancelAllAfter(new CancelAllAfterReq().setTimeOut(String.valueOf(timeout))),
-                    true
-            );
+            armExchangeTimer();
         } catch (RuntimeException e) {
             errors.add("arm cancel-all-after: " + e.getMessage());
             log.error("Fund stop persisted but exchange cancel-all-after failed", e);
@@ -243,6 +251,14 @@ public class FundSafetyService {
             throw new IllegalStateException("OKX " + action + " requires exactly one acknowledgement");
         }
         return response.getData().getFirst();
+    }
+
+    private void armExchangeTimer() {
+        int timeout = properties.getFundSafety().getDeadManTimeoutSeconds();
+        if (timeout < 10 || timeout > 120) {
+            throw new IllegalStateException("Cancel-all-after timeout must be between 10 and 120 seconds");
+        }
+        requireTimerAcknowledgement(okxApi.cancelAllAfter(new CancelAllAfterReq().setTimeOut(String.valueOf(timeout))), true);
     }
 
     private static void requireTimerAcknowledgement(OkxResponse<CancelAllAfterResp> response, boolean armed) {

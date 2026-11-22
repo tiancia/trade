@@ -5,6 +5,7 @@ import com.trade.client.okx.dto.OkxResponse;
 import com.trade.client.okx.dto.OrderActionResp;
 import com.trade.client.okx.dto.OrderInfoResp;
 import com.trade.client.okx.dto.CancelOrderReq;
+import com.trade.client.okx.dto.CancelAllAfterReq;
 import com.trade.client.okx.dto.CancelAllAfterResp;
 import com.trade.trading.port.FundSafetyRepository;
 import com.trade.trading.port.TradingOrderRepository;
@@ -20,6 +21,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.ConcurrentModificationException;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -38,6 +41,70 @@ import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.argThat;
 
 class FundSafetyServiceTest {
+    @Test
+    void aNewHaltDuringPendingOrderChecksPreventsTimerDisarm() {
+        var fixture = haltedFixture();
+        when(fixture.okx().getPendingOrders(any())).thenAnswer(call -> {
+            when(fixture.repository().getOrCreate("live")).thenReturn(new FundSafetyState()
+                    .setStatus(FundSafetyStatus.HALTED).setVersion(5).setHaltedAt(Instant.now()));
+            return OkxResponse.success(List.of());
+        });
+
+        assertThrows(ConcurrentModificationException.class,
+                () -> fixture.service().resume(4, "checked", "RESUME_LIVE_TRADING"));
+        verify(fixture.okx(), never()).cancelAllAfter(any());
+        verify(fixture.repository(), never()).resume(anyString(), anyLong(), anyString(), any());
+    }
+
+    @Test
+    void failedResumeRestoresTheTimerOnlyWhileTheAccountRemainsHalted() {
+        for (var winningState : List.of(FundSafetyStatus.HALTED, FundSafetyStatus.ACTIVE)) {
+            var fixture = haltedFixture();
+            var timeouts = new ArrayList<String>();
+            when(fixture.okx().cancelAllAfter(any())).thenAnswer(call -> {
+                String timeout = call.getArgument(0, CancelAllAfterReq.class).getTimeOut();
+                timeouts.add(timeout);
+                return timerResponse("0".equals(timeout) ? "0" : "110", "100");
+            });
+            when(fixture.repository().resume(eq("live"), eq(4L), anyString(), any())).thenAnswer(call -> {
+                when(fixture.repository().getOrCreate("live")).thenReturn(new FundSafetyState()
+                        .setStatus(winningState).setVersion(5));
+                throw new ConcurrentModificationException("competing operation won");
+            });
+
+            assertThrows(ConcurrentModificationException.class,
+                    () -> fixture.service().resume(4, "checked", "RESUME_LIVE_TRADING"));
+            assertEquals(winningState == FundSafetyStatus.HALTED ? List.of("0", "10") : List.of("0"), timeouts);
+            verify(fixture.okx(), never()).cancelOrder(any());
+        }
+    }
+
+    @Test
+    void unknownDisarmResultRearmsTheTimerAndKeepsLocalSubmissionsBlocked() {
+        var fixture = haltedFixture();
+        when(fixture.okx().cancelAllAfter(any())).thenThrow(new IllegalStateException("missing disarm response"))
+                .thenReturn(timerResponse("110", "100"));
+        var error = assertThrows(IllegalStateException.class,
+                () -> fixture.service().resume(4, "checked", "RESUME_LIVE_TRADING"));
+        assertEquals("missing disarm response", error.getMessage());
+        verify(fixture.okx()).cancelAllAfter(argThat(request -> "10".equals(request.getTimeOut())));
+        verify(fixture.repository(), never()).resume(anyString(), anyLong(), anyString(), any());
+    }
+
+    @Test
+    void reconciliationFailureDuringDisarmBlocksResumeAndRestoresTheTimer() {
+        var fixture = haltedFixture();
+        when(fixture.okx().cancelAllAfter(any())).thenAnswer(call -> {
+            when(fixture.state().getState()).thenReturn(new TradingState().setRiskState(
+                    new TradingRiskState().setLastReconciliationError("position check failed")));
+            return timerResponse("0", "100");
+        }).thenReturn(timerResponse("110", "100"));
+        assertThrows(IllegalStateException.class,
+                () -> fixture.service().resume(4, "checked", "RESUME_LIVE_TRADING"));
+        verify(fixture.okx()).cancelAllAfter(argThat(request -> "10".equals(request.getTimeOut())));
+        verify(fixture.repository(), never()).resume(anyString(), anyLong(), anyString(), any());
+    }
+
     @Test
     void emptyTimerAcknowledgementCannotAuthorizeLiveResume() {
         var fixture = haltedFixture();
@@ -167,10 +234,11 @@ class FundSafetyServiceTest {
         when(state.getState()).thenReturn(new TradingState().setPositionLastReconciledAt(now.toString())
                 .setRiskState(new TradingRiskState().setLastReconciliationAt(now.toString())));
         return new HaltedFixture(new FundSafetyService(repository, orders, state, okx,
-                properties, new SimpleMeterRegistry()), repository, okx);
+                properties, new SimpleMeterRegistry()), repository, state, okx);
     }
 
-    private record HaltedFixture(FundSafetyService service, FundSafetyRepository repository, OkxApi okx) { }
+    private record HaltedFixture(FundSafetyService service, FundSafetyRepository repository,
+                                 TradingStateRepository state, OkxApi okx) { }
 
     @Test
     void missingPendingOrderDataCannotAuthorizeLiveResume() {
