@@ -19,10 +19,14 @@ public final class PolymarketOrderPolicy {
     public PolymarketOrderPolicy(Limits properties) { this.properties = properties; }
     public Preparation prepare(AiPolymarketDecision decision, PolymarketDecisionContext context, Instant now) {
         if (decision.getAction() == PolymarketAction.HOLD) { return new Preparation(null, "HOLD"); }
-        String error = validateDecision(decision, context, now);
+        var selection = context.findUniqueToken(decision.getTokenId()).orElse(null);
+        if (selection == null) {
+            return new Preparation(null, "tokenId is missing or ambiguous in collected Polymarket context");
+        }
+        var market = selection.market();
+        var outcome = selection.outcome();
+        String error = validateDecision(decision, market, outcome, now);
         if (error != null) { return new Preparation(null, error); }
-        PolymarketOutcomeSnapshot outcome = context.findOutcomeByTokenId(decision.getTokenId()).orElseThrow();
-        PolymarketMarketSnapshot market = context.findMarketByTokenId(decision.getTokenId()).orElseThrow();
         BigDecimal price = decision.getLimitPrice();
         // Clamp spend before calculating shares so both dry-run and live orders
         // use the exact risk-capped value.
@@ -52,7 +56,8 @@ public final class PolymarketOrderPolicy {
         return new Preparation(request, null);
     }
 
-    private String validateDecision(AiPolymarketDecision decision, PolymarketDecisionContext context, Instant now) {
+    private String validateDecision(AiPolymarketDecision decision, PolymarketMarketSnapshot market,
+                                    PolymarketOutcomeSnapshot outcome, Instant now) {
         // These checks duplicate the prompt's hard gates. The prompt guides the
         // model, while this method is the final application-side guard.
         if (decision.getLimitPrice().compareTo(properties.minLimitPrice()) < 0
@@ -68,14 +73,6 @@ public final class PolymarketOrderPolicy {
         if (decision.getWinProbability().compareTo(decision.getLimitPrice().add(properties.minExpectedEdge())) < 0) {
             return "winProbability minus limitPrice below configured minimum";
         }
-        PolymarketOutcomeSnapshot outcome = context.findOutcomeByTokenId(decision.getTokenId()).orElse(null);
-        if (outcome == null) {
-            return "tokenId is not present in collected Polymarket context";
-        }
-        PolymarketMarketSnapshot market = context.findMarketByTokenId(decision.getTokenId()).orElse(null);
-        if (market == null) {
-            return "market is not present in collected Polymarket context";
-        }
         if (outcome.getOutcome() == null || !outcome.getOutcome().strip().equalsIgnoreCase(decision.getOutcome())) {
             return "selected outcome does not match tokenId";
         }
@@ -84,7 +81,7 @@ public final class PolymarketOrderPolicy {
             return "selected market does not match tokenId";
         }
         String statusSkipReason = PolymarketMarketFilters.marketStatusSkipReason(properties.requireAcceptingOrders(),
-                market.getClosed(), market.getArchived(), market.getAcceptingOrders(), market.getEnableOrderBook());
+                market.getActive(), market.getClosed(), market.getArchived(), market.getAcceptingOrders(), market.getEnableOrderBook());
         if (statusSkipReason != null) {
             return statusSkipReason;
         }
@@ -98,11 +95,9 @@ public final class PolymarketOrderPolicy {
         if (turnoverSkipReason != null) {
             return turnoverSkipReason;
         }
-        String outcomeSkipReason = PolymarketMarketFilters.outcomeLiquiditySkipReason(properties.marketEligibilityPolicy(), outcome);
-        if (outcomeSkipReason != null) {
-            return outcomeSkipReason;
-        }
-        return null;
+        boolean immediate = "FAK".equalsIgnoreCase(properties.orderType()) || "FOK".equalsIgnoreCase(properties.orderType());
+        return PolymarketMarketFilters.outcomeLiquiditySkipReason(properties.marketEligibilityPolicy(), outcome,
+                immediate ? decision.getLimitPrice() : null);
     }
 
     private BigDecimal minOrderSize(PolymarketMarketSnapshot market, PolymarketOutcomeSnapshot outcome) {

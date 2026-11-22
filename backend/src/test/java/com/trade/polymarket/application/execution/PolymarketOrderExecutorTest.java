@@ -3,6 +3,7 @@ package com.trade.polymarket.application.execution;
 import com.trade.client.polymarket.PolymarketApi;
 import com.trade.polymarket.port.PolymarketOrderRunner;
 import com.trade.polymarket.domain.model.AiPolymarketDecision;
+import com.trade.polymarket.domain.model.MarketDepthLevel;
 import com.trade.polymarket.domain.model.PolymarketAction;
 import com.trade.polymarket.domain.model.PolymarketDecisionContext;
 import com.trade.polymarket.domain.model.PolymarketMarketSnapshot;
@@ -218,6 +219,63 @@ class PolymarketOrderExecutorTest {
     }
 
     @Test
+    void ambiguousTokenMappingNeverReachesTheRunner() {
+        var runner = mock(PolymarketOrderRunner.class);
+        var geoblock = mock(PolymarketGeoblockService.class);
+        var executor = new PolymarketOrderExecutor(liveProperties(), runner, geoblock);
+        var context = context();
+        var market = context.getMarkets().getFirst();
+        var otherOutcome = new PolymarketOutcomeSnapshot().setTokenId("token-1").setOutcome("No");
+        var otherMarket = new PolymarketMarketSnapshot().setSlug("other").setOutcomes(List.of(otherOutcome));
+        context.setMarkets(List.of(market, otherMarket));
+        assertEquals("SKIPPED", executor.execute(buyDecision(), context).getStatus());
+
+        context.setMarkets(List.of(market));
+        market.setOutcomes(List.of(market.getOutcomes().getFirst(), otherOutcome));
+        assertEquals("SKIPPED", executor.execute(buyDecision(), context).getStatus());
+        verifyNoInteractions(geoblock, runner);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"FAK", "FOK"})
+    void onlyAsksAtOrBelowTheBuyLimitSatisfyTheLiquidityMinimum(String orderType) {
+        var properties = liveProperties();
+        properties.getExecution().setOrderType(orderType);
+        properties.setMinOutcomeAskLiquidityUsdc(new BigDecimal("25"));
+        var runner = mock(PolymarketOrderRunner.class);
+        var geoblock = mock(PolymarketGeoblockService.class);
+        var executor = new PolymarketOrderExecutor(properties, runner, geoblock);
+        var context = context();
+        var outcome = context.getMarkets().getFirst().getOutcomes().getFirst();
+        outcome.setTopAskLiquidityUsdc(new BigDecimal("76"));
+        assertEquals("SKIPPED", executor.execute(buyDecision(), context).getStatus());
+        outcome.setTopAsks(List.of(new MarketDepthLevel("0.50", "2"), new MarketDepthLevel("0.75", "100")));
+        assertEquals("SKIPPED", executor.execute(buyDecision(), context).getStatus());
+        verifyNoInteractions(geoblock, runner);
+
+        outcome.setTopAsks(List.of(new MarketDepthLevel("0.40", "50"), new MarketDepthLevel("0.50", "10"),
+                new MarketDepthLevel("0.75", "68")));
+        assertEquals("PLACED", executor.execute(buyDecision(), context).getStatus());
+        verify(runner).placeOrder(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"GTC", "GTD"})
+    void restingBuyRetainsTheMarketDepthCheck(String orderType) {
+        var properties = liveProperties();
+        properties.getExecution().setOrderType(orderType);
+        properties.setMinOutcomeAskLiquidityUsdc(new BigDecimal("25"));
+        var runner = mock(PolymarketOrderRunner.class);
+        var context = context();
+        context.getMarkets().getFirst().getOutcomes().getFirst()
+                .setTopAsks(List.of(new MarketDepthLevel("0.75", "40")))
+                .setTopAskLiquidityUsdc(new BigDecimal("30"));
+        var executor = new PolymarketOrderExecutor(properties, runner, mock(PolymarketGeoblockService.class));
+        assertEquals("PLACED", executor.execute(buyDecision(), context).getStatus());
+        verify(runner).placeOrder(any());
+    }
+
+    @Test
     void skipsWhenEdgeIsTooSmall() {
         AiPolymarketProperties properties = new AiPolymarketProperties();
         properties.setEnabled(true);
@@ -277,6 +335,8 @@ class PolymarketOrderExecutorTest {
         market.setAcceptingOrders(null);
         assertEquals("SKIPPED", executor.execute(buyDecision(), context).getStatus());
         market.setAcceptingOrders(true).setEnableOrderBook(null);
+        assertEquals("SKIPPED", executor.execute(buyDecision(), context).getStatus());
+        market.setEnableOrderBook(true).setActive(false);
         assertEquals("SKIPPED", executor.execute(buyDecision(), context).getStatus());
         verifyNoInteractions(geoblock, runner);
     }

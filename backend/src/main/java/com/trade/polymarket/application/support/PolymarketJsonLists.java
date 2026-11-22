@@ -22,15 +22,10 @@ public final class PolymarketJsonLists {
             return List.of();
         }
 
-        List<String> values = new ArrayList<>();
+        // Gamma joins outcomes, token IDs and prices by index, including empty slots.
+        List<String> values = new ArrayList<>(normalized.size());
         for (JsonNode item : normalized) {
-            if (item == null || item.isNull()) {
-                continue;
-            }
-            String value = item.asText(null);
-            if (value != null && !value.isBlank()) {
-                values.add(value.trim());
-            }
+            values.add(item.isTextual() || item.isNumber() ? item.asText().trim() : "");
         }
         return values;
     }

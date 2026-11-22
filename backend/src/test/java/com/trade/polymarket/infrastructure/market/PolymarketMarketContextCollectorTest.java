@@ -27,6 +27,98 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PolymarketMarketContextCollectorTest {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final String BOOK_MARKET = "condition-test";
+
+    @Test
+    void alignsGammaOutcomesTokensAndPricesByTheirOriginalIndex() {
+        var market = tradableMarket("m", "sample", "token-yes", "token-no");
+        var collector = new PolymarketMarketContextCollector(new FakePolymarketApi(List.of(market)),
+                new AiPolymarketProperties());
+        market.setClobTokenIds(OBJECT_MAPPER.getNodeFactory().textNode("[null,\"token-no\"]"));
+        var outcomes = collector.collect().getMarkets().getFirst().getOutcomes();
+        assertEquals(1, outcomes.size());
+        assertEquals("No", outcomes.getFirst().getOutcome());
+        assertEquals("token-no", outcomes.getFirst().getTokenId());
+
+        market.setClobTokenIds(OBJECT_MAPPER.valueToTree(List.of("token-yes", "token-no")))
+                .setOutcomes(OBJECT_MAPPER.valueToTree(List.of(" ", "No")))
+                .setOutcomePrices(OBJECT_MAPPER.createArrayNode().addNull().add("0.49"));
+        outcomes = collector.collect().getMarkets().getFirst().getOutcomes();
+        assertEquals(1, outcomes.size());
+        assertEquals("token-no", outcomes.getFirst().getTokenId());
+        assertEquals(new BigDecimal("0.49"), outcomes.getFirst().getGammaPrice());
+
+        market.setOutcomes(OBJECT_MAPPER.valueToTree(List.of("Yes", "No")));
+        outcomes = collector.collect().getMarkets().getFirst().getOutcomes();
+        assertEquals(BigDecimal.ZERO, outcomes.getFirst().getGammaPrice());
+        assertEquals(new BigDecimal("0.49"), outcomes.getLast().getGammaPrice());
+
+        market.setOutcomePrices(OBJECT_MAPPER.valueToTree(List.of("0.49")));
+        assertTrue(collector.collect().getMarkets().getFirst().getOutcomes().stream()
+                .allMatch(outcome -> outcome.getGammaPrice().signum() == 0));
+        market.setClobTokenIds(OBJECT_MAPPER.valueToTree(List.of("token-no")));
+        assertTrue(collector.collect().getMarkets().isEmpty());
+        market.setClobTokenIds(OBJECT_MAPPER.valueToTree(List.of("token-no", "token-no")));
+        assertTrue(collector.collect().getMarkets().isEmpty());
+    }
+
+    @Test
+    void onlyCollectsGammaMarketsMatchingEveryConfiguredMarketFilter() {
+        var properties = new AiPolymarketProperties();
+        properties.setMarketIds(List.of("allowed-id"));
+        properties.setMarketSlugs(List.of("allowed-slug"));
+        var api = new FakePolymarketApi(List.of(
+                tradableMarket("other-id", "allowed-slug", "a", "b"),
+                tradableMarket("allowed-id", "other-slug", "c", "d"),
+                tradableMarket("allowed-id", "allowed-slug", "e", "f")));
+        var markets = new PolymarketMarketContextCollector(api, properties).collect().getMarkets();
+        assertEquals(1, markets.size());
+        assertEquals("e", markets.getFirst().getOutcomes().getFirst().getTokenId());
+    }
+
+    @Test
+    void rejectsBooksWithMissingOrConflictingIdentitiesEvenWithLiquidityFiltersOff() {
+        var api = new OrderBookAwarePolymarketApi(List.of(restrictedTradableMarket()));
+        var collector = new PolymarketMarketContextCollector(api, new AiPolymarketProperties());
+        for (var book : List.of(
+                orderBook("0.50", "10", "0.52", "10").setAssetId("token-no"),
+                orderBook("0.50", "10", "0.52", "10").setAssetId(null),
+                orderBook("0.50", "10", "0.52", "10").setAssetId("token-yes").setMarket("other-condition"),
+                orderBook("0.50", "10", "0.52", "10").setAssetId("token-yes").setMarket(null))) {
+            api.putOrderBook("token-yes", book);
+            var outcomes = collector.collect().getMarkets().getFirst().getOutcomes();
+            assertEquals(1, outcomes.size());
+            assertEquals("token-no", outcomes.getFirst().getTokenId());
+        }
+    }
+
+    @Test
+    void checksExecutableBestPricesAndDepthIndependentlyOfResponseOrder() {
+        var properties = new AiPolymarketProperties();
+        properties.setClobTokenIds(List.of("token-yes"));
+        properties.setOrderBookDepth(1);
+        properties.setMaxOutcomeSpread(new BigDecimal("0.06"));
+        var api = new OrderBookAwarePolymarketApi(List.of(restrictedTradableMarket()));
+        var book = orderBook("0.20", "500", "0.95", "500").setAssetId("token-yes")
+                .setBids(List.of(level("0.51", "0"), level("0.20", "500"), level("0.49", "10")))
+                .setAsks(List.of(level("0.95", "500"), level("0.51", "0"), level("0.52", "5")));
+        api.putOrderBook("token-yes", book);
+        var collector = new PolymarketMarketContextCollector(api, properties);
+        var outcome = collector.collect().getMarkets().getFirst().getOutcomes().getFirst();
+        assertEquals(new BigDecimal("0.49"), outcome.getBestBid());
+        assertEquals(new BigDecimal("0.52"), outcome.getBestAsk());
+        assertEquals("0.49", outcome.getTopBids().getFirst().price());
+        assertEquals("0.52", outcome.getTopAsks().getFirst().price());
+        assertEquals(0, new BigDecimal("2.60").compareTo(outcome.getTopAskLiquidityUsdc()));
+
+        properties.setMinOutcomeAskLiquidityUsdc(new BigDecimal("3"));
+        assertTrue(collector.collect().getMarkets().isEmpty());
+        properties.setMinOutcomeAskLiquidityUsdc(BigDecimal.ZERO);
+        properties.setOrderBookDepth(0);
+        outcome = collector.collect().getMarkets().getFirst().getOutcomes().getFirst();
+        assertTrue(outcome.getTopAsks().isEmpty());
+        assertEquals(new BigDecimal("0.52"), outcome.getBestAsk());
+    }
 
     @Test
     void collectsRestrictedMarketsWhenTheyAcceptOrdersAndHaveOrderBooks() {
@@ -189,10 +281,12 @@ class PolymarketMarketContextCollectorTest {
         api.putOrderBook(
                 "token-wide-yes",
                 orderBook("0.40", "100", "0.48", "100")
+                        .setAssetId("token-wide-yes")
         );
         api.putOrderBook(
                 "token-tight-no",
                 orderBook("0.50", "100", "0.52", "100")
+                        .setAssetId("token-tight-no")
         );
         PolymarketMarketContextCollector collector = new PolymarketMarketContextCollector(api, properties);
 
@@ -212,7 +306,7 @@ class PolymarketMarketContextCollectorTest {
         var originalJson = OBJECT_MAPPER.valueToTree(original);
         book.setBids(List.of(original, new PolymarketOrderBookLevel().setPrice("0.49").setSize("500")));
         var api = new FakePolymarketApi(List.of(restrictedTradableMarket())) {
-            @Override public PolymarketOrderBook getOrderBook(String tokenId) { return book; }
+            @Override public PolymarketOrderBook getOrderBook(String tokenId) { return book.setAssetId(tokenId); }
         };
         var outcome = new PolymarketMarketContextCollector(api, properties).collect()
                 .getMarkets().getFirst().getOutcomes().getFirst();
@@ -233,7 +327,7 @@ class PolymarketMarketContextCollectorTest {
     private static GammaMarket tradableMarket(String id, String slug, String yesTokenId, String noTokenId) {
         return new GammaMarket()
                 .setId(id)
-                .setConditionId("condition-" + id)
+                .setConditionId(BOOK_MARKET)
                 .setSlug(slug)
                 .setQuestion("Will it happen?")
                 .setClosed(false)
@@ -257,11 +351,16 @@ class PolymarketMarketContextCollectorTest {
             String askSize
     ) {
         return new PolymarketOrderBook()
-                .setBids(List.of(new PolymarketOrderBookLevel().setPrice(bidPrice).setSize(bidSize)))
-                .setAsks(List.of(new PolymarketOrderBookLevel().setPrice(askPrice).setSize(askSize)))
+                .setMarket(BOOK_MARKET)
+                .setBids(List.of(level(bidPrice, bidSize)))
+                .setAsks(List.of(level(askPrice, askSize)))
                 .setMinOrderSize("5")
                 .setTickSize("0.001")
                 .setLastTradePrice(askPrice);
+    }
+
+    private static PolymarketOrderBookLevel level(String price, String size) {
+        return new PolymarketOrderBookLevel().setPrice(price).setSize(size);
     }
 
     private static class FakePolymarketApi extends PolymarketApi {
@@ -285,12 +384,7 @@ class PolymarketMarketContextCollectorTest {
 
         @Override
         public PolymarketOrderBook getOrderBook(String tokenId) {
-            return new PolymarketOrderBook()
-                    .setBids(List.of(new PolymarketOrderBookLevel().setPrice("0.50").setSize("100")))
-                    .setAsks(List.of(new PolymarketOrderBookLevel().setPrice("0.52").setSize("100")))
-                    .setMinOrderSize("5")
-                    .setTickSize("0.001")
-                    .setLastTradePrice("0.51");
+            return orderBook("0.50", "100", "0.52", "100").setAssetId(tokenId).setLastTradePrice("0.51");
         }
 
         @Override
@@ -365,7 +459,7 @@ class PolymarketMarketContextCollectorTest {
                     .setCount(1000)
                     .setNextCursor(nextCursor)
                     .setData(List.of(new PolymarketSamplingMarket()
-                            .setConditionId("condition-" + slug)
+                            .setConditionId(BOOK_MARKET)
                             .setQuestionId("question-" + slug)
                             .setMarketSlug(slug)
                             .setQuestion("Will the sampled market happen?")

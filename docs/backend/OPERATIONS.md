@@ -64,6 +64,10 @@ Polymarket BUY 按 `max-order-usdc` 和决策请求金额中较小的值向下�
 
 开启 `require-accepting-orders` 时，市场须明确接受订单且订单簿已启用。若配置了 24 小时成交量下限，缺少近 24 小时成交量的市场会被排除。仅指定 token 且没有匹配市场时，只有各项筛选都允许缺少市场元数据，才会尝试按 token 读取盘口。
 
+Gamma 返回的市场必须符合已配置的 ID 和 slug 筛选。明确停用的市场会被排除。结果名称、token 和价格按原始数组位置对应，缺少名称或 token 的结果会跳过。名称与 token 数量不一致或 token 重复时跳过该市场。下单时，选定的 token 必须在候选中唯一。
+
+读取盘口时会核对返回的 `asset_id` 和已知的市场条件 ID。深度按有效报价排序，取最高买价和最低卖价一侧各自的前 `order-book-depth` 档。对于 FAK 和 FOK 买单，只有价格不超过买入限价的卖盘才计入 `min-outcome-ask-liquidity-usdc`。如果该门槛已启用而限价内深度不足，本轮跳过下单。[Polymarket 盘口字段](https://docs.polymarket.com/api-reference/market-data/get-order-book)
+
 启用地域检查时，服务只接受明确的布尔判定。地域接口缺少判定字段、格式异常或报告受限时，本轮在调用下单脚本前停止，并按下述流程保留已经取得的实盘预留。
 
 Polymarket LIVE BUY 执行前使用独立事务预留 `polymarket_execution_guard`。只有正常执行结果和最终审计均提交后才释放；超时、拒绝或不完整确认、进程崩溃及审计失败均保留预留。后续调度会报失败而不再提交真实订单，重启和等待不会解除。该门禁覆盖共享同一数据库的后端实例，当前配置按单账户使用固定 `primary` 名称。

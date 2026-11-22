@@ -14,25 +14,29 @@ public class PolymarketDecisionContext {
     private String aiParametersJson;
     private List<PolymarketMarketSnapshot> markets;
 
-    public Optional<PolymarketMarketSnapshot> findMarketByTokenId(String tokenId) {
-        if (tokenId == null || markets == null) {
+    public record TokenSelection(PolymarketMarketSnapshot market, PolymarketOutcomeSnapshot outcome) {}
+
+    public Optional<TokenSelection> findUniqueToken(String tokenId) {
+        if (tokenId == null || tokenId.isBlank() || markets == null) {
             return Optional.empty();
         }
-        return markets.stream()
-                .filter(market -> market.getOutcomes() != null)
-                .filter(market -> market.getOutcomes().stream()
-                        .anyMatch(outcome -> tokenId.equals(outcome.getTokenId())))
-                .findFirst();
+        TokenSelection selected = null;
+        for (var market : markets) {
+            if (market == null || market.getOutcomes() == null) continue;
+            for (var outcome : market.getOutcomes()) {
+                if (outcome == null || !tokenId.equals(outcome.getTokenId())) continue;
+                if (selected != null) return Optional.empty();
+                selected = new TokenSelection(market, outcome);
+            }
+        }
+        return Optional.ofNullable(selected);
+    }
+
+    public Optional<PolymarketMarketSnapshot> findMarketByTokenId(String tokenId) {
+        return findUniqueToken(tokenId).map(TokenSelection::market);
     }
 
     public Optional<PolymarketOutcomeSnapshot> findOutcomeByTokenId(String tokenId) {
-        if (tokenId == null || markets == null) {
-            return Optional.empty();
-        }
-        return markets.stream()
-                .filter(market -> market.getOutcomes() != null)
-                .flatMap(market -> market.getOutcomes().stream())
-                .filter(outcome -> tokenId.equals(outcome.getTokenId()))
-                .findFirst();
+        return findUniqueToken(tokenId).map(TokenSelection::outcome);
     }
 }

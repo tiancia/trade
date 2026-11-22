@@ -1,6 +1,7 @@
 package com.trade.polymarket.domain.rule;
 
 import com.trade.common.support.TradingMath;
+import com.trade.polymarket.domain.model.MarketDepthLevel;
 import com.trade.polymarket.domain.model.PolymarketOutcomeSnapshot;
 
 import java.math.BigDecimal;
@@ -12,6 +13,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.Objects;
 import java.util.Optional;
 
 public final class PolymarketMarketFilters {
@@ -19,9 +21,12 @@ public final class PolymarketMarketFilters {
     }
 
     public static String marketStatusSkipReason(
-            boolean requireAcceptingOrders, Boolean closed, Boolean archived,
+            boolean requireAcceptingOrders, Boolean active, Boolean closed, Boolean archived,
             Boolean acceptingOrders, Boolean enableOrderBook
     ) {
+        if (Boolean.FALSE.equals(active)) {
+            return "market is inactive";
+        }
         if (Boolean.TRUE.equals(closed) || Boolean.TRUE.equals(archived)) {
             return "market is closed or archived";
         }
@@ -78,6 +83,12 @@ public final class PolymarketMarketFilters {
             MarketEligibilityPolicy properties,
             PolymarketOutcomeSnapshot outcome
     ) {
+        return outcomeLiquiditySkipReason(properties, outcome, null);
+    }
+
+    public static String outcomeLiquiditySkipReason(
+            MarketEligibilityPolicy properties, PolymarketOutcomeSnapshot outcome, BigDecimal buyLimit
+    ) {
         if (outcome == null) {
             return "outcome is null";
         }
@@ -91,16 +102,28 @@ public final class PolymarketMarketFilters {
             if (bestAsk.compareTo(bestBid) < 0) {
                 return "outcome order book is crossed";
             }
-            BigDecimal spread = outcome.getSpread() == null ? bestAsk.subtract(bestBid) : outcome.getSpread();
+            BigDecimal spread = bestAsk.subtract(bestBid);
             if (spread.compareTo(maxSpread) > 0) {
                 return "outcome spread is wider than configured maximum";
             }
         }
 
         BigDecimal minAskLiquidity = properties.getMinOutcomeAskLiquidityUsdc();
-        if (isPositive(minAskLiquidity)
-                && zeroIfNull(outcome.getTopAskLiquidityUsdc()).compareTo(minAskLiquidity) < 0) {
-            return "outcome top ask liquidity is below configured minimum";
+        if (isPositive(minAskLiquidity)) {
+            if (buyLimit != null) {
+                var asks = outcome.getTopAsks();
+                BigDecimal available = asks == null ? BigDecimal.ZERO : asks.stream()
+                        .filter(Objects::nonNull)
+                        .filter(MarketDepthLevel::executable)
+                        .filter(ask -> ask.priceValue().compareTo(buyLimit) <= 0)
+                        .map(MarketDepthLevel::quoteNotional)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+                if (available.compareTo(minAskLiquidity) < 0) {
+                    return "ask liquidity at or below the buy limit is below configured minimum";
+                }
+            } else if (zeroIfNull(outcome.getTopAskLiquidityUsdc()).compareTo(minAskLiquidity) < 0) {
+                return "outcome top ask liquidity is below configured minimum";
+            }
         }
         return null;
     }

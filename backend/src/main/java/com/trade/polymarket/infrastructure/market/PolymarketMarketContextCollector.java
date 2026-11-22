@@ -26,9 +26,11 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -299,8 +301,16 @@ public class PolymarketMarketContextCollector {
         if (market == null) {
             return "market is null";
         }
+        if (!properties.getMarketIds().isEmpty()
+                && (!hasText(market.getId()) || !properties.getMarketIds().contains(market.getId()))) {
+            return "market ID is outside the configured selection";
+        }
+        if (!properties.getMarketSlugs().isEmpty()
+                && (!hasText(market.getSlug()) || !properties.getMarketSlugs().contains(market.getSlug()))) {
+            return "market slug is outside the configured selection";
+        }
         String statusSkipReason = PolymarketMarketFilters.marketStatusSkipReason(properties.isRequireAcceptingOrders(),
-                market.getClosed(), market.getArchived(), market.getAcceptingOrders(), market.getEnableOrderBook());
+                market.getActive(), market.getClosed(), market.getArchived(), market.getAcceptingOrders(), market.getEnableOrderBook());
         if (statusSkipReason != null) {
             return statusSkipReason;
         }
@@ -318,7 +328,7 @@ public class PolymarketMarketContextCollector {
             return "market is null";
         }
         String statusSkipReason = PolymarketMarketFilters.marketStatusSkipReason(properties.isRequireAcceptingOrders(),
-                market.getClosed(), market.getArchived(), market.getAcceptingOrders(), market.getEnableOrderBook());
+                market.getActive(), market.getClosed(), market.getArchived(), market.getAcceptingOrders(), market.getEnableOrderBook());
         if (statusSkipReason != null) {
             return statusSkipReason;
         }
@@ -337,18 +347,25 @@ public class PolymarketMarketContextCollector {
         List<String> outcomePrices = PolymarketJsonLists.stringList(market.getOutcomePrices());
         List<PolymarketOutcomeSnapshot> outcomeSnapshots = new ArrayList<>();
 
-        int outcomeCount = Math.min(outcomes.size(), tokenIds.size());
+        // Different lengths give no way to establish which outcome lost its token.
+        int outcomeCount = outcomes.size() == tokenIds.size() ? outcomes.size() : 0;
+        var seenTokens = new HashSet<String>();
         for (int i = 0; i < outcomeCount; i++) {
             String tokenId = tokenIds.get(i);
-            if (isFilteredOutToken(tokenId)) {
+            if (hasText(tokenId) && !seenTokens.add(tokenId)) {
+                outcomeSnapshots.clear();
+                break;
+            }
+            if (!hasText(outcomes.get(i)) || !hasText(tokenId) || isFilteredOutToken(tokenId)) {
                 continue;
             }
-            BigDecimal gammaPrice = i < outcomePrices.size()
+            BigDecimal gammaPrice = outcomePrices.size() == outcomeCount
                     ? TradingMath.decimal(outcomePrices.get(i))
                     : BigDecimal.ZERO;
             addOutcomeIfEligible(outcomeSnapshots, market.getSlug(), outcomeSnapshot(
                     outcomes.get(i),
                     tokenId,
+                    market.getConditionId(),
                     gammaPrice,
                     market.getOrderMinSize(),
                     market.getOrderPriceMinTickSize(),
@@ -381,13 +398,20 @@ public class PolymarketMarketContextCollector {
 
     private PolymarketMarketSnapshot toSnapshot(PolymarketSamplingMarket market) {
         List<PolymarketOutcomeSnapshot> outcomeSnapshots = new ArrayList<>();
+        var seenTokens = new HashSet<String>();
         for (PolymarketSamplingToken token : nullToEmpty(market.getTokens())) {
-            if (token == null || !hasText(token.getTokenId()) || isFilteredOutToken(token.getTokenId())) {
+            if (token == null || !hasText(token.getTokenId())) continue;
+            if (!seenTokens.add(token.getTokenId())) {
+                outcomeSnapshots.clear();
+                break;
+            }
+            if (isFilteredOutToken(token.getTokenId())) {
                 continue;
             }
             addOutcomeIfEligible(outcomeSnapshots, market.getMarketSlug(), outcomeSnapshot(
                     firstText(token.getOutcome(), token.getTokenId()),
                     token.getTokenId(),
+                    market.getConditionId(),
                     TradingMath.decimal(token.getPrice()),
                     market.getMinimumOrderSize(),
                     market.getMinimumTickSize(),
@@ -418,7 +442,7 @@ public class PolymarketMarketContextCollector {
         List<PolymarketOutcomeSnapshot> outcomes = new ArrayList<>();
         tokenIds.stream()
                 .filter(tokenId -> tokenId != null && !tokenId.isBlank())
-                .map(tokenId -> outcomeSnapshot(tokenId, tokenId, BigDecimal.ZERO, null, null, null))
+                .map(tokenId -> outcomeSnapshot(tokenId, tokenId, null, BigDecimal.ZERO, null, null, null))
                 .forEach(outcome -> addOutcomeIfEligible(outcomes, "configured-token", outcome));
         return new PolymarketMarketSnapshot()
                 .setQuestion("Configured Polymarket CLOB tokens")
@@ -432,6 +456,7 @@ public class PolymarketMarketContextCollector {
     private PolymarketOutcomeSnapshot outcomeSnapshot(
             String outcome,
             String tokenId,
+            String conditionId,
             BigDecimal gammaPrice,
             String marketMinOrderSize,
             String marketTickSize,
@@ -449,20 +474,25 @@ public class PolymarketMarketContextCollector {
             // CLOB book data is the executable view; Gamma prices are kept only
             // as fallback/context when book or last-trade calls fail.
             PolymarketOrderBook orderBook = polymarketApi.getOrderBook(tokenId);
+            if (orderBook == null || !tokenId.equals(orderBook.getAssetId())
+                    || (hasText(conditionId) && !conditionId.equalsIgnoreCase(orderBook.getMarket()))) {
+                log.warn("Discard Polymarket outcome with an unverified order book identity: tokenId={}", tokenId);
+                return null;
+            }
             List<PolymarketOrderBookLevel> bids = nullToEmpty(orderBook.getBids());
             List<PolymarketOrderBookLevel> asks = nullToEmpty(orderBook.getAsks());
-            List<MarketDepthLevel> topBids = trimLevels(bids);
-            List<MarketDepthLevel> topAsks = trimLevels(asks);
-            BigDecimal bestBid = bestBid(bids);
-            BigDecimal bestAsk = bestAsk(asks);
+            BookSide bidSide = bookSide(bids, Comparator.reverseOrder());
+            BookSide askSide = bookSide(asks, Comparator.naturalOrder());
+            BigDecimal bestBid = bidSide.bestPrice();
+            BigDecimal bestAsk = askSide.bestPrice();
             snapshot.setBestBid(bestBid)
                     .setBestAsk(bestAsk)
                     .setMidPrice(midPrice(bestBid, bestAsk))
                     .setSpread(bestAsk.signum() > 0 && bestBid.signum() > 0 ? bestAsk.subtract(bestBid) : BigDecimal.ZERO)
-                    .setTopBids(topBids)
-                    .setTopAsks(topAsks)
-                    .setTopBidLiquidityUsdc(liquidityUsdc(topBids))
-                    .setTopAskLiquidityUsdc(liquidityUsdc(topAsks))
+                    .setTopBids(bidSide.topLevels())
+                    .setTopAsks(askSide.topLevels())
+                    .setTopBidLiquidityUsdc(liquidityUsdc(bidSide.topLevels()))
+                    .setTopAskLiquidityUsdc(liquidityUsdc(askSide.topLevels()))
                     .setMinOrderSize(firstText(orderBook.getMinOrderSize(), marketMinOrderSize))
                     .setTickSize(firstText(orderBook.getTickSize(), marketTickSize))
                     .setNegRisk(orderBook.getNegRisk() == null ? marketNegRisk : orderBook.getNegRisk())
@@ -591,14 +621,17 @@ public class PolymarketMarketContextCollector {
         }
     }
 
-    private List<MarketDepthLevel> trimLevels(List<PolymarketOrderBookLevel> levels) {
-        if (levels == null || levels.isEmpty()) {
-            return List.of();
-        }
-        return levels.stream()
-                .limit(Math.max(properties.getOrderBookDepth(), 0))
+    private record BookSide(BigDecimal bestPrice, List<MarketDepthLevel> topLevels) {}
+
+    private BookSide bookSide(List<PolymarketOrderBookLevel> levels, Comparator<BigDecimal> priceOrder) {
+        var sorted = levels.stream()
+                .filter(Objects::nonNull)
                 .map(level -> new MarketDepthLevel(level.getPrice(), level.getSize()))
+                .filter(MarketDepthLevel::executable)
+                .sorted(Comparator.comparing(MarketDepthLevel::priceValue, priceOrder))
                 .toList();
+        BigDecimal bestPrice = sorted.isEmpty() ? BigDecimal.ZERO : sorted.getFirst().priceValue();
+        return new BookSide(bestPrice, sorted.stream().limit(Math.max(properties.getOrderBookDepth(), 0)).toList());
     }
 
     private void addOutcomeIfEligible(
@@ -628,22 +661,6 @@ public class PolymarketMarketContextCollector {
                 .map(MarketDepthLevel::quoteNotional)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .stripTrailingZeros();
-    }
-
-    private static BigDecimal bestBid(List<PolymarketOrderBookLevel> bids) {
-        return bids.stream()
-                .map(level -> TradingMath.decimal(level.getPrice()))
-                .filter(value -> value.signum() > 0)
-                .max(Comparator.naturalOrder())
-                .orElse(BigDecimal.ZERO);
-    }
-
-    private static BigDecimal bestAsk(List<PolymarketOrderBookLevel> asks) {
-        return asks.stream()
-                .map(level -> TradingMath.decimal(level.getPrice()))
-                .filter(value -> value.signum() > 0)
-                .min(Comparator.naturalOrder())
-                .orElse(BigDecimal.ZERO);
     }
 
     private static BigDecimal midPrice(BigDecimal bid, BigDecimal ask) {
