@@ -41,22 +41,22 @@ const worker = {
       }, allowedWidths);
     }
 
+    // Both the API and the page renderer derive public URLs from these headers.
+    const headers = new Headers(request.headers);
+    for (const name of [...headers.keys()]) {
+      if (name === "forwarded" || name.startsWith("x-forwarded-") || name === "x-real-ip") {
+        headers.delete(name);
+      }
+    }
+    headers.set("x-forwarded-host", url.host);
+    headers.set("x-forwarded-proto", url.protocol.slice(0, -1));
+    headers.set("x-forwarded-port", url.port || (url.protocol === "https:" ? "443" : "80"));
+
     if (url.pathname.startsWith("/api/") && env.TRADE_API_URL) {
       const upstream = new URL(env.TRADE_API_URL);
       upstream.pathname = `${upstream.pathname.replace(/\/$/, "")}${url.pathname}`;
       upstream.search = url.search;
-      const headers = new Headers(request.headers);
       headers.delete("host");
-      // Forwarded metadata is a proxy trust boundary, not caller input. Spring can prefer
-      // RFC Forwarded over X-Forwarded-* when deciding the effective request origin.
-      for (const name of [...headers.keys()]) {
-        if (name === "forwarded" || name.startsWith("x-forwarded-") || name === "x-real-ip") {
-          headers.delete(name);
-        }
-      }
-      headers.set("x-forwarded-host", url.host);
-      headers.set("x-forwarded-proto", url.protocol.replace(":", ""));
-      headers.set("x-forwarded-port", url.port || (url.protocol === "https:" ? "443" : "80"));
       return fetch(upstream, {
         method: request.method,
         headers,
@@ -65,7 +65,8 @@ const worker = {
       });
     }
 
-    return handler.fetch(request, env, ctx);
+    headers.set("host", url.host);
+    return handler.fetch(new Request(request, { headers }), env, ctx);
   },
 };
 

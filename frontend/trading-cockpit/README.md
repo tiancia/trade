@@ -23,7 +23,7 @@ NEXT_PUBLIC_TRADE_API_URL=https://your-backend.example.com
 
 当前生产方案使用 Docker Node SSR，由 gateway 转发同源 `/api/`，按生产部署说明操作。若另外选择 Sites/Cloudflare Worker 部署，可设置运行时 `TRADE_API_URL=https://your-backend.example.com`，站点 Worker 会把同源 `/api/*` 请求（包括 K 线 SSE 流）转发到该后端；未设置时继续展示安全演示快照。这是另一种部署方式，不是当前生产入口。
 
-Worker 保留请求的 Origin、CSRF 标记及认证头，先清除调用方的 `Forwarded`、`X-Forwarded-*` 和 `X-Real-IP`，再根据实际站点 URL 重建转发主机、协议与端口，避免客户端伪造后端的有效请求来源。
+Worker 保留请求的 Origin、CSRF 标记及认证头，先清除调用方的 `Forwarded`、`X-Forwarded-*` 和 `X-Real-IP`，再根据实际站点 URL 重建转发主机、协议与端口。后端的请求来源校验和页面的分享图片链接均使用该站点地址。
 
 首次连接前，页面清楚标记为“演示数据”，任务启停和回测交互只修改浏览器内的演示快照。运行状态、事件总线、策略、自动化任务、回测列表这 5 路接口全部成功后，才整体替换为真实快照，避免将演示 PAPER 状态或虚构任务混入真实数据。
 
@@ -59,7 +59,7 @@ PAPER 总览支持设置初始资金、创建独立模拟会话，查看现金�
 
 `build/font-urls.ts` 为vinext在Windows上的字体缓存路径补齐站点相对URL，普通构建和Docker Node SSR构建共用；Dockerfile及忽略白名单均需包含此文件。生产HTML不得出现 `file:///` 或本机磁盘字体URL，字体文件应从站点的静态资源路径返回。
 
-当前使用 `vinext` 0.0.55，包含 Windows 静态资源路径修复。其固定依赖的 `image-size` 2.0.2 存在图片解析死循环漏洞，因此只对该依赖覆盖为兼容的 2.0.4。升级 `vinext` 后需重新检查此覆盖是否仍有必要，并重新运行 `npm audit`；审计结果随供应商公告与依赖变化。
+当前使用 `vinext` 0.0.55，支持 Windows 静态资源路径。图像解析依赖 `image-size` 固定为已修复死循环问题的 2.0.4。锁文件使用 `@vercel/og` 1.0.3 引入修复后的 `satori`，并将 `satori` 安装的 `fflate` 覆盖到 0.7.5。驾驶舱分享卡直接使用静态图片 `public/og-live-strategy.png`。升级这些依赖时，运行 `npm audit` 和 `npm test` 复核公告及服务端渲染。[Satori 安全公告](https://github.com/advisories/GHSA-wx4j-mvgx-mqwp) · [fflate 安全公告](https://github.com/advisories/GHSA-px8p-9vwx-vf98)
 
 ## 接入的后端接口
 

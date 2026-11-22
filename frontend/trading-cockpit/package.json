@@ -14,31 +14,35 @@
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
-    "next": "16.4.2",
+    "next": "16.4.6",
     "react": "19.2.9",
     "react-dom": "19.2.9"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.64.0",
+    "@cloudflare/vite-plugin": "1.66.0",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
-    "@vitejs/plugin-rsc": "0.5.26",
+    "@vitejs/plugin-rsc": "0.5.34",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.4.2",
+    "eslint-config-next": "16.4.6",
     "react-server-dom-webpack": "19.2.9",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
     "vinext": "0.0.55",
     "vite": "8.3.5",
-    "wrangler": "4.151.0"
+    "wrangler": "4.154.0"
   },
   "type": "module",
   "overrides": {
     "vinext": {
-      "image-size": "2.0.4"
+      "image-size": "2.0.4",
+      "@vercel/og": "1.0.3"
+    },
+    "satori": {
+      "fflate": "0.7.5"
     }
   }
 }

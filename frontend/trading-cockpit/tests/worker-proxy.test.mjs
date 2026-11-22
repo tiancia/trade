@@ -4,26 +4,34 @@ import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
 
-test("the Worker proxy preserves Origin and CSRF while rebuilding trusted forwarding metadata", async () => {
+async function loadWorker(render, proxy) {
   const source = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
   const compiled = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
-  const forwarded = [];
   const exports = {};
   vm.runInNewContext(compiled, {
     exports,
     URL, Headers, Request, Response,
     require(name) {
       if (name === "vinext/server/image-optimization") return {};
-      if (name === "vinext/server/app-router-entry") return { default: { fetch() { throw new Error("API proxy unexpectedly rendered a page"); } } };
+      if (name === "vinext/server/app-router-entry") return { default: { fetch: render } };
       throw new Error(`Unexpected import: ${name}`);
     },
-    async fetch(url, init) {
+    fetch: proxy,
+  });
+  return exports.default;
+}
+
+test("the Worker proxy preserves Origin and CSRF while rebuilding trusted forwarding metadata", async () => {
+  const forwarded = [];
+  const worker = await loadWorker(
+    () => assert.fail("API proxy unexpectedly rendered a page"),
+    async (url, init) => {
       forwarded.push({ url: String(url), init });
       return new Response("upstream rejection", { status: 403 });
     },
-  });
+  );
 
   for (const [site, expectedHost, expectedProto, expectedPort] of [
     ["https://cockpit.example", "cockpit.example", "https", "443"],
@@ -44,7 +52,7 @@ test("the Worker proxy preserves Origin and CSRF while rebuilding trusted forwar
         "X-Real-IP": "192.0.2.1",
       });
       if (origin !== null) headers.set("Origin", origin);
-      const response = await exports.default.fetch(
+      const response = await worker.fetch(
         new Request(`${site}/api/automation/tasks/trading/start?test=1`, { method: "POST", headers }),
         { TRADE_API_URL: "https://backend.example/base" },
         {},
@@ -65,4 +73,23 @@ test("the Worker proxy preserves Origin and CSRF while rebuilding trusted forwar
       assert.equal(response.status, 403);
     }
   }
+});
+
+test("the Worker page renderer receives the public site origin from the request URL", async () => {
+  const worker = await loadWorker(
+    (page) => {
+      assert.equal(page.headers.get("host"), "cockpit.example:8443");
+      assert.equal(page.headers.get("x-forwarded-host"), "cockpit.example:8443");
+      assert.equal(page.headers.get("x-forwarded-proto"), "https");
+      assert.equal(page.headers.get("x-forwarded-port"), "8443");
+      assert.equal(page.headers.get("forwarded"), null);
+      assert.equal(page.headers.get("accept-language"), "zh-CN");
+      return new Response("page");
+    },
+    () => assert.fail("page request unexpectedly reached the API"),
+  );
+  const request = new Request("https://cockpit.example:8443/", {
+    headers: { "x-forwarded-host": "previous-hop.example", forwarded: "proto=http", "accept-language": "zh-CN" },
+  });
+  assert.equal(await (await worker.fetch(request, {}, {})).text(), "page");
 });
