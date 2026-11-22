@@ -167,6 +167,7 @@ class TradingStrategyEngineTest {
         var registry = new TradingStrategyRegistry(List.of(new ThresholdEventStrategy()), properties);
         var selection = new TradingStrategySelectionService(registry, repository);
         CandleResp candle = new CandleResp();
+        candle.setTs(Long.toString(Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MINUTES).minusSeconds(60).toEpochMilli()));
         candle.setClose("invalid");
         candle.setConfirm("1");
         AccountBalanceResp account = new AccountBalanceResp();

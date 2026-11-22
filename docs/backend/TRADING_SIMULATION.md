@@ -18,6 +18,12 @@
 
 每条新决策保存 `strategyConfigVersion` 与完整 `strategyConfigSnapshot`。模拟成交和估值记录关联策略及配置版本；旧记录不会被新参数重新标记。上线前的历史决策没有该字段时应视为旧版本未知，不补造版本。
 
+## 价量阈值策略
+
+`threshold-event` 用所选周期的连续 K 线比较窗口涨跌幅和量比。默认以最近一个已收盘周期为准，只有显式允许未收盘信号时才可使用当根。最新价格过期、时间错位或重复时观望。历史断档只影响跨越缺口的指标，最新有效价格仍可触发持仓浮亏退出。
+
+量比用最新成交量除以此前窗口的平均成交量。整段优先使用 `volCcyQuote`，只有备用字段 `volCcy` 覆盖整段时才可用它计算。没有完整成交量或历史均量为零时，策略等待有效量比。驾驶舱「总览 → 策略决策 → 本次决策指标」可查看当时能算出的涨跌幅、量比、持仓浮动盈亏率及配置门槛。
+
 ## 15 分钟日内候选策略
 
 已有 OKX `getCandles` / `history-candles` 公共接口和 business WebSocket 支持 15m，无需新交易接口或额外 API 权限。图表/WS 支持 1m、5m、15m、1H、4H；决策上下文显式承载 1m、5m、15m，未知周期不回退成 1m。公开周期和完成标记以 [OKX 文档](https://app.okx.com/docs-v5/en/#order-book-trading-market-data-get-candlesticks) 为准。

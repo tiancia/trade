@@ -14,12 +14,17 @@ import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class ThresholdEventStrategyTest {
+    private static final Instant BAR_OPEN = Instant.parse("2026-05-17T12:00:00Z");
+    private static final long MINUTE = 60_000L;
     private final ThresholdEventStrategy strategy = new ThresholdEventStrategy();
 
     @Test
@@ -98,6 +103,7 @@ class ThresholdEventStrategyTest {
         List<CandleResp> candles = candles("110", "100", "3000");
         CandleResp unconfirmed = candle("invalid", "100");
         unconfirmed.setConfirm("0");
+        unconfirmed.setTs(Long.toString(BAR_OPEN.toEpochMilli()));
         candles.addFirst(unconfirmed);
 
         assertEquals(TradingAction.BUY, strategy.evaluate(context(candles, null), config()).getAction());
@@ -108,6 +114,102 @@ class ThresholdEventStrategyTest {
         StrategyDecision decision = strategy.evaluate(context(List.of(), null), config());
 
         assertEquals(TradingAction.HOLD, decision.getAction());
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {-60_000, 1, 60_000, 120_000})
+    void rejectsStaleMisalignedOrNotYetClosedPricesForEntryAndExit(long shiftMillis) {
+        var rows = candles("110", "100", "3000");
+        rows.forEach(row -> row.setTs(Long.toString(Long.parseLong(row.getTs()) + shiftMillis)));
+        assertEquals(TradingAction.HOLD, strategy.evaluate(context(rows, null), config()).getAction());
+
+        rows.getFirst().setClose("80");
+        var state = new TradingState().setTrackedBaseAmount(BigDecimal.ONE).setAverageCost(new BigDecimal("100"));
+        assertEquals(TradingAction.HOLD, strategy.evaluate(context(rows, state), config()).getAction());
+    }
+
+    @Test
+    void missingBarsInvalidateOnlyTheWindowsThatCrossTheGap() {
+        var rows = candles("110", "100", "3000");
+        rows.remove(12);
+        assertEquals(TradingAction.HOLD, strategy.evaluate(context(rows, null), config()).getAction());
+
+        var state = new TradingState().setTrackedBaseAmount(BigDecimal.ONE).setAverageCost(new BigDecimal("100"));
+        rows.getFirst().setClose("97");
+        assertEquals(TradingAction.SELL, strategy.evaluate(context(rows, state), config()).getAction());
+        rows.remove(2);
+        assertEquals(TradingAction.HOLD, strategy.evaluate(context(rows, state), config()).getAction());
+        rows.getFirst().setClose("89");
+        assertEquals(TradingAction.SELL, strategy.evaluate(context(rows, state), config()).getAction());
+    }
+
+    @Test
+    void conflictingClosesForLatestTimestampCannotTriggerAStop() {
+        var rows = candles("89", "100", "100");
+        rows.get(1).setTs(rows.getFirst().getTs());
+        var state = new TradingState().setTrackedBaseAmount(BigDecimal.ONE).setAverageCost(new BigDecimal("100"));
+        assertEquals(TradingAction.HOLD, strategy.evaluate(context(rows, state), config()).getAction());
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"invalid", "-100"})
+    void missingOrInvalidHistoricalVolumeCannotManufactureABuy(String invalidVolume) {
+        var rows = candles("110", "100", "295");
+        rows.get(10).setVolCcyQuote(invalidVolume);
+        var decision = strategy.evaluate(context(rows, null), config());
+        assertEquals(TradingAction.HOLD, decision.getAction());
+        assertFalse(decision.getMetadata().containsKey("volumeSpikeRatio"));
+    }
+
+    @Test
+    void volumeRatioUsesOneAvailableUnitForTheWholeWindowAndPreservesGenuineZero() {
+        var rows = candles("110", "100", "3000");
+        rows.forEach(row -> row.setVolCcy("100"));
+        rows.getFirst().setVolCcy("200");
+        rows.get(10).setVolCcyQuote(null);
+        var decision = strategy.evaluate(context(rows, null), config());
+        assertEquals(TradingAction.HOLD, decision.getAction());
+        assertEquals(0, new BigDecimal("2").compareTo((BigDecimal) decision.getMetadata().get("volumeSpikeRatio")));
+
+        rows.getFirst().setVolCcy("300");
+        assertEquals(TradingAction.BUY, strategy.evaluate(context(rows, null), config()).getAction());
+        rows.get(10).setVolCcyQuote("100");
+        rows.getFirst().setVolCcyQuote("0");
+        decision = strategy.evaluate(context(rows, null), config());
+        assertEquals(TradingAction.HOLD, decision.getAction());
+        assertEquals(0, ((BigDecimal) decision.getMetadata().get("volumeSpikeRatio")).signum());
+    }
+
+    @Test
+    void formingBarCanGenerateASignalWhenUnconfirmedCandlesAreEnabled() {
+        var rows = candles("100", "100", "100");
+        var forming = candle("110", "3000");
+        forming.setTs(Long.toString(BAR_OPEN.toEpochMilli()));
+        forming.setConfirm("0");
+        rows.addFirst(forming);
+        assertEquals(TradingAction.HOLD, strategy.evaluate(context(rows, null), config()).getAction());
+        assertEquals(TradingAction.BUY, strategy.evaluate(context(rows, null),
+                config().setRequireConfirmedCandle(false)).getAction());
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {1, 5, 15})
+    void readsOnlyTheConfiguredLookbackAtTheHistoricalBarClose(int minutes) {
+        var rows = candles("110", "100", "3000");
+        for (int i = 0; i < rows.size(); i++) {
+            rows.get(i).setTs(Long.toString(BAR_OPEN.toEpochMilli() - (i + 1L) * minutes * MINUTE));
+        }
+        List<CandleResp> history = new AbstractList<>() {
+            @Override public CandleResp get(int index) {
+                if (index > 21) throw new AssertionError("Read past the 21-bar signal window and its boundary");
+                return rows.get(index);
+            }
+            @Override public int size() { return 50_000; }
+        };
+        var context = context(history, null).setBar(minutes + "m").setEvaluatedAt(BAR_OPEN);
+        context.getMarketContext().setFiveMinuteCandles(history).setFifteenMinuteCandles(history);
+        assertEquals(TradingAction.BUY, strategy.evaluate(context, config()).getAction());
     }
 
     private static StrategyEvaluationContext context(List<CandleResp> candles, TradingState state) {
@@ -127,6 +229,7 @@ class ThresholdEventStrategyTest {
         return new StrategyEvaluationContext()
                 .setStrategyId("threshold")
                 .setBar("1m")
+                .setEvaluatedAt(BAR_OPEN.plusSeconds(30))
                 .setProperties(new TradingProperties())
                 .setMarketContext(decisionContext);
     }
@@ -149,12 +252,14 @@ class ThresholdEventStrategyTest {
         for (int i = 0; i < 20; i++) {
             candles.add(candle(baseClose, "100"));
         }
+        for (int i = 0; i < candles.size(); i++) {
+            candles.get(i).setTs(Long.toString(BAR_OPEN.toEpochMilli() - (i + 1L) * MINUTE));
+        }
         return candles;
     }
 
     private static CandleResp candle(String close, String quoteVolume) {
         CandleResp candle = new CandleResp();
-        candle.setTs("1");
         candle.setOpen(close);
         candle.setHigh(close);
         candle.setLow(close);

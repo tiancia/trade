@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 /** Price/volume entry and position-loss exit rules, independent of transport and configuration. */
 public final class ThresholdDecisionPolicy {
@@ -41,8 +42,7 @@ public final class ThresholdDecisionPolicy {
     }
 
     public StrategyDecision evaluate(Facts context, Settings config) {
-        Settings normalized = config;
-        List<Candle> candles = usableCandles(context.getCandles(), normalized.isRequireConfirmedCandle());
+        List<Candle> candles = usableCandles(context.getCandles(), config.isRequireConfirmedCandle());
         if (candles.isEmpty()) {
             return StrategyDecision.hold(context.getStrategyId(), "No usable candles available");
         }
@@ -53,25 +53,33 @@ public final class ThresholdDecisionPolicy {
         }
 
         Map<String, Object> metadata = new LinkedHashMap<>();
-        PriceMove priceMove = priceMove(candles, normalized.getPriceMoveWindowCandles());
-        VolumeSpike volumeSpike = volumeSpike(candles, normalized.getVolumeLookbackCandles());
-        FloatingLoss floatingLoss = floatingLoss(candles.getFirst(), context.getTradingState(), normalized);
+        BigDecimal change = priceMove(candles, config.getPriceMoveWindowCandles());
+        BigDecimal volumeRatio = volumeRatio(candles, config.getVolumeLookbackCandles());
+        TradingState state = context.getTradingState();
+        BigDecimal positionReturn = state != null && state.hasTrackedPosition()
+                ? TradingMath.percentChange(candles.getFirst().close(), state.getAverageCost()) : null;
         metadata.put("bar", context.getBar());
-        metadata.put("priceMovePercent", priceMove.changePercent());
-        metadata.put("priceMoveThresholdPercent", normalized.getPriceMoveTriggerPercent());
-        metadata.put("volumeSpikeRatio", volumeSpike.ratio());
-        metadata.put("volumeSpikeThresholdMultiplier", normalized.getVolumeSpikeMultiplier());
-        metadata.put("floatingLossPercent", floatingLoss.pnlPercent());
-        metadata.put("floatingLossThresholdPercent", normalized.getFloatingLossTriggerPercent());
+        metadata.put("priceMoveThresholdPercent", config.getPriceMoveTriggerPercent());
+        metadata.put("volumeSpikeThresholdMultiplier", config.getVolumeSpikeMultiplier());
+        metadata.put("floatingLossThresholdPercent", config.getFloatingLossTriggerPercent());
+        if (change != null) metadata.put("priceMovePercent", change);
+        if (volumeRatio != null) metadata.put("volumeSpikeRatio", volumeRatio);
+        if (positionReturn != null) metadata.put("floatingLossPercent", positionReturn);
 
-        if (hasPosition(context) && shouldExit(priceMove, floatingLoss, normalized)) {
-            return exitDecision(context, normalized, metadata, exitReason(priceMove, floatingLoss, normalized));
+        if (positionReturn != null && positionReturn.compareTo(config.getFloatingLossTriggerPercent().negate()) <= 0) {
+            return exitDecision(context, config, metadata, "Tracked position floating loss threshold reached");
         }
-
-        if (shouldEnter(priceMove, volumeSpike, normalized)) {
-            return enterDecision(context, normalized, metadata);
+        if (change != null && hasPosition(context) && change.compareTo(config.getPriceMoveTriggerPercent().negate()) <= 0) {
+            return exitDecision(context, config, metadata, "Reverse price move threshold reached");
         }
-
+        if (change == null || volumeRatio == null) {
+            return StrategyDecision.hold(context.getStrategyId(), "Insufficient valid price or volume history for threshold entry")
+                    .setMetadata(metadata);
+        }
+        if (change.compareTo(config.getPriceMoveTriggerPercent()) >= 0
+                && volumeRatio.compareTo(config.getVolumeSpikeMultiplier()) >= 0) {
+            return enterDecision(context, config, metadata);
+        }
         return StrategyDecision.hold(context.getStrategyId(), "Threshold conditions not met")
                 .setMetadata(metadata);
     }
@@ -111,84 +119,46 @@ public final class ThresholdDecisionPolicy {
         return decision.setMetadata(metadata);
     }
 
-    private static boolean shouldEnter(
-            PriceMove priceMove,
-            VolumeSpike volumeSpike,
-            Settings config
-    ) {
-        return priceMove.changePercent().compareTo(config.getPriceMoveTriggerPercent()) >= 0
-                && volumeSpike.ratio().compareTo(config.getVolumeSpikeMultiplier()) >= 0;
-    }
-
-    private static boolean shouldExit(
-            PriceMove priceMove,
-            FloatingLoss floatingLoss,
-            Settings config
-    ) {
-        BigDecimal reverseThreshold = config.getPriceMoveTriggerPercent().negate();
-        BigDecimal lossThreshold = config.getFloatingLossTriggerPercent().negate();
-        return priceMove.changePercent().compareTo(reverseThreshold) <= 0
-                || floatingLoss.pnlPercent().compareTo(lossThreshold) <= 0;
-    }
-
-    private static String exitReason(
-            PriceMove priceMove,
-            FloatingLoss floatingLoss,
-            Settings config
-    ) {
-        if (floatingLoss.pnlPercent().compareTo(config.getFloatingLossTriggerPercent().negate()) <= 0) {
-            return "Tracked position floating loss threshold reached";
-        }
-        return "Reverse price move threshold reached";
-    }
-
-    private static PriceMove priceMove(List<Candle> confirmed, int windowCandles) {
+    private static BigDecimal priceMove(List<Candle> confirmed, int windowCandles) {
         int window = Math.max(windowCandles, 2);
         if (confirmed.size() < window) {
-            return new PriceMove(BigDecimal.ZERO);
+            return null;
         }
         // Do not infer a move across a broken window. A verified latest-price
         // loss exit remains available independently of historical comparisons.
         if (confirmed.subList(0, window).stream().anyMatch(candle -> !hasValidClose(candle))) {
-            return new PriceMove(BigDecimal.ZERO);
+            return null;
         }
         BigDecimal current = confirmed.getFirst().close();
         BigDecimal base = confirmed.get(window - 1).close();
-        return new PriceMove(TradingMath.percentChange(current, base));
+        return TradingMath.percentChange(current, base);
     }
 
     private static boolean hasValidClose(Candle candle) {
         return candle.close() != null && candle.close().signum() > 0;
     }
 
-    private static VolumeSpike volumeSpike(List<Candle> confirmed, int lookbackCandles) {
+    private static BigDecimal volumeRatio(List<Candle> candles, int lookbackCandles) {
         int lookback = Math.max(lookbackCandles, 1);
-        if (confirmed.size() < lookback + 1) {
-            return new VolumeSpike(BigDecimal.ZERO);
-        }
-
-        BigDecimal latestVolume = quoteVolume(confirmed.getFirst());
+        if (candles.size() <= lookback) return null;
+        List<Candle> window = candles.subList(0, lookback + 1);
+        // Both sides of a ratio must use the same volume field, including when only fallback data is available.
+        Function<Candle, BigDecimal> field = window.stream().allMatch(c -> validVolume(c.quoteVolume()))
+                ? Candle::quoteVolume : Candle::volume;
+        BigDecimal latestVolume = field.apply(window.getFirst());
+        if (!validVolume(latestVolume)) return null;
         BigDecimal previousSum = BigDecimal.ZERO;
         for (int i = 1; i <= lookback; i++) {
-            previousSum = previousSum.add(quoteVolume(confirmed.get(i)));
+            BigDecimal volume = field.apply(window.get(i));
+            if (!validVolume(volume)) return null;
+            previousSum = previousSum.add(volume);
         }
-        BigDecimal average = previousSum.divide(new BigDecimal(lookback), 10, RoundingMode.HALF_UP);
-        if (average.signum() <= 0) {
-            return new VolumeSpike(BigDecimal.ZERO);
-        }
-        return new VolumeSpike(latestVolume.divide(average, 10, RoundingMode.HALF_UP));
+        return previousSum.signum() == 0 ? null
+                : latestVolume.multiply(BigDecimal.valueOf(lookback)).divide(previousSum, 10, RoundingMode.HALF_UP);
     }
 
-    private static FloatingLoss floatingLoss(
-            Candle latestConfirmed,
-            TradingState tradingState,
-            Settings config
-    ) {
-        if (tradingState == null || !tradingState.hasTrackedPosition()) {
-            return new FloatingLoss(BigDecimal.ZERO);
-        }
-        BigDecimal latestClose = latestConfirmed.close();
-        return new FloatingLoss(TradingMath.percentChange(latestClose, tradingState.getAverageCost()));
+    private static boolean validVolume(BigDecimal volume) {
+        return volume != null && volume.signum() >= 0;
     }
 
     private static List<Candle> usableCandles(List<Candle> candles, boolean requireConfirmed) {
@@ -202,14 +172,6 @@ public final class ThresholdDecisionPolicy {
             }
         }
         return result;
-    }
-
-    private static BigDecimal quoteVolume(Candle candle) {
-        BigDecimal quoteVolume = candle == null ? BigDecimal.ZERO : candle.quoteVolume();
-        if (quoteVolume.signum() > 0) {
-            return quoteVolume;
-        }
-        return candle == null ? BigDecimal.ZERO : candle.volume();
     }
 
     private static boolean hasPosition(Facts context) {
@@ -230,12 +192,4 @@ public final class ThresholdDecisionPolicy {
         return first != null && first.signum() > 0 ? first : fallback == null ? BigDecimal.ZERO : fallback;
     }
 
-    private record PriceMove(BigDecimal changePercent) {
-    }
-
-    private record VolumeSpike(BigDecimal ratio) {
-    }
-
-    private record FloatingLoss(BigDecimal pnlPercent) {
-    }
 }

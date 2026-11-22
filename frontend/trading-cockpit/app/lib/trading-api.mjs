@@ -208,6 +208,9 @@ export function decisionIndicatorEntries(metadata) {
   if (!metadata || typeof metadata !== "object") return [];
   /** @type {[string, string, boolean?][]} */
   const fields = [
+    ["priceMovePercent", "窗口涨跌幅", true], ["priceMoveThresholdPercent", "涨跌幅门槛", true],
+    ["volumeSpikeRatio", "成交量倍数"], ["volumeSpikeThresholdMultiplier", "放量门槛（倍）"],
+    ["floatingLossPercent", "持仓浮动盈亏率", true], ["floatingLossThresholdPercent", "浮亏退出幅度", true],
     ["close", "信号收盘价"], ["emaFast", "快 EMA"], ["emaSlow", "慢 EMA"],
     ["rsi", "RSI 分数"], ["atr", "ATR"], ["atrPercent", "ATR / 收盘价", true],
     ["adx", "ADX 分数"], ["bollingerMiddle", "布林中轨"], ["bollingerUpper", "布林上轨"],

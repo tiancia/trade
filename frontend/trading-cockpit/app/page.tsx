@@ -635,6 +635,7 @@ export default function Home() {
   const eventLoop = task?.loops.find((loop) => loop.id === "event-scan");
   const queueUtilization = Math.min(100, (snapshot.events.queueDepth / Math.max(1, snapshot.events.queueCapacity)) * 100);
   const decision = snapshot.runtime.lastDecision;
+  const decisionIndicators = decisionIndicatorEntries(decision?.metadata);
   const chart = useMemo(() => {
     const items = market.candles.slice(-48).map((candle) => ({
       candle,
@@ -941,7 +942,14 @@ export default function Home() {
                   <div><span>执行结果</span><strong className="muted-value">{decision?.executionStatus ?? "—"}</strong></div>
                 </div>
                 <div className="reasoning"><BrainCircuit size={17} /><p>{decision?.reason ?? "等待首次策略决策。"}</p></div>
-                {decisionIndicatorEntries(decision?.metadata).length > 0 && <details className="backtest-parameters"><summary>已收盘 K 线技术指标</summary><div className="decision-stats" aria-label="决策技术指标">{decisionIndicatorEntries(decision?.metadata).map((entry) => <div key={entry.key}><span>{entry.label}</span><strong>{entry.value}</strong></div>)}</div></details>}
+                {decisionIndicators.length > 0 && (
+                  <details className="backtest-parameters">
+                    <summary>本次决策指标</summary>
+                    <div className="decision-stats" aria-label="决策技术指标">
+                      {decisionIndicators.map((entry) => <div key={entry.key}><span>{entry.label}</span><strong>{entry.value}</strong></div>)}
+                    </div>
+                  </details>
+                )}
                 <button className="text-button" onClick={() => navigate("strategies")}>查看决策上下文 <ChevronRight size={14} /></button>
               </section>
             </div>

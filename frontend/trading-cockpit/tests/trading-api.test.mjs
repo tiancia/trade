@@ -737,6 +737,19 @@ test("recorded technical indicators distinguish score units and fractional perce
   assert.deepEqual(decisionIndicatorEntries({}), []);
 });
 
+test("threshold decisions show recorded values beside their configured thresholds", () => {
+  const entries = decisionIndicatorEntries({
+    priceMovePercent: "0.021", priceMoveThresholdPercent: "0.02",
+    volumeSpikeRatio: "3.1", volumeSpikeThresholdMultiplier: "3",
+    floatingLossPercent: "-0.06", floatingLossThresholdPercent: "0.10",
+  });
+  assert.deepEqual(Object.fromEntries(entries.map(({ key, value }) => [key, value])), {
+    priceMovePercent: "2.10%", priceMoveThresholdPercent: "2.00%",
+    volumeSpikeRatio: "3.1", volumeSpikeThresholdMultiplier: "3",
+    floatingLossPercent: "-6.00%", floatingLossThresholdPercent: "10.00%",
+  });
+});
+
 test("new simulation sessions require valid funds and a concurrency revision", () => {
   assert.deepEqual(buildPaperSessionPayload({ initialCash: "25000.50", expectedSessionId: "trial-1", expectedVersion: 3 }), { initialCash: "25000.50", expectedSessionId: "trial-1", expectedVersion: 3 });
   assert.deepEqual(buildPaperSessionPayload({ initialCash: 100, expectedSessionId: null, expectedVersion: null }), { initialCash: "100", expectedSessionId: null, expectedVersion: null });

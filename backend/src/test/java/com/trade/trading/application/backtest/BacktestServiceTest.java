@@ -5,6 +5,7 @@ import com.trade.trading.application.strategy.StrategyConfig;
 import com.trade.trading.application.strategy.IntradayTechnicalStrategy;
 import com.trade.trading.application.strategy.IntradayTechnicalStrategyConfig;
 import com.trade.trading.application.strategy.StrategyEvaluationContext;
+import com.trade.trading.application.strategy.ThresholdEventStrategy;
 import com.trade.trading.application.strategy.TradingStrategy;
 import com.trade.trading.application.strategy.TradingStrategyRegistry;
 import com.trade.trading.domain.backtest.BacktestRequest;
@@ -41,6 +42,30 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class BacktestServiceTest {
+    @Test
+    void thresholdStrategyUsesHistoricalCloseAndFillsAtTheFollowingOpen() {
+        var request = request().setForceCloseAtEnd(false);
+        var strategy = new ThresholdEventStrategy();
+        var properties = properties(strategy.type());
+        properties.getStrategies().getFirst().setParams(Map.of("price-move-window-candles", 2, "volume-lookback-candles", 1));
+        var signal = candle("2026-05-17T00:01:00Z", "100", "105", "1");
+        signal.setVolCcyQuote("300");
+        HistoricalCandleSource source = (inst, bar, from, to, limit) -> List.of(
+                candle("2026-05-17T00:00:00Z", "100", "100", "1"), signal,
+                candle("2026-05-17T00:02:00Z", "106", "106", "1"));
+        var service = new BacktestService(source, new TradingStrategyRegistry(List.of(strategy), properties), properties, Runnable::run);
+
+        var run = service.start(request);
+
+        assertEquals(BacktestStatus.SUCCEEDED, run.getStatus(), run.getError());
+        assertEquals(1, run.getTradeCount());
+        var trade = run.getTrades().getFirst();
+        assertEquals(TradingAction.BUY, trade.action());
+        assertEquals(FillPriceSource.OPEN, trade.fillPriceSource());
+        assertEquals(Instant.parse("2026-05-17T00:02:00Z"), trade.timestamp());
+        assertEquals(0, new BigDecimal("106").compareTo(trade.price()));
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"drawdown", "daily-loss"})
     void holdSamplesPeakAndNewRiskDayWithoutBlockingTheLaterExit(String guard) {
