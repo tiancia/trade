@@ -1,16 +1,12 @@
 package com.trade.marketplace.application.service;
 
-import com.trade.marketplace.domain.rule.MarketplaceAccountRules;
-import com.trade.marketplace.domain.exception.MarketplaceConflictException;
 import com.trade.marketplace.domain.exception.MarketplaceUnauthorizedException;
 import com.trade.marketplace.domain.model.MarketplaceApi;
 import com.trade.marketplace.domain.model.MarketplacePrincipal;
+import com.trade.marketplace.domain.rule.MarketplaceAccountRules;
 import com.trade.marketplace.infrastructure.config.MarketplaceProperties;
-import com.trade.marketplace.infrastructure.persistence.MarketplaceMapper;
-import com.trade.marketplace.infrastructure.persistence.MarketplaceSessionRow;
-import com.trade.marketplace.infrastructure.persistence.MarketplaceUserRow;
+import com.trade.marketplace.port.MarketplaceAccountStore;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,7 +14,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
-import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -36,27 +31,27 @@ public class MarketplaceAuthService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
-    private final MarketplaceMapper mapper;
+    private final MarketplaceAccountStore accounts;
     private final PasswordEncoder passwordEncoder;
     private final MarketplaceProperties properties;
     private final Clock clock;
 
     @Autowired
     public MarketplaceAuthService(
-            MarketplaceMapper mapper,
+            MarketplaceAccountStore accounts,
             PasswordEncoder passwordEncoder,
             MarketplaceProperties properties
     ) {
-        this(mapper, passwordEncoder, properties, Clock.systemUTC());
+        this(accounts, passwordEncoder, properties, Clock.systemUTC());
     }
 
     public MarketplaceAuthService(
-            MarketplaceMapper mapper,
+            MarketplaceAccountStore accounts,
             PasswordEncoder passwordEncoder,
             MarketplaceProperties properties,
             Clock clock
     ) {
-        this.mapper = mapper;
+        this.accounts = accounts;
         this.passwordEncoder = passwordEncoder;
         this.properties = properties;
         this.clock = clock == null ? Clock.systemUTC() : clock;
@@ -67,16 +62,7 @@ public class MarketplaceAuthService {
         String username = MarketplaceAccountRules.cleanUsername(request == null ? null : request.username());
         String password = MarketplaceAccountRules.requiredPassword(request == null ? null : request.password());
         String displayName = MarketplaceAccountRules.cleanDisplayName(request == null ? null : request.displayName(), username);
-        MarketplaceUserRow row = new MarketplaceUserRow()
-                .setUsername(username)
-                .setPasswordHash(passwordEncoder.encode(password))
-                .setDisplayName(displayName);
-        try {
-            mapper.insertUser(row);
-        } catch (DuplicateKeyException e) {
-            throw new MarketplaceConflictException("username is already registered");
-        }
-        return issueSession(row);
+        return issueSession(accounts.createUser(username, passwordEncoder.encode(password), displayName));
     }
 
     @Transactional
@@ -89,21 +75,20 @@ public class MarketplaceAuthService {
         } catch (IllegalArgumentException invalidPassword) {
             throw new MarketplaceUnauthorizedException("username or password is invalid");
         }
-        MarketplaceUserRow row = mapper.findUserByUsername(username);
-        if (row == null || !passwordEncoder.matches(password, row.getPasswordHash())) {
-            throw new MarketplaceUnauthorizedException("username or password is invalid");
-        }
-        return issueSession(row);
+        MarketplaceAccountStore.Credentials credentials = accounts.findCredentials(username)
+                .filter(stored -> passwordEncoder.matches(password, stored.passwordHash()))
+                .orElseThrow(() -> new MarketplaceUnauthorizedException("username or password is invalid"));
+        return issueSession(credentials.principal());
     }
 
     @Transactional
     public void logout(String authorization) {
         String token = bearerToken(authorization, true);
-        mapper.revokeSession(hashToken(token), Timestamp.from(Instant.now(clock)));
+        accounts.revokeSession(hashToken(token), Instant.now(clock));
     }
 
     public MarketplaceApi.User me(String authorization) {
-        return MarketplaceViews.user(requireUser(authorization));
+        return requireUser(authorization).toUser();
     }
 
     public MarketplacePrincipal optionalUser(String authorization) {
@@ -117,37 +102,30 @@ public class MarketplaceAuthService {
         return requireToken(bearerToken(authorization, true));
     }
 
-    private MarketplaceApi.AuthResponse issueSession(MarketplaceUserRow user) {
+    private MarketplaceApi.AuthResponse issueSession(MarketplacePrincipal user) {
         Instant now = Instant.now(clock);
         Instant expiresAt = now.plus(Math.max(1, properties.getSessionRetentionDays()), ChronoUnit.DAYS);
         String token = newToken();
-        mapper.insertSession(new MarketplaceSessionRow()
-                .setTokenHash(hashToken(token))
-                .setUserId(user.getId())
-                .setExpiresAt(Timestamp.from(expiresAt))
-                .setLastSeenAt(Timestamp.from(now)));
-        return new MarketplaceApi.AuthResponse(token, MarketplaceViews.user(user), expiresAt);
+        accounts.issueSession(hashToken(token), user.id(), expiresAt, now);
+        return new MarketplaceApi.AuthResponse(token, user.toUser(), expiresAt);
     }
 
     private MarketplacePrincipal requireToken(String token) {
         Instant now = Instant.now(clock);
         String hash = hashToken(token);
-        MarketplaceSessionRow session = mapper.findSessionByTokenHash(hash);
-        if (session == null || session.getRevokedAt() != null || !now.isBefore(session.getExpiresAt().toInstant())) {
-            throw new MarketplaceUnauthorizedException("marketplace session is invalid or expired");
-        }
-        MarketplaceUserRow user = mapper.findUserById(session.getUserId());
-        if (user == null) {
-            throw new MarketplaceUnauthorizedException("marketplace session user no longer exists");
-        }
+        MarketplaceAccountStore.Session session = accounts.findSession(hash)
+                .filter(stored -> stored.revokedAt() == null && now.isBefore(stored.expiresAt()))
+                .orElseThrow(() -> new MarketplaceUnauthorizedException("marketplace session is invalid or expired"));
+        MarketplacePrincipal user = accounts.findPrincipal(session.userId())
+                .orElseThrow(() -> new MarketplaceUnauthorizedException("marketplace session user no longer exists"));
         Instant touchBefore = now.minus(
                 Math.max(1, properties.getSessionTouchIntervalMinutes()),
                 ChronoUnit.MINUTES
         );
-        if (session.getLastSeenAt() == null || session.getLastSeenAt().toInstant().isBefore(touchBefore)) {
-            mapper.touchSession(hash, Timestamp.from(now));
+        if (session.lastSeenAt() == null || session.lastSeenAt().isBefore(touchBefore)) {
+            accounts.touchSession(hash, now);
         }
-        return new MarketplacePrincipal(user.getId(), user.getUsername(), user.getDisplayName());
+        return user;
     }
 
     private static String bearerToken(String authorization, boolean required) {

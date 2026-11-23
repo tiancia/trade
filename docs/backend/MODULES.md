@@ -131,11 +131,11 @@ Polymarket LIVE 决策在开始采集和 AI 调用前必须创建持久化审计
 
 ### textgame 与 marketplace
 
-这两个 HTTP 业务域使用 `interfaces/web`、`application/service`、`domain/model`、`domain/exception`、`infrastructure/persistence` 和 `infrastructure/config`。文字游戏的纯规则额外放在 `domain/rule`；集市的 OSS 实现放在 `infrastructure/oss`，契约放在 `port`。文字游戏会话用例通过 `port/TextGameSessionStore` 访问持久化；管理用例和集市部分 application service 仍直接依赖 Mapper 或 Row，后续随具体需求渐进收敛。
+两个模块的 HTTP 入口均在 `interfaces/web`，用例和事务在 `application/service`，业务规则和异常分别在 `domain/rule` 与 `domain/exception`。
 
-文字游戏和集市的共享业务异常均位于各自的 `domain/exception`。集市商品和会话规则在 `domain/rule`，应用服务仍负责查询与事务；`MarketplaceViews` 保留为 `application/service` 内部的 Row 转换助手。文字游戏规则的 Spring 装配位于 `TextGameConfiguration`，规则类不依赖 Spring。
+文字游戏通过 `port/TextGameSessionStore` 读写会话。`GameSession` 调用 `SessionProgression` 推进剧情，`MyBatisTextGameSessionStore` 转换 Row 和旧存档 JSON，`TextGameSessionViews` 组装响应。会话更新与事件写入使用同一事务。`StoryPublicationPolicy` 判断发布条件，`TextGameConfiguration` 装配规则。剧情管理和种子导入仍直接使用 Mapper。
 
-`GameSession` 承载类型化会话状态并调用 `SessionProgression` 进行选择和阶段推进；`MyBatisTextGameSessionStore` 隔离 Row 与旧存档 JSON，`TextGameSessionViews` 负责响应视图，会话更新与事件写入仍在应用事务中。`StoryPublicationPolicy` 负责发布条件；账号和图片元数据规则分别由 `MarketplaceAccountRules` 和 `MarketplaceImageRules` 承担。OSS 单对象授权策略的 JSON 和签名属于 `infrastructure/oss`。
+集市用例按职责使用 `MarketplaceAccountStore`、`MarketplaceItemStore` 和 `MarketplaceConversationStore`。三个接口都在 `marketplace/port`，MyBatis 实现与联表视图转换在 `infrastructure/persistence`。首次联系卖家使用读已提交隔离级别，使并发创建时遇到唯一键冲突的请求能读到同一个会话。`MarketplaceAccountRules` 和 `MarketplaceImageRules` 分别校验账号与图片元数据，OSS 单对象上传授权和签名由 `infrastructure/oss` 实现。
 
 ### weibo
 

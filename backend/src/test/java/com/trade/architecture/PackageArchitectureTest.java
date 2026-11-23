@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -78,8 +79,15 @@ class PackageArchitectureTest {
     }
 
     @Test
-    void topLevelModulesDocumentTheirOwnership() {
+    void topLevelModulesAreClassifiedAndDocumentTheirOwnership() throws IOException {
         Path tradeRoot = mainJava.resolve("com/trade");
+        Set<String> sourceModules = javaSources(tradeRoot).stream()
+                .map(tradeRoot::relativize)
+                .filter(path -> path.getNameCount() > 1)
+                .map(path -> path.getName(0).toString())
+                .collect(Collectors.toSet());
+        assertEquals(Set.copyOf(DOCUMENTED_TOP_LEVEL_PACKAGES), sourceModules,
+                "classify every top-level source package so its dependency rules run");
         for (String topLevelPackage : DOCUMENTED_TOP_LEVEL_PACKAGES) {
             Path packageInfo = tradeRoot.resolve(topLevelPackage).resolve("package-info.java");
             assertTrue(
@@ -305,6 +313,20 @@ class PackageArchitectureTest {
                 assertFalse(restore.matcher(text).find(), () -> "use named domain operations, not rehydration: " + source);
                 assertFalse(text.contains("import static com.trade.trading.domain.order.TradingOrder.restore")
                         || text.contains("import static com.trade.trading.domain.model.TradingPositionState.restore"));
+            }
+        }
+    }
+
+    @Test
+    void marketplaceUseCasesAndPortsDoNotDependOnPersistence() throws IOException {
+        Path marketplace = mainJava.resolve("com/trade/marketplace");
+        Pattern persistenceImport = Pattern.compile("(?m)^\\s*import\\s+(?:static\\s+)?(?:"
+                + "com\\.trade\\.marketplace\\.infrastructure\\.persistence|org\\.apache\\.ibatis|"
+                + "org\\.mybatis|org\\.springframework\\.(?:dao|jdbc)|java\\.sql)\\.");
+        for (String layer : List.of("application", "port")) {
+            for (Path source : javaSources(marketplace.resolve(layer))) {
+                assertFalse(persistenceImport.matcher(Files.readString(source)).find(),
+                        () -> "marketplace persistence belongs behind a store: " + source);
             }
         }
     }

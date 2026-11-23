@@ -1,12 +1,6 @@
-package com.trade.marketplace.application.service;
+package com.trade.marketplace.infrastructure.persistence;
 
 import com.trade.marketplace.domain.model.MarketplaceApi;
-import com.trade.marketplace.domain.model.MarketplacePrincipal;
-import com.trade.marketplace.infrastructure.persistence.MarketplaceCategoryRow;
-import com.trade.marketplace.infrastructure.persistence.MarketplaceConversationRow;
-import com.trade.marketplace.infrastructure.persistence.MarketplaceItemRow;
-import com.trade.marketplace.infrastructure.persistence.MarketplaceMessageRow;
-import com.trade.marketplace.infrastructure.persistence.MarketplaceUserRow;
 
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -15,15 +9,7 @@ final class MarketplaceViews {
     private MarketplaceViews() {
     }
 
-    static MarketplaceApi.User user(MarketplaceUserRow row) {
-        return new MarketplaceApi.User(row.getId(), row.getUsername(), row.getDisplayName());
-    }
-
-    static MarketplaceApi.User user(MarketplacePrincipal principal) {
-        return new MarketplaceApi.User(principal.id(), principal.username(), principal.displayName());
-    }
-
-    static MarketplaceApi.User user(Long id, String username, String displayName) {
+    private static MarketplaceApi.User user(Long id, String username, String displayName) {
         if (id == null) {
             return null;
         }
@@ -102,7 +88,7 @@ final class MarketplaceViews {
         );
     }
 
-    private static Instant instant(Timestamp timestamp) {
+    static Instant instant(Timestamp timestamp) {
         return timestamp == null ? null : timestamp.toInstant();
     }
 }

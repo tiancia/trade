@@ -31,7 +31,7 @@
 | X 控制台 | 查看草稿、审核与发布状态 | [x-console](../frontend/x-console/README.md) |
 | 功能控制台 | 管理各模块开关、查看任务状态 | [control-console](../frontend/control-console/README.md) |
 | 文字游戏 | 剧情选择和会话 | [text-game](../frontend/text-game/package.json) |
-| 二手集市 | 商品、图片和会话 | [market](../frontend/market/package.json) |
+| 二手集市 | 账号、商品浏览与发布、买卖双方聊天 | [页面入口](../frontend/market/src/MarketplaceApp.tsx) · [运行命令](../frontend/market/package.json) |
 
 ## 维护规则
 

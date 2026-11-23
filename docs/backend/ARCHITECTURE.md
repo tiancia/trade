@@ -59,7 +59,7 @@ automation -> 各业务域的 scheduler / lifecycle 入口
 - `TradingScheduler` 只调用 `TradingTriggerService`。后者编排行情回退、领导权校验、扫描冷却和决策触发；这些是有状态的用例流程。
 - Trading 用例通过 `TradingStateStore`、`TradingMarketSource`、`TradingMarketFeed` 和 `TradingEventPipeline` 使用状态、行情及事件管道。事件状态 HTTP 接口调用 `TradingEventStatusService`。
 - Polymarket 市场期限、成交量、价差及流动性规则位于 `domain/rule`，采集与执行共同使用 `MarketEligibilityPolicy`。
-- 集市商品可见性、卖家权限、价格及图片归属规则，以及会话参与者和消息内容规则位于 `domain/rule`；数据库查询、事务和唯一键冲突处理仍归应用用例。
+- 集市的商品可见性、卖家权限、价格、图片归属和会话参与规则位于 `domain/rule`。应用服务控制事务，通过账号、商品和会话三个存储接口读写数据。MyBatis 实现在 `infrastructure/persistence` 中转换 Row、获取回填主键并处理唯一键冲突。
 - 文字游戏规则保留在 domain，Spring Bean 装配移到 `TextGameConfiguration`。
 
 进一步按实际行为下沉的核心规则：
@@ -78,7 +78,7 @@ automation -> 各业务域的 scheduler / lifecycle 入口
 
 并非所有 if/循环都应下沉：输入缺失、记录查询、外部调用失败、分页、事务/CAS 重试、任务取消、锁和资源释放属于用例或技术处理。Prompt、JSON 别名和格式容错留在 `application/decision`，交易概率/金额等业务约束调用 domain。Weibo OAuth/发布与 automation 主要是外部调用和生命周期编排，不为它们制造空领域服务。
 
-仍保留的技术耦合有明确边界：textgame 的管理用例与 marketplace 的应用服务仍使用 Mapper/Row，部分用例使用配置类和 provider client；`ExchangeOrderGateway` 是 OKX 专用契约，继续使用现有协议 DTO；原始采集上下文 `TradingDecisionContext` 位于 `application/market`，Prompt 与审计信封 `AiDecisionAuditRecord` 位于 `application/decision`。领域规则只接收 `TradingMarketInputs` 转换后的既有 Facts；Polymarket 盘口通过不可变 `MarketDepthLevel` 复制供应商档位，保留 JSON 的 price/size 字符串精度。这些不进入新增纯领域规则，也不代表全仓已达到严格六边形架构。没有为简单 CRUD 新增机械转发仓储，不能把 Row 改名搬进 domain。
+文字游戏的剧情管理和种子导入仍直接使用 Mapper 和 Row。部分用例使用配置类和供应商客户端，`ExchangeOrderGateway` 继续使用 OKX 协议 DTO。原始采集上下文 `TradingDecisionContext` 位于 `application/market`，Prompt 与审计信封 `AiDecisionAuditRecord` 位于 `application/decision`。交易领域规则接收 `TradingMarketInputs` 转换后的 Facts。Polymarket 盘口通过不可变 `MarketDepthLevel` 复制供应商档位，保留 JSON 的 price/size 字符串精度。提取新接口时，用业务输入和返回值表达契约，行映射留在适配器内。
 
 关键类型与用例按以下边界组织：
 
@@ -108,7 +108,7 @@ automation -> 各业务域的 scheduler / lifecycle 入口
 | Prompt、协议解析与格式校验 | `application/decision` | `AiStoryResponseParser` |
 | 供应商 HTTP/WS、签名、协议 DTO | `client/<provider>`，AI 实现归 `client/ai` | `client/okx`、`client/ai/gemini` |
 
-不创建全局 `enums`、`dto`、`service` 或 `utils`。纯数据按业务归属放置，而不是只按 Java 语法分类。`MarketplaceViews` 是依赖 Row 的包级转换助手，留在 `application/service`；HTTP 专用鉴权异常可以留在 `interfaces/web`。
+纯数据按业务归属放置，避免创建全局 `enums`、`dto`、`service` 或 `utils`。`MarketplaceViews` 在 `infrastructure/persistence` 中把联表查询结果转换为商品、会话和消息视图。HTTP 专用鉴权异常归 `interfaces/web`。
 
 ## 4. Trading 的主要调用链
 
@@ -187,7 +187,8 @@ weibo/
 ├─ interfaces/web/           # WeiboController、HTTP 专用鉴权异常
 ├─ application/
 │  ├─ service/               # OAuth、账号查询、发布用例
-│  └─ port/                  # token、OAuth state、草稿存储与审核投递接口
+│  └─ decision/              # AI 草稿生成
+├─ port/                     # token、OAuth state、草稿存储与审核投递接口
 ├─ domain/
 │  ├─ model/                 # 账号、令牌、授权结果、草稿与审核类型
 │  └─ exception/             # 授权与发布失败
@@ -213,7 +214,7 @@ X 的 `application/service/XPostService` 编排配置驱动的 AI 草稿、Teleg
 - 生产代码和测试包路径镜像；移动、删除或重命名类型后清理旧 class，运行相关模块及 `PackageArchitectureTest`，无需因此执行全量。范围与命令见[贡献指南](../../backend/CONTRIBUTING.md#测试与质量门禁)。
 - MyBatis XML 保留 `src/main/resources/mapper/<module>/`，同步更新 namespace/resultType/parameterType。
 - 数据库完整结构按模块保存于 `db/schema/<module>/schema.sql`，仅用于查阅和离线校验；运行时由 `automation/infrastructure/migration` 编排 Flyway 的全库版本迁移，完成后才进入应用就绪及任务启动阶段。`db/upgrade/` 仅保留接入前的历史补丁。详见 [数据库目录](../../backend/src/main/resources/db/README.md)。
-- `PackageArchitectureTest` 检查包与路径、四层入口、业务域隔离、共享模块依赖方向、Web 不引用持久化、内层不依赖接口入口、port 不依赖实现、领域类型不依赖外层，以及 Mapper XML 中类名可解析。
+- `PackageArchitectureTest` 从生产源码识别 `com.trade` 下的一级模块，核对每个模块的分类和职责说明，再按归属检查层与模块之间的依赖方向。它也校验包路径和 Mapper XML 中的 Java 类型。集市的应用服务与存储接口另有依赖检查，防止重新引入 MyBatis、SQL 类型或持久化实现。
 - domain 不允许引用 provider DTO；应用层采集与执行契约可以保留供应商协议，在调用纯规则前转换。结构规则不得通过放宽限制来掩盖错误归层。
 - 新增边界检查禁止 domain 引入 Spring/MyBatis/SQL 框架，禁止 Trading 的 application/interfaces 直接依赖已抽象的四类状态/行情/事件实现。
 - 历史行情也通过 `port/HistoricalCandleSource` 注入回测用例，由 `HistoricalCandleService` 实现；架构测试禁止用例与 HTTP 层直接依赖该实现。实时 Broker 仅路由 PAPER/LIVE，BACKTEST 必须走独立回测 API。

@@ -156,7 +156,7 @@ describe('marketplace app', () => {
     expect(screen.getByLabelText('密码')).toHaveAttribute('maxlength', '72');
   });
 
-  it('publishes an item after uploading through an OSS intent', async () => {
+  it('keeps the publish draft when the sheet closes and uploads its file through an OSS intent', async () => {
     setup({ session: sellerSession, items: [] });
 
     await screen.findByRole('button', { name: /卖家/ });
@@ -165,12 +165,15 @@ describe('marketplace app', () => {
     fireEvent.change(screen.getByLabelText('分类'), { target: { value: '1' } });
     fireEvent.change(screen.getByLabelText('价格'), { target: { value: '199' } });
     fireEvent.change(screen.getByLabelText(/^商品描述/), { target: { value: '青轴，配件齐全' } });
-    fireEvent.change(screen.getByLabelText('选择商品图片'), {
-      target: { files: [new File(['image'], 'keyboard.png', { type: 'image/png' })] },
-    });
+    const image = new File(['image'], 'keyboard.png', { type: 'image/png' });
+    fireEvent.change(screen.getByLabelText('选择商品图片'), { target: { files: [image] } });
+    fireEvent.click(screen.getByRole('button', { name: '关闭弹窗' }));
+    expect(screen.queryByLabelText('商品标题')).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', { name: /发布闲置/ }));
+    expect(screen.getByLabelText('商品标题')).toHaveValue('机械键盘');
     fireEvent.click(screen.getByRole('button', { name: /确认发布/ }));
 
-    await waitFor(() => expect(api.createUploadIntent).toHaveBeenCalled());
+    await waitFor(() => expect(api.createUploadIntent).toHaveBeenCalledWith(sellerSession.token, image));
     expect(api.uploadFileToOss).toHaveBeenCalled();
     expect(api.createItem).toHaveBeenCalledWith('seller-token', expect.objectContaining({
       title: '机械键盘',
@@ -178,6 +181,34 @@ describe('marketplace app', () => {
       price: 199,
     }));
     expect((await screen.findAllByText('机械键盘')).length).toBeGreaterThan(0);
+  });
+
+  it('discards the previous account’s draft and pending upload when the seller logs out', async () => {
+    setup({ session: sellerSession });
+    const upload = deferred<string>();
+    api.uploadFileToOss.mockReturnValueOnce(upload.promise);
+    api.login.mockResolvedValueOnce(buyerSession);
+    const nav = within(await screen.findByRole('navigation', { name: '主导航' }));
+    fireEvent.click(nav.getByRole('button', { name: /发布闲置/ }));
+    fireEvent.change(screen.getByLabelText('商品标题'), { target: { value: '卖家的草稿' } });
+    fireEvent.change(screen.getByLabelText('选择商品图片'), {
+      target: { files: [new File(['image'], 'draft.png', { type: 'image/png' })] },
+    });
+    fireEvent.submit(screen.getByLabelText('商品标题').closest('form')!);
+    await waitFor(() => expect(api.uploadFileToOss).toHaveBeenCalled());
+
+    fireEvent.click(nav.getByRole('button', { name: /卖家/ }));
+    fireEvent.click(screen.getByRole('button', { name: /退出登录/ }));
+    fireEvent.click(await nav.findByRole('button', { name: /^登录$/ }));
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'buyer' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password123' } });
+    fireEvent.submit(screen.getByLabelText('密码').closest('form')!);
+    await nav.findByRole('button', { name: /买家/ });
+    fireEvent.click(nav.getByRole('button', { name: /发布闲置/ }));
+    await act(async () => { upload.resolve('https://cdn.example.com/draft.png'); });
+
+    expect(screen.getByLabelText('商品标题')).toHaveValue('');
+    expect(api.createItem).not.toHaveBeenCalled();
   });
 
   it('filters items by category', async () => {

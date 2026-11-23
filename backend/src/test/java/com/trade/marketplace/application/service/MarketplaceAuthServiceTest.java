@@ -4,6 +4,7 @@ import com.trade.marketplace.application.support.InMemoryMarketplaceMapper;
 import com.trade.marketplace.domain.exception.MarketplaceUnauthorizedException;
 import com.trade.marketplace.domain.model.MarketplaceApi;
 import com.trade.marketplace.infrastructure.config.MarketplaceProperties;
+import com.trade.marketplace.infrastructure.persistence.MyBatisMarketplaceAccountStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
@@ -18,10 +19,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class MarketplaceAuthServiceTest {
     private final InMemoryMarketplaceMapper mapper = new InMemoryMarketplaceMapper();
+    private final MyBatisMarketplaceAccountStore accounts = new MyBatisMarketplaceAccountStore(mapper);
     private final MarketplaceProperties properties = new MarketplaceProperties();
     private final Clock clock = Clock.fixed(Instant.parse("2026-06-19T08:00:00Z"), ZoneOffset.UTC);
     private final MarketplaceAuthService service = new MarketplaceAuthService(
-            mapper,
+            accounts,
             new BCryptPasswordEncoder(),
             properties,
             clock
@@ -75,7 +77,7 @@ class MarketplaceAuthServiceTest {
 
         MarketplaceApi.AuthResponse shortLived = service.login(new MarketplaceApi.LoginRequest("carol", "password-123"));
         for (Instant expiredAt : new Instant[] {shortLived.expiresAt(), shortLived.expiresAt().plusSeconds(1)}) {
-            var expired = new MarketplaceAuthService(mapper, new BCryptPasswordEncoder(), properties,
+            var expired = new MarketplaceAuthService(accounts, new BCryptPasswordEncoder(), properties,
                     Clock.fixed(expiredAt, ZoneOffset.UTC));
             assertThrows(MarketplaceUnauthorizedException.class, () -> expired.me("Bearer " + shortLived.token()));
         }
@@ -92,7 +94,7 @@ class MarketplaceAuthServiceTest {
         assertEquals(0, mapper.getSessionTouchCount());
 
         MarketplaceAuthService afterTouchInterval = new MarketplaceAuthService(
-                mapper,
+                accounts,
                 new BCryptPasswordEncoder(),
                 properties,
                 Clock.fixed(clock.instant().plusSeconds(6 * 60), ZoneOffset.UTC)

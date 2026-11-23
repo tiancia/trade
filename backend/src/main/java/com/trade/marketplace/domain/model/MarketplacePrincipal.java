@@ -7,4 +7,7 @@ package com.trade.marketplace.domain.model;
  * and every other persistence-only field.</p>
  */
 public record MarketplacePrincipal(Long id, String username, String displayName) {
+    public MarketplaceApi.User toUser() {
+        return new MarketplaceApi.User(id, username, displayName);
+    }
 }

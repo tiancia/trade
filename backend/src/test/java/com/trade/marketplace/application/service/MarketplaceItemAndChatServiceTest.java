@@ -7,6 +7,8 @@ import com.trade.marketplace.domain.model.MarketplacePrincipal;
 import com.trade.marketplace.infrastructure.config.MarketplaceProperties;
 import com.trade.marketplace.infrastructure.persistence.MarketplaceCategoryRow;
 import com.trade.marketplace.infrastructure.persistence.MarketplaceUserRow;
+import com.trade.marketplace.infrastructure.persistence.MyBatisMarketplaceConversationStore;
+import com.trade.marketplace.infrastructure.persistence.MyBatisMarketplaceItemStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -17,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class MarketplaceItemAndChatServiceTest {
     private final InMemoryMarketplaceMapper mapper = new InMemoryMarketplaceMapper();
+    private final MyBatisMarketplaceItemStore items = new MyBatisMarketplaceItemStore(mapper);
     private MarketplaceItemService itemService;
     private MarketplaceChatService chatService;
     private MarketplacePrincipal seller;
@@ -32,8 +35,8 @@ class MarketplaceItemAndChatServiceTest {
         seller = user("seller", "Seller");
         buyer = user("buyer", "Buyer");
         outsider = user("outsider", "Outsider");
-        itemService = new MarketplaceItemService(mapper);
-        chatService = new MarketplaceChatService(mapper, itemService);
+        itemService = new MarketplaceItemService(items, new MarketplaceProperties());
+        chatService = new MarketplaceChatService(new MyBatisMarketplaceConversationStore(mapper), items);
     }
 
     @Test
@@ -62,7 +65,7 @@ class MarketplaceItemAndChatServiceTest {
         MarketplaceProperties properties = new MarketplaceProperties();
         properties.getOss().setBucket("images");
         properties.getOss().setRegion("cn-beijing");
-        MarketplaceItemService configured = new MarketplaceItemService(mapper, properties);
+        MarketplaceItemService configured = new MarketplaceItemService(items, properties);
         String base = "https://images.oss-cn-beijing.aliyuncs.com/marketplace/users/";
 
         MarketplaceApi.Item item = configured.createItem(seller, new MarketplaceApi.CreateItemRequest(

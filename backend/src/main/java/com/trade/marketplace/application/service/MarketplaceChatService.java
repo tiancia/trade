@@ -1,79 +1,55 @@
 package com.trade.marketplace.application.service;
 
-import com.trade.marketplace.domain.rule.MarketplaceConversationRules;
-import com.trade.marketplace.domain.exception.MarketplaceNotFoundException;
 import com.trade.marketplace.domain.model.MarketplaceApi;
 import com.trade.marketplace.domain.model.MarketplacePrincipal;
-import com.trade.marketplace.infrastructure.persistence.MarketplaceConversationRow;
-import com.trade.marketplace.infrastructure.persistence.MarketplaceItemRow;
-import com.trade.marketplace.infrastructure.persistence.MarketplaceMapper;
-import com.trade.marketplace.infrastructure.persistence.MarketplaceMessageRow;
+import com.trade.marketplace.domain.rule.MarketplaceConversationRules;
+import com.trade.marketplace.port.MarketplaceConversationStore;
+import com.trade.marketplace.port.MarketplaceItemStore;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.List;
 
 /**
  * Coordinates buyer-seller conversations and enforces participant access.
  */
 @Service
 public class MarketplaceChatService {
-    private final MarketplaceMapper mapper;
-    private final MarketplaceItemService itemService;
+    private final MarketplaceConversationStore conversations;
+    private final MarketplaceItemStore items;
     private final Clock clock;
 
     @Autowired
-    public MarketplaceChatService(MarketplaceMapper mapper, MarketplaceItemService itemService) {
-        this(mapper, itemService, Clock.systemUTC());
+    public MarketplaceChatService(MarketplaceConversationStore conversations, MarketplaceItemStore items) {
+        this(conversations, items, Clock.systemUTC());
     }
 
-    public MarketplaceChatService(MarketplaceMapper mapper, MarketplaceItemService itemService, Clock clock) {
-        this.mapper = mapper;
-        this.itemService = itemService;
+    public MarketplaceChatService(MarketplaceConversationStore conversations, MarketplaceItemStore items, Clock clock) {
+        this.conversations = conversations;
+        this.items = items;
         this.clock = clock == null ? Clock.systemUTC() : clock;
     }
 
-    @Transactional
+    // A competing insert can commit after our first lookup. The retry must see that conversation.
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public MarketplaceApi.Conversation createConversation(MarketplacePrincipal buyer, long itemId) {
-        MarketplaceItemRow item = itemService.requireItem(itemId);
-        MarketplaceConversationRules.requireCanStart(item.getStatus(), item.getSellerId(), buyer.id());
-        MarketplaceConversationRow existing = mapper.findConversationForItemBuyer(itemId, buyer.id());
-        if (existing != null) {
-            return MarketplaceViews.conversation(existing);
-        }
-        MarketplaceConversationRow created = new MarketplaceConversationRow()
-                .setItemId(itemId)
-                .setBuyerId(buyer.id())
-                .setSellerId(item.getSellerId());
-        try {
-            mapper.insertConversation(created);
-        } catch (DuplicateKeyException e) {
-            return MarketplaceViews.conversation(mapper.findConversationForItemBuyer(itemId, buyer.id()));
-        }
-        return MarketplaceViews.conversation(requireConversation(created.getId(), buyer));
+        MarketplaceApi.Item item = items.requireItem(itemId);
+        MarketplaceConversationRules.requireCanStart(item.status(), item.seller().id(), buyer.id());
+        return requireParticipant(conversations.findOrCreate(itemId, buyer.id(), item.seller().id()), buyer);
     }
 
     public MarketplaceApi.Conversations listConversations(MarketplacePrincipal user) {
-        List<MarketplaceApi.Conversation> conversations = mapper.listConversations(user.id()).stream()
-                .map(MarketplaceViews::conversation)
-                .toList();
-        return new MarketplaceApi.Conversations(conversations);
+        return new MarketplaceApi.Conversations(conversations.listConversations(user.id()));
     }
 
     public MarketplaceApi.Messages listMessages(MarketplacePrincipal user, long conversationId, Long afterId, Integer limit) {
-        requireConversation(conversationId, user);
+        requireParticipant(conversations.requireConversation(conversationId), user);
         int normalizedLimit = limit == null ? 50 : Math.max(1, Math.min(100, limit));
         Long normalizedAfterId = afterId == null || afterId <= 0 ? null : afterId;
-        List<MarketplaceApi.Message> messages = mapper.listMessages(conversationId, normalizedAfterId, normalizedLimit)
-                .stream()
-                .map(MarketplaceViews::message)
-                .toList();
-        return new MarketplaceApi.Messages(messages);
+        return new MarketplaceApi.Messages(conversations.listMessages(conversationId, normalizedAfterId, normalizedLimit));
     }
 
     @Transactional
@@ -82,28 +58,14 @@ public class MarketplaceChatService {
             long conversationId,
             MarketplaceApi.SendMessageRequest request
     ) {
-        requireConversation(conversationId, sender);
+        requireParticipant(conversations.requireConversation(conversationId), sender);
         String body = MarketplaceConversationRules.cleanBody(request == null ? null : request.body());
-        Timestamp now = Timestamp.from(Instant.now(clock));
-        MarketplaceMessageRow row = new MarketplaceMessageRow()
-                .setConversationId(conversationId)
-                .setSenderId(sender.id())
-                .setSenderUsername(sender.username())
-                .setSenderDisplayName(sender.displayName())
-                .setBody(body)
-                .setCreatedAt(now);
-        mapper.insertMessage(row);
-        mapper.touchConversation(conversationId, now);
-        return MarketplaceViews.message(row);
+        return conversations.appendMessage(conversationId, sender, body, Instant.now(clock));
     }
 
-    private MarketplaceConversationRow requireConversation(long id, MarketplacePrincipal user) {
-        MarketplaceConversationRow row = mapper.findConversationById(id);
-        if (row == null) {
-            throw new MarketplaceNotFoundException("conversation does not exist");
-        }
-        MarketplaceConversationRules.requireParticipant(row.getBuyerId(), row.getSellerId(), user.id());
-        return row;
+    private static MarketplaceApi.Conversation requireParticipant(
+            MarketplaceApi.Conversation conversation, MarketplacePrincipal user) {
+        MarketplaceConversationRules.requireParticipant(conversation.buyer().id(), conversation.seller().id(), user.id());
+        return conversation;
     }
-
 }
