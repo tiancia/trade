@@ -165,13 +165,13 @@ public class HistoricalCandleService implements HistoricalCandleSource {
     private static CandleResp toCandle(OkxCandleCacheRow row) {
         CandleResp candle = new CandleResp();
         candle.setTs(String.valueOf(row.getTs()));
-        candle.setOpen(plain(row.getOpen()));
-        candle.setHigh(plain(row.getHigh()));
-        candle.setLow(plain(row.getLow()));
-        candle.setClose(plain(row.getClose()));
-        candle.setVol(plain(row.getVol()));
-        candle.setVolCcy(plain(row.getVolCcy()));
-        candle.setVolCcyQuote(plain(row.getVolCcyQuote()));
+        candle.setOpen(TradingMath.plain(row.getOpen()));
+        candle.setHigh(TradingMath.plain(row.getHigh()));
+        candle.setLow(TradingMath.plain(row.getLow()));
+        candle.setClose(TradingMath.plain(row.getClose()));
+        candle.setVol(volumeText(row.getVol()));
+        candle.setVolCcy(volumeText(row.getVolCcy()));
+        candle.setVolCcyQuote(volumeText(row.getVolCcyQuote()));
         candle.setConfirm(row.getConfirm());
         return candle;
     }
@@ -187,7 +187,7 @@ public class HistoricalCandleService implements HistoricalCandleSource {
         }
     }
 
-    private static String plain(BigDecimal value) {
-        return TradingMath.plain(value);
+    private static String volumeText(BigDecimal volume) {
+        return volume == null ? null : TradingMath.plain(volume);
     }
 }

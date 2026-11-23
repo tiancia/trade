@@ -8,13 +8,18 @@ public final class TradingMath {
     }
 
     public static BigDecimal decimal(String value) {
+        BigDecimal parsed = decimalOrNull(value);
+        return parsed == null ? BigDecimal.ZERO : parsed;
+    }
+
+    public static BigDecimal decimalOrNull(String value) {
         if (value == null || value.isBlank()) {
-            return BigDecimal.ZERO;
+            return null;
         }
         try {
             return new BigDecimal(value.trim());
-        } catch (RuntimeException e) {
-            return BigDecimal.ZERO;
+        } catch (NumberFormatException invalid) {
+            return null;
         }
     }
 

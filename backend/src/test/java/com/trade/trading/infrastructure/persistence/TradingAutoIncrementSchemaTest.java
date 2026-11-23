@@ -1,10 +1,21 @@
 package com.trade.trading.infrastructure.persistence;
 
+import com.trade.client.okx.OkxApi;
 import com.trade.client.okx.dto.CandleResp;
+import com.trade.client.okx.dto.OkxResponse;
+import com.trade.trading.application.backtest.BacktestService;
+import com.trade.trading.application.strategy.ThresholdEventStrategy;
+import com.trade.trading.application.strategy.TradingStrategyRegistry;
+import com.trade.trading.domain.backtest.BacktestRequest;
+import com.trade.trading.domain.backtest.BacktestStatus;
 import com.trade.trading.infrastructure.config.TradingProperties;
+import com.trade.trading.infrastructure.market.HistoricalCandleService;
 import com.trade.trading.port.OkxMarketDataStore;
+import com.trade.trading.port.TradingEventPublisher;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mybatis.spring.SqlSessionFactoryBean;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.ClassPathResource;
@@ -15,13 +26,17 @@ import org.springframework.dao.DuplicateKeyException;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /** Executes the module's real DDL and mapper SQL offline, preserving business uniqueness and references. */
 class TradingAutoIncrementSchemaTest {
@@ -109,6 +124,64 @@ class TradingAutoIncrementSchemaTest {
             assertEquals(0, new BigDecimal("456").compareTo(
                     mapper.findRange("ETH-USDT", "1m", timestamp, timestamp).getFirst().getClose()));
         }
+    }
+
+    @ParameterizedTest
+    @CsvSource(value = {
+            "missing, missing, 0",
+            "'', missing, 0",
+            "invalid, missing, 0",
+            "0.000, 0, 1",
+            "' 100.25 ', 100.25, 0"
+    }, nullValues = "missing")
+    void cachedCandleVolumesProduceTheSameBacktestTradesAsFreshVolumes(
+            String firstVolume, String expectedVolume, int expectedTrades) throws Exception {
+        Instant from = Instant.parse("2026-05-17T00:00:00Z");
+        var candles = List.of(
+                confirmedCandle(from, "100", firstVolume),
+                confirmedCandle(from.plusSeconds(60), "100", "100"),
+                confirmedCandle(from.plusSeconds(120), "105", "160"),
+                confirmedCandle(from.plusSeconds(180), "106", "100"));
+        var properties = new TradingProperties();
+        var threshold = new TradingProperties.StrategyInstanceProperties();
+        threshold.setType(ThresholdEventStrategy.TYPE);
+        threshold.setParams(Map.of("price-move-window-candles", 2, "volume-lookback-candles", 2));
+        properties.setStrategies(List.of(threshold));
+        var registry = new TradingStrategyRegistry(List.of(new ThresholdEventStrategy()), properties);
+        var request = new BacktestRequest().setStrategyId(ThresholdEventStrategy.TYPE).setInstId("BTC-USDT")
+                .setBar("1m").setFrom(from).setTo(from.plusSeconds(240)).setForceCloseAtEnd(false);
+
+        try (var session = candleFactory(initializedDataSource()).openSession(true)) {
+            var mapper = session.getMapper(OkxCandleCacheMapper.class);
+            var api = mock(OkxApi.class);
+            when(api.getHistoryCandles(any())).thenReturn(OkxResponse.success(candles))
+                    .thenReturn(OkxResponse.success(List.of()));
+            var history = new HistoricalCandleService(api, mapper, mock(TradingEventPublisher.class));
+            var backtests = new BacktestService(history, registry, properties, Runnable::run);
+            var fresh = backtests.start(request);
+            assertEquals(BacktestStatus.SUCCEEDED, fresh.getStatus(), fresh.getError());
+            assertEquals(expectedTrades, fresh.getTradeCount());
+
+            var store = new MyBatisOkxMarketDataStore(mock(OkxMarketSnapshotMapper.class), mapper, properties);
+            assertEquals(OkxMarketDataStore.SaveResult.SAVED, store.saveCandlesWithResult("BTC-USDT", "1m", candles));
+            var cached = backtests.start(request);
+            assertEquals(BacktestStatus.SUCCEEDED, cached.getStatus(), cached.getError());
+            assertEquals(fresh.getTradeCount(), cached.getTradeCount());
+
+            var first = history.historyCandles("BTC-USDT", "1m", from, from.plusSeconds(60)).getFirst();
+            assertEquals(expectedVolume, first.getVol());
+            assertEquals(expectedVolume, first.getVolCcy());
+            assertEquals(expectedVolume, first.getVolCcyQuote());
+        }
+    }
+
+    private static CandleResp confirmedCandle(Instant at, String price, String volume) {
+        CandleResp candle = observation(at.toEpochMilli(), price);
+        candle.setVol(volume);
+        candle.setVolCcy(volume);
+        candle.setVolCcyQuote(volume);
+        candle.setConfirm("1");
+        return candle;
     }
 
     @Test

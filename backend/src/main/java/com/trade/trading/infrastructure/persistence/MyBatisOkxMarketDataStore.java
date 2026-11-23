@@ -171,9 +171,9 @@ public class MyBatisOkxMarketDataStore implements OkxMarketDataStore {
                 .setHigh(decimal(candle == null ? null : candle.getHigh()))
                 .setLow(decimal(candle == null ? null : candle.getLow()))
                 .setClose(decimal(candle == null ? null : candle.getClose()))
-                .setVol(decimal(candle == null ? null : candle.getVol()))
-                .setVolCcy(decimal(candle == null ? null : candle.getVolCcy()))
-                .setVolCcyQuote(decimal(candle == null ? null : candle.getVolCcyQuote()))
+                .setVol(TradingMath.decimalOrNull(candle == null ? null : candle.getVol()))
+                .setVolCcy(TradingMath.decimalOrNull(candle == null ? null : candle.getVolCcy()))
+                .setVolCcyQuote(TradingMath.decimalOrNull(candle == null ? null : candle.getVolCcyQuote()))
                 .setConfirm(candle == null ? null : candle.getConfirm());
     }
 

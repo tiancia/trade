@@ -52,18 +52,9 @@ public final class TradingMarketInputs {
     public static List<ThresholdDecisionPolicy.Candle> thresholdCandles(List<CandleResp> newestFirst) {
         return newestFirst.stream().filter(Objects::nonNull)
                 .map(candle -> new ThresholdDecisionPolicy.Candle(TradingMath.decimal(candle.getClose()),
-                        candleVolume(candle.getVolCcyQuote()), candleVolume(candle.getVolCcy()),
+                        TradingMath.decimalOrNull(candle.getVolCcyQuote()), TradingMath.decimalOrNull(candle.getVolCcy()),
                         "1".equals(candle.getConfirm())))
                 .toList();
-    }
-
-    private static BigDecimal candleVolume(String value) {
-        if (value == null || value.isBlank()) return null;
-        try {
-            return new BigDecimal(value.trim());
-        } catch (NumberFormatException invalid) {
-            return null;
-        }
     }
 
     private static BigDecimal balanceAmount(BalanceDetail detail) {
