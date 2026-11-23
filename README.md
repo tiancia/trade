@@ -1,64 +1,30 @@
-# Trade Workspace
+# Trade
 
-这个仓库按运行职责拆成后端、前端、工具脚本、生成内容和文档，避免业务代码、调试脚本、运行产物混在同一层。
+Trade 用一个 Spring Boot 后端承载 OKX 策略交易、Polymarket、小说生成、文字游戏、二手集市和社交内容发布。五个前端各自构建，通过 HTTP API 访问后端。第一次读代码，可以从 [应用入口](backend/src/main/java/com/trade/TradeApplication.java) 和 [业务模块目录](docs/backend/MODULES.md) 开始。
 
-文档统一从 [项目文档总导航](docs/README.md) 进入。第一次接手项目，先读 [项目架构与部署上手指南](docs/PROJECT_GUIDE.md)：包含电脑、国内主机、德国 VPS 的通信图，端口和令牌说明，业务调用链、接入步骤、迭代发布与排障入口。
+## 项目结构
 
-## 目录
+| 路径 | 用途 |
+| --- | --- |
+| [backend/](backend/README.md) | Java 21、Spring Boot 4、MyBatis。业务代码按域组织，SQL、迁移和 Mapper 在 `src/main/resources/` |
+| [frontend/](frontend/) | 生产部署交易驾驶舱、X 控制台和功能控制台。文字游戏与集市也各有独立前端 |
+| [tools/polymarket/](tools/polymarket/README.md) | 后端调用的 Python 下单桥接、调试工具和样例 |
+| [deploy/](deploy/README.md) | 生产配置模板、网关、代理、镜像构建、发布和回滚脚本 |
+| [.github/workflows/](.github/workflows/cnb-build-deploy.yml) | 手动提交 CNB 构建或发布任务的入口 |
+| [docs/](docs/README.md) | 系统上手指南、后端架构与运维、交易和内容发布专题 |
 
-```text
-backend/             Spring Boot 后端：交易决策、调度、外部客户端、持久化、HTTP API
-compose.yaml         MySQL、Redis、Prometheus、Grafana 的统一 Docker 入口
-compose.prod.yaml    Ubuntu 生产部署：后端、交易驾驶舱、X 控制台、功能控制台、代理隧道和基础服务
-compose.public.yaml  可选的多域名 HTTPS 公共访问覆盖配置
-deploy/              生产配置模板、私有 / 公共网关、构建 / 发布 / 回滚脚本
-docs/                文档总导航、全局交接指南及 backend/ 后端专题文档
-frontend/trading-cockpit/  交易驾驶舱：Node SSR
-frontend/x-console/  X 内容只读控制台：静态站点
-frontend/control-console/  独立功能控制台：统一管理模块开关，React + Vite
-frontend/text-game/  React + Vite 文字游戏前端：浏览器交互和界面状态
-frontend/market/     React + Vite 二手集市前端：商品发布、筛选、会话和图片上传
-tools/polymarket/    Polymarket Python 工具：CLOB 下单桥接、凭证调试、样例 payload
-story/               AI 小说生成输出和素材，属于运行产物
-```
+小说正文、配图和分类表放在仓库同级的 `story/`。在本机对应 `A:\story`，可用 `TRADE_STORY_OUTPUT_DIR` 指定其他生成目录。
 
-后端 Java 包也按“业务域 + 层职责”拆分。具体规则见 [后端架构说明](docs/backend/ARCHITECTURE.md)。
+## 本地上手
 
-Ubuntu 首次部署和后续迭代按 [生产部署说明](deploy/README.md) 操作。默认将后端和三个前端一起部署到国内服务器，通过电脑 SSH 隧道访问 `http://127.0.0.1:18080`（交易驾驶舱）、`http://127.0.0.1:18081`（X 控制台）和 `http://127.0.0.1:18082`（功能控制台），无需域名或 TLS 证书。原有 `compose.yaml` 继续用于本地基础服务；生产使用独立的 `compose.prod.yaml` 和 Linux 命名卷。后续需要公共 HTTPS 访问时再叠加 `compose.public.yaml`。
+1. 在 Windows 仓库根目录准备本地配置，启动 MySQL 和 Redis。监控服务和数据位置见 [本地基础设施](backend/infrastructure/README.md)。
 
-功能控制台本地启动与构建见 [frontend/control-console/README.md](frontend/control-console/README.md)，开发入口为 `http://127.0.0.1:5176/`。
+   ```powershell
+   if (-not (Test-Path -LiteralPath .env)) { Copy-Item .env.example .env }
+   docker compose up -d mysql redis
+   ```
 
-## 常用命令
+2. 安装 JDK 21，进入 `backend/`，使用独立开发库并按 [后端启动说明](backend/README.md#快速启动) 加载配置、启动服务。
+3. 进入要开发的 `frontend/<应用>/`，执行 `npm ci` 和 `npm run dev`。构建用 `npm run build`。各应用的入口见 [前端组件](docs/README.md#前端组件)。
 
-从仓库根目录执行：
-
-```powershell
-Copy-Item .env.example .env  # 首次执行；本地开发密码默认均为 123456
-docker compose up -d
-```
-
-```powershell
-cd backend
-.\mvnw test
-```
-
-```powershell
-cd frontend\text-game
-npm run build
-```
-
-```powershell
-cd frontend\market
-npm run build
-```
-
-```powershell
-cd tools\polymarket
-python debug_polymarket_place_order.py --print-only
-```
-
-## 配置约定
-
-- Polymarket、OKX、AI、数据库等密钥只从环境变量或启动工具加载的本地 `.env` 读取，不写进仓库。
-- 从 `backend/` 启动时，Polymarket 下单脚本默认使用 `../tools/polymarket/polymarket_place_order.py`，需要改路径时设置 `POLYMARKET_ORDER_SCRIPT`。
-- `story/` 是生成内容目录，不放服务端源码；后端生成位置由 `trade.story.output-dir` 控制。
+连接现有服务器时，从 [系统与通信指南](docs/PROJECT_GUIDE.md) 了解三个管理页面的访问方式。Ubuntu 部署、备份和回滚命令集中在 [生产部署说明](deploy/README.md)。

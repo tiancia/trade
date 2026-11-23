@@ -22,7 +22,7 @@ AI 读取公开行情，可以保持策略、切换已有策略或直接修改�
 - 自动调整使已采集的旧选择修订/参数版本无法执行；PAPER 同时推进模拟会话版本。LIVE 复用订单预留与策略维护的数据库互斥机制。
 - AI HTTP 请求在独立任务上执行，不持有交易决策锁。停止 AI 任务会令在途评估失效；失效建议不再应用。已经提交的变更仍完成通知，不能通过暂停抹去审计或通知责任。
 
-## 后续填写环境变量
+## 环境变量
 
 本地 Java 进程参考 [backend/.env.example](../../backend/.env.example)；Spring Boot 不自动读取普通 `.env`，需由 IDE 或进程环境注入。生产使用 [deploy/backend.env.example](../../deploy/backend.env.example) 对应的后端 env_file。根 `.env` 仅用于基础设施。
 

@@ -480,8 +480,8 @@ trade:
     generation-fixed-delay-ms: 1800000
     # story 任务启动后首次生成前的等待时间，单位毫秒；12000 = 12 秒。
     initial-delay-ms: 12000
-    # 小说文件保存目录，相对路径从进程工作目录解析。
-    output-dir: ${TRADE_STORY_OUTPUT_DIR:../story}
+    # 从 backend/ 启动时，作品默认写入与仓库同级的 story/。
+    output-dir: ${TRADE_STORY_OUTPUT_DIR:../../story}
     # 提示词中的目标非空白字符数；统计含中文、英文、数字和标点的 Unicode code point。
     target-char-count: 10000
     # 低于该字数时最多补写 max-continuation-sections 节。

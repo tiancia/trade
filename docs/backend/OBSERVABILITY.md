@@ -22,31 +22,9 @@ Prometheus 默认从 `host.docker.internal:8080/actuator/prometheus` 抓取宿�
 
 ## 本地启动
 
-前置条件：
+按 [本地基础设施](../../backend/infrastructure/README.md) 启动 MySQL、Redis、Prometheus 和 Grafana。使用独立开发库，按 [后端安全启动](OPERATIONS.md#安全启动) 启动应用。`TRADE_METRICS_ENVIRONMENT` 可指定本地指标的环境标签。
 
-- 后端所需的 JDK 21；
-- Docker Desktop 或 Docker Engine；
-- Docker Compose v2。
-
-先从仓库根目录 `A:\trade` 创建本地基础设施配置并启动全部中间件；模板中的本地开发密码统一为 `123456`：
-
-```powershell
-Copy-Item .env.example .env
-docker compose up -d
-```
-
-把仓库根目录 `.env` 中的 MySQL/Redis 账号密码同步到 `backend/.env` 的后端连接变量；完整对应关系见 [基础设施说明](../../backend/infrastructure/README.md)。然后进入 `backend/` 启动后端，并保持危险能力关闭：
-
-```powershell
-cd A:\trade\backend
-$env:TRADE_AUTOMATION_TRADING_AUTO_START="false"
-$env:TRADE_TRADING_ENABLED="false"
-$env:TRADE_METRICS_ENVIRONMENT="local"
-
-.\mvnw.cmd spring-boot:run
-```
-
-确认 Prometheus 文本端点可访问：
+在 PowerShell 中检查后端是否暴露了行情队列指标。
 
 ```powershell
 Invoke-WebRequest http://127.0.0.1:8080/actuator/prometheus |
@@ -54,29 +32,7 @@ Invoke-WebRequest http://127.0.0.1:8080/actuator/prometheus |
   Select-String "trade_trading_events_queue_capacity"
 ```
 
-如果之前只启动了 MySQL 和 Redis，可单独启动监控服务：
-
-```powershell
-cd A:\trade
-docker compose up -d prometheus grafana
-```
-
-访问入口：
-
-- Prometheus targets：`http://127.0.0.1:9090/targets`，`trade-backend` 应为 `UP`；
-- Prometheus rules：`http://127.0.0.1:9090/rules`；
-- Grafana：`http://127.0.0.1:3000`；
-- Grafana 仪表盘：`Dashboards -> Trade -> Trading Module Overview`。
-
-Grafana 数据源和仪表盘由 provisioning 自动创建，不需要手工导入 JSON。
-
-停止服务但保留历史数据：
-
-```powershell
-docker compose down
-```
-
-MySQL、Redis、Prometheus 与 Grafana 都使用命名卷保存数据。只有明确不再需要本地数据时，才额外使用 `down --volumes`。
+在 `http://127.0.0.1:9090/targets` 确认 `trade-backend` 为 `UP`，在 `/rules` 查看规则。打开 `http://127.0.0.1:3000`，进入 **Dashboards → Trade → Trading Module Overview**。Grafana 启动时自动配置数据源和看板。
 
 ## 指标分层
 

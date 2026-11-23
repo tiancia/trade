@@ -1,6 +1,5 @@
 # Build outputs
 .worktrees
-.worktrees/
 backend/target/
 frontend/**/dist/
 frontend/**/node_modules/
@@ -8,6 +7,7 @@ frontend/**/*.tsbuildinfo
 /.ci-output/
 
 # Local runtime data and secrets
+/story/
 backend/.env
 backend/polymarket.env
 backend/data/trading-state.json

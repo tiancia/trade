@@ -1,59 +1,38 @@
 # 项目文档总导航
 
-项目目录见 [项目 README](../README.md)，初次接手先读 [系统与通信指南](PROJECT_GUIDE.md)。下表同时作为阅读入口和各主题的正文归属表；组件、数据库与内置资源的说明保留在对应目录。
+本地启动和仓库目录见 [项目首页](../README.md)。连接现有环境从 [系统与通信指南](PROJECT_GUIDE.md) 开始，按功能找代码从 [后端模块目录](backend/MODULES.md) 开始。
 
-Maven 命令从 `backend/` 执行，生产 Compose 命令从仓库根目录执行；具体字段和默认值以当前代码、配置及测试为准。
+## 开发与运维
 
-### 整体架构、环境和运维
-
-| 文档 | 回答什么 |
+| 要做的事 | 入口 |
 | --- | --- |
-| [系统与通信指南](PROJECT_GUIDE.md) | 机器分工、通信、端口、核心业务链路与接手入口 |
-| [生产部署说明](../deploy/README.md) | Docker、运行配置、密钥权限、镜像、发布、回滚、备份和公共模式 |
-| [本地基础设施](../backend/infrastructure/README.md) | 开发用 MySQL、Redis、Prometheus、Grafana 的启动方式 |
-| [后端运维](backend/OPERATIONS.md) | 应用安全启动、任务控制、资金停止、恢复和业务排障 |
-| [可观测性](backend/OBSERVABILITY.md) | 指标流、抓取配置、看板、告警及本地/生产差异 |
+| 启动本地环境 | [MySQL、Redis 和监控](../backend/infrastructure/README.md) · [后端启动](../backend/README.md) |
+| 理解分层与调用链 | [后端架构](backend/ARCHITECTURE.md) · [业务模块与代码入口](backend/MODULES.md) |
+| 修改和验证后端 | [贡献指南](../backend/CONTRIBUTING.md) · [AI 开发约定](../backend/AGENTS.md) |
+| 查表或升级数据库 | [完整结构与 Flyway 迁移](../backend/src/main/resources/db/README.md) · [接入 Flyway 前的历史补丁](../backend/src/main/resources/db/upgrade/README.md) |
+| 发布、回滚或恢复备份 | [生产部署说明](../deploy/README.md) |
+| 启停任务、恢复交易或排查告警 | [后端运维](backend/OPERATIONS.md) · [指标、看板和告警](backend/OBSERVABILITY.md) |
 
-### 后端设计与开发
+## 业务专题
 
-| 文档 | 回答什么 |
+| 功能 | 入口 |
 | --- | --- |
-| [后端 README](../backend/README.md) | 后端定位、启动、测试与专题入口 |
-| [模块目录](backend/MODULES.md) | 一个功能属于哪个业务域，从哪个类进入 |
-| [架构说明](backend/ARCHITECTURE.md) | 四层职责、依赖方向和典型调用链 |
-| [贡献指南](../backend/CONTRIBUTING.md) | 开发、数据库变更、测试与评审约定 |
-| [AI 开发约定](../backend/AGENTS.md) | AI 工具修改后端时必须遵守的仓库规则 |
+| OKX 交易 | [模拟资金与策略配置](trading/SIMULATION.md) · [历史回测](trading/BACKTEST.md) · [Trading AI 策略顾问](trading/AI.md) |
+| 内容生成、审核与发布 | [X 工作流](publishing/X_WORKFLOW.md) · [微博工作流](publishing/WEIBO_WORKFLOW.md) |
+| 平台客户端 | [X API 与 OAuth](publishing/X_API.md) · [Telegram Bot API](publishing/TELEGRAM_API.md) |
+| Polymarket | [Python 桥接、输入输出与调试](../tools/polymarket/README.md) |
+| 文字游戏 | [内置剧情、导入与版本发布](../backend/src/main/resources/textgame/stories/README.md) |
 
-### 业务、接口和数据
+## 前端组件
 
-| 文档 | 回答什么 |
-| --- | --- |
-| [Trading 回测](backend/TRADING_BACKTEST.md) | 回测参数、成交、手续费、滑点和指标 |
-| [Trading 模拟资金与策略配置](backend/TRADING_SIMULATION.md) | 策略参数版本、独立模拟资金、成交与估值账本及 API |
-| [Trading AI 策略顾问](backend/TRADING_AI.md) | 行情评估、自动调整边界、独立 Telegram 通知与环境变量 |
-| [X 工作流](backend/X_WORKFLOW.md) | AI 草稿、内容配置、Telegram 审核、发布与 UNKNOWN |
-| [X API](backend/X_API.md) | X 客户端方法、OAuth 凭据和协议边界 |
-| [Telegram API](backend/TELEGRAM_API.md) | Bot 客户端、消息、更新轮询和审核接入 |
-| [微博工作流](backend/WEIBO_WORKFLOW.md) | 微博热点、生成、审核与发布门禁 |
-| [数据库 SQL 目录](../backend/src/main/resources/db/README.md) | 完整 schema、数据归属、初始化与主键规则 |
-| [数据库升级](../backend/src/main/resources/db/upgrade/README.md) | 旧库手工补丁、适用条件与升级顺序 |
-| [内置文字游戏剧情](../backend/src/main/resources/textgame/stories/README.md) | 剧情 JSON 的校验、显式导入和版本发布 |
-| [Polymarket 工具](../tools/polymarket/README.md) | Python 桥接和调试脚本的用途与输入输出 |
-
-### 前端组件
-
-| 组件 | 入口与范围 |
-| --- | --- |
-| 交易驾驶舱 | [README](../frontend/trading-cockpit/README.md)：本地开发、SSE、策略操作、回测及 Node SSR |
-| X 控制台 | [README](../frontend/x-console/README.md)：只读列表、详情、状态与网关访问 |
-| 功能控制台 | [README](../frontend/control-console/README.md)：独立前端、模块开关、运行状态与部署入口 |
-| 文字游戏 | 尚无独立 README；开发脚本见 [package.json](../frontend/text-game/package.json)，后端归属见模块目录 |
-| 集市 | 尚无独立 README；开发脚本见 [package.json](../frontend/market/package.json)，后端归属见模块目录 |
+| 应用 | 用途 | 本地开发入口 |
+| --- | --- | --- |
+| 交易驾驶舱 | 行情、策略、模拟资金和回测 | [trading-cockpit](../frontend/trading-cockpit/README.md) |
+| X 控制台 | 查看草稿、审核与发布状态 | [x-console](../frontend/x-console/README.md) |
+| 功能控制台 | 管理各模块开关、查看任务状态 | [control-console](../frontend/control-console/README.md) |
+| 文字游戏 | 剧情选择和会话 | [text-game](../frontend/text-game/package.json) |
+| 二手集市 | 商品、图片和会话 | [market](../frontend/market/package.json) |
 
 ## 维护规则
 
-- **一个主题一份正文**：按上表确定归属；其他文档保留必要摘要并使用相对链接，不复制完整规则、配置表或操作步骤。
-- **优先更新已有文档**：新增文件须有独立、长期的读者和职责，且现有文件无法合理承载；新增后补入本导航。
-- **入口保持简短**：组件 README 保留定位、最短启动步骤和导航；系统指南解释全貌，部署、运维及业务细节由对应手册维护。
-- **改行为就改所属文档**：核对源码、命令、路径及配置名，区分默认值、配置模板与服务器实际状态；示例不包含真实凭据。
-- **合并删除同步引用**：保留独有内容，更新入站、出站链接及本导航；检查文件路径和章节锚点，避免仅用章节编号指引。
+每个主题维护一份正文。组件启动方法放在组件目录，跨组件调用、架构和业务说明放在对应专题。行为变更时核对命令、路径和配置，文件移动时同步更新导航及引用。操作日志、开发计划和一次性验收记录放在仓库外。

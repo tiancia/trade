@@ -67,7 +67,7 @@ GENERATION_FAILED  REJECTED      EXPIRED      FAILED / UNKNOWN
 
 ## 配置与启动
 
-配置好账号、AI 与审核凭据后，工作流主开关会同时启动生成、审核和发布扫描；真实发布另行授权。参数见 `application.yml` 和 `.env.example`，旧覆盖值按[功能启用](OPERATIONS.md#功能启用)迁移。首次试用保持真实发布关闭：
+配置好账号、AI 与审核凭据后，工作流主开关会同时启动生成、审核和发布扫描；真实发布另行授权。参数见 `application.yml` 和 `.env.example`，旧覆盖值按[功能启用](../backend/OPERATIONS.md#功能启用)迁移。首次试用保持真实发布关闭：
 
 ```powershell
 $env:TRADE_WEIBO_WORKFLOW_ENABLED="true"

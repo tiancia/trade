@@ -169,7 +169,7 @@ REST / WebSocket producers
 信封和载荷在 `application/event`，因为它们描述包含 provider DTO 的技术接入数据；策略推导出的业务信号是 `domain/model/MarketSignal`。
 
 - 消费者随应用启动，HTTP 回测和 REST 采集无需启动交易任务。任务生命周期控制 WebSocket 和领导租约；应用停止时先停止生产，再在超时内排空队列。
-- 队列保持固定容量，保留 `DROP_OLDEST`、`DROP_LATEST`、有超时的 `BLOCK` 行为。
+- 队列容量固定。`trade.trading.event-queue.full-policy` 默认 `drop-oldest`，保留较新的行情。`drop-latest` 丢弃新事件，`block` 让生产者最多等待 `publish-timeout-ms`。
 - handler 异常隔离，不向 WebSocket 回调传播数据库失败。
 - Micrometer 继续报告队列深度、容量、发布结果、丢弃、延迟和处理耗时；状态 API 保持 `/api/trading/runtime/events`。
 - 历史 K 线异步写入，但调用返回时合并本次 REST 数据与缓存，保留回测读取语义。
@@ -180,7 +180,7 @@ REST / WebSocket producers
 热点审核工作流沿用相同四层：不可变 `WeiboPost` 聚合管理规则，应用服务通过 port 编排
 RSS/Atom、AI、MyBatis 和发布。审核请求与决策归 `weibo/domain/model`，投递契约归
 `weibo/port`，Telegram 审核及关闭时的占位实现在 `weibo/infrastructure/review`。
-当前工作流见 [微博工作流](WEIBO_WORKFLOW.md)。
+当前工作流见 [微博工作流](../publishing/WEIBO_WORKFLOW.md)。
 
 ```text
 weibo/
@@ -206,7 +206,7 @@ Telegram Bot API 协议与 DTO 位于 `client/telegram`，共享的 `TelegramCli
 X 的 `application/service/XPostService` 编排配置驱动的 AI 草稿、Telegram 审核与发布。
 内容规则快照、状态及版本在 `domain/model`，Prompt、解析和官方加权字数校验在
 `application/decision`；`infrastructure` 实现持久化、审核与发布适配，OAuth 签名归 `client/x`。
-`automation` 负责跨域 Bot 消费者互斥检查，禁止微博与 X 审核同时启用。详细配置见 [X 工作流](X_WORKFLOW.md)。
+`automation` 负责跨域 Bot 消费者互斥检查，禁止微博与 X 审核同时启用。详细配置见 [X 工作流](../publishing/X_WORKFLOW.md)。
 
 ## 6. 验证与资源约定
 

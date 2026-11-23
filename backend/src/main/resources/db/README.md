@@ -7,6 +7,7 @@ db/
 ├─ migration/                 # Flyway 不可变版本 SQL，目前 V1、V3
 ├─ migration-support/         # Java V2 使用并校验的不可变 SQL
 ├─ schema/
+│  ├─ automation/schema.sql
 │  ├─ ai/schema.sql
 │  ├─ trading/schema.sql
 │  ├─ polymarket/schema.sql

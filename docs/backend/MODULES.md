@@ -103,9 +103,9 @@ REST / WebSocket market data
 
 含糊的下单确认保持 `SUBMIT_UNKNOWN` 并阻断后续新单。结算校验累计成交量、均价及单调性；累计成交量相等或增加但净数量或成本倒退时，结算事务失败并保留旧账本，订单继续待对账。有未决订单时暂缓账户余额核对，现货账户余额不替代成交账本记仓；余额响应必须有账户和明细，缺失数据不当作零余额。LIVE 恢复必须收到明确的挂单列表，缺失列表不当作没有挂单。紧急停止的定时器与各笔撤单独立尽力执行，错误保留供人工处理。
 
-页面参数编辑经 `StrategyConfigurationController → TradingStrategyRegistry` 保存 MySQL 当前配置及不可变版本历史；新决策冻结所用配置版本。`application/paper` 编排独立的 PAPER 初始资金、批次、成交与估值账本，`domain/paper` 负责现金、成本和盈亏演进。具体口径与接口见 [策略参数版本与模拟资金](TRADING_SIMULATION.md)。
+页面参数编辑经 `StrategyConfigurationController → TradingStrategyRegistry` 保存 MySQL 当前配置及不可变版本历史；新决策冻结所用配置版本。`application/paper` 编排独立的 PAPER 初始资金、批次、成交与估值账本，`domain/paper` 负责现金、成本和盈亏演进。具体口径与接口见 [策略参数版本与模拟资金](../trading/SIMULATION.md)。
 
-`TradingAiScheduler → TradingAiAdvisor` 由独立的 `trading-ai` 任务评估公开行情，复用共享 AI 客户端。PAPER/LIVE 空仓且无未决订单时可自动切换已有策略或修改支持的策略参数，但 AI 不能切换执行模式。变更与前后审计在同一 MySQL 事务提交，复用完整校验、配置行锁及执行版本保护。已生效变更逐次通过独立 Telegram Bot 通知，新策略模式仅发送建议，无 X 审核轮询。配置、通知状态与回退步骤见 [Trading AI 策略顾问](TRADING_AI.md)。
+`TradingAiScheduler → TradingAiAdvisor` 由独立的 `trading-ai` 任务评估公开行情，复用共享 AI 客户端。PAPER/LIVE 空仓且无未决订单时可自动切换已有策略或修改支持的策略参数，但 AI 不能切换执行模式。变更与前后审计在同一 MySQL 事务提交，复用完整校验、配置行锁及执行版本保护。已生效变更逐次通过独立 Telegram Bot 通知，新策略模式仅发送建议，无 X 审核轮询。配置、通知状态与回退步骤见 [Trading AI 策略顾问](../trading/AI.md)。
 
 策略输入显式区分1m、5m、15m。`intraday-technical` 提供趋势回踩、放量突破和震荡回归三种15m现货多头候选，复用纯领域指标；每分钟事件扫描独立评估确认收盘信号，订单及PAPER账本保存每个方向的稳定信号身份。新增实例不自动切换当前策略，不改变LIVE门禁；收益与频率需要独立回测、样本外及PAPER验证。
 
@@ -148,7 +148,7 @@ RSS/Atom 源在 `infrastructure/trend`，AI Prompt 在 `application/decision`，
 审核契约位于 `weibo/port/HumanReviewGateway`，请求与决策位于 `weibo/domain/model`。
 `infrastructure/review/TelegramHumanReviewGateway` 发送按钮并认证轮询回调，投递去重、决定、游标和租约由 MyBatis 持久化；
 未启用时使用 `UnavailableHumanReviewGateway`，不会批准。任务包含生成、审核与发布循环；配置默认关闭。
-详见 [微博工作流](WEIBO_WORKFLOW.md)。
+详见 [微博工作流](../publishing/WEIBO_WORKFLOW.md)。
 
 ### x
 
@@ -159,7 +159,7 @@ RSS/Atom 源在 `infrastructure/trend`，AI Prompt 在 `application/decision`，
 `XAiDraftGenerator` 筛选格式、字数及近期重复，`XContentPolicy` 提供冻结格式校验和纯文本重复规则。旧草稿缺少格式字段时仍为自由正文。
 同账号近期正文由应用用例读取，最终只持久化并审核一条正文，内容边界仍由人工确认。
 `client/x` 负责 OAuth 1.0a 协议；业务状态、审计与六张表归 `x`。
-普通帖子的官方加权字数由 `application/decision/XPostTextValidator` 校验，详情见 [X 工作流](X_WORKFLOW.md)。
+普通帖子的官方加权字数由 `application/decision/XPostTextValidator` 校验，详情见 [X 工作流](../publishing/X_WORKFLOW.md)。
 
 ### client
 
@@ -169,7 +169,7 @@ RSS/Atom 源在 `infrastructure/trend`，AI Prompt 在 `application/decision`，
 
 `client/telegram` 封装 Bot API 协议、DTO 与客户端装配，提供身份查询、文本/内联按钮发送、获取更新和回调应答。
 `TelegramClientConfiguration` 绑定 `trade.telegram` 并装配共享 `TelegramApi`；微博与 X 各自拥有审核投递和认证。
-属性默认关闭，创建客户端不访问 API。使用说明见 [Telegram Bot API](TELEGRAM_API.md)。
+属性默认关闭，创建客户端不访问 API。使用说明见 [Telegram Bot API](../publishing/TELEGRAM_API.md)。
 
 ## Resources 所有权
 
