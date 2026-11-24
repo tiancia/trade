@@ -1,12 +1,10 @@
 # 运维手册
 
-本手册负责后端应用的安全启动、任务控制、资金停止/恢复、观测和业务排障。全项目资料见 [文档总导航](../README.md)，三台机器与端口通信见 [全局上手指南](../PROJECT_GUIDE.md)，Ubuntu Docker、密钥、发布/回滚和备份见 [生产部署说明](../../deploy/README.md)。
+本手册覆盖后端安全启动、任务控制、资金停止与恢复，以及业务排障。服务器拓扑、端口、密钥、备份和回滚步骤集中在[生产部署说明](../../deploy/README.md#部署方案)。
 
 下文 Maven 命令从 `backend/` 执行，直连 `127.0.0.1:8080` 的 API 示例面向宿主机运行的 Java 进程。Docker 私有部署通过 SSH 转发后的 `127.0.0.1:18080` 及网关认证访问，不能直接套用本地直连地址。
 
 ## 运行依赖
-
-Trading AI 顾问的配置类及 env 示例默认关闭；当前 `application.yml` 运行模板开启了顾问和当前 PAPER/LIVE 模式内自动应用，启动前须核对实际环境覆盖。环境变量、独立 Telegram Bot、数据库新增表及启停验收见 [Trading AI 策略顾问](../trading/AI.md)。它使用独立的 `trading-ai` 自动任务，不阻塞交易决策和对账任务。默认按交易日统计、每 30 分钟复评，以日内净收益和每天 5–8 笔完整交易为规划目标；`TRADE_TRADING_AI_TARGET_MIN_CLOSED_TRADES_PER_DAY` / `TRADE_TRADING_AI_TARGET_MAX_CLOSED_TRADES_PER_DAY` 可调整范围。部署时若已有 `TRADE_TRADING_AI_REVIEW_INTERVAL_MS`，须改为 `1800000` 才使用新节奏。修改后重启后端；已有数据库冷却窗口不会被重启清除，下一轮按新值预留。驾驶舱显示真实下一窗口、生效策略版本和最近执行原因；评估窗口逾期时检查 `trading-ai` 任务运行结果及交易领导租约。次数不足不会强制下单。
 
 - JDK 21；
 - MySQL，连接信息通过 `SPRING_DATASOURCE_*` 提供；
@@ -30,7 +28,7 @@ Trading AI 顾问的配置类及 env 示例默认关闭；当前 `application.ym
 
 X/微博默认启用生成和发布扫描；只做草稿时保持真实发布授权关闭。Telegram 客户端按 Token 接入，审核按模块 chat ID 接入并校验审核人；Trading AI 通知使用自己的 chat ID 和 Bot Token。未配置聊天时不接入，配置了聊天但缺少凭据或审核人时仍报告配置错误。关闭 X/微博模块会同时停用其审核消费者，不必清空聊天配置。
 
-兼容旧配置：显式的 `TRADE_AUTOMATION_*_AUTO_START`、`TRADE_*_GENERATION_ENABLED`、`TRADE_*_PUBLISHING_ENABLED`、客户端和 Telegram 开关仍优先。升级时从实际运行环境移除不再需要的这些覆盖值（特别是旧示例中的 `false`），即可使用自动接入；不会静默忽略已有暂停意图。要保留手动启动、仅暂停生成或停用通知时，才单独设置相应覆盖。修改环境后重启后端；任务 API 的暂停只对当前进程有效。此变更不需要数据库迁移。
+显式的 `TRADE_AUTOMATION_*_AUTO_START`、生成、发布扫描、客户端和 Telegram 开关会覆盖默认行为。需要恢复随模块启动时，检查部署环境是否仍保留暂停用的覆盖值。修改环境后重建容器或重启本地 Java 进程。已保存的模块开关及临时启停的优先级见[后台任务操作](#后台任务操作)。
 
 ## 仓库配置与运行环境
 
@@ -39,6 +37,7 @@ X/微博默认启用生成和发布扫描；只做草稿时保持真实发布授
 | 能力 | 配置及行为 |
 | --- | --- |
 | OKX | `TRADE_TRADING_ENABLED=true`、`TRADE_TRADING_EXECUTION_MODE=paper`、`TRADE_TRADING_LIVE_ENABLED=false`；自动运行策略，仅模拟成交 |
+| Trading AI | `application.yml` 的顾问和自动应用回退值为 true，后端与生产 env 示例均设为 false。评估逾期时检查 `trading-ai` 任务、数据库评估窗口和领导租约。[策略顾问配置](../trading/AI.md) |
 | X | 工作流默认开启，调度和生成随之启用；审核按配置接入；YAML 的 live-publishing 默认 false，env 示例为 true，只有经人工审核批准的版本可发布 |
 | X 节奏 | `TRADE_X_GENERATION_FIXED_DELAY_MS=10800000`，每轮完成后等待三小时；首次延迟 30 秒；UTC 日生成 / 发布尝试额度各 8 次 |
 | Polymarket | 模块、真实执行和代理均关闭 |
@@ -134,37 +133,20 @@ Actuator 当前暴露 health、info、metrics 和 prometheus。automation 启停
 
 选择保存在 `automation_module_switch`，优先于配置文件的模块 `enabled` 和 `auto-start`，在应用启动任务前恢复。没有保存记录的模块保持原配置行为。仅当前后端实例立即生效；本版本不向其他运行中的副本广播变更，多实例运维须逐实例协调，后续重启读取数据库最后保存的选择。保存失败不修改运行状态；配置校验失败不保存；启动失败保留选择但将实际模块关闭并报告错误，可在页面重试或关闭该选择。旧 `/tasks/{id}/start|stop` 仍是临时任务控制，不写持久化选择。
 
-首次上线自动执行 Flyway V3 建表，镜像数据库版本提升为 3。**安全启动或离线验证不可仅依赖将环境变量设为 false**：已保存的开启选择会覆盖这些默认值，应先在页面关闭模块，或使用独立空数据库。该页面不会授予实盘下单、真实发布或 AI 自动应用权限，也不管理凭据。开启 X/微博会重新检查目标账号、审核配置及共享 Telegram Bot 的消费者冲突。
+安全启动时使用独立开发库，或先在功能控制台关闭已保存为开启的模块。实盘下单、真实发布和 AI 自动应用各有独立授权。开启 X 或微博会重新检查目标账号、审核配置和共享 Telegram Bot 的消费者冲突。
 
 关闭阻止后续循环；Polymarket 在 AI 返回后及地域检查完成后重新检查开关，X / 微博在账号或凭据检查完成后重新检查发布许可，关闭期间返回的旧检查结果不能继续发起新的下单或发布。微博发送前的本地校验或凭据读取失败记为明确的发布失败，只有实际发送后的不确定结果才进入 `UNKNOWN`。已经通过最终检查的在途请求仍可能完成，关闭不能撤回已发送请求。关闭 OKX 模块还会停止行情订阅、对账和策略止损检查，不会自动撤单或平仓。资金异常仍应使用「资金级停止与恢复」流程。
 
-微博 `weibo` 任务包含生成、Telegram 审核与发布循环；默认关闭，真实发布需要独立授权及审核通过。
-机器人将完整正文和审核按钮发到指定聊天，仅认证审核人能批准具体版本。配置、数据库升级和 UNKNOWN 排障见
-[微博审核工作流](../publishing/WEIBO_WORKFLOW.md)。
-
-Telegram 协议和共享 Bean 在 `client/telegram`，审核行为分别由微博与 X 装配。启用微博前确认
-`db/schema/weibo/schema.sql` 中的表已创建；旧表结构有差异时按[微博工作流](../publishing/WEIBO_WORKFLOW.md)选择 `db/upgrade/weibo/` 补丁。安全注入 `TRADE_TELEGRAM_BOT_TOKEN`，
-配置 `TRADE_WEIBO_TELEGRAM_CHAT_ID` 与 `TRADE_WEIBO_TELEGRAM_REVIEWER_USER_IDS`，再开启
-`TRADE_WEIBO_WORKFLOW_ENABLED` 即可启动工作流。
-初次联调保持真实发布授权关闭；确认审核状态后，按[工作流说明](../publishing/WEIBO_WORKFLOW.md)配置目标账号授权和发布门禁。
-创建 Bean 不启动任务；实际聊天权限、消息发送和微博发布仍需独立联调。轮询模式不能与该 bot 已有 webhook 或另一套 consumer 共用。
-
-X 的 `x` 任务也包含生成、审核、发布三个循环。启动时 Flyway 完成 X 表结构迁移；`db/upgrade/x/` 只用于核实接入前历史结构的前置条件。
-配置 `TRADE_X_CONTENT_*`、目标 X 用户 ID 与四个 OAuth 1.0a 凭据，再按
-[X 工作流](../publishing/X_WORKFLOW.md)联调。复用现有 Bot 时，先停止所有实例的微博审核并关闭
-`TRADE_WEIBO_TELEGRAM_REVIEW_ENABLED`；应用会拒绝两个已启用模块同时消费同一个 Bot；也可直接关闭微博模块。
-保持 X 真实发布授权关闭直到联调完成；X 外部协议见 [X 客户端](../publishing/X_API.md)。
-
-查询、启动和停止任务：
+微博和 X 各有生成、审核与发布循环。复用同一个 Telegram Bot 时，先在所有实例停用原审核消费者并检查 webhook，再启用新的审核。真实发布需要有效批准和各模块的独立授权。账号配置、草稿版本与未知发布的人工核对见[微博工作流](../publishing/WEIBO_WORKFLOW.md)和[X 工作流](../publishing/X_WORKFLOW.md)。
 
 管理 API（automation、trading、X 和微博管理接口）的 GET 与写请求均由应用独立校验 HTTP Basic 凭据；`TRADE_MANAGEMENT_AUTH_CREDENTIALS_FILE` 指向 bcrypt htpasswd 文件。未配置时这些接口返回 503，配置文件无效时启动失败；生产 Compose 强制开启并挂载网关同一份哈希文件。每人使用独立账号，修改/撤销后重建 backend 与 gateway。仅隔离开发环境可显式关闭 `TRADE_MANAGEMENT_AUTH_ENABLED`。微博 OAuth GET 回调继续通过自身 state 鉴权；浏览器 CORS 预检不执行业务操作。原有业务令牌校验保留。
 
-管理写请求还要求 `X-Trade-CSRF: 1`，浏览器须同源或来自允许的 Origin；无 Origin 的 CLI 同样需要。CSRF 标记不替代身份校验。下面 PowerShell 示例须同时通过 `-Authentication Basic -Credential (Get-Credential)` 提供凭据；仅本机回环 HTTP 调试时 PowerShell 还需显式允许非 HTTPS 认证，生产使用部署网关的 HTTPS 或 SSH 隧道。完整部署、mTLS 公网访问、限速和审计见[部署手册](../../deploy/README.md)。
+管理写请求还要求 `X-Trade-CSRF: 1`，浏览器须同源或来自允许的 Origin。下面是从 Windows 查询、启动和停止单个任务的命令，`curl.exe` 会提示输入操作员密码。示例地址用于本机后端，私有生产环境请换成 SSH 转发后的网关地址。可将 `trading` 替换为目标任务 ID。[部署手册](../../deploy/README.md#4-建立电脑访问隧道)
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8080/api/automation/tasks
-Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/trading/start
-Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/trading/stop
+curl.exe --noproxy "*" -fsS -u operator http://127.0.0.1:8080/api/automation/tasks/trading
+curl.exe --noproxy "*" -fsS -u operator -X POST -H 'X-Trade-CSRF: 1' http://127.0.0.1:8080/api/automation/tasks/trading/start
+curl.exe --noproxy "*" -fsS -u operator -X POST -H 'X-Trade-CSRF: 1' http://127.0.0.1:8080/api/automation/tasks/trading/stop
 ```
 
 启动前检查所属域的 enabled 开关、凭据、风险参数、外部网络和数据库结构。`start` 是幂等的运行状态切换，不会自动把业务 enabled 开关改成 true。
@@ -204,7 +186,7 @@ $env:TRADE_TRADING_LEADERSHIP_HEARTBEAT_INTERVAL_MS="5000"
 `execution-mode=live + live-enabled=true`，未启用租约或数据库租约不可用时也不会调用 OKX 下单。
 不要为了绕过迁移把该门禁改成 `false`；单实例 PAPER 环境可继续保持 leadership disabled。
 
-活动策略选择和 revision 由 `okx_strategy_selection` 按执行模式和标的共享。切换后各实例直接读取数据库，接管不会恢复本地缓存中的旧策略。本次结构随 Flyway V2 自动升级，正常发布无需手工执行旧 SQL；所有共享该库的旧实例都须先停写，并核对旧 leader 的活动策略。表为空时首个实例仅导入一次自己的旧 JSON 选择，不应同时启动内容冲突的旧文件，也不能与旧二进制混跑。
+活动策略选择和 revision 由 `okx_strategy_selection` 按执行模式和标的共享，接管实例从 MySQL 读取。旧库首次升级前，停止共享该库的旧实例并核对原 leader 的活动策略。表为空时首个实例会一次性导入自己的旧 JSON 选择，应先确认导入来源，再启动其他实例。
 
 已有仓位但旧文件没有活动策略时，必须先核实并填入共享选择；系统不会在持仓期间自动猜测新策略。升级前由旧版日亏损/回撤触发的 HALTED 也不会自动解除，仍按下述完整对账及显式恢复流程处理。
 

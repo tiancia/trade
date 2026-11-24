@@ -1,214 +1,74 @@
-# 后端架构说明
+# 后端架构与模块
 
-后端采用业务域优先的模块化单体，共享应用进程、构建和数据库，同时用包边界隔离业务所有权。当前规模保留进程内调用和本地事务，不拆分微服务或 Maven 子模块；域内统一四层后再按能力细分，使入口、用例、业务规则和外部适配职责清晰。模块职责见 [模块目录](MODULES.md)。
+后端是一个 Java 21、Spring Boot 4、MyBatis 应用，单个 Maven 工程，共享进程和 MySQL 数据库。HTTP 请求从各域的 Controller 进入，定时任务由 `automation` 调用各域的 Scheduler。[应用入口](../../backend/src/main/java/com/trade/TradeApplication.java)
 
-## 1. 先定位业务域，再定位层和能力
+## 模块目录
 
-业务域包括 `trading`、`polymarket`、`weibo`、`x`。它们保留同一个 Spring Boot 进程、Maven 构建和数据库连接；没有拆成微服务或多个 Maven module。
+代码位于 `backend/src/main/java/com/trade/`，测试在 `backend/src/test/java/com/trade/` 下按包对应。每个一级包的 `package-info.java` 说明该模块的职责。
 
-业务域、`automation` 和共享能力模块 `ai` 按以下四层组织，出站契约独立放在模块根目录的 `port`，各目录按需创建：
-
-```text
-<module>/
-├─ interfaces/             # 从外部进入系统
-│  ├─ web/                 # HTTP、鉴权、请求转换、异常映射
-│  └─ scheduler/           # 定时触发，薄入口
-├─ application/            # 一个用例如何执行
-│  ├─ service/             # 小模块的用例服务及包内辅助转换
-│  └─ strategy/order/.../  # 大模块按用例能力细分
-├─ port/                   # 模块需要的出站接口
-├─ domain/                 # 业务数据和纯规则
-│  ├─ model/               # 稳定值、状态快照、业务枚举
-│  ├─ exception/           # 跨层共享的业务异常
-│  └─ order/risk/rule/.../ # 有明确归属的模型与纯规则
-└─ infrastructure/         # 技术实现和装配
-   ├─ persistence/         # MyBatis、Row、文件存储、Redis 实现
-   ├─ broker/              # 实盘、模拟盘、回测或外部进程执行器
-   ├─ market/event/.../    # 行情接入、队列、处理器等适配实现
-   └─ config/             # 配置绑定、Bean 装配
-```
-
-`client` 是按外部服务或能力组织的共享传输模块，使用 `client/okx`、`client/weibo`、`client/polymarket`、`client/telegram`、`client/ai` 等目录。AI provider 选择位于 `client/ai/config`，Gemini 协议及 DTO 位于 `client/ai/gemini`；`common/support` 只容纳无业务归属的纯函数，不强行给这两个技术模块套四层空目录。
-
-## 2. 依赖方向与现有边界
-
-```text
-interfaces -> application -> domain
-                    |
-                    v
-             port <- infrastructure implementation
-
-automation -> 各业务域的 scheduler / lifecycle 入口
-业务域 -> client / ai / common
-```
-
-- 业务域之间不得直接 import，跨域生命周期由 `automation` 编排。
-- `client`、`ai`、`common` 不得反向依赖业务域或 `automation`。
-- `domain` 不依赖 `application`、`port`、`interfaces`、`infrastructure`。不依赖供应商 client；架构测试不再保留 provider DTO 豁免。
-- `port` 不依赖接口入口或基础设施实现。Broker、订单存储、资金状态、行情缓存和审计等现有接口放在这里。
-- 非接口层不得反向依赖本域 HTTP 或定时入口。`automation` 登记各域 scheduler 是跨域编排的明确职责。
-- Web 不直接访问 Mapper 或暴露持久化 Row。请求路径、返回 JSON、配置键和表结构不因目录调整而变化。
-
-目录分层不等于完成 DDD。判断职责的依据是变化原因，而不是类的长度：业务阈值、状态演进和不变量归 domain；数据加载、事务、调用顺序、审计及指标归 application；外部协议、持久化与框架装配归 infrastructure；HTTP 与定时入口归 interfaces。规则由配置驱动并不意味着必须放在 application：先把配置和 provider DTO 转成领域参数，再调用纯规则。
-
-已收敛的边界：
-
-- `RiskControlService` 加载/保存状态并记录指标；`domain/risk` 执行六类风控规则及交易日、亏损冷却、已成交动作的状态演进。`TradingRiskConfiguration` 在 `infrastructure/config` 中按固定顺序装配名为 `tradingRiskRules` 的规则集合，由构造方法注入；缺失或空集合会阻止服务创建。`RiskInputs` 负责配置转换，`TradingMarketInputs` 负责账户与行情 DTO 到领域输入的转换。
-- `OrderSizingService` 转换余额、品种限制和配置；`domain/order/OrderSizingRules` 执行数量上限、步长取整与最小量规则。
-- `ThresholdEventStrategy` 负责注册及输入转换；`domain/strategy/ThresholdDecisionPolicy` 决定价量入场、反向波动与浮亏退出。
-- `TradingScheduler` 只调用 `TradingTriggerService`。后者编排行情回退、领导权校验、扫描冷却和决策触发；这些是有状态的用例流程。
-- Trading 用例通过 `TradingStateStore`、`TradingMarketSource`、`TradingMarketFeed` 和 `TradingEventPipeline` 使用状态、行情及事件管道。事件状态 HTTP 接口调用 `TradingEventStatusService`。
-- Polymarket 市场期限、成交量、价差及流动性规则位于 `domain/rule`，采集与执行共同使用 `MarketEligibilityPolicy`。
-
-进一步按实际行为下沉的核心规则：
-
-| 能力 | domain 决定什么 | application 编排什么 |
+| 模块 | 负责什么 | 从哪里读代码 |
 | --- | --- | --- |
-| 订单与资金 | `OrderIdentity`、`OrderChange`、`OrderSettlementPolicy`、`PositionAccounting` 决定幂等身份、状态演进、手续费、累计成交差量和持仓成本；`FundSafetyPolicy` / `ReconciliationPolicy` 判断恢复条件与资金偏差 | CAS 重试、事务、账本更新、审计、HALTED 后撤单的调用顺序 |
-| 执行 | `ExecutionEligibility` 校验动作与品种；`PaperFillPolicy` 计算模拟成交；`AccountValuation` 计算权益与开仓上限 | `LiveOrderExecutionService` / `PaperOrderExecutionService` 编排门禁、风控、预留、提交和结算 |
-| 行情与回测 | `MarketSignalPolicy` 判断价量/浮亏触发；`SimulatedPortfolio` 管理模拟持仓、手续费、滑点和盈亏；`BacktestPolicy` / `BacktestStatistics` 校验参数和统计结果 | 历史加载、逐根推进、策略调用、异步任务和结果发布 |
-| Polymarket | `PolymarketDecisionRules` 校验业务有效性；`PolymarketOrderPolicy` 决定执行阈值、花费上限、最小数量和取整 | 解析、执行开关、地域检查、下单和审计 |
+| `automation` | 后台任务、持久化模块开关和启动时的数据库迁移 | [任务登记](../../backend/src/main/java/com/trade/automation/application/task/AutomationTaskRegistrar.java) · [模块开关恢复](../../backend/src/main/java/com/trade/automation/application/task/ModuleControlService.java) |
+| `trading` | OKX 行情、策略、风控、PAPER 账本、LIVE 订单与对账、回测和 Trading AI | [交易决策](../../backend/src/main/java/com/trade/trading/application/strategy/TradingStrategyEngine.java) · [订单对账](../../backend/src/main/java/com/trade/trading/application/order/OrderReconciliationService.java) · [策略顾问](../../backend/src/main/java/com/trade/trading/application/strategy/TradingAiAdvisor.java) |
+| `polymarket` | 市场筛选、AI 决策、执行预留与审计 | [决策与执行用例](../../backend/src/main/java/com/trade/polymarket/application/service/AiPolymarketService.java) |
+| `weibo` | OAuth、热点采集、草稿、审核、发布和账号配额 | [微博发布用例](../../backend/src/main/java/com/trade/weibo/application/service/WeiboPostService.java) |
+| `x` | 内容规则、版本化草稿、审核、发布和账号配额 | [X 发布用例](../../backend/src/main/java/com/trade/x/application/service/XPostService.java) |
+| `client` | AI、OKX、Polymarket、微博、Telegram 和 X 的协议、签名与传输 | [客户端目录](../../backend/src/main/java/com/trade/client/) · [AI 供应商选择](../../backend/src/main/java/com/trade/client/ai/config/AiClientConfiguration.java) |
+| `ai` | 各业务域共用的 AI 响应解析失败审计 | [审计接口](../../backend/src/main/java/com/trade/ai/port/AiResponseParseErrorSink.java) |
+| `common` | 无 I/O 的共享函数，包括交易数值计算 | [TradingMath](../../backend/src/main/java/com/trade/common/support/TradingMath.java) |
 
-基础设施的 Broker 只负责接入转发；`OkxOrderGateway` 处理供应商响应、拒绝和只读查询重试。MyBatis 实现保留行锁、账本原子写入、行映射，金额计算复用领域规则。阿里云授权策略 JSON、签名与 STS 请求统一由 `infrastructure/oss` 实现。
+## 分层与依赖
 
-并非所有 if/循环都应下沉：输入缺失、记录查询、外部调用失败、分页、事务/CAS 重试、任务取消、锁和资源释放属于用例或技术处理。Prompt、JSON 别名和格式容错留在 `application/decision`，交易概率/金额等业务约束调用 domain。Weibo OAuth/发布与 automation 主要是外部调用和生命周期编排，不为它们制造空领域服务。
+业务域先分层，再按能力建包。`automation` 与 `ai` 也按需采用这一结构。`client` 按外部服务组织，业务域各自维护提示词、响应解析和业务校验。
 
-部分用例使用配置类和供应商客户端，`ExchangeOrderGateway` 继续使用 OKX 协议 DTO。原始采集上下文 `TradingDecisionContext` 位于 `application/market`，Prompt 与审计信封 `AiDecisionAuditRecord` 位于 `application/decision`。交易领域规则接收 `TradingMarketInputs` 转换后的 Facts。Polymarket 盘口通过不可变 `MarketDepthLevel` 复制供应商档位，保留 JSON 的 price/size 字符串精度。提取新接口时，用业务输入和返回值表达契约，行映射留在适配器内。
-
-关键类型与用例按以下边界组织：
-
-- `TradingOrder` 不提供公开构造器或 setter，业务推进仅通过不可任意构造的 `OrderChange`，保留状态机、同状态成交刷新、CAS 版本和完成时间语义。持久化使用 `TradingOrderRow`；`restore(Snapshot)` 只用于数据库恢复，禁止应用层把恢复入口当成状态修改入口。
-- `TradingPositionState` 是不可变快照，买入、卖出与对账通过领域方法返回下一版本；实时成交卖出仍严格禁止超出受管理持仓，普通卖出保留原来的归零行为。累计成交 checkpoint、行锁和持仓写入仍由持久化适配在同一事务中完成。
-- `BacktestExecutorConfiguration` 拥有回测线程池及停机；`BacktestService` 注入名为 `backtestExecutor` 的 `Executor`，保留 2 个线程、32 个排队任务、拒绝策略和 5 秒停机等待，不新增配置项。
-
-## 3. 类型应该放在哪里
-
-| 内容 | 位置 | 示例 |
+| 包 | 职责 | 示例 |
 | --- | --- | --- |
-| HTTP 接口、SSE、HTTP 专用请求 | `interfaces/web` | `TradingController`、`TradingCandleStream` |
-| 定时触发 | `interfaces/scheduler` | `TradingScheduler` |
-| 用例服务、事务编排 | `application/<能力>` | `application/order/OrderSettlementService` |
-| 策略注册、输入转换及风控编排 | `application/strategy`、`application/risk` | `TradingStrategyEngine`、`RiskControlService` |
-| 出站契约 | `port` | `TradingBroker`、`TradingFinancialStateStore` |
-| 状态、业务枚举 | `domain/model` 或领域能力包 | `ExecutionMode`、`domain/order/OrderStatus` |
-| 纯规则 | `domain/order`、`domain/risk`、`domain/strategy`、`domain/rule` | `OrderSizingRules`、`RiskStateTransitions`、`ThresholdDecisionPolicy` |
-| 业务异常 | `domain/exception` | `WeiboPublishingException` |
-| 回测结果 | `domain/backtest` | `BacktestRun`、`BacktestTrade`、`FillPriceSource` |
-| Broker 实现 | `infrastructure/broker` | `OkxLiveBroker`、`PaperBroker`、`BacktestBroker` |
-| 数据库、文件与缓存实现 | `infrastructure/persistence` | `MyBatisTradingOrderRepository`、`RedisHotMarketDataCache` |
-| 外部行情获取 | `infrastructure/market` | `OkxMarketDataWebSocketFeed`、`HistoricalCandleService` |
-| 技术事件契约与信封 | `application/event`、`port` | `TradingEvent`、`TradingEventPublisher` |
-| 队列与事件处理器 | `infrastructure/event` | `BoundedTradingEventBus` |
-| Prompt、协议解析与格式校验 | `application/decision` | `AiPolymarketDecisionParser` |
-| 供应商 HTTP/WS、签名、协议 DTO | `client/<provider>`，AI 实现归 `client/ai` | `client/okx`、`client/ai/gemini` |
+| `interfaces` | 接收 HTTP、SSE 或定时触发，转换外部请求 | `TradingController`、`TradingScheduler` |
+| `application` | 安排调用顺序、事务和审计，将配置、供应商 DTO 转换为领域输入 | `RiskControlService`、`OrderSettlementService` |
+| `domain` | 订单状态、资金计算、策略规则与不变量 | `OrderChange`、`OrderSizingRules`、`ThresholdDecisionPolicy` |
+| `port` | 定义用例需要的下单、存储、行情和审核等接口，与四层目录并列 | `TradingBroker`、`TradingStateStore`、`HumanReviewGateway` |
+| `infrastructure` | 实现上述接口，装配 Spring Bean，接入 MyBatis、Redis、交易所或外部进程 | `MyBatisTradingOrderRepository`、`OkxOrderGateway` |
 
-纯数据按业务归属放置，避免创建全局 `enums`、`dto`、`service` 或 `utils`。HTTP 专用鉴权异常归 `interfaces/web`。
+`interfaces` 调用 `application`，纯领域规则独立于 Spring、MyBatis 和供应商类型。HTTP 层通过用例访问数据，Mapper 和持久化 Row 留在适配器内。四个业务域之间的调度由 `automation` 协调，`client`、`ai` 和 `common` 只向业务域提供共享能力。包路径、依赖方向和 Mapper XML 类型由架构测试校验。[架构测试](../../backend/src/test/java/com/trade/architecture/PackageArchitectureTest.java)
 
-## 4. Trading 的主要调用链
+## 启动与后台任务
 
-### 任务与策略
+Flyway 在应用就绪前完成迁移。`AutomationTaskRegistrar` 登记 `trading`、`trading-ai`、`polymarket`、`weibo`、`x` 五个任务。应用就绪时，`ModuleControlService` 先恢复数据库中的操作员选择，`AutomationTaskManager` 再启动启用的任务。没有保存选择时，自动启动跟随模块开关，显式的 `auto-start` 可覆盖默认值。[迁移装配](../../backend/src/main/java/com/trade/automation/infrastructure/config/DatabaseMigrationConfiguration.java) · [任务执行](../../backend/src/main/java/com/trade/automation/application/task/AutomationTaskManager.java)
+
+各循环在上一次执行结束后按固定延迟调度，同一任务内的循环互斥。交易任务和领导租约心跳使用独立调度池。功能控制台保存的模块选择可以跨重启恢复，任务 API 的临时启停只作用于当前实例。[后台任务操作](OPERATIONS.md#后台任务操作)
+
+## OKX 交易调用链
 
 ```text
-automation/application/task/AutomationTaskManager
-  -> trading/interfaces/scheduler/TradingScheduler
-    -> trading/application/runtime/TradingTriggerService
-      -> trading/application/strategy/TradingStrategyEngine
-        -> 当前激活策略 -> domain 策略规则
-        -> port/TradingBroker
-          <- infrastructure/broker/TradingBrokerRouter
-            -> PaperBroker / OkxLiveBroker
-              -> PaperOrderExecutionService / LiveOrderExecutionService
-                -> domain policies + application ports
+TradingScheduler → TradingTriggerService → TradingStrategyEngine
+  → 当前策略 → TradingBrokerRouter
+    ├─ PaperBroker   → PaperOrderExecutionService → 模拟账本
+    └─ OkxLiveBroker → LiveOrderExecutionService  → 订单预留 → OkxOrderGateway
+
+OrderReconciliationService → 按标的、clOrdId 和已有的交易所订单 ID 查询 OKX
+  → OrderSettlementService → 订单状态与历史、累计成交账本、仓位成本、风险状态
 ```
 
-`AutomationTaskRegistrar` 只登记任务；`ApplicationReadyEvent + auto-start` 或任务 API 才会启动循环。同一任务内多个循环共用互斥锁，每轮结束后按 fixed delay 重新调度。交易多实例领导租约由 `application/runtime/TradingLeadershipService` 管理；真实下单前再次校验领导权。
+- **实盘提交与对账。** 每笔订单有持久化幂等键和确定的 `clOrdId`。提交前检查模块、领导权及资金停止状态。结果不明进入 `SUBMIT_UNKNOWN`，阻断新单，按原标识查询。结算在同一事务内应用累计成交量和费用相对上次记录的差额，重放同一快照不会重复计仓。[实盘执行](../../backend/src/main/java/com/trade/trading/application/execution/LiveOrderExecutionService.java) · [成交结算](../../backend/src/main/java/com/trade/trading/application/order/OrderSettlementService.java)
+- **资金状态。** MySQL 持久化受管理仓位、成本和风险。交易所余额用于核对，`HALTED` 持续阻止新单，恢复需要对账、核对挂单、当前 revision 和人工确认。[资金停止与恢复](OPERATIONS.md#资金级停止与恢复)
+- **策略与模拟。** 活动策略按模式和标的共享。策略维护、PAPER 成交与 LIVE 订单预留在短事务内核对版本，交易所请求在锁外执行。PAPER 使用公共行情和独立的模拟账本。Trading AI 通过自己的任务评估已有策略，自动调整受独立开关约束。[策略参数与模拟资金](../trading/SIMULATION.md) · [Trading AI](../trading/AI.md)
+- **行情与回测。** REST 与 WebSocket 将行情送入有界队列，各处理器独立写入 MySQL 或 Redis。HTTP 接口经 SSE 向驾驶舱推送增量。回测从独立 API 触发，通过 `HistoricalCandleSource` 合并本次 REST 数据和已有 K 线；回测运行记录保存在进程内，重启后清空。[事件总线](../../backend/src/main/java/com/trade/trading/infrastructure/event/BoundedTradingEventBus.java) · [回测](../trading/BACKTEST.md) · [队列指标与告警](OBSERVABILITY.md)
 
-### 真实资金闭环
+## Polymarket 与内容发布
 
-真实提交前先建立幂等订单账本并取得提交所有权；订单接受后的即时查询与后台 `application/order/OrderReconciliationService` 共用结算服务：
+Polymarket 实盘决策先建立审计记录，再采集行情并调用 AI。下单前取得数据库执行预留，通过市场约束、地域和执行检查后调用 Python 桥接。确认不完整时保留预留，重启后仍会阻断后续实盘下单。恢复步骤和脚本契约分别见[未决执行恢复](OPERATIONS.md#polymarket-未决执行恢复)和[桥接工具](../../tools/polymarket/README.md)。
 
-```text
-OKX order snapshot
-  -> application/order/OrderSettlementService (@Transactional)
-    -> OrderSettlementPolicy / OrderChange -> 结算计划与下一状态
-    -> OrderLifecycleService -> 订单 + 状态历史
-    -> 累计成交 checkpoint -> okx_order_fill_ledger
-    -> 仓位与成本 -> okx_position_state
-    -> 已执行动作的风险状态 -> okx_risk_state
-```
+微博和 X 分别保存草稿、正文版本、审核决定、轮询进度与发布尝试。共享的 Telegram 客户端负责传输，各域的审核适配器核对聊天、审核人、消息和版本。批准后由所属域检查发布开关、账号与额度，再调用平台客户端。发布进入 `UNKNOWN` 时须人工核对平台结果。[微博工作流](../publishing/WEIBO_WORKFLOW.md) · [X 工作流](../publishing/X_WORKFLOW.md) · [Telegram 协议](../publishing/TELEGRAM_API.md)
 
-累计成交只应用相对 checkpoint 的差量，避免重复查询、崩溃重放和部分成交刷新重复加仓。LIVE 与 PAPER 使用不同 `account_scope`。幂等键、确定性 `clOrdId`、乐观锁、审计、事务边界均保持原语义；对账不得重新提交订单。
+## 配置与持久化
 
-下单只有在收到完整且身份匹配的成功确认后才记录接受；空响应、超时和系统错误保留 `SUBMIT_UNKNOWN`，由相同 `clOrdId` 查询确认，不释放未决订单屏障。成交结算要求有效的累计 `accFillSz` 和累计均价 `avgPx`，不以最后一笔 `fillSz/fillPx` 代替累计数据；乐观锁重试也禁止累计成交量回退。
+后端配置入口是 [application.yml](../../backend/src/main/resources/application.yml)。数据库表、Mapper 与代码按域对应，策略画像和近期决策记忆另存于 `data/trading-state.json`。运行中的资金与订单记录在 MySQL。
 
-订单结算失败或仍有未决订单时不记录整轮对账成功。现货账户余额只更新交易所观测量，不覆盖受管理仓位与成本，包括 `DEDICATED_ACCOUNT`；受管理仓位只由成交账本推进。专用账户的双向差异、共用账户中交易所总量低于受管理仓位的缺口，超过配置容差时均立即触发资金停止；共用账户允许额外人工仓位，但不将其导入本系统账本。
+| 目录 | 用途 |
+| --- | --- |
+| [mapper/](../../backend/src/main/resources/mapper/) | 各域的 MyBatis XML，与 Mapper 接口、Row 类型对应 |
+| [db/schema/](../../backend/src/main/resources/db/schema/) | 各模块当前的完整表结构，供查阅和离线校验 |
+| [db/migration/](../../backend/src/main/resources/db/migration/) · [db/migration-support/](../../backend/src/main/resources/db/migration-support/) | Flyway 启动迁移及 Java 迁移依赖的固定 SQL |
+| [db/upgrade/](../../backend/src/main/resources/db/upgrade/README.md) | 接入 Flyway 之前的旧库补丁及前置条件，按目标库结构选用 |
 
-MySQL 是活动策略和资金状态的权威来源。旧 JSON 的仓位、成本、风险和活动选择仅在目标数据库行为空时兼容初始化；之后 JSON 只维护画像和有界决策记忆。活动选择按执行模式及标的存储，每次直接读取共享数据库。
-
-本地记忆在副本上修改，同目录临时文件完成序列化后原子替换，成功后才更新内存；不支持原子替换的文件系统会拒绝写入。此机制只负责单进程记忆的失败一致性。`TradingStrategyMaintenance` 使用共享数据库锁串行化策略修改、PAPER 成交和 LIVE 预留，并核对活动选择 revision 及参数版本；锁内不调用交易所。同库有 LIVE/PAPER 持仓或未决订单时拒绝策略修改，保持持仓退出规则稳定。实际启停、领导权和资金恢复步骤见 [后端运维手册](OPERATIONS.md)。
-
-资金级停止先提交 `HALTED`，再设置 cancel-all-after 并逐笔撤销挂单。设置定时器失败或某笔撤单失败不阻止后续撤单；错误聚合到 `lastActionError`，不会自动解除停止。每次真实提交在取得提交所有权后再次读取停止门；恢复要求期望 revision、确认词、本地无待对账订单且交易所无挂单。
-
-日亏损、回撤和连亏冷却只拦截加仓，不激活禁止全部真实下单的 HALTED。连亏来自空仓至完整平仓的净盈亏，部分成交差量及累计手续费在资金事务中应用，重放不重复计数。采集、策略或执行失败向 automation 传播异常；正常禁用、锁忙及风险拦截仍为跳过。
-
-### 行情事件管道
-
-```text
-REST / WebSocket producers
-  -> port/TradingEventPublisher
-    <- infrastructure/event/BoundedTradingEventBus
-      -> 有界队列 -> 隔离的 handlers -> MySQL / Redis
-```
-
-信封和载荷在 `application/event`，因为它们描述包含 provider DTO 的技术接入数据；策略推导出的业务信号是 `domain/model/MarketSignal`。
-
-- 消费者随应用启动，HTTP 回测和 REST 采集无需启动交易任务。任务生命周期控制 WebSocket 和领导租约；应用停止时先停止生产，再在超时内排空队列。
-- 队列容量固定。`trade.trading.event-queue.full-policy` 默认 `drop-oldest`，保留较新的行情。`drop-latest` 丢弃新事件，`block` 让生产者最多等待 `publish-timeout-ms`。
-- handler 异常隔离，不向 WebSocket 回调传播数据库失败。
-- Micrometer 继续报告队列深度、容量、发布结果、丢弃、延迟和处理耗时；状态 API 保持 `/api/trading/runtime/events`。
-- 历史 K 线异步写入，但调用返回时合并本次 REST 数据与缓存，保留回测读取语义。
-- MySQL K 线落库先按标的、周期和时间戳批量查询已存在记录：已有 K 线走批量 `UPDATE`，新 K 线才走批量插入，同批重复时间戳保留最后一次观测。插入仍保留唯一键冲突更新以处理并发首次写入；日常重复更新不会消耗自增 ID，但并发插入、回滚等情况仍可能产生编号缺口。表没有自动过期清理，Redis 的 TTL 与根数上限不影响 MySQL 数据。
-
-## 5. Weibo 分层示例
-
-热点审核工作流沿用相同四层：不可变 `WeiboPost` 聚合管理规则，应用服务通过 port 编排
-RSS/Atom、AI、MyBatis 和发布。审核请求与决策归 `weibo/domain/model`，投递契约归
-`weibo/port`，Telegram 审核及关闭时的占位实现在 `weibo/infrastructure/review`。
-当前工作流见 [微博工作流](../publishing/WEIBO_WORKFLOW.md)。
-
-```text
-weibo/
-├─ interfaces/web/           # WeiboController、HTTP 专用鉴权异常
-├─ application/
-│  ├─ service/               # OAuth、账号查询、发布用例
-│  └─ decision/              # AI 草稿生成
-├─ port/                     # token、OAuth state、草稿存储与审核投递接口
-├─ domain/
-│  ├─ model/                 # 账号、令牌、授权结果、草稿与审核类型
-│  └─ exception/             # 授权与发布失败
-└─ infrastructure/
-   ├─ persistence/           # MyBatis 实现、Mapper、Row
-   ├─ review/                # Telegram 投递/认证轮询，关闭时 submit 返回 false
-   └─ config/                # 客户端 Bean 装配
-```
-
-供应商协议仍位于 `client/weibo`。共享 AI provider 的选择位于 `client/ai/config/AiClientConfiguration`；OKX Bean 在 `trading/infrastructure/config/OkxClientConfiguration` 装配。
-
-Telegram Bot API 协议与 DTO 位于 `client/telegram`，共享的 `TelegramClientConfiguration` 绑定属性并装配 `TelegramApi`。
-审核适配器验证用户、聊天、bot 和消息，再把持久化的 `ReviewDecision` 交给应用用例；游标推进在业务提交之后。
-微博与 X 分别拥有自身审核投递与轮询数据，未新增顶层 `telegram` 模块；开关默认关闭，注册 Bean 不会调用 API 或启动任务。
-
-X 的 `application/service/XPostService` 编排配置驱动的 AI 草稿、Telegram 审核与发布。
-内容规则快照、状态及版本在 `domain/model`，Prompt、解析和官方加权字数校验在
-`application/decision`；`infrastructure` 实现持久化、审核与发布适配，OAuth 签名归 `client/x`。
-`automation` 负责跨域 Bot 消费者互斥检查，禁止微博与 X 审核同时启用。详细配置见 [X 工作流](../publishing/X_WORKFLOW.md)。
-
-## 6. 验证与资源约定
-
-- 生产代码和测试包路径镜像；移动、删除或重命名类型后清理旧 class，运行相关模块及 `PackageArchitectureTest`，无需因此执行全量。范围与命令见[贡献指南](../../backend/CONTRIBUTING.md#测试与质量门禁)。
-- MyBatis XML 保留 `src/main/resources/mapper/<module>/`，同步更新 namespace/resultType/parameterType。
-- 数据库完整结构按模块保存于 `db/schema/<module>/schema.sql`，仅用于查阅和离线校验；运行时由 `automation/infrastructure/migration` 编排 Flyway 的全库版本迁移，完成后才进入应用就绪及任务启动阶段。`db/upgrade/` 仅保留接入前的历史补丁。详见 [数据库目录](../../backend/src/main/resources/db/README.md)。
-- `PackageArchitectureTest` 从生产源码识别 `com.trade` 下的一级模块，核对每个模块的分类和职责说明，再按归属检查层与模块之间的依赖方向。它也校验包路径和 Mapper XML 中的 Java 类型。
-- domain 不允许引用 provider DTO；应用层采集与执行契约可以保留供应商协议，在调用纯规则前转换。结构规则不得通过放宽限制来掩盖错误归层。
-- 新增边界检查禁止 domain 引入 Spring/MyBatis/SQL 框架，禁止 Trading 的 application/interfaces 直接依赖已抽象的四类状态/行情/事件实现。
-- 历史行情也通过 `port/HistoricalCandleSource` 注入回测用例，由 `HistoricalCandleService` 实现；架构测试禁止用例与 HTTP 层直接依赖该实现。实时 Broker 仅路由 PAPER/LIVE，BACKTEST 必须走独立回测 API。
+修改表结构、包路径或配置后，按对应范围验证。[数据库开发规范](../../backend/src/main/resources/db/README.md#主键开发规范) · [后端贡献指南](../../backend/CONTRIBUTING.md#测试与质量门禁)

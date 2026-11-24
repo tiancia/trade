@@ -13,7 +13,7 @@
 ## 开始修改前
 
 1. 运行 `git status --short`，保护已有未提交改动；不要重置、覆盖或顺手格式化无关文件。
-2. 从 [模块目录](../docs/backend/MODULES.md) 定位所属业务域，再读该域的 `package-info.java` 和直接调用链。
+2. 从[模块目录](../docs/backend/ARCHITECTURE.md#模块目录)定位所属业务域，再读该域的 `package-info.java` 和直接调用链。
 3. 检查配置门禁、持久化契约、Mapper XML 和相邻测试，不要只根据类名猜测行为。
 4. 需求存在多种解释时，优先选择能保持现有 API、数据库和资金安全语义的最小改动。
 

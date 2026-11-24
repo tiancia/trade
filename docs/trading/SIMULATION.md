@@ -84,8 +84,8 @@ PAPER 的持仓、现金和风险状态属于模拟批次，行情仍来自公�
 - `GET /api/trading/paper/sessions/{sessionId}/equity`
 - `GET /api/trading/paper/sessions/{sessionId}/fills`
 
-写接口沿用现有网关登录和网络隔离。创建批次携带当前批次标识及版本，防止并发页面互相覆盖；旧批次中的在途决策不能写入新批次。
+管理写入需要操作员 Basic 认证和 `X-Trade-CSRF: 1`。创建批次携带当前批次标识及版本，旧批次中的在途决策不能写入新批次。[管理接口认证](../backend/OPERATIONS.md#后台任务操作)
 
 `GET /api/trading/runtime/status` 同时返回 `instId`、`baseCcy`、`quoteCcy`。驾驶舱行情查询、图表标题和回测默认标的跟随此配置，兼容旧后端缺少字段的响应；PAPER初始资金可作为回测默认资金，回测本身仍独立于当前PAPER持仓。
 
-完整建表语句在 [Trading schema](../../backend/src/main/resources/db/schema/trading/schema.sql)。运行时结构由 Flyway 管理，本次新增字段、共享选择表及检查点回填随 V2 自动执行；旧库首次接入条件见 [数据库说明](../../backend/src/main/resources/db/README.md)。标准发布会先停掉旧后端并自动备份，再启动新后端迁移；部署需要更新后端和驾驶舱。本地离线测试不能证明生产 MySQL 锁、真实行情或实盘效果。
+模拟会话、成交和资金曲线的表定义见 [Trading schema](../../backend/src/main/resources/db/schema/trading/schema.sql)。运行时迁移和旧库首次接入条件见[数据库说明](../../backend/src/main/resources/db/README.md)。

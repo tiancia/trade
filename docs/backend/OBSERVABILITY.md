@@ -1,6 +1,6 @@
 # Trading 可观测性
 
-本页主要说明本地开发环境的指标与监控。全项目环境见 [上手指南](../PROJECT_GUIDE.md)，生产容器的启用方式见 [部署说明](../../deploy/README.md)；本地与生产使用不同 Compose 和抓取配置。
+本页说明本地开发环境的指标、看板与排障。本地和生产分别使用各自的 Compose 与抓取配置。[本地基础设施](../../backend/infrastructure/README.md) · [生产监控](../../deploy/README.md#数据备份和监控)
 
 本项目用 Spring Boot Actuator + Micrometer 暴露指标，由 Prometheus 抓取和计算告警，Grafana 负责查询与展示。监控服务已纳入仓库根目录 `A:\trade\compose.yaml` 统一管理，专属配置位于 `backend/infrastructure/observability/`；启动基础设施不会开启 trading、自动任务或真实下单开关。
 

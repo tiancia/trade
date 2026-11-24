@@ -1,12 +1,8 @@
 # Ubuntu 生产部署（默认 SSH 私有访问）
 
-[项目文档总导航](../docs/README.md) · [架构与部署上手指南](../docs/PROJECT_GUIDE.md) · [后端运维](../docs/backend/OPERATIONS.md)
-
-首次接手项目，先读上手指南理解三台机器、三条独立通信链路和配置职责；本文件负责首次安装及生产运维的详细步骤。
+首次安装从[部署方案](#部署方案)开始。接手已有服务器时，先向维护者取得主机地址与指纹、登录授权、当前镜像清单和备份位置，再按 [SSH 访问](#4-建立电脑访问隧道)和[部署验收](#5-部署验收)核对运行状态。资金恢复与任务操作见[后端运维](../docs/backend/OPERATIONS.md)。
 
 ## deploy 目录放什么
-
-`deploy` 存放生产部署需要的工具与配置，不放业务代码。其 README 与脚本就近维护，全局文档导航统一在仓库根目录 `docs/`。
 
 | 路径 | 用途 |
 | --- | --- |
@@ -21,34 +17,27 @@
 | `.env.example`、`backend.env.example`、`release.env.example` | 基础设施、后端业务、镜像版本的配置模板 |
 | `.env`、`backend.env`、`secrets/`、`releases/` | 在实际环境创建的运行配置、密钥及发布记录，Git 不保存真实值 |
 
-本地开发中间件使用根目录 `compose.yaml`；生产使用 `compose.prod.yaml`。不要因为目录里也有配置模板，就把真实凭据或运行数据放入共享文档。
-
 ## 部署方案
 
-新增功能控制台后，从旧版升级须先在 TCR 建立 `control-console` 仓库，将当前 Compose 与 `deploy/nginx/` 配置同步到服务器，再执行一次 `service=all` 的构建和全量部署。公共模式还须补充 `CONTROL_CONSOLE_DOMAIN` 和覆盖新域名的证书。旧四镜像清单不能直接用于新版回滚；首次升级保留的旧清单只用于核对历史引用，需生成包含五个服务且数据库版本兼容的完整清单后再发布。后续日常页面更新可选择 `service=control-console`。
+国内 Ubuntu 运行后端、三个管理页面、Nginx、MySQL、Redis 和出站代理。CNB 构建带版本的镜像并推送到 TCR，服务器按发布清单拉取。默认私有部署通过 SSH 访问，网关将页面和同源 API 请求转发到对应容器。[生产 Compose](../compose.prod.yaml) · [网关路由](nginx/private.conf.template)
 
-本方案把后端、交易驾驶舱、X 控制台和功能控制台一起部署到国内 Ubuntu，不使用 Vercel。代码由 CNB 打包为带版本号的 Linux 镜像并推送 TCR，服务器负责拉取和运行；后续更新继续使用同一套发布脚本。默认通过 SSH 隧道访问三个页面，无需准备域名或 TLS 证书。
-
-```text
-电脑浏览器 ── localhost:18080 / localhost:18081 / localhost:18082
-                       └─ SSH 加密隧道 → 国内服务器 127.0.0.1:18080 / :18081 / :18082
-                                               └─ gateway + 网关密码
-                                                    ├─ 18080 → cockpit:3000
-                                                    ├─ 18081 → x-console:8080
-                                                    ├─ 18082 → control-console:8080
-                                                    └─ /api/ → backend:8080
-                                                                 ├─ mysql:3306 / redis:6379
-                                                                 ├─ DeepSeek：直接访问
-                                                                 └─ egress:13128
-                                                                      └─ SSH → 德国 127.0.0.1:3128 Squid
-                                                                                └─ OKX / Telegram / X
+```mermaid
+flowchart LR
+    Browser["电脑浏览器"] -->|SSH 端口转发| Gateway["国内主机 · Nginx"]
+    Gateway -->|页面| UI["交易驾驶舱 / X 控制台 / 功能控制台"]
+    Gateway -->|同源 API| Backend["backend:8080"]
+    Backend --> DB["mysql:3306 / redis:6379"]
+    Backend -->|模板默认直连| AI["DeepSeek"]
+    Backend --> Egress["egress:13128"]
+    Egress -->|SSH| Squid["德国 VPS · Squid:3128"]
+    Squid --> External["OKX / Telegram / X"]
 ```
 
 默认只开放受限制的 SSH 管理入口。三个 Web 入口绑定宿主机 `127.0.0.1`；安全组和防火墙不开放 80、443、18080、18081、18082、数据库、后端或代理端口。电脑访问的 HTTP 地址在本机回环，跨公网传输由 SSH 加密。页面和 API 统一使用网关账号密码限制访问。
 
 网关删除调用方的 `Forwarded`、`X-Forwarded-Prefix` 和 `X-Forwarded-Ssl`，根据实际连接重建转发主机、协议、端口和来源地址，避免后端的转发头处理器信任伪造信息。显式外部端口取自实际请求的 `Host`，因此 SSH 私有访问的 `18080` / `18081` / `18082` 以及自定义 HTTPS 端口仍可用于生成正确 URL。更新此规则时同步两个 Nginx 模板和 `includes/proxy-common.conf`，再按现行发布流程重新创建 `gateway`；仅发布后端镜像不会更新服务器配置文件。
 
-电脑到国内服务器的访问隧道，与国内服务器到德国 VPS 的 `egress` 隧道独立。关闭电脑上的 SSH 连接只会中断页面访问，服务器上的 PAPER 策略、X 生成、Telegram 审核和发布任务继续运行。此方案是私人运维访问安排；公网网站的备案与接入要求另按托管方式和服务商规定确认，见后文可选公共模式。
+关闭电脑上的 SSH 窗口会中断页面访问，服务器任务和 `egress` 到德国的隧道继续运行。容器通过服务名 `egress:13128` 连接业务代理。宿主机的 Docker daemon 拉取镜像时使用自己的网络和代理配置，排障见[构建缓存与耗时定位](#构建缓存与耗时定位)。
 
 ## 先准备这些内容
 
@@ -166,6 +155,8 @@ chmod 644 deploy/secrets/gateway.htpasswd
 
 ## 3. 构建镜像并发布
 
+发布前在隔离环境使用示例配置核对所选访问模式的 Compose、Linux 网关的 `nginx -t`、发布脚本及受影响的应用测试。公共模式另需核对域名、证书和续期配置。
+
 完成服务器配置后，将代码提交到 GitHub `main`，在 **Actions → Submit build or deployment to CNB → Run workflow** 选择 `service=all`、`mode=build_deploy`。首次尚无成功镜像基线，必须全量构建。也可先用 `mode=build`，确认 CNB 镜像推送成功后，再用 `mode=deploy` 并粘贴完整清单发布，详见 [CNB 发布入口](#cnb-发布入口)。
 
 CNB 构建 `linux/amd64` 镜像；不需要在电脑或生产服务器手工生成 JAR、dist。GitHub 任务成功只表示提交成功，构建与生产发布结果以 CNB 任务日志为准。
@@ -194,11 +185,11 @@ ssh -NT -o ExitOnForwardFailure=yes `
 
 SSH 不是 22 端口时，在登录地址前添加 `-p 实际端口`；有专用登录密钥时添加 `-i 密钥路径`。这里的登录密钥属于电脑访问国内服务器，不能使用德国代理的 `egress_key`。首次连接核对国内服务器主机指纹。命令成功后通常没有输出，保留该窗口；电脑休眠或网络中断后重新运行即可。
 
-浏览器访问：
-
-- 交易驾驶舱：`http://127.0.0.1:18080`；
-- X 控制台：`http://127.0.0.1:18081`。
-- 功能控制台：`http://127.0.0.1:18082`。
+| 页面 | 浏览器默认地址 | 服务器网关 → 前端容器 |
+| --- | --- | --- |
+| 交易驾驶舱 | `http://127.0.0.1:18080` | `gateway:8080` → `cockpit:3000` |
+| X 控制台 | `http://127.0.0.1:18081` | `gateway:8081` → `x-console:8080` |
+| 功能控制台 | `http://127.0.0.1:18082` | `gateway:8082` → `control-console:8080` |
 
 三个页面都先输入 `operator` 和网关密码，之后无需填写应用令牌，X 控制台会自动读取内容。电脑本地端口已占用时，例如把第一条改为 `-L 127.0.0.1:28080:127.0.0.1:18080`，浏览器对应使用 `http://127.0.0.1:28080`。不要把 `-L` 的监听地址改成 `0.0.0.0`。
 
@@ -228,7 +219,14 @@ curl -fsS -u operator 'http://127.0.0.1:18080/api/trading/market/candles?instId=
 curl -fsS -u operator http://127.0.0.1:18080/api/automation/tasks
 ```
 
-以上两个网关请求可直接在服务器上验证；Windows 电脑建立隧道后也可用 `curl.exe` 请求同一地址。浏览器确认行情、运行状态和 X 草稿列表加载正常；确认策略运行模式为 PAPER。再完成一次真实 AI 生成 → Telegram 审核 → X 发布的人工验收，这一步会产生 AI 费用和真实 X 发帖。上线配置开关已经开启，请自行选择要批准的草稿。
+Windows 电脑建立隧道后，可用以下只读命令核对模式、实盘授权、活动策略和最近一次决策。再从浏览器确认行情和 X 草稿列表能加载。生产模板选择 PAPER，运行中的模块选择以功能控制台和任务 API 为准。
+
+```powershell
+curl.exe --noproxy "*" -fsS --max-time 30 -u operator 'http://127.0.0.1:18080/api/trading/runtime/status' |
+    ConvertFrom-Json | Select-Object executionMode, liveEnabled, activeStrategyId, lastError, lastDecision
+```
+
+页面可访问但 API 返回 502 时，检查网关到 `backend:8080` 的路由及容器就绪状态。遇到 401 时检查操作员凭据，管理写入返回 403 时检查 Origin 和 CSRF，版本冲突返回 409 时重新读取当前记录。验收 X 真实发布时，由操作员选择并批准草稿，再核对平台帖子 ID。真实生成会消耗 AI 额度，通过发布检查的草稿会对外发帖。[后端运维](../docs/backend/OPERATIONS.md) · [X 审核与发布](../docs/publishing/X_WORKFLOW.md)
 
 `/healthz` 只报告网关，不能代表业务验收；网关没有转发 `/actuator/`。backend 自检在容器内部访问 `/actuator/health/readiness`。从其他机器直接请求国内服务器的 18080 / 18081 / 18082 应无法连接；如果能连接，检查是否仍使用旧 Compose 配置或存在其他进程监听。
 
@@ -254,6 +252,8 @@ TCR 和 SSH 凭据只在 CNB 注入，不放进 GitHub 请求、构建上下文�
 
 单服务或 `frontends` 构建会通过 SSH 下载服务器的 `deploy/releases/current.env`，只替换选定镜像，因此即使仅构建也需要部署 SSH 凭据和成功基线。没有基线时先选 `all`。只改后端选 `backend`，只改驾驶舱选 `cockpit`；`all` 部署包含网关与基础设施前置检查。
 
+从四镜像清单升级时，先准备 `control-console` 仓库并同步当前 Compose、Nginx 配置，公共模式还需补齐域名和证书，再执行 `service=all` 构建和部署。回滚需使用含五个服务且兼容数据库版本的完整清单。
+
 镜像固定推送到 `ccr.ccs.tencentyun.com/tiancia-trade/<服务>`，版本含实际 GitHub SHA、运行号和随机后缀，不使用 `latest`。所有选定镜像推送成功后才生成完整清单，包含 `RELEASE_VERSION` 及五项 `BACKEND_IMAGE`、`COCKPIT_IMAGE`、`X_CONSOLE_IMAGE`、`CONTROL_CONSOLE_IMAGE`、`EGRESS_IMAGE`。CNB 日志在 `IMAGE_MANIFEST_BEGIN` / `IMAGE_MANIFEST_END` 间打印清单，并尝试保留 `release-*.env` 附件 30 天；后续部署失败仍可复制清单重试 `mode=deploy`。该模式校验选定服务确实属于清单版本，不自动搜索历史任务。
 
 GitHub 成功只表示 CNB 接受了请求。打开提交结果中的 CNB 任务链接核对构建和推送；生产发布成功日志包含 `DEPLOYMENT_OK`，回滚成功包含 `ROLLBACK_OK`，并应核对服务器成功版本记录和业务状态。
@@ -277,7 +277,7 @@ bash deploy/scripts/release.sh rollback --no-pull
 
 BuildKit 按服务保存本地 OCI 缓存，CNB 节点数据卷提供复用；节点变化或缓存淘汰后可能重新填充。构建脚本逐服务记录构建、推送和 `elapsed_seconds`；发布脚本通过 `DEPLOY_STAGE` 区分配置校验、镜像拉取、容器停止、重建与健康等待。依赖下载和推送发生在 CNB，`image_pull` 才是生产服务器下载。
 
-服务器 Docker daemon 的代理例外需覆盖 TCR 及实际镜像层重定向域名，保留已有例外并通过真实私有镜像拉取验收。仅仓库入口返回 `401` 不能证明完整下载正常；调整 daemon 配置可能需要在维护窗口重启 Docker 并核对容器状态。
+服务器 Docker daemon 的代理例外需覆盖 TCR 及实际镜像层重定向域名。若宿主机另配了 `trade-docker-egress.service`，检查该服务和 Docker 的 `trade-proxy.conf`。容器出站正常时，宿主机仍可能拉取超时。保留已有代理例外，用实际私有镜像验证下载；调整 daemon 配置可能需要在维护窗口重启 Docker 并核对容器状态。
 
 ## 数据、备份和监控
 
@@ -397,9 +397,3 @@ dc() {
 浏览器改为访问三个 `https://` 域名，须选择客户端证书并输入个人 Basic 口令；HTTP 仅处理证书验证和跳转 HTTPS。CLI 另外提供 `--cert`、`--key` 和 `--user`。私有模式的回环 Web 端口会被替换，不与公共端口同时发布。网关容器健康探针使用容器内回环 8082，不提供外部免证书访问入口。
 
 切换私有 / 公共模式时保留相同项目名、数据卷前缀和运行配置，并执行目标模式的**全量发布**，不要只更新 `gateway` 或某个单服务，因为后端的来源配置也随模式变化。切到公共模式用 `deploy --access public`；切回私有模式用 `deploy --access private`。访问模式不存入镜像历史，镜像回滚不会恢复旧访问模式，回滚时须明确选择当前要使用的模式。
-
-## 验证边界
-
-每次发布前，应在隔离环境检查所选访问模式的 Compose 配置、Linux Nginx `-t`、发布脚本和受影响的应用测试；配置校验使用虚构凭据，不读取或输出生产密钥。发布完成后，重新核对当前运行镜像、容器健康、业务代理、行情和审核状态。
-
-发布后分别核对 PAPER 的最近决策、Telegram 审核及 X 的实际发布状态。公共模式还需验收域名、证书和续期。[连接与业务状态检查](../docs/PROJECT_GUIDE.md#连接现有环境)

@@ -53,6 +53,4 @@ XPost published = api.publishText("已审核的正文");
 
 业务发布器将 `GET /2/users/me` 的 HTTP 失败保留为 `FAILED` 与 `preflight HTTP <状态>`，可确认创建帖子请求尚未发送；`POST /2/tweets` 的明确 4xx（除 408）为 `FAILED`，其余不确定结果为 `UNKNOWN`。日志和记录只保留阶段、状态和固定文案，单凭状态码不能证明余额不足。
 
-按 2026-10-06 核实的 [官方计费文档](https://docs.x.com/x-api/getting-started/pricing)，X API 使用预付 credits 按使用量扣费；余额耗尽或达到 spending limit 都可能阻断 API。账号查询也可能产生读取费用。价格和可用余额以开发者控制台为准；购买 AI 服务额度不代表 X API 有余额。
-
-离线测试使用 fake sender，覆盖公开签名向量、GET/POST、JSON 正文、nonce、属性门禁、异常脱敏和代理，不读真实凭据、不调用 X。实际账号权限、网络、额度和发布仍需独立联调。
+排查额度问题时，在 X 开发者控制台核对当前账号的权限、余额和消费上限，同时查草稿历史，区分账号查询与发帖请求的失败阶段。[X API 计费说明](https://docs.x.com/x-api/getting-started/pricing) · [发布状态排查](X_WORKFLOW.md#审核通过却没有发布)

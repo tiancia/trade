@@ -49,8 +49,7 @@ GENERATION_FAILED  REJECTED      EXPIRED      FAILED / UNKNOWN
   领取、尝试和历史同事务提交，网络请求不占数据库事务。
 - 网络错误、HTTP 408/5xx、响应缺少微博 ID、崩溃后超时的发布进入 `UNKNOWN`；
   明确的其他 4xx 拒绝进入 `FAILED`。两者都不自动重试，也不能通过编辑触发重发。
-- 完成事务失败时保留 `PUBLISHING`，后续扫描转为 `UNKNOWN`。必须人工核对微博，
-  本阶段不提供把未知状态强行重置成待发布的接口。不宣称外部接口严格 exactly-once。
+- 完成事务失败时保留 `PUBLISHING`，后续扫描转为 `UNKNOWN`。此时须人工核对微博发布结果，保留稿件状态和发布历史。
 - `GENERATING` 超时转为 `GENERATION_FAILED`，不再次自动消耗 AI。默认超时 300 秒，
   应大于实际 AI/微博请求最长耗时。停止任务不打断进行中的网络请求。
 - 配额按 UTC 自然日计算。数据库连接时区应固定并在真实 MySQL 联调确认。
@@ -59,11 +58,7 @@ GENERATION_FAILED  REJECTED      EXPIRED      FAILED / UNKNOWN
 
 [`db/schema/weibo/schema.sql`](../../backend/src/main/resources/db/schema/weibo/schema.sql) 是 OAuth、账号、草稿、审核历史、发布尝试和 Telegram 审核投递/轮询表的完整结构参考；运行时由 Flyway 执行版本迁移，详见 [数据库说明](../../backend/src/main/resources/db/README.md)。
 
-仅在接入 Flyway 前需要补齐更老结构时，先检查目标库。历史手工脚本的依赖顺序为
-[`migration_add_weibo_oauth.sql`](../../backend/src/main/resources/db/upgrade/weibo/migration_add_weibo_oauth.sql)、
-[`migration_add_weibo_workflow.sql`](../../backend/src/main/resources/db/upgrade/weibo/migration_add_weibo_workflow.sql)、
-[`migration_add_weibo_review_delivery.sql`](../../backend/src/main/resources/db/upgrade/weibo/migration_add_weibo_review_delivery.sql)。
-只选择适用于实际结构的脚本，按照[升级说明](../../backend/src/main/resources/db/upgrade/README.md)先备份并在隔离库验证；`upgrade/` 不会自动执行。
+接入 Flyway 前的旧库如缺少前置结构，先备份并在隔离库核对 OAuth、工作流和审核投递补丁的依赖顺序。[旧库升级说明](../../backend/src/main/resources/db/upgrade/README.md#使用方式)
 
 ## 配置与启动
 
@@ -91,13 +86,7 @@ title/link/description/pubDate；Atom 要求 title/alternate link、summary 或 
 来源发布时间作为事件资料时间。缺少字段、非法时间或摘要的条目跳过；前 20 条、响应最大 256 KiB。
 过期事件不生成，不使用 fallback 热点。无源时可以手动提交资料。
 
-工作流开启后默认自动启动；仅需手动启动时设 `TRADE_AUTOMATION_WEIBO_AUTO_START=false`。通过运维控制面查询或启停：
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8080/api/automation/tasks/weibo
-Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/weibo/start
-Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/weibo/stop
-```
+工作流默认随模块启动。没有保存的模块选择时，可用 `TRADE_AUTOMATION_WEIBO_AUTO_START=false` 改为手动启动。查询或临时启停时使用任务 ID `weibo`。[任务命令与认证](../backend/OPERATIONS.md#后台任务操作)
 
 generation、review 和 publishing 三个循环在同一任务内串行。真实发布关闭时 publishing 循环仍扫描过期、
 崩溃恢复和审核投递。默认正文 280 个 Unicode 字符，每 UTC 日生成 5 条、发布 3 次，间隔 1800 秒；
@@ -115,7 +104,7 @@ review 短轮询只订阅 `callback_query`，批准后立即尝试发布；配�
 
 ## 管理 API
 
-全部要求 `X-Weibo-Admin-Token`，OAuth callback 仍用 state 校验。回调先在独立短事务中消费 state，提交后才请求微博和保存账号令牌；外部交换、账号查询或令牌保存失败都不会恢复已用 state，必须重新获取授权链接。外部请求期间不持有数据库事务。
+下表的草稿管理接口需要操作员 Basic 认证和 `X-Weibo-Admin-Token`。OAuth callback 使用 state 校验。回调先在独立短事务中消费 state，提交后才请求微博和保存账号令牌。外部交换、账号查询或令牌保存失败时，须重新获取授权链接。
 
 管理 POST / PUT / DELETE 还需 `X-Trade-CSRF: 1`，浏览器请求须来自可信 Origin；该标记不替代微博令牌。任务管理的命令行调用同样需要这个头。
 

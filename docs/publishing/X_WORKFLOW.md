@@ -65,22 +65,6 @@ X 只需工作流主开关及必要凭据：调度、生成和发布扫描默认
 
 人工修改正文后，送审消息会明确标注原始 AI 说明不代表当前版本；旧批准继续失效，必须审核新正文。不会为更新审核说明额外调用 AI。
 
-可尝试的对话情绪，不是固定栏目：
-
-| 情绪 | 对话中的变化 |
-| --- | --- |
-| 想念与嘴硬 | 问对方有没有睡，真正想说的话却删了又写 |
-| 靠近与试探 | 一句普通邀约，另一方多问了一句，让关系显出变化 |
-| 失落与幽默 | 一方等着认真回答，另一方轻轻岔开；不靠羞辱制造情绪 |
-
-这些是创作取向，不是流量承诺；实际内容质量和受众反馈需要审核真实模型输出后再调整。
-
-可先人工记录 20–30 条稿件的情绪、对白自然度、曝光、持续讨论、关注和读者反馈，再调整创作取向；系统目前不采集互动指标，也不保证流量或收入。图片、原生投票与 thread 需要结构化内容、完整预览审核及部分成功处理，当前未实现。也要持续遵守 [X 自动化规则](https://help.x.com/en/rules-and-policies/x-automation)，避免重复或高度相似内容。
-
-### 运营工具与创作奖励
-
-按 2026-10-12 核实的 [X 原创内容奖励规则](https://help.x.com/en/using-x/original-content-rewards)，使用自动化方式创建或发布的内容被列为不符合奖励资格；人工审核没有被列为该规则的豁免。因此本模块是 AI 草稿、人工审阅与受控发布工具，不能视为领取奖励的合规方案。“非露骨”也不等于必然能获得收益，过度性暗示等内容仍可能受到[创作者变现标准](https://help.x.com/en/rules-and-policies/content-monetization-standards)限制。是否有受众、商业需求或平台奖励资格，都要另行验证。
-
 ## 准备账号与数据库
 
 1. 应用启动通过 Flyway 完成版本迁移，六张 X 表已纳入 V1。完整结构参考为 [`db/schema/x/schema.sql`](../../backend/src/main/resources/db/schema/x/schema.sql)，正常发布无需手工建表；只有首次接入前的历史结构不兼容时，才按[数据库说明](../../backend/src/main/resources/db/README.md)核实适用的历史前置补丁。
@@ -90,13 +74,7 @@ X 只需工作流主开关及必要凭据：调度、生成和发布扫描默认
 
 ## 复用 Telegram Bot，暂停微博审核
 
-若微博任务已运行，先停止：
-
-```powershell
-Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/weibo/stop
-```
-
-暂时不使用微博时，在**所有使用该 Bot 的实例**关闭微博模块即可；旧的 auto-start 显式覆盖按[功能启用](../backend/OPERATIONS.md#功能启用)移除：
+在所有使用该 Bot 的实例上先停止微博审核。暂时停用微博时，在功能控制台关闭微博模块。环境配置示例如下，已有数据库保存的模块选择在启动时优先恢复。[后台任务操作](../backend/OPERATIONS.md#后台任务操作)
 
 ```ini
 TRADE_WEIBO_WORKFLOW_ENABLED=false
@@ -140,20 +118,9 @@ Spring Boot 不自动加载 `.env`。将部署值注入 Shell、IDE、systemd `E
 TRADE_X_LIVE_PUBLISHING_ENABLED=false
 ```
 
-工作流开启后默认自动运行。仅需手动启动时，额外设置 `TRADE_AUTOMATION_X_AUTO_START=false`；任务 API 可随时查询或启停：
+通过 X 内容工作台或任务 API 临时启停当前实例的 `x` 任务。暂停后，已发出的请求仍可能完成。恢复时，符合条件的已批准草稿会继续发布。多实例须分别核对状态。需要手动启动且没有保存的模块选择时，设置 `TRADE_AUTOMATION_X_AUTO_START=false`。[X 控制台](../../frontend/x-console/README.md) · [任务命令与认证](../backend/OPERATIONS.md#后台任务操作)
 
-```powershell
-Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/x/start
-Invoke-RestMethod http://127.0.0.1:8080/api/automation/tasks/x
-# 停止后续循环
-Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} http://127.0.0.1:8080/api/automation/tasks/x/stop
-```
-
-automation API 沿用现有运维访问控制，须置于受保护的部署控制面。手工启动不会打开业务开关；注册 Bean 不发起外部请求。
-
-X 内容工作台也可读取并启停当前后端实例的 X 自动工作流，覆盖生成、审核和发布三个循环。停止不取消已经开始的工作，也不禁用独立的手动生成 API；恢复后仍在有效期内且符合门禁的已批准草稿可能继续发布。该状态只在当前进程有效，重启后默认跟随工作流主开关；`TRADE_AUTOMATION_X_AUTO_START` 可显式覆盖；多实例需要分别控制。操作结果未知时应刷新状态确认。
-
-完成分阶段验收后，设置 `TRADE_X_LIVE_PUBLISHING_ENABLED=true`，并移除不再需要的手动启动覆盖，重启生效。以上操作说明不代表已完成真实 AI、Telegram 或 X API 联调。
+准备对外发帖时，核对待发布的已批准草稿，再设置 `TRADE_X_LIVE_PUBLISHING_ENABLED=true` 并重新加载后端配置。[X 自动化规则](https://help.x.com/en/rules-and-policies/x-automation)
 
 Bot 消息展示目标账号、草稿 ID、版本、过期时间和完整待发布正文。审核上下文优先展示中文 AI 创作说明，并显示冻结格式：`CHAT_DIALOGUE` 检查2～6句成对引号、自然来回、潜台词与情绪，识别旁白、角色名、解释和总结，确认没有冒充真实聊天；`FREE_TEXT` 只按旧稿冻结的风格和规则判断，不强制聊天格式。共同核对冻结语言与方向、成年人边界，以及是否冒充专家或承诺操纵、挽回、涨粉与收益。审核说明不会发布，过长说明可能被截断，正文完整保留。只有指定聊天、审核人、Bot 与绑定消息匹配的按钮才有效。点击“通过并发布”后立即尝试发布；开关未开、本地配额不足或发布间隔未到时保持 APPROVED，后续 publishing 循环继续检查。拒绝不发布；修改正文使旧批准失效，必须审核新版本。按钮反馈表示审核受理，发布结果需查看草稿状态。
 
@@ -175,7 +142,7 @@ Bot 消息展示目标账号、草稿 ID、版本、过期时间和完整待发�
 
 ## 管理草稿与失败状态
 
-管理 API 随应用注册，无需单独的应用令牌。生产访问由网关账号密码和容器网络隔离保护，后端端口不直接对公网开放：
+管理 API 使用操作员 Basic 认证，写请求还需 `X-Trade-CSRF: 1`。生产通过网关转发到后端。[管理接口认证](../backend/OPERATIONS.md#后台任务操作)
 
 | 方法与路径 | 用途 |
 | --- | --- |
@@ -184,13 +151,6 @@ Bot 消息展示目标账号、草稿 ID、版本、过期时间和完整待发�
 | `GET /api/x/posts/{id}` | 查看一条草稿及冻结规则 |
 | `GET /api/x/posts/{id}/history` | 查看版本、审核和发布审计 |
 | `PUT /api/x/posts/{id}` | `{ "expectedRevision": 1, "body": "新正文" }`，修改后重新送审 |
-
-没有绕过审核的 HTTP 发布或批准接口。例：
-
-```powershell
-Invoke-RestMethod -Method Post -Headers @{'X-Trade-CSRF'='1'} -Uri http://127.0.0.1:8080/api/x/posts
-Invoke-RestMethod -Uri http://127.0.0.1:8080/api/x/posts
-```
 
 发布前完成审核和持久化 claim，再调用 `POST /2/tweets`，仅发送审核过的正文。收到明确 4xx 拒绝（除 408）记为 FAILED；超时、5xx、解析失败或中断发送记为 UNKNOWN。两种状态都不自动重发；必须先在 X 核对实际结果。审核投递的不确定发送也不自动重复，同版本无绑定记录的按钮不能审批。
 
@@ -209,7 +169,3 @@ Invoke-RestMethod -Uri http://127.0.0.1:8080/api/x/posts
 | `PUBLISHED` + `postId` | API 返回有效帖子 ID；仍可在 X 核对实际展示 |
 
 关闭 workflow 总开关时扫描直接停止，不会新增等待记录。已批准且同一原因等待的草稿仍保留批准与 TTL；门禁满足后后续扫描可继续发布。`FAILED` / `UNKNOWN` 不属于自动重试队列。日志只显示草稿 ID、状态和受控原因，不打印正文、密钥或供应商响应。
-
-按 2026-10-06 核实的 [X API 官方计费说明](https://docs.x.com/x-api/getting-started/pricing)，余额不足或达到 spending limit 会阻断请求；本模块还会先调用账号查询端点。因此额度确实可能导致失败，但源码门禁关闭时根本没有 X 请求，充值不会改变该门禁。HTTP 402 等状态是线索，不能单凭状态码确定计费原因，也不能把 AI 服务额度当作 X API 余额。
-
-离线测试验证本地状态、协议签名、配置、数据库契约和模拟完整流程；实际 X API 权限、余额/额度、网络代理、Telegram 权限、AI 质量和 MySQL 部署仍需环境联调。当前不包含图片、线程和 Premium 长帖。

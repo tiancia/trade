@@ -1,16 +1,16 @@
 # 项目文档总导航
 
-本地启动和仓库目录见 [项目首页](../README.md)。连接现有环境从 [系统与通信指南](PROJECT_GUIDE.md) 开始，按功能找代码从 [后端模块目录](backend/MODULES.md) 开始。
+仓库结构和本地上手步骤见[项目首页](../README.md)。
 
 ## 开发与运维
 
 | 要做的事 | 入口 |
 | --- | --- |
 | 启动本地环境 | [MySQL、Redis 和监控](../backend/infrastructure/README.md) · [后端启动](../backend/README.md) |
-| 理解分层与调用链 | [后端架构](backend/ARCHITECTURE.md) · [业务模块与代码入口](backend/MODULES.md) |
+| 按功能找代码、理解调用链 | [后端模块目录](backend/ARCHITECTURE.md#模块目录) · [OKX 交易调用链](backend/ARCHITECTURE.md#okx-交易调用链) |
 | 修改和验证后端 | [贡献指南](../backend/CONTRIBUTING.md) · [AI 开发约定](../backend/AGENTS.md) |
 | 查表或升级数据库 | [完整结构与 Flyway 迁移](../backend/src/main/resources/db/README.md) · [接入 Flyway 前的历史补丁](../backend/src/main/resources/db/upgrade/README.md) |
-| 发布、回滚或恢复备份 | [生产部署说明](../deploy/README.md) |
+| 访问或维护服务器 | [部署拓扑](../deploy/README.md#部署方案) · [SSH 访问](../deploy/README.md#4-建立电脑访问隧道) · [发布与回滚](../deploy/README.md#后续更新和回滚) · [数据与备份](../deploy/README.md#数据备份和监控) |
 | 启停任务、恢复交易或排查告警 | [后端运维](backend/OPERATIONS.md) · [指标、看板和告警](backend/OBSERVABILITY.md) |
 
 ## 业务专题
@@ -27,7 +27,7 @@
 | 应用 | 用途 | 本地开发入口 |
 | --- | --- | --- |
 | 交易驾驶舱 | 行情、策略、模拟资金和回测 | [trading-cockpit](../frontend/trading-cockpit/README.md) |
-| X 控制台 | 查看草稿、审核与发布状态 | [x-console](../frontend/x-console/README.md) |
+| X 控制台 | 查看草稿、审核和发布结果，临时启停 X 任务 | [x-console](../frontend/x-console/README.md) |
 | 功能控制台 | 管理各模块开关、查看任务状态 | [control-console](../frontend/control-console/README.md) |
 
 ## 维护规则

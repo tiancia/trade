@@ -1,12 +1,12 @@
 # 贡献指南
 
-本页负责后端开发流程与质量门禁。模块归属见 [模块目录](../docs/backend/MODULES.md)，结构规范见 [架构说明](../docs/backend/ARCHITECTURE.md)，Maven 命令从 `backend/` 执行。
+本页的 Maven 命令从 `backend/` 执行。业务域、依赖方向和代码入口见[后端架构与模块](../docs/backend/ARCHITECTURE.md)。
 
 ## 开发流程
 
 1. 从最新代码创建短生命周期分支，保持一次变更只解决一个主题。
 2. 用 `git status --short` 识别并保护已有工作区改动。
-3. 在 [模块目录](../docs/backend/MODULES.md) 中确认归属、入口和依赖边界。
+3. 在[模块目录](../docs/backend/ARCHITECTURE.md#模块目录)确认改动归属和调用入口。
 4. 先补测试或明确验收条件，再实现最小完整改动。
 5. 更新与行为变化直接相关的配置、数据库、接口和运维文档。
 6. 按影响范围完成必要验证，再提交评审；不默认追加全量测试。

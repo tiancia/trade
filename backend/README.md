@@ -1,6 +1,6 @@
 # Trade Backend
 
-后端是 Java 21、Spring Boot 4 和 MyBatis 构建的模块化单体。应用从 `TradeApplication` 启动，HTTP 接口、后台任务和数据库访问按业务域组织。[应用入口](src/main/java/com/trade/TradeApplication.java) · [业务模块目录](../docs/backend/MODULES.md)
+后端是 Java 21、Spring Boot 4 和 MyBatis 构建的模块化单体。应用从 `TradeApplication` 启动，HTTP 接口、后台任务和数据库访问按业务域组织。[应用入口](src/main/java/com/trade/TradeApplication.java) · [业务模块目录](../docs/backend/ARCHITECTURE.md#模块目录)
 
 ## 快速启动
 
@@ -15,4 +15,4 @@
 
 运行模板默认选择 OKX PAPER。LIVE 下单还需独立授权，新的 LIVE 资金域从 `HALTED` 开始，完成对账并显式恢复后才可放行。[功能启用](../docs/backend/OPERATIONS.md#功能启用) · [资金级停止与恢复](../docs/backend/OPERATIONS.md#资金级停止与恢复)
 
-架构和依赖方向见 [架构说明](../docs/backend/ARCHITECTURE.md)。按改动范围选择测试，命令见 [贡献指南](CONTRIBUTING.md#测试与质量门禁)。AI 编码助手的约定见 [AGENTS.md](AGENTS.md)。
+后端开发按改动范围选择测试。[贡献指南](CONTRIBUTING.md#测试与质量门禁) · [AI 开发约定](AGENTS.md)
