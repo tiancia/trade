@@ -314,3 +314,17 @@ export function mergeContiguousHistory(fresh, cached, pageSize = 100) {
   const previous = fresh.length >= pageSize && !overlaps ? [] : cached;
   return [...fresh, ...previous.filter((item) => !freshIds.has(item.id))].sort((left, right) => right.id - left.id);
 }
+
+/** Refresh the first page while preserving only the continuously paged older sessions.
+ * @template {{id: number}} T
+ * @param {T[]} fresh
+ * @param {{items: T[], hasMore: boolean}} previous
+ */
+export function refreshSessionPage(fresh, previous, pageSize = 20) {
+  if (fresh.length < pageSize) return { items: fresh, hasMore: false };
+  const freshIds = new Set(fresh.map((item) => item.id));
+  if (!previous.items.some((item) => freshIds.has(item.id))) return { items: fresh, hasMore: true };
+  const oldest = fresh[fresh.length - 1].id;
+  const older = previous.items.filter((item) => item.id < oldest);
+  return { items: [...fresh, ...older], hasMore: previous.hasMore };
+}

@@ -16,6 +16,7 @@ import {
   filterConfigurationEvents,
   formatReturnFraction,
   mergeContiguousHistory,
+  refreshSessionPage,
   marketDataIsFresh,
   backtestSelectionForStrategy,
   decisionIndicatorEntries,
@@ -306,6 +307,57 @@ test("paper refresh keeps the displayed session until the new data arrives", asy
   tree = render();
   assert.ok(!findElement(tree, (node) => node.props?.className === "session-identity"), "the old session must not be shown under a new selection");
   assert.ok(findElement(tree, (node) => node.props?.children?.includes?.("正在读取模拟资金与历史…")));
+});
+
+test("paper session refresh preserves loaded pages and a pinned selection never moves the page cursor", async () => {
+  const { render, load, pending, flush } = await mountPaperPanel();
+  const sessions = Array.from({ length: 100 }, (_, index) => ({
+    id: 100 - index, sessionId: "s" + (100 - index), status: "ARCHIVED", instId: "BTC-USDT", quoteCcy: "USDT",
+    initialCash: 100, cash: 100, equity: 100, realizedPnl: 0, positionQuantity: 0, totalFeesQuote: 0, version: 1,
+  }));
+  const page = (beforeId) => sessions.filter((item) => item.id < beforeId).slice(0, 20);
+  const selector = () => findElement(render(), (node) => node.props?.["aria-label"] === "查看模拟会话");
+  const more = () => findElement(render(), (node) => node.type === "button" && node.props.children === "更早会话");
+  const refresh = async (firstPage, selected) => {
+    render(); load();
+    pending.shift().resolve(Response.json(null));
+    pending.shift().resolve(Response.json(firstPage));
+    await flush();
+    if (selected) {
+      assert.equal(pending[0].url, "/api/trading/paper/sessions/" + selected.sessionId);
+      pending.shift().resolve(Response.json(selected));
+      await flush();
+      pending.shift().resolve(Response.json([]));
+      pending.shift().resolve(Response.json([]));
+      await flush();
+    }
+  };
+  const loadEarlier = async (beforeId) => {
+    more().props.onClick();
+    assert.equal(pending[0].url, "/api/trading/paper/sessions?limit=20&beforeId=" + beforeId);
+    pending.shift().resolve(Response.json(page(beforeId)));
+    await flush();
+  };
+  await refresh(page(61));
+  await loadEarlier(41);
+  await loadEarlier(21);
+  await loadEarlier(1);
+  const selected = sessions.find((item) => item.id === 15);
+  selector().props.onChange({ target: { value: selected.sessionId } });
+  await refresh(page(61), selected);
+  assert.equal(selector().props.children.flat().filter((item) => item.props.value).length, 60);
+  assert.ok(!more());
+  await refresh(page(101), selected);
+  assert.ok(selector().props.children.flat().some((item) => item.props.value === "s15"));
+  await loadEarlier(81);
+  await loadEarlier(61);
+  await loadEarlier(41);
+  assert.ok(selector().props.children.flat().some((item) => item.props.value === "s35"));
+});
+
+test("a partial first page removes deleted sessions and closes pagination", () => {
+  const previous = { items: [{ id: 4 }, { id: 3 }, { id: 2 }], hasMore: true };
+  assert.deepEqual(refreshSessionPage([{ id: 4 }], previous, 2), { items: [{ id: 4 }], hasMore: false });
 });
 
 test("paper deletion requires confirmation, sends the selected revision, and clears its cached history", async () => {
