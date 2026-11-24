@@ -4,9 +4,6 @@ import com.trade.automation.domain.model.AutomationLoopDefinition;
 import com.trade.automation.domain.model.AutomationTaskDefinition;
 import com.trade.polymarket.application.service.AiPolymarketService;
 import com.trade.polymarket.interfaces.scheduler.AiPolymarketScheduler;
-import com.trade.story.application.service.AiStoryService;
-import com.trade.story.domain.model.StoryGenerationResult;
-import com.trade.story.interfaces.scheduler.AiStoryScheduler;
 import com.trade.weibo.application.service.WeiboPostService;
 import com.trade.weibo.interfaces.scheduler.WeiboScheduler;
 import com.trade.x.application.service.XPostService;
@@ -19,7 +16,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.ScheduledFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -29,12 +25,6 @@ import static org.mockito.Mockito.*;
 class AutomationWorkflowVisibilityTest {
     @Test
     void workflowFailuresAndNormalSkipsReachStatusAndMetrics() {
-        AiStoryService story = mock(AiStoryService.class);
-        when(story.generateStory()).thenThrow(new IllegalStateException("AI key=secret-quota-response"));
-        verifyRun("story", new AiStoryScheduler(story)::runScheduledGeneration, false);
-        doReturn(Optional.of(new StoryGenerationResult().setDegraded(true))).when(story).generateStory();
-        verifyRun("story", new AiStoryScheduler(story)::runScheduledGeneration, false);
-
         XPostService x = mock(XPostService.class);
         verifyRun("x", new XScheduler(x)::generate, false);
         verifyRun("x", new XScheduler(x)::publish, false);

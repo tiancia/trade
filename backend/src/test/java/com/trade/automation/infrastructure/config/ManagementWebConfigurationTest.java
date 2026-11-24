@@ -34,8 +34,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class ManagementWebConfigurationTest {
     private static final String[] MANAGEMENT_PATHS = {
-            "/api/automation/tasks/sample/start", "/api/automation/modules/story", "/api/trading/safety/resume", "/api/x/posts",
-            "/api/weibo/posts", "/api/text-game/admin/stories/sample/versions"
+            "/api/automation/tasks/sample/start", "/api/automation/modules/polymarket", "/api/trading/safety/resume", "/api/x/posts",
+            "/api/weibo/posts"
     };
     private AnnotationConfigWebApplicationContext context;
     private MockMvc mvc;
@@ -123,16 +123,14 @@ class ManagementWebConfigurationTest {
     }
 
     @Test
-    void readOnlyAndPlayerRequestsKeepTheirExistingContract() throws Exception {
+    void readOnlyRequestsKeepTheirExistingContract() throws Exception {
         mvc.perform(get("/api/automation/tasks")).andExpect(status().isOk());
         mvc.perform(get("/api/weibo/oauth/callback")).andExpect(status().isOk());
-        mvc.perform(post("/api/text-game/sessions")).andExpect(status().isOk());
-        mvc.perform(post("/api/marketplace/items")).andExpect(status().isOk());
-        assertEquals(2, controller.writes.get());
+        assertEquals(0, controller.writes.get());
     }
 
     @Test
-    void applicationAuthenticationCoversEveryManagementRouteBeforeCsrfAndKeepsPlayerAndOAuthRoutes() throws Exception {
+    void applicationAuthenticationCoversEveryManagementRouteBeforeCsrfAndKeepsTheOAuthCallbackPublic() throws Exception {
         context.close();
         Path file = directory.resolve("operators");
         Files.writeString(file, "operator:" + new BCryptPasswordEncoder(4).encode("test-password") + "\n");
@@ -153,7 +151,6 @@ class ManagementWebConfigurationTest {
         mvc.perform(get("/api/automation/tasks")).andExpect(status().isUnauthorized());
         mvc.perform(get("/api/automation/tasks").header("Authorization", authorization)).andExpect(status().isOk());
         mvc.perform(get("/api/weibo/oauth/callback")).andExpect(status().isOk());
-        mvc.perform(post("/api/text-game/sessions")).andExpect(status().isOk());
     }
 
     @TestConfiguration(proxyBeanMethods = false)
@@ -170,9 +167,8 @@ class ManagementWebConfigurationTest {
         final AtomicInteger writes = new AtomicInteger();
 
         @RequestMapping(value = {
-                "/api/automation/tasks/sample/start", "/api/automation/modules/story", "/api/trading/safety/resume", "/api/x/posts",
-                "/api/weibo/posts", "/api/text-game/admin/stories/sample/versions",
-                "/api/text-game/sessions", "/api/marketplace/items"
+                "/api/automation/tasks/sample/start", "/api/automation/modules/polymarket", "/api/trading/safety/resume", "/api/x/posts",
+                "/api/weibo/posts"
         }, method = {RequestMethod.POST, RequestMethod.PUT, RequestMethod.PATCH, RequestMethod.DELETE})
         String write() {
             writes.incrementAndGet();

@@ -35,7 +35,7 @@ public class ManagementWebConfiguration implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(authentication).addPathPatterns("/api/automation/**", "/api/trading/**", "/api/x/**",
-                "/api/weibo/**", "/api/text-game/admin/**");
+                "/api/weibo/**");
         registry.addInterceptor(new HandlerInterceptor() {
             @Override
             public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
@@ -52,8 +52,7 @@ public class ManagementWebConfiguration implements WebMvcConfigurer {
                 }
                 return true;
             }
-        }).addPathPatterns("/api/automation/**", "/api/trading/**", "/api/x/**", "/api/weibo/**",
-                "/api/text-game/admin/**");
+        }).addPathPatterns("/api/automation/**", "/api/trading/**", "/api/x/**", "/api/weibo/**");
     }
 
     private boolean trustedOrigin(HttpServletRequest request) {

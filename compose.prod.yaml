@@ -91,7 +91,6 @@ services:
       TRADE_X_PROXY_HOST: egress
       TRADE_X_PROXY_PORT: "13128"
       TRADE_TRADING_STATE_FILE: /app/data/trading-state.json
-      TRADE_STORY_OUTPUT_DIR: /app/data/story
       POLYMARKET_ORDER_SCRIPT: /app/tools/polymarket/polymarket_place_order.py
       TRADE_TRADING_FRONTEND_ALLOWED_ORIGIN_PATTERNS: http://127.0.0.1:${COCKPIT_LOCAL_PORT:-18080},http://localhost:${COCKPIT_LOCAL_PORT:-18080},http://127.0.0.1:${CONTROL_CONSOLE_LOCAL_PORT:-18082},http://localhost:${CONTROL_CONSOLE_LOCAL_PORT:-18082}
       TRADE_METRICS_ENVIRONMENT: production

@@ -12,12 +12,12 @@ class ModuleControlControllerTest {
         var service = mock(ModuleControlService.class);
         var mvc = MockMvcBuilders.standaloneSetup(new ModuleControlController(service)).build();
         for (String body : new String[]{"{}", "{\"enabled\":null}"}) {
-            mvc.perform(put("/api/automation/modules/story").contentType("application/json").content(body))
+            mvc.perform(put("/api/automation/modules/polymarket").contentType("application/json").content(body))
                     .andExpect(status().isBadRequest());
         }
         verifyNoInteractions(service);
-        mvc.perform(put("/api/automation/modules/story").contentType("application/json").content("{\"enabled\":false}"))
+        mvc.perform(put("/api/automation/modules/polymarket").contentType("application/json").content("{\"enabled\":false}"))
                 .andExpect(status().isOk());
-        verify(service).setEnabled("story", false);
+        verify(service).setEnabled("polymarket", false);
     }
 }

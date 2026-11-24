@@ -61,7 +61,7 @@ class AutomationSchedulingIsolationTest {
             AutomationTaskManager manager = context.getBean(AutomationTaskManager.class);
             TradingLeadershipService leadership = context.getBean(TradingLeadershipService.class);
             try {
-                for (String task : List.of("story", "polymarket", "weibo", "x")) {
+                for (String task : List.of("trading-ai", "polymarket", "weibo", "x")) {
                     manager.register(task(task, () -> {
                         allContentEntered.countDown();
                         try {

@@ -9,7 +9,6 @@ public class AutomationProperties {
     private ModuleProperties trading = new ModuleProperties();
     private ModuleProperties tradingAi = new ModuleProperties();
     private ModuleProperties polymarket = new ModuleProperties();
-    private ModuleProperties story = new ModuleProperties();
     private ModuleProperties weibo = new ModuleProperties();
     private ModuleProperties x = new ModuleProperties();
 

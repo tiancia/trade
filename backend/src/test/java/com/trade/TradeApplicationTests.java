@@ -5,10 +5,15 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import com.trade.automation.application.task.AutomationTaskManager;
+import com.trade.automation.domain.model.AutomationTaskStatus;
 import com.trade.weibo.port.HumanReviewGateway;
 import com.trade.weibo.infrastructure.review.UnavailableHumanReviewGateway;
 import com.trade.x.port.XHumanReviewGateway;
 import com.trade.x.infrastructure.review.UnavailableXReviewGateway;
+import org.springframework.http.MediaType;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter;
+import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -19,7 +24,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "trade.trading.enabled=false",
         "trade.automation.trading.auto-start=false",
         "trade.automation.polymarket.auto-start=false",
-        "trade.automation.story.auto-start=false",
         "trade.automation.weibo.auto-start=false",
         "trade.automation.x.auto-start=false",
         "trade.telegram.enabled=false",
@@ -35,8 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "spring.datasource.url=jdbc:h2:mem:trade_context;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
         "spring.datasource.username=sa",
         "spring.datasource.password=",
-        "spring.sql.init.mode=never",
-        "trade.text-game.seed-enabled=false"
+        "spring.sql.init.mode=never"
 })
 class TradeApplicationTests {
     @Autowired
@@ -44,9 +47,16 @@ class TradeApplicationTests {
     @Autowired private AutomationTaskManager tasks;
     @Autowired private HumanReviewGateway reviews;
     @Autowired private XHumanReviewGateway xReviews;
+    @Autowired private RequestMappingHandlerAdapter handlers;
 
     @Test
     void contextLoads() {
+        assertEquals(List.of("polymarket", "trading", "trading-ai", "weibo", "x"),
+                tasks.statuses().stream().map(AutomationTaskStatus::id).toList());
+        assertInstanceOf(MappingJackson2HttpMessageConverter.class,
+                handlers.getMessageConverters().stream()
+                        .filter(converter -> converter.canWrite(AutomationTaskStatus.class, MediaType.APPLICATION_JSON))
+                        .findFirst().orElseThrow());
         var weibo = tasks.status("weibo");
         assertFalse(weibo.running());
         assertEquals(3, weibo.loops().size());

@@ -9,9 +9,6 @@
 | `automation` | 跨域编排 | `ModuleControlController`、`AutomationTaskController`、`AutomationTaskRegistrar`、`AutomationTaskManager`、`DatabaseMigrationConfiguration` | `trade.automation.*`；启动前编排 Flyway；`automation_module_switch` 保存模块选择 |
 | `trading` | 业务域 | `TradingController`、`TradingScheduler`、`TradingStrategyEngine` | `trade.trading.*`、`trade.okx.*`；MySQL 行情、策略选择、订单与金融状态，本地画像/近期决策记忆，Redis 热缓存；当前回测运行结果保存在进程内存 |
 | `polymarket` | 业务域 | `AiPolymarketScheduler`、`AiPolymarketService` | `trade.polymarket.*`；决策审计表 |
-| `story` | 业务域 | `AiStoryScheduler`、`AiStoryService` | `trade.story.*`；配置目录下的生成文件 |
-| `textgame` | 业务域 | `TextGameController`、`TextGameAdminController` | `trade.text-game.*`；故事、版本、会话和事件表 |
-| `marketplace` | 业务域 | `Marketplace*Controller`、`Marketplace*Service` | `trade.marketplace.*`；用户、商品、会话和消息表 |
 | `weibo` | 业务域 | `WeiboController`、`WeiboPostService`、`WeiboScheduler` | `trade.weibo.*`；OAuth、草稿、审核投递/轮询、历史、发布尝试和账号配额锁 |
 | `x` | 业务域 | `XPostController`、`XPostService`、`XScheduler` | `trade.x.*`；冻结内容规则、草稿、审核、历史、尝试和账号配额锁 |
 | `client` | 共享出站适配 | `AiClientConfiguration`、各 provider client | `trade.ai.client`、`trade.gemini`、`trade.okx`、`trade.telegram` 等；不拥有业务数据 |
@@ -26,7 +23,7 @@
 
 ### automation
 
-`AutomationTaskRegistrar` 把 trading、trading-ai、polymarket、story、weibo、x 的循环定义登记到 `AutomationTaskManager`。登记不等于运行：应用就绪后默认跟随对应模块主开关启动；`auto-start` 留空继承，显式 true/false 覆盖。`/api/automation/tasks/{taskId}/start` 仍可手动启动，但不越过业务主开关或真实执行授权。
+`AutomationTaskRegistrar` 把 trading、trading-ai、polymarket、weibo、x 的循环定义登记到 `AutomationTaskManager`。登记不等于运行：应用就绪后默认跟随对应模块主开关启动；`auto-start` 留空继承，显式 true/false 覆盖。`/api/automation/tasks/{taskId}/start` 仍可手动启动，但不越过业务主开关或真实执行授权。
 
 两者位于 `automation/application/task`；HTTP 入口在 `interfaces/web`，任务定义和快照在 `domain/model`，调度器装配在 `infrastructure/config`。
 
@@ -34,7 +31,7 @@
 
 同一任务内的多个循环共用互斥锁，避免同时修改同一外部账户或本地状态；每次执行完成后按 fixed delay 自调度。业务逻辑必须留在所属域，不能迁入 automation。
 
-Story、Weibo、X 的调度入口会把内部已落库的生成、审核投递和发布失败反馈给 manager；批量执行仍隔离单条失败，但整轮 `lastRunSuccessful=false`。Story 的降级产物保留并标记 `degraded`，该轮同样报失败。禁用、配额或幂等预留未获准、无待处理项属于正常跳过；互斥锁忙只计 skipped，不覆盖上次运行结果。所有已登记循环都提供按 task/loop 标记的运行计数、耗时和最近结果 Micrometer 指标。
+Weibo、X 的调度入口会把内部已落库的生成、审核投递和发布失败反馈给 manager；批量执行仍隔离单条失败，但整轮 `lastRunSuccessful=false`。禁用、配额或幂等预留未获准、无待处理项属于正常跳过；互斥锁忙只计 skipped，不覆盖上次运行结果。所有已登记循环都提供按 task/loop 标记的运行计数、耗时和最近结果 Micrometer 指标。
 
 ### trading
 
@@ -113,29 +110,21 @@ REST / WebSocket market data
 
 `threshold-event` 不把缺失、格式错误或非正数收盘价当作暴跌信号：最新参与评估的收盘价无效时返回 HOLD；价格比较窗口中有无效收盘价时，不触发涨跌幅入场或反向退出，但最新有效价格仍可触发受管理持仓的浮亏止损。
 
-### polymarket 与 story
+### polymarket
 
-两个域共享 `client.ai.AiTextClient`，但 Prompt、解析器、业务校验和审计仍归各自领域。Polymarket 的真实执行还必须经过 execution 开关、市场约束和 geoblock 检查；story 的输出由 `StoryFileRepository` 写入配置目录。
+Polymarket 通过共享的 `client.ai.AiTextClient` 调用模型，在域内完成 Prompt 构建、响应解析、业务校验和审计。真实执行还必须通过执行开关、市场约束和 geoblock 检查。
 
-用例在 `application/service`，Prompt 与解析在 `application/decision`，模型在 `domain/model`，触发器在 `interfaces/scheduler`。Polymarket 的订单编排在 `application/execution`，Python 下单及地域检查实现在 `infrastructure/broker`，行情在 `infrastructure/market`；story 的热点采集在 `infrastructure/trend`，文件输出在 `infrastructure/persistence`。
+用例在 `application/service`，Prompt 与解析在 `application/decision`，模型在 `domain/model`，触发器在 `interfaces/scheduler`。Polymarket 的订单编排在 `application/execution`，Python 下单及地域检查实现在 `infrastructure/broker`，行情在 `infrastructure/market`。
 
 Polymarket 市场资格规则在 `domain/rule/PolymarketMarketFilters`，参数由 `MarketEligibilityPolicy` 表达，不依赖配置绑定类；行情采集和下单校验共同复用。
 
-`PolymarketOrderPolicy` 负责执行阈值和数量计算，解析后的业务有效性由 `PolymarketDecisionRules` 校验。故事的分节、篇幅、续写、连续性和伏笔回收位于 `domain/rule/StoryDraftPolicy`，AI 调用循环留在应用服务。
+`PolymarketOrderPolicy` 负责执行阈值和数量计算，解析后的业务有效性由 `PolymarketDecisionRules` 校验。
 
 Polymarket Python 桥接使用请求冻结的订单类型，不允许 SDK 兼容分支丢弃订单或签名类型；不完整的 API 凭据直接拒绝。Java 子进程的 stdin、运行和输出排空共用超时，每个输出流最多接收 1 MiB，失败异常不包含原始 SDK 输出。凭据辅助工具需显式选择联网及显示秘密，详见 [工具说明](../../tools/polymarket/README.md)。
 
 Polymarket LIVE 决策在开始采集和 AI 调用前必须创建持久化审计记录；BUY 在执行前还须以独立事务预留 `polymarket_execution_guard` 的单账户门禁。超时、确认不完整、进程退出或执行审计失败都会保留未决预留，阻断同数据库下所有实例的后续真实下单，重启和等待均不自动释放。正常结果及审计均提交后才释放，未决恢复按[运维手册](OPERATIONS.md)人工核实。子进程正常退出后仍校验 CLOB 的接受标志、错误、订单 ID 和状态；`PLACED` 表示接受，不代表成交。采集、AI 或执行异常在保存审计后传播到任务管理器，计为失败；禁用、互斥锁忙和没有候选市场仍属于正常跳过。
 
 共享 AI 审计接口在 `ai/port`，记录在 `ai/domain/model`，MyBatis 实现在 `ai/infrastructure/persistence`。
-
-### textgame 与 marketplace
-
-两个模块的 HTTP 入口均在 `interfaces/web`，用例和事务在 `application/service`，业务规则和异常分别在 `domain/rule` 与 `domain/exception`。
-
-文字游戏通过 `port/TextGameSessionStore` 读写会话。`GameSession` 调用 `SessionProgression` 推进剧情，`MyBatisTextGameSessionStore` 转换 Row 和旧存档 JSON，`TextGameSessionViews` 组装响应。会话更新与事件写入使用同一事务。`StoryPublicationPolicy` 判断发布条件，`TextGameConfiguration` 装配规则。剧情管理和种子导入仍直接使用 Mapper。
-
-集市用例按职责使用 `MarketplaceAccountStore`、`MarketplaceItemStore` 和 `MarketplaceConversationStore`。三个接口都在 `marketplace/port`，MyBatis 实现与联表视图转换在 `infrastructure/persistence`。首次联系卖家使用读已提交隔离级别，使并发创建时遇到唯一键冲突的请求能读到同一个会话。`MarketplaceAccountRules` 和 `MarketplaceImageRules` 分别校验账号与图片元数据，OSS 单对象上传授权和签名由 `infrastructure/oss` 实现。
 
 ### weibo
 
@@ -181,7 +170,6 @@ RSS/Atom 源在 `infrastructure/trend`，AI Prompt 在 `application/decision`，
 | `db/migration-support/` | 不可变 Java 迁移的 SQL 支持文件，随迁移校验 |
 | `db/upgrade/<module>/` | 接入 Flyway 前的历史手工补丁；跨模块历史补丁归 `legacy/`，不自动执行 |
 | `mapper/<domain>/` | 对应业务域的 MyBatis XML |
-| `textgame/stories/` | textgame 内置故事定义 |
 | `data/trading-state.example.json` | trading 非资金策略记忆格式示例；仓位/成本/风险不在此保存 |
 
 数据库模块索引和启动、升级边界见 [数据库目录](../../backend/src/main/resources/db/README.md)。模块入口、配置前缀或资源所有权变化时，必须同步更新本页、对应 `package-info.java` 和架构测试。

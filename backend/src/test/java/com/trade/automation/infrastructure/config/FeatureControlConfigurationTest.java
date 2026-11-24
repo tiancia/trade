@@ -7,8 +7,6 @@ import com.trade.client.telegram.TelegramClientProperties;
 import com.trade.client.x.XClientProperties;
 import com.trade.polymarket.infrastructure.config.AiPolymarketProperties;
 import com.trade.polymarket.interfaces.scheduler.AiPolymarketScheduler;
-import com.trade.story.infrastructure.config.AiStoryProperties;
-import com.trade.story.interfaces.scheduler.AiStoryScheduler;
 import com.trade.trading.application.runtime.TradingMarketDataRuntime;
 import com.trade.trading.infrastructure.config.TradingAiProperties;
 import com.trade.trading.infrastructure.config.TradingProperties;
@@ -44,7 +42,7 @@ class FeatureControlConfigurationTest {
         for (var source : new YamlPropertySourceLoader().load("application", new ClassPathResource("application.yml"))) {
             environment.getPropertySources().addLast(source);
         }
-        for (String variable : List.of("TRADING", "TRADING_AI", "POLYMARKET", "STORY", "WEIBO_WORKFLOW", "X_WORKFLOW")) {
+        for (String variable : List.of("TRADING", "TRADING_AI", "POLYMARKET", "WEIBO_WORKFLOW", "X_WORKFLOW")) {
             environment.withProperty("TRADE_" + variable + "_ENABLED", "false");
         }
         return environment;
@@ -52,7 +50,7 @@ class FeatureControlConfigurationTest {
 
     @ParameterizedTest
     @CsvSource({"trading,TRADING", "trading-ai,TRADING_AI", "polymarket,POLYMARKET",
-            "story,STORY", "weibo,WEIBO_WORKFLOW", "x,X_WORKFLOW"})
+            "weibo,WEIBO_WORKFLOW", "x,X_WORKFLOW"})
     void oneModuleSwitchStartsOnlyItsOwnTask(String taskId, String variable) throws IOException {
         var environment = environment().withProperty("TRADE_" + variable + "_ENABLED", "true");
         var definitions = definitions(environment);
@@ -68,10 +66,10 @@ class FeatureControlConfigurationTest {
     void disabledModulesStayStoppedAndLegacyExplicitStartRemainsAvailable() throws IOException {
         var environment = environment();
         assertTrue(definitions(environment).stream().noneMatch(AutomationTaskDefinition::autoStart));
-        environment.withProperty("TRADE_AUTOMATION_STORY_AUTO_START", "true");
-        assertEquals(List.of("story"), definitions(environment).stream().filter(AutomationTaskDefinition::autoStart)
+        environment.withProperty("TRADE_AUTOMATION_POLYMARKET_AUTO_START", "true");
+        assertEquals(List.of("polymarket"), definitions(environment).stream().filter(AutomationTaskDefinition::autoStart)
                 .map(AutomationTaskDefinition::id).toList());
-        assertFalse(bind(environment, "trade.story", AiStoryProperties.class).isEnabled());
+        assertFalse(bind(environment, "trade.polymarket", AiPolymarketProperties.class).isEnabled());
     }
 
     @Test
@@ -138,13 +136,12 @@ class FeatureControlConfigurationTest {
                 mock(TradingScheduler.class), bind(environment, "trade.trading", TradingProperties.class), runtime,
                 mock(TradingAiScheduler.class), bind(environment, "trade.trading.ai", TradingAiProperties.class),
                 mock(AiPolymarketScheduler.class), bind(environment, "trade.polymarket", AiPolymarketProperties.class),
-                mock(AiStoryScheduler.class), bind(environment, "trade.story", AiStoryProperties.class),
                 mock(WeiboScheduler.class), bind(environment, "trade.weibo.workflow", WeiboWorkflowProperties.class),
                 bind(environment, "trade.weibo.review.telegram", WeiboTelegramReviewProperties.class),
                 mock(XScheduler.class), bind(environment, "trade.x.workflow", XWorkflowProperties.class),
                 bind(environment, "trade.x.review.telegram", XTelegramReviewProperties.class));
         var definitions = ArgumentCaptor.forClass(AutomationTaskDefinition.class);
-        verify(manager, times(6)).register(definitions.capture());
+        verify(manager, times(5)).register(definitions.capture());
         verifyNoInteractions(runtime);
         return definitions.getAllValues();
     }

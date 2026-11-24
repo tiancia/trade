@@ -4,7 +4,7 @@
 
 ## 1. 先定位业务域，再定位层和能力
 
-业务域包括 `trading`、`polymarket`、`story`、`textgame`、`marketplace`、`weibo`、`x`。它们保留同一个 Spring Boot 进程、Maven 构建和数据库连接；没有拆成微服务或多个 Maven module。
+业务域包括 `trading`、`polymarket`、`weibo`、`x`。它们保留同一个 Spring Boot 进程、Maven 构建和数据库连接；没有拆成微服务或多个 Maven module。
 
 业务域、`automation` 和共享能力模块 `ai` 按以下四层组织，出站契约独立放在模块根目录的 `port`，各目录按需创建：
 
@@ -59,8 +59,6 @@ automation -> 各业务域的 scheduler / lifecycle 入口
 - `TradingScheduler` 只调用 `TradingTriggerService`。后者编排行情回退、领导权校验、扫描冷却和决策触发；这些是有状态的用例流程。
 - Trading 用例通过 `TradingStateStore`、`TradingMarketSource`、`TradingMarketFeed` 和 `TradingEventPipeline` 使用状态、行情及事件管道。事件状态 HTTP 接口调用 `TradingEventStatusService`。
 - Polymarket 市场期限、成交量、价差及流动性规则位于 `domain/rule`，采集与执行共同使用 `MarketEligibilityPolicy`。
-- 集市的商品可见性、卖家权限、价格、图片归属和会话参与规则位于 `domain/rule`。应用服务控制事务，通过账号、商品和会话三个存储接口读写数据。MyBatis 实现在 `infrastructure/persistence` 中转换 Row、获取回填主键并处理唯一键冲突。
-- 文字游戏规则保留在 domain，Spring Bean 装配移到 `TextGameConfiguration`。
 
 进一步按实际行为下沉的核心规则：
 
@@ -70,22 +68,18 @@ automation -> 各业务域的 scheduler / lifecycle 入口
 | 执行 | `ExecutionEligibility` 校验动作与品种；`PaperFillPolicy` 计算模拟成交；`AccountValuation` 计算权益与开仓上限 | `LiveOrderExecutionService` / `PaperOrderExecutionService` 编排门禁、风控、预留、提交和结算 |
 | 行情与回测 | `MarketSignalPolicy` 判断价量/浮亏触发；`SimulatedPortfolio` 管理模拟持仓、手续费、滑点和盈亏；`BacktestPolicy` / `BacktestStatistics` 校验参数和统计结果 | 历史加载、逐根推进、策略调用、异步任务和结果发布 |
 | Polymarket | `PolymarketDecisionRules` 校验业务有效性；`PolymarketOrderPolicy` 决定执行阈值、花费上限、最小数量和取整 | 解析、执行开关、地域检查、下单和审计 |
-| 故事 | `StoryDraftPolicy` 决定分节、篇幅预算、续写条件、连续性和伏笔回收、兜底草稿 | AI 调用与错误审计、逐节生成、文件保存 |
-| 文字游戏 | `SessionProgression` 决定选择资格、效果/分支/历史顺序、阶段和版本冲突；`StoryPublicationPolicy` 校验发布条件 | 加载固定版本、事务更新、CAS、事件保存和视图转换 |
-| 集市 | 商品/会话权限、内容、价格、图片归属；`MarketplaceAccountRules` / `MarketplaceImageRules` 校验账号和图片元数据 | 查询、事务、密码编码、登录令牌和单对象上传凭证申请 |
 
 基础设施的 Broker 只负责接入转发；`OkxOrderGateway` 处理供应商响应、拒绝和只读查询重试。MyBatis 实现保留行锁、账本原子写入、行映射，金额计算复用领域规则。阿里云授权策略 JSON、签名与 STS 请求统一由 `infrastructure/oss` 实现。
 
 并非所有 if/循环都应下沉：输入缺失、记录查询、外部调用失败、分页、事务/CAS 重试、任务取消、锁和资源释放属于用例或技术处理。Prompt、JSON 别名和格式容错留在 `application/decision`，交易概率/金额等业务约束调用 domain。Weibo OAuth/发布与 automation 主要是外部调用和生命周期编排，不为它们制造空领域服务。
 
-文字游戏的剧情管理和种子导入仍直接使用 Mapper 和 Row。部分用例使用配置类和供应商客户端，`ExchangeOrderGateway` 继续使用 OKX 协议 DTO。原始采集上下文 `TradingDecisionContext` 位于 `application/market`，Prompt 与审计信封 `AiDecisionAuditRecord` 位于 `application/decision`。交易领域规则接收 `TradingMarketInputs` 转换后的 Facts。Polymarket 盘口通过不可变 `MarketDepthLevel` 复制供应商档位，保留 JSON 的 price/size 字符串精度。提取新接口时，用业务输入和返回值表达契约，行映射留在适配器内。
+部分用例使用配置类和供应商客户端，`ExchangeOrderGateway` 继续使用 OKX 协议 DTO。原始采集上下文 `TradingDecisionContext` 位于 `application/market`，Prompt 与审计信封 `AiDecisionAuditRecord` 位于 `application/decision`。交易领域规则接收 `TradingMarketInputs` 转换后的 Facts。Polymarket 盘口通过不可变 `MarketDepthLevel` 复制供应商档位，保留 JSON 的 price/size 字符串精度。提取新接口时，用业务输入和返回值表达契约，行映射留在适配器内。
 
 关键类型与用例按以下边界组织：
 
 - `TradingOrder` 不提供公开构造器或 setter，业务推进仅通过不可任意构造的 `OrderChange`，保留状态机、同状态成交刷新、CAS 版本和完成时间语义。持久化使用 `TradingOrderRow`；`restore(Snapshot)` 只用于数据库恢复，禁止应用层把恢复入口当成状态修改入口。
 - `TradingPositionState` 是不可变快照，买入、卖出与对账通过领域方法返回下一版本；实时成交卖出仍严格禁止超出受管理持仓，普通卖出保留原来的归零行为。累计成交 checkpoint、行锁和持仓写入仍由持久化适配在同一事务中完成。
 - `BacktestExecutorConfiguration` 拥有回测线程池及停机；`BacktestService` 注入名为 `backtestExecutor` 的 `Executor`，保留 2 个线程、32 个排队任务、拒绝策略和 5 秒停机等待，不新增配置项。
-- `TextGameSessionService` 通过 `TextGameSessionStore` 加载与保存 `GameSession`，调用领域规则后在原事务中更新会话并写事件；`MyBatisTextGameSessionStore` 承担 Row、存档及事件 JSON 转换、CAS SQL 结果检查；`TextGameSessionViews` 只构建用例响应。旧存档字段、固定剧情版本、修订号和 HTTP JSON 不变。
 
 ## 3. 类型应该放在哪里
 
@@ -97,18 +91,18 @@ automation -> 各业务域的 scheduler / lifecycle 入口
 | 策略注册、输入转换及风控编排 | `application/strategy`、`application/risk` | `TradingStrategyEngine`、`RiskControlService` |
 | 出站契约 | `port` | `TradingBroker`、`TradingFinancialStateStore` |
 | 状态、业务枚举 | `domain/model` 或领域能力包 | `ExecutionMode`、`domain/order/OrderStatus` |
-| 纯规则 | `domain/order`、`domain/risk`、`domain/strategy`、`domain/rule` | `OrderSizingRules`、`RiskStateTransitions`、`ThresholdDecisionPolicy`、`TextGameRuleEngine` |
-| 业务异常 | `domain/exception` | `TextGameConflictException` |
+| 纯规则 | `domain/order`、`domain/risk`、`domain/strategy`、`domain/rule` | `OrderSizingRules`、`RiskStateTransitions`、`ThresholdDecisionPolicy` |
+| 业务异常 | `domain/exception` | `WeiboPublishingException` |
 | 回测结果 | `domain/backtest` | `BacktestRun`、`BacktestTrade`、`FillPriceSource` |
 | Broker 实现 | `infrastructure/broker` | `OkxLiveBroker`、`PaperBroker`、`BacktestBroker` |
 | 数据库、文件与缓存实现 | `infrastructure/persistence` | `MyBatisTradingOrderRepository`、`RedisHotMarketDataCache` |
 | 外部行情获取 | `infrastructure/market` | `OkxMarketDataWebSocketFeed`、`HistoricalCandleService` |
 | 技术事件契约与信封 | `application/event`、`port` | `TradingEvent`、`TradingEventPublisher` |
 | 队列与事件处理器 | `infrastructure/event` | `BoundedTradingEventBus` |
-| Prompt、协议解析与格式校验 | `application/decision` | `AiStoryResponseParser` |
+| Prompt、协议解析与格式校验 | `application/decision` | `AiPolymarketDecisionParser` |
 | 供应商 HTTP/WS、签名、协议 DTO | `client/<provider>`，AI 实现归 `client/ai` | `client/okx`、`client/ai/gemini` |
 
-纯数据按业务归属放置，避免创建全局 `enums`、`dto`、`service` 或 `utils`。`MarketplaceViews` 在 `infrastructure/persistence` 中把联表查询结果转换为商品、会话和消息视图。HTTP 专用鉴权异常归 `interfaces/web`。
+纯数据按业务归属放置，避免创建全局 `enums`、`dto`、`service` 或 `utils`。HTTP 专用鉴权异常归 `interfaces/web`。
 
 ## 4. Trading 的主要调用链
 
@@ -214,7 +208,7 @@ X 的 `application/service/XPostService` 编排配置驱动的 AI 草稿、Teleg
 - 生产代码和测试包路径镜像；移动、删除或重命名类型后清理旧 class，运行相关模块及 `PackageArchitectureTest`，无需因此执行全量。范围与命令见[贡献指南](../../backend/CONTRIBUTING.md#测试与质量门禁)。
 - MyBatis XML 保留 `src/main/resources/mapper/<module>/`，同步更新 namespace/resultType/parameterType。
 - 数据库完整结构按模块保存于 `db/schema/<module>/schema.sql`，仅用于查阅和离线校验；运行时由 `automation/infrastructure/migration` 编排 Flyway 的全库版本迁移，完成后才进入应用就绪及任务启动阶段。`db/upgrade/` 仅保留接入前的历史补丁。详见 [数据库目录](../../backend/src/main/resources/db/README.md)。
-- `PackageArchitectureTest` 从生产源码识别 `com.trade` 下的一级模块，核对每个模块的分类和职责说明，再按归属检查层与模块之间的依赖方向。它也校验包路径和 Mapper XML 中的 Java 类型。集市的应用服务与存储接口另有依赖检查，防止重新引入 MyBatis、SQL 类型或持久化实现。
+- `PackageArchitectureTest` 从生产源码识别 `com.trade` 下的一级模块，核对每个模块的分类和职责说明，再按归属检查层与模块之间的依赖方向。它也校验包路径和 Mapper XML 中的 Java 类型。
 - domain 不允许引用 provider DTO；应用层采集与执行契约可以保留供应商协议，在调用纯规则前转换。结构规则不得通过放宽限制来掩盖错误归层。
 - 新增边界检查禁止 domain 引入 Spring/MyBatis/SQL 框架，禁止 Trading 的 application/interfaces 直接依赖已抽象的四类状态/行情/事件实现。
 - 历史行情也通过 `port/HistoricalCandleSource` 注入回测用例，由 `HistoricalCandleService` 实现；架构测试禁止用例与 HTTP 层直接依赖该实现。实时 Broker 仅路由 PAPER/LIVE，BACKTEST 必须走独立回测 API。

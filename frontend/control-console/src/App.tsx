@@ -1,4 +1,4 @@
-import { Activity, Bot, BookOpen, CirclePause, MessageSquare, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { Activity, Bot, CirclePause, MessageSquare, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createJsonRequestHeaders, formatTradingTimestamp } from "./api.mjs";
 
@@ -10,9 +10,9 @@ type ModuleStatus = {
 };
 const groups = [
   { name: "交易与分析", ids: ["trading", "trading-ai", "polymarket"] },
-  { name: "内容与发布", ids: ["story", "weibo", "x"] },
+  { name: "内容与发布", ids: ["weibo", "x"] },
 ];
-const icons = { trading: Activity, "trading-ai": Bot, polymarket: Activity, story: BookOpen, weibo: MessageSquare, x: MessageSquare };
+const icons = { trading: Activity, "trading-ai": Bot, polymarket: Activity, weibo: MessageSquare, x: MessageSquare };
 const loopNames: Record<string, string> = { decision: "策略决策", "event-scan": "事件扫描", reconciliation: "订单对账", review: "评估 / 审核", generation: "内容生成", publishing: "发布扫描" };
 
 async function request<T>(path: string, init: RequestInit): Promise<T> {

@@ -12,7 +12,7 @@
     <artifactId>trade</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>trade-backend</name>
-    <description>Spring Boot backend for automated trading, AI workflows, text-game and marketplace APIs, and publishing integrations.</description>
+    <description>Spring Boot backend for OKX trading, Polymarket decisions, and X and Weibo publishing.</description>
     <properties>
         <java.version>21</java.version>
     </properties>

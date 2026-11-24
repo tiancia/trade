@@ -61,7 +61,7 @@ AI 复用现有 `TRADE_AI_PROVIDER`、`TRADE_AI_MODEL`、`TRADE_AI_BASE_URL`、`
 
 ## 数据库、观测与回退
 
-`okx_ai_strategy_guard` 和 `okx_ai_strategy_review` 不存储凭据。Flyway V4 在评估表追加可空 `application_json`，保留历史记录；新库与升级均按版本链自动执行，镜像数据库版本为 4。部署前按既有流程备份；不修改已发布迁移或重复执行历史补丁。接入前置条件见 [数据库说明](../../backend/src/main/resources/db/README.md)。
+`okx_ai_strategy_guard` 和 `okx_ai_strategy_review` 不存储凭据。Flyway V4 在评估表追加可空 `application_json`，保留历史记录；新库由 Flyway 快照创建该字段，旧库通过增量迁移升级。部署前按既有流程备份；不修改已发布迁移或重复执行历史补丁。接入前置条件见 [数据库说明](../../backend/src/main/resources/db/README.md)。
 
 驾驶舱显示每日目标、交易日与时区、当前模拟会话的今日/昨日进度和已实现净收益，以及当前生效策略及参数版本、数据库预留的下次评估窗口、最近执行检查原因、AI 状态和最近 5 次评估。AI 面板随全局每 30 秒轮询、全局同步按钮、面板同步按钮和窗口重新聚焦更新；失败保留旧数据并显示错误。评估时间统一使用交易日时区，避免浏览器时区与 UTC 混淆。读取状态不触发 AI 调用；`HELD` 表示该轮保持策略，并非漏同步了切换。生效记录可展开查看变更前后参数；本次升级需执行 Flyway V4。管理认证及 CSRF 规则与现有 API 一致：
 

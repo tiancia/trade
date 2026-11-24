@@ -20,7 +20,7 @@ RUN cp target/trade-0.0.1-SNAPSHOT.jar app.jar \
 
 FROM ${RUNTIME_JAVA_IMAGE} AS runtime
 # Highest immutable migration shipped in this image; deployment blocks schema downgrades.
-LABEL com.trade.database.version="4"
+LABEL com.trade.database.version="5"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl python3 python3-venv \
     && rm -rf /var/lib/apt/lists/* \
@@ -34,7 +34,6 @@ RUN python3 -m venv /opt/polymarket-venv \
     && /opt/polymarket-venv/bin/pip check
 ENV PATH="/opt/polymarket-venv/bin:${PATH}" \
     POLYMARKET_ORDER_SCRIPT=/app/tools/polymarket/polymarket_place_order.py \
-    TRADE_STORY_OUTPUT_DIR=/app/data/story \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 COPY --chown=10001:10001 tools/polymarket/polymarket_place_order.py /app/tools/polymarket/polymarket_place_order.py

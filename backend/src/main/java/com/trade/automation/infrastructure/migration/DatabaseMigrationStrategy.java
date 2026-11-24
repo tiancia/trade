@@ -1,6 +1,8 @@
 package com.trade.automation.infrastructure.migration;
 
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
+import org.flywaydb.core.api.migration.baseline.BaselineMigrationType;
 import org.springframework.boot.flyway.autoconfigure.FlywayMigrationStrategy;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -21,6 +23,15 @@ public final class DatabaseMigrationStrategy implements FlywayMigrationStrategy 
                 // Version zero adopts only a verified legacy layout. V1's frozen
                 // CREATE IF NOT EXISTS statements then fill missing modules safely.
                 flyway.baseline();
+            } else if (tables.contains("flyway_schema_history")) {
+                // Flyway validates versioned SQL, but skips checksum validation for SQL baselines.
+                for (var migration : flyway.info().applied()) {
+                    if (migration.getType() == BaselineMigrationType.SQL_BASELINE
+                            && (migration.getResolvedChecksum() == null || migration.getAppliedChecksum() == null
+                            || !migration.isChecksumMatching())) {
+                        throw new FlywayException("Missing or changed SQL baseline at version " + migration.getVersion());
+                    }
+                }
             }
             flyway.migrate();
         } catch (SQLException e) {

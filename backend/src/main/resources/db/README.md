@@ -4,15 +4,13 @@ SQL 区分运行时版本迁移、按模块维护的完整结构和接入前的�
 
 ```text
 db/
-├─ migration/                 # Flyway 不可变版本 SQL，目前 V1、V3
+├─ migration/                 # Flyway 不可变版本 SQL，空库快照 B5，增量 SQL 为 V1、V3 至 V5
 ├─ migration-support/         # Java V2 使用并校验的不可变 SQL
 ├─ schema/
 │  ├─ automation/schema.sql
 │  ├─ ai/schema.sql
 │  ├─ trading/schema.sql
 │  ├─ polymarket/schema.sql
-│  ├─ textgame/schema.sql
-│  ├─ marketplace/schema.sql
 │  ├─ weibo/schema.sql
 │  └─ x/schema.sql
 └─ upgrade/
@@ -20,8 +18,6 @@ db/
    ├─ ai/
    ├─ trading/
    ├─ polymarket/
-   ├─ textgame/
-   ├─ marketplace/
    ├─ weibo/
    ├─ x/
    └─ legacy/                 # 跨模块历史升级
@@ -37,18 +33,18 @@ db/
 | `automation` | [schema/automation/schema.sql](schema/automation/schema.sql) | V3：统一功能管理的持久化模块开关 |
 | `trading` | [schema/trading/schema.sql](schema/trading/schema.sql) | OKX 决策、行情、策略、回测、订单、资金状态与领导租约 |
 | `polymarket` | [schema/polymarket/schema.sql](schema/polymarket/schema.sql) | Polymarket 决策、请求、执行审计与持久执行预留 |
-| `textgame` | [schema/textgame/schema.sql](schema/textgame/schema.sql) | 剧情、版本、会话与事件 |
-| `marketplace` | [schema/marketplace/schema.sql](schema/marketplace/schema.sql) | 集市用户、商品、会话与消息 |
 | `weibo` | [schema/weibo/schema.sql](schema/weibo/schema.sql) | 微博 OAuth、账号、草稿、审核与发布记录 |
 | `x` | [schema/x/schema.sql](schema/x/schema.sql) | X 草稿、内容规则、审核与发布记录 |
 
-`application.yml` 的 `spring.sql.init.mode=never`。`schema-locations` 列出的八份文件仅供查阅及离线结构测试，运行时统一由 Flyway 执行版本迁移，避免两种初始化机制同时改库。
+`application.yml` 的 `spring.sql.init.mode=never`。`schema-locations` 列出的六份文件仅供查阅及离线结构测试，运行时统一由 Flyway 执行版本迁移，避免两种初始化机制同时改库。
 
 ## 随后端发布自动升级
 
-后端启动先完成 Flyway，再进入应用就绪及后台任务启动阶段。`flyway_schema_history` 记录已应用版本、校验值和结果；重复启动只执行新增版本。当前 V1 是冻结的接入前完整结构，Java V2 添加 Trading 连亏会计字段、共享策略选择及 SELL 检查点回填。V2 支持核验并接入已经手工应用过同一变更的库；V3 新增模块开关表，不修改原业务数据。
+后端启动先完成 Flyway，再进入应用就绪及后台任务启动阶段。`flyway_schema_history` 记录已应用版本、校验值和结果；重复启动只执行新增版本。当前 V1 是冻结的接入前完整结构，Java V2 添加 Trading 连亏会计字段、共享策略选择及 SELL 检查点回填。V2 支持核验并接入已经手工应用过同一变更的库。V3 新增模块开关表，V4 为 Trading AI 评估增加应用审计字段。
 
-旧库首次接入时先核验已存在业务表的列类型、必填约束、自增主键和业务唯一键；只接纳冻结结构及已知 V2 表，不会把任意非空库直接标记为已升级。通过后建立版本 0 基线，再执行 V1 补齐缺失模块及 V2。更早的主键或字段结构须先按 [历史升级说明](upgrade/README.md) 补齐前置条件；无法确认的结构直接阻止启动。数据库用户需要本库的建表、改表、索引、读写及备份权限。
+空库使用冻结的 `B5__trade_schema.sql` 创建 47 张当前业务和基础表。已有 Flyway 历史的库按版本升级。V5 会永久删除文字游戏的四张表以及小说任务开关，保留原库六张 `marketplace_*` 表的数据，供独立集市导出。发布前停掉旧实例并验证备份。确认独立集市的账号、商品和会话数据后，可清理旧库的集市表。
+
+旧库首次接入时先核验已存在业务表的列类型、必填约束、自增主键和业务唯一键；只接纳冻结结构及已知 V2 表，不会把任意非空库直接标记为已升级。通过后建立版本 0 基线，再执行 V1 到当前版本的历史升级。更早的主键或字段结构须先按 [历史升级说明](upgrade/README.md) 补齐前置条件；无法确认的结构直接阻止启动。数据库用户需要本库的建表、改表、索引、读写及备份权限。
 
 生产使用 [发布脚本](../../../../../deploy/scripts/release.sh)：先拉取镜像并检查镜像 schema 版本，停止旧后端，在 `deploy/releases/database-backups/` 保存并校验本地压缩备份，再启动新后端完成迁移，等待健康及版本检查通过后才记录发布成功。仅发布前端不操作数据库。部署前应停止本机之外所有共享该库的旧实例和其他写入者；迁移锁串行化迁移，不会停止其他主机的业务写入。
 
@@ -56,7 +52,7 @@ MySQL DDL 可能立即提交。迁移失败会阻止应用启动与发布完成�
 
 后续改库须在同一变更中：
 
-1. 追加全库唯一递增版本，例如 `db/migration/V4__add_trading_index.sql`；更新所属模块完整 schema。
+1. 追加全库唯一递增版本，例如 `db/migration/V6__add_trading_index.sql`；更新所属模块完整 schema。
 2. 将 `backend/Dockerfile` 的 `com.trade.database.version` 提升为该最高版本；迁移测试会核对标签与迁移链。
 3. 验证空库、旧版本升级及重复启动，保持主键、业务唯一约束、Mapper 和历史数据语义。
 
@@ -103,5 +99,5 @@ Mapper 将这些业务键继续映射到原有 Java/API 的标识字段，已有
 启动不会执行这些历史补丁。部分脚本面向不同历史结构，包含 `ALTER TABLE`、数据转换或重叠建表操作，不能按文件名全部串行执行。只有首次接入前的旧结构缺少前置条件时才评估适用补丁；升级前备份并对比实际结构，依赖与使用步骤见 [升级说明](upgrade/README.md)。
 
 已按旧结构建库时，升级为自增主键前，需按实际存在的模块执行
-`upgrade/{trading,textgame,marketplace,weibo,x}/migration_add_auto_increment_primary_keys.sql`。
-这五份脚本只适用于旧主键结构，不能在新库或已升级的表上重复执行。
+`upgrade/{trading,weibo,x}/migration_add_auto_increment_primary_keys.sql`。
+这三份脚本只适用于旧主键结构，不能在新库或已升级的表上重复执行。

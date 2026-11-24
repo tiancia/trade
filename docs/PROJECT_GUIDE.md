@@ -56,7 +56,7 @@ MySQL（3306）、Redis（6379）和 egress（13128）仅在容器网络内提�
 | --- | --- |
 | 活动策略、模拟资金、真实订单与成交、资金停止状态、草稿及发布审计 | MySQL 持久化。标准后端发布先备份数据库，再由 Flyway 在启动时执行待应用版本。[数据库说明](../backend/src/main/resources/db/README.md) |
 | 热行情 | Redis 缓存，缺失或故障时可回退行情源。后端对接交易所 WebSocket/REST，浏览器通过 SSE 接收增量行情。[可观测性](backend/OBSERVABILITY.md) |
-| 策略画像与近期决策记忆、小说生成文件 | 使用后端 `/app/data` 卷，其中交易记忆在 `trading-state.json`，小说在 `story/` |
+| 策略画像与近期决策记忆 | 使用后端 `/app/data` 卷中的 `trading-state.json` |
 | 历史回测任务与结果 | `BacktestService` 保存在进程内，重启后清空。[回测说明](trading/BACKTEST.md) |
 
 ## 从代码跟踪业务
@@ -65,7 +65,7 @@ MySQL（3306）、Redis（6379）和 egress（13128）仅在容器网络内提�
 
 | 功能 | 调用链与代码入口 |
 | --- | --- |
-| 后台任务 | 登记交易、Trading AI、Polymarket、小说、微博和 X 循环。应用就绪后恢复模块选择，再按固定延迟调度，同一任务的循环互斥。[任务登记](../backend/src/main/java/com/trade/automation/application/task/AutomationTaskRegistrar.java) · [模块恢复](../backend/src/main/java/com/trade/automation/application/task/ModuleControlService.java) · [任务执行](../backend/src/main/java/com/trade/automation/application/task/AutomationTaskManager.java) |
+| 后台任务 | 登记交易、Trading AI、Polymarket、微博和 X 循环。应用就绪后恢复模块选择，再按固定延迟调度，同一任务的循环互斥。[任务登记](../backend/src/main/java/com/trade/automation/application/task/AutomationTaskRegistrar.java) · [模块恢复](../backend/src/main/java/com/trade/automation/application/task/ModuleControlService.java) · [任务执行](../backend/src/main/java/com/trade/automation/application/task/AutomationTaskManager.java) |
 | OKX 决策与执行 | 定时决策或事件信号 → 行情和账户上下文 → 活动策略 → 风控与数量校验 → PAPER 模拟成交或 LIVE 提交与对账。PAPER 使用公共行情和独立模拟账本，LIVE 还需实盘授权及资金状态检查。[决策引擎](../backend/src/main/java/com/trade/trading/application/strategy/TradingStrategyEngine.java) · [行情采集](../backend/src/main/java/com/trade/trading/infrastructure/market/MarketContextCollector.java) · [模拟账本](trading/SIMULATION.md) |
 | X 内容发布 | 生成并保存草稿 → 发送 Telegram 审核消息 → 后端轮询 `getUpdates` 并校验审核人、消息和版本 → 检查发布条件 → 调用 X API。`UNKNOWN` 需先到平台核实，再决定后续处理。[发布用例](../backend/src/main/java/com/trade/x/application/service/XPostService.java) · [X 工作流](publishing/X_WORKFLOW.md) |
 

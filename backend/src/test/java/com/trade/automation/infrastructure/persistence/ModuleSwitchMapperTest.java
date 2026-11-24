@@ -19,12 +19,12 @@ class ModuleSwitchMapperTest {
         try (var session = sessions.openSession(true)) {
             var mapper = session.getMapper(ModuleSwitchMapper.class);
             assertTrue(mapper.findAll().isEmpty());
-            mapper.save("story", true); mapper.save("story", false); mapper.save("trading-ai", true);
+            mapper.save("polymarket", true); mapper.save("polymarket", false); mapper.save("trading-ai", true);
         }
         try (var session = sessions.openSession(true)) {
             var choices = session.getMapper(ModuleSwitchMapper.class).findAll();
             assertEquals(2, choices.size());
-            assertEquals("story", choices.getFirst().id()); assertFalse(choices.getFirst().enabled());
+            assertEquals("polymarket", choices.getFirst().id()); assertFalse(choices.getFirst().enabled());
             assertTrue(choices.getLast().enabled());
         }
     }

@@ -97,11 +97,11 @@ chmod 600 deploy/.env deploy/backend.env
 
 管理员口令最多 72 个 UTF-8 字节。后端对超长口令返回 401。已有超长口令的操作者需要用 `htpasswd -B` 重新设置口令，并按下文步骤重建服务。
 
-管理写接口还要求 `X-Trade-CSRF: 1`，浏览器请求校验同源或配置允许的 Origin；驾驶舱和功能控制台自动附加该头。命令行需同时携带 Basic 凭据及 CSRF 头，例如 `curl --user operator -H 'X-Trade-CSRF: 1' ...`（交互输入口令）。原有微博和文字游戏业务令牌仍须携带。后端与网关须一起更新，旧网关会剥除 Authorization。原生开发运行需要配置 `TRADE_MANAGEMENT_AUTH_CREDENTIALS_FILE`；仅隔离开发环境可显式设置 `TRADE_MANAGEMENT_AUTH_ENABLED=false`。
+管理写接口还要求 `X-Trade-CSRF: 1`，浏览器请求校验同源或配置允许的 Origin；驾驶舱和功能控制台自动附加该头。命令行需同时携带 Basic 凭据及 CSRF 头，例如 `curl --user operator -H 'X-Trade-CSRF: 1' ...`（交互输入口令）。微博管理接口仍须携带业务令牌。后端与网关须一起更新，旧网关会剥除 Authorization。原生开发运行需要配置 `TRADE_MANAGEMENT_AUTH_CREDENTIALS_FILE`；仅隔离开发环境可显式设置 `TRADE_MANAGEMENT_AUTH_ENABLED=false`。
 
 每位操作者使用独立账号，新增使用 `htpasswd -B deploy/secrets/gateway.htpasswd alice`，已有文件勿加 `-c`。使用 bcrypt cost 4–14，生产建议 cost 10–12。更新或撤销后重建 backend 与 gateway，使只读挂载和后端快照同时更新；后端只缓存成功凭据的 SHA256 30 秒，不保存明文，重建后立即清空。后端限制每分钟 30 次未缓存的口令验证，网关每来源 IP 限制平均 10 请求/秒、突发 100；收到 429 后按 Retry-After 等待。网关 JSON 审计保留来源 IP、账号、客户端证书序列号、方法、路径、结果与 request_id；应用审计记录写操作及拒绝的操作者、路径和状态。均不记录 Authorization、请求体或查询参数。
 
-网关访问日志将文字游戏存档路径统一记作 `/api/text-game/sessions/[redacted]`。存档 ID 可用于读取、修改或删除存档，旧版网关日志可能含有仍有效的 ID 或微博 OAuth 回调参数。存档和 OAuth 回调请求排障时，按访问日志中的状态码和 request_id 定位。网关对这两个端点关闭会附带原始请求行的错误日志。容器日志仍在本机，外部收集与保留期限需另行配置。
+网关的访问日志只记录请求路径，微博 OAuth 回调的查询参数会被省略。回调端点关闭包含原始请求行的错误日志，可按状态码和 request_id 排障。
 
 `backend.env` 使用 **raw** 格式：每行 `KEY=value`，不要给值额外加引号，不要 `source`，也不要放 shell 命令。它只在运行时注入后端，不参与镜像构建。
 
@@ -121,7 +121,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File A:\trade\deploy\scripts\sync
 
 缺项时只显示字段名并终止上传。内容经 SSH 标准输入传输，不回显、不放入命令参数或本地中间文件。服务器保留基础设施 `.env` 和其他业务配置，不再生成管理令牌。更新前保留权限 600 的 `backend.env.before-sync-*` 备份，再原子替换 `backend.env`。同步不会启动或重启服务。运行中的容器需要通过发布脚本重新创建 `backend` 才能加载新环境；单纯 `docker compose restart` 不会加载 env 文件更新。
 
-模板默认配置为：OKX 自动策略 **PAPER**、真实下单关闭；X 自动生成、Telegram 人工审核和真实发布开启，每轮完成后等三小时；首次生成约 30 秒后开始。Polymarket、微博、小说任务关闭。DeepSeek 使用 `deepseek-flash` 直连；OKX、Telegram、X 使用隧道代理。容器地址由 Compose 强制覆盖为 `egress:13128`，不要填写 `127.0.0.1`。
+模板默认配置为：OKX 自动策略 **PAPER**、真实下单关闭；X 自动生成、Telegram 人工审核和真实发布开启，每轮完成后等三小时；首次生成约 30 秒后开始。Polymarket 和微博任务关闭。DeepSeek 使用 `deepseek-flash` 直连；OKX、Telegram、X 使用隧道代理。容器地址由 Compose 强制覆盖为 `egress:13128`，不要填写 `127.0.0.1`。
 
 当前 PAPER 使用独立、持久化的模拟现金和持仓账本，决策只采集公共行情与产品规则，不读取真实账户余额、挂单和成交；三个 `OKX_*` 可以留空。LIVE 私有接口需要独立配置和验收凭据；只读检查仅开启 `Read`，关闭 `Trade` / `Withdraw`，绑定 IP 时使用实际出口德国 VPS 的公网 IP。权限说明参见 [OKX 官方文档](https://www.okx.com/docs-v5/en/#overview-api-key)。公共行情、PAPER 成功不代表 LIVE 私有接口可用；同时检查运行状态 `lastError` 和最新决策。模拟账本口径见 [策略参数版本与模拟资金](../docs/trading/SIMULATION.md)。
 
@@ -172,9 +172,7 @@ CNB 构建 `linux/amd64` 镜像；不需要在电脑或生产服务器手工生�
 
 后端构建上下文是仓库根，由 `backend/Dockerfile.dockerignore` 白名单限制；三个前端和隧道各有独立上下文。实际 `.env`、密钥、数据目录和历史构建产物不进入镜像。前端有独立 Docker Vite 配置，原本地 / Cloudflare 开发流程保持不变。
 
-后端镜像包含现有 Polymarket 桥接所需的 Python 虚拟环境、固定版本客户端和脚本，构建时只检查依赖导入。Compose 固定 `POLYMARKET_ORDER_SCRIPT=/app/tools/polymarket/polymarket_place_order.py`；该模块及真实执行开关仍默认关闭。Story 输出固定到持久卷内的 `/app/data/story`，生成前会验证实际写入权限；这两项路径不应使用开发机的相对目录。
-
-集市图片上传改为后端签发短期 OSS V4 PostObject policy，前端用表单直接上传，不再接收 AccessKey Secret。开启集市时需同时更新后端和集市前端，并在 OSS Bucket CORS 中允许该前端来源的 POST；policy 绑定对象 key、文件字节数、类型、ACL 和过期时间。它限制 HTTP 元数据及文件大小，不进行图片内容识别。真实 STS/OSS 权限与上传仍需部署后独立验收。
+后端镜像包含现有 Polymarket 桥接所需的 Python 虚拟环境、固定版本客户端和脚本，构建时只检查依赖导入。Compose 固定 `POLYMARKET_ORDER_SCRIPT=/app/tools/polymarket/polymarket_place_order.py`；该模块及真实执行开关仍默认关闭。容器应使用上述绝对路径。
 
 CNB 将完整镜像清单及发布脚本上传服务器，然后校验、拉取镜像并等待容器健康。服务器上的 `deploy/.env`、`backend.env`、`secrets/` 和数据卷须提前准备；Compose、网关等配置变更仍需单独同步到服务器。
 
@@ -285,7 +283,7 @@ BuildKit 按服务保存本地 OCI 缓存，CNB 节点数据卷提供复用；�
 
 生产使用独立命名卷：默认 `trade-production_mysql`、`trade-production_redis`、`trade-production_backend`。后者持久化整个 `/app/data`，保留策略、近期决策和原子替换的 `trading-state.json`；资金、订单、X 草稿和审核状态在 MySQL。不要挂载单个 JSON 文件，不要执行 `down -v`。现有 Windows 数据不会自动迁移。
 
-数据库结构由镜像内的 Flyway 版本迁移管理。空库自动初始化；无迁移历史的旧库经已知结构核验后接入，再执行增量升级，本次 Trading 变更包含在 V2 中。今后改库追加 `db/migration/V<N>__description.sql`、同步模块完整结构并提升后端 Dockerfile 的 schema 标签，不能修改已发布的迁移。详见 [数据库升级说明](../backend/src/main/resources/db/README.md)。过旧或未知结构会阻止启动，需先核实历史前置条件。
+数据库结构由镜像内的 Flyway 版本迁移管理。空库自动初始化；无迁移历史的旧库经已知结构核验后接入，再执行增量升级，V5 升级会删除文字游戏数据并保留原集市表供导出。今后改库追加 `db/migration/V<N>__description.sql`、同步模块完整结构并提升后端 Dockerfile 的 schema 标签，不能修改已发布的迁移。详见 [数据库升级说明](../backend/src/main/resources/db/README.md)。过旧或未知结构会阻止启动，需先核实历史前置条件。
 
 后端发布前会在 `deploy/releases/database-backups/` 留存权限受限的 `.sql.gz` 和 SHA256 文件，输出 `DATABASE_BACKUP_OK`。备份、迁移、健康或版本检查任何一步失败都不会记录发布成功。备份覆盖当前整库且不自动删除，定期按保留策略归档；本地发布快照不替代下述异机备份。所有业务表须为 InnoDB；共用数据库的其他主机或外部写入者须先停止，单机发布锁与数据库迁移锁不会代替它们停写。
 

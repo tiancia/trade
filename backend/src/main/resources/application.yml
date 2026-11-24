@@ -43,8 +43,6 @@ spring:
         - classpath:db/schema/ai/schema.sql
         - classpath:db/schema/trading/schema.sql
         - classpath:db/schema/polymarket/schema.sql
-        - classpath:db/schema/textgame/schema.sql
-        - classpath:db/schema/marketplace/schema.sql
         - classpath:db/schema/weibo/schema.sql
         - classpath:db/schema/x/schema.sql
   flyway:
@@ -121,9 +119,6 @@ trade:
     x:
       # 应用就绪后是否启动 X 生成、Telegram 审核轮询和发布扫描三个循环。
       auto-start: ${TRADE_AUTOMATION_X_AUTO_START:}
-    story:
-      # 应用就绪后是否启动小说生成循环。
-      auto-start: ${TRADE_AUTOMATION_STORY_AUTO_START:}
     trading:
       # 应用就绪后是否启动交易决策、事件扫描、对账循环和行情运行时。
       auto-start: ${TRADE_AUTOMATION_TRADING_AUTO_START:}
@@ -132,39 +127,6 @@ trade:
     polymarket:
       # 应用就绪后是否启动 Polymarket AI 决策循环。
       auto-start: ${TRADE_AUTOMATION_POLYMARKET_AUTO_START:}
-  text-game:
-    # 文字游戏管理 API 的鉴权令牌；留空时管理接口关闭。
-    admin-token: ${TRADE_TEXT_GAME_ADMIN_TOKEN:}
-    # 游戏会话到期时间从创建 / 更新时起延长的天数。
-    session-retention-days: 30
-    # 启动时是否导入 textgame/stories/ 中的内置故事。
-    seed-enabled: ${TRADE_TEXT_GAME_SEED_ENABLED:true}
-  marketplace:
-    # 登录会话有效期，单位天。
-    session-retention-days: ${TRADE_MARKETPLACE_SESSION_RETENTION_DAYS:30}
-    # 更新会话 last_seen_at 的最小间隔，单位分钟，减少频繁写库。
-    session-touch-interval-minutes: ${TRADE_MARKETPLACE_SESSION_TOUCH_INTERVAL_MINUTES:5}
-    oss:
-      # 向阿里云 STS 申请上传凭据使用的 AccessKey ID。
-      access-key-id: ${ALIBABA_CLOUD_ACCESS_KEY_ID:}
-      # 与 AccessKey ID 配对的密钥，通过环境变量提供。
-      access-key-secret: ${ALIBABA_CLOUD_ACCESS_KEY_SECRET:}
-      # STS AssumeRole 使用的 RAM 角色 ARN。
-      role-arn: ${TRADE_MARKETPLACE_OSS_ROLE_ARN:}
-      # 商品图片上传的 OSS Bucket 名称。
-      bucket: ${TRADE_MARKETPLACE_OSS_BUCKET:26-6-second-hand-market}
-      # OSS 所在地域，例如 oss-cn-beijing。
-      region: ${TRADE_MARKETPLACE_OSS_REGION:oss-cn-beijing}
-      # 生成图片公开访问 URL 使用的基础地址。
-      public-base-url: ${TRADE_MARKETPLACE_OSS_PUBLIC_BASE_URL:https://26-6-second-hand-market.oss-cn-beijing.aliyuncs.com}
-      # 阿里云 STS API 基础地址。
-      sts-endpoint: ${TRADE_MARKETPLACE_OSS_STS_ENDPOINT:https://sts.aliyuncs.com}
-      # 临时上传凭据有效期，单位秒；代码限制为 900～3600 秒。
-      duration-seconds: ${TRADE_MARKETPLACE_OSS_DURATION_SECONDS:900}
-      # 图片对象 key 的目录前缀。
-      key-prefix: ${TRADE_MARKETPLACE_OSS_KEY_PREFIX:marketplace}
-
-
   telegram:
     # 留空时配置 Bot Token 即接入客户端；false 可单独暂停。
     enabled: ${TRADE_TELEGRAM_ENABLED:}
@@ -444,7 +406,7 @@ trade:
       # 下单地域限制检查接口地址。
       geoblock-url: "https://polymarket.com/api/geoblock"
 
-  # 通用 AI 客户端配置，供小说、交易决策和微博/X 草稿复用。
+  # 通用 AI 客户端配置，供交易、Polymarket 决策和微博/X 草稿复用。
   ai:
     client:
       # AI 服务提供商；可选值：gemini、openai-compatible、deepseek、kimi。
@@ -471,53 +433,6 @@ trade:
         host: ${TRADE_AI_PROXY_HOST:127.0.0.1}
         # AI HTTP 请求代理 TCP 端口。
         port: ${TRADE_AI_PROXY_PORT:13128}
-
-  # AI 自动短篇小说生成模块
-  story:
-    # 是否启用小说生成调度；启用后会消耗 AI token。
-    enabled: ${TRADE_STORY_ENABLED:false}
-    # 本轮小说生成结束后等待的毫秒数；1800000 = 30 分钟。
-    generation-fixed-delay-ms: 1800000
-    # story 任务启动后首次生成前的等待时间，单位毫秒；12000 = 12 秒。
-    initial-delay-ms: 12000
-    # 从 backend/ 启动时，作品默认写入与仓库同级的 story/。
-    output-dir: ${TRADE_STORY_OUTPUT_DIR:../../story}
-    # 提示词中的目标非空白字符数；统计含中文、英文、数字和标点的 Unicode code point。
-    target-char-count: 10000
-    # 低于该字数时最多补写 max-continuation-sections 节。
-    min-acceptable-char-count: 13000
-    # 主体分节数量；分节生成比一次性长输出更稳。
-    section-count: 6
-    # 正文不足 min-acceptable-char-count 时最多追加的续写节数。
-    max-continuation-sections: 2
-    # 目标平台定位，用于提示词约束题材和节奏。
-    target-platform: "番茄小说等中文网络小说平台"
-    # 是否在生成前抓取榜单/题材页；失败会自动回退到 fallback-hot-topics。
-    trend-fetch-enabled: true
-    # 热点页面连接和单次抓取请求超时，单位毫秒；10000 = 10 秒。
-    trend-fetch-timeout-ms: 10000
-    # 抓取页面及汇总热点上下文保留的最大字符数，避免提示词过长。
-    trend-source-max-chars: 6000
-    # 生成小说前尝试读取的榜单 / 题材页面 URL 列表。
-    trend-source-urls:
-      - "https://fanqienovel.com/rank"
-    # 抓取关闭或未取得内容时使用的本地题材候选列表。
-    fallback-hot-topics:
-      - "都市脑洞：普通人绑定反套路系统，在现实压力中快速逆袭"
-      - "末世囤货：灾变前重生，围绕家庭、物资和基地建设展开"
-      - "规则怪谈：现实城市出现诡异规则，主角靠推理和冷静破局"
-      - "玄幻修仙：低起点主角获得隐藏传承，主线强调升级和宗门冲突"
-      - "年代重生：回到关键节点弥补遗憾，兼顾创业、亲情和爽点"
-      - "悬疑推理：小城连环谜案与个人命运交织，节奏紧凑反转明确"
-      - "女频成长：女主事业线、家庭关系和情感选择并行推进"
-      - "无限流副本：高概念副本、团队博弈和阶段性通关奖励"
-    trend-proxy:
-      # 是否通过 HTTP 代理抓取热点页面；AI 请求代理另由 trade.ai.client.proxy 配置。
-      enabled: ${TRADE_STORY_TREND_PROXY_ENABLED:false}
-      # 热点页面 HTTP 代理主机地址。
-      host: ${TRADE_STORY_TREND_PROXY_HOST:127.0.0.1}
-      # 热点页面 HTTP 代理 TCP 端口。
-      port: ${TRADE_STORY_TREND_PROXY_PORT:13128}
 
   # OKX 自动交易模块配置。
   trading:

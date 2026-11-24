@@ -24,7 +24,6 @@ Trading AI 顾问的配置类及 env 示例默认关闭；当前 `application.ym
 | --- | --- | --- |
 | OKX 模拟交易 | `TRADE_TRADING_ENABLED=true` | 实盘选择 `EXECUTION_MODE=live` 并开启 `LIVE_ENABLED`；保留租约、资金停止及风控 |
 | Trading AI 评估 | `TRADE_TRADING_AI_ENABLED=true` | 自动修改当前 PAPER/LIVE 策略另设 `TRADE_TRADING_AI_AUTO_APPLY=true` |
-| 小说生成 | `TRADE_STORY_ENABLED=true` | 无 |
 | Polymarket 决策 | `TRADE_POLYMARKET_ENABLED=true` | 真实下单另设 `TRADE_POLYMARKET_EXECUTION_ENABLED=true` |
 | X 工作流 | `TRADE_X_WORKFLOW_ENABLED=true` | 真实发布另设 `TRADE_X_LIVE_PUBLISHING_ENABLED=true`，且稿件须审核通过 |
 | 微博工作流 | `TRADE_WEIBO_WORKFLOW_ENABLED=true` | 真实发布另设 `TRADE_WEIBO_LIVE_PUBLISHING_ENABLED=true`，且稿件须审核通过 |
@@ -101,7 +100,6 @@ $env:TRADE_TRADING_EXECUTION_MODE="paper"
 $env:TRADE_TRADING_LIVE_ENABLED="false"
 $env:TRADE_POLYMARKET_ENABLED="false"
 $env:TRADE_POLYMARKET_EXECUTION_ENABLED="false"
-$env:TRADE_STORY_ENABLED="false"
 $env:TRADE_WEIBO_WORKFLOW_ENABLED="false"
 $env:TRADE_WEIBO_LIVE_PUBLISHING_ENABLED="false"
 $env:TRADE_X_WORKFLOW_ENABLED="false"
@@ -132,7 +130,7 @@ Actuator 当前暴露 health、info、metrics 和 prometheus。automation 启停
 
 ## 后台任务操作
 
-独立[功能控制台](../../frontend/control-console/README.md)统一管理模块，本地开发入口 `http://127.0.0.1:5176/`，生产 SSH 入口 `http://127.0.0.1:18082/`。`GET /api/automation/modules` 返回六个模块的实际开关、任务状态、持久化选择和执行范围；`PUT /api/automation/modules/{id}` 接收 `{"enabled":true}` 或 `{"enabled":false}`，同时更新模块门禁和后台任务，沿用操作员认证、Origin 与 CSRF 校验。
+独立[功能控制台](../../frontend/control-console/README.md)统一管理模块，本地开发入口 `http://127.0.0.1:5176/`，生产 SSH 入口 `http://127.0.0.1:18082/`。`GET /api/automation/modules` 返回五个受控任务的实际开关、任务状态、持久化选择和执行范围；`PUT /api/automation/modules/{id}` 接收 `{"enabled":true}` 或 `{"enabled":false}`，同时更新模块门禁和后台任务，沿用操作员认证、Origin 与 CSRF 校验。
 
 选择保存在 `automation_module_switch`，优先于配置文件的模块 `enabled` 和 `auto-start`，在应用启动任务前恢复。没有保存记录的模块保持原配置行为。仅当前后端实例立即生效；本版本不向其他运行中的副本广播变更，多实例运维须逐实例协调，后续重启读取数据库最后保存的选择。保存失败不修改运行状态；配置校验失败不保存；启动失败保留选择但将实际模块关闭并报告错误，可在页面重试或关闭该选择。旧 `/tasks/{id}/start|stop` 仍是临时任务控制，不写持久化选择。
 
@@ -159,7 +157,7 @@ X 的 `x` 任务也包含生成、审核、发布三个循环。启动时 Flyway
 
 查询、启动和停止任务：
 
-管理 API（automation、trading、X、微博和文字游戏管理接口）的 GET 与写请求均由应用独立校验 HTTP Basic 凭据；`TRADE_MANAGEMENT_AUTH_CREDENTIALS_FILE` 指向 bcrypt htpasswd 文件。未配置时这些接口返回 503，配置文件无效时启动失败；生产 Compose 强制开启并挂载网关同一份哈希文件。每人使用独立账号，修改/撤销后重建 backend 与 gateway。仅隔离开发环境可显式关闭 `TRADE_MANAGEMENT_AUTH_ENABLED`。微博 OAuth GET 回调继续通过自身 state 鉴权；浏览器 CORS 预检不执行业务操作。原有业务令牌校验保留。
+管理 API（automation、trading、X 和微博管理接口）的 GET 与写请求均由应用独立校验 HTTP Basic 凭据；`TRADE_MANAGEMENT_AUTH_CREDENTIALS_FILE` 指向 bcrypt htpasswd 文件。未配置时这些接口返回 503，配置文件无效时启动失败；生产 Compose 强制开启并挂载网关同一份哈希文件。每人使用独立账号，修改/撤销后重建 backend 与 gateway。仅隔离开发环境可显式关闭 `TRADE_MANAGEMENT_AUTH_ENABLED`。微博 OAuth GET 回调继续通过自身 state 鉴权；浏览器 CORS 预检不执行业务操作。原有业务令牌校验保留。
 
 管理写请求还要求 `X-Trade-CSRF: 1`，浏览器须同源或来自允许的 Origin；无 Origin 的 CLI 同样需要。CSRF 标记不替代身份校验。下面 PowerShell 示例须同时通过 `-Authentication Basic -Credential (Get-Credential)` 提供凭据；仅本机回环 HTTP 调试时 PowerShell 还需显式允许非 HTTPS 认证，生产使用部署网关的 HTTPS 或 SSH 隧道。完整部署、mTLS 公网访问、限速和审计见[部署手册](../../deploy/README.md)。
 

@@ -41,7 +41,7 @@ Micrometer 的点号名称在 Prometheus 中转换为下划线；Counter 还会�
 | 业务面 | 主要指标 | 关键标签或含义 |
 | --- | --- | --- |
 | 应用与 HTTP | `up`、`http_server_requests_seconds_*`、`jvm_*`、`process_*` | 存活、5xx、p95、堆内存、CPU |
-| 自动任务（含 story/Weibo/X） | `trade_automation_runs_total`、`trade_automation_duration_seconds_*`、`trade_automation_last_success` | 固定 task/loop；outcome=success/failure/skipped；最近结果 -1 未运行、0 失败、1 成功 |
+| 自动任务（含 Weibo/X） | `trade_automation_runs_total`、`trade_automation_duration_seconds_*`、`trade_automation_last_success` | 固定 task/loop；outcome=success/failure/skipped；最近结果 -1 未运行、0 失败、1 成功 |
 | 策略决策 | `trade_trading_decisions_runs_total`、`trade_trading_decisions_duration_seconds_*`、`trade_trading_decisions_actions_total`、`trade_trading_decisions_running` | trigger、outcome、action、execution_status |
 | 风控 | `trade_trading_risk_assessments_total`、`trade_trading_risk_violations_total` | allowed/blocked、primary_rule、rule |
 | 事件总线 | `trade_trading_events_queue_*`、`trade_trading_events_published_total`、`trade_trading_events_dropped_total`、`trade_trading_events_handled_total` | 队列容量、背压、丢弃原因、handler 结果 |

@@ -61,25 +61,13 @@ test('every public TLS server requires a client certificate and a revocation lis
   assert.doesNotMatch(controls, /\$(request_uri|http_authorization|request_body)\b/);
 });
 
-test('gateway access logs omit game save IDs and override the inherited request log', () => {
+test('gateway logs the path without query parameters and suppresses raw OAuth callback errors', () => {
   const controls = fs.readFileSync(path.join(nginx, 'includes/management-controls.conf'), 'utf8');
-  const map = /map \$uri \$trade_audit_path\s*\{([^}]+)\}/.exec(controls)[1];
-  assert.match(map, /default \$uri;/);
-  const [, pattern, replacement] = /^\s*"~([^"]+)"\s+(\S+);$/m.exec(map);
-  const sensitive = new RegExp(pattern);
-  const logPath = (uri) => sensitive.test(uri) ? replacement : uri;
-  for (const suffix of ['', '/choices', '/continue']) {
-    assert.equal(logPath('/api/text-game/sessions/save-id' + suffix), '/api/text-game/sessions/[redacted]');
-  }
-  assert.equal(logPath('/api/text-game;v=1/sessions;v=1/save-id'), '/api/text-game/sessions/[redacted]');
-  assert.equal(logPath('/api/text-game/sessions'), '/api/text-game/sessions');
-  assert.equal(logPath('/api/trading/runtime'), '/api/trading/runtime');
-  assert.match(controls, /"path":"\$trade_audit_path"/);
+  assert.match(controls, /"path":"\$uri"/);
   const api = fs.readFileSync(path.join(nginx, 'includes/api.conf'), 'utf8');
   const [, errorPattern, location] = /location ~ "([^"]+)"\s*\{([^}]+)\}/.exec(api);
   const hidesRawErrors = new RegExp(errorPattern);
-  for (const uri of ['/api/text-game/sessions/save-id/choices', '/api/weibo/oauth/callback',
-    '/api/text-game;v=1/sessions;v=1/save-id']) {
+  for (const uri of ['/api/weibo/oauth/callback', '/api/weibo;v=1/oauth;v=1/callback/']) {
     assert.ok(hidesRawErrors.test(uri));
   }
   assert.equal(hidesRawErrors.test('/api/trading/runtime'), false);

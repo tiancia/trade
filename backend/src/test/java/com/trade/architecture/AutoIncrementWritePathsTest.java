@@ -66,7 +66,7 @@ class AutoIncrementWritePathsTest {
             dataSource = h2;
         }
         try (var connection = dataSource.getConnection()) {
-            for (String module : new String[]{"ai", "trading", "polymarket", "textgame", "marketplace", "weibo", "x"}) {
+            for (String module : new String[]{"ai", "trading", "polymarket", "weibo", "x"}) {
                 byte[] bytes;
                 try (var input = new ClassPathResource("db/schema/" + module + "/schema.sql").getInputStream()) {
                     bytes = input.readAllBytes();

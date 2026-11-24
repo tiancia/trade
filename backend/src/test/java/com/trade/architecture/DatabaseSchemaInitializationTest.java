@@ -45,14 +45,13 @@ class DatabaseSchemaInitializationTest {
             initializer.setResourceLoader(new H2SchemaResourceLoader());
             assertTrue(initializer.initializeDatabase());
             var jdbc = new JdbcTemplate(dataSource);
-            assertEquals(57, jdbc.queryForObject("""
+            assertEquals(47, jdbc.queryForObject("""
                     SELECT COUNT(*) FROM information_schema.tables
                     WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
                     """, Integer.class));
             assertGeneratedPrimaryKeys(connection, jdbc);
             assertEquals("HALTED", jdbc.queryForObject(
                     "SELECT status FROM okx_fund_safety_state WHERE account_scope = 'live'", String.class));
-            assertEquals(7, jdbc.queryForObject("SELECT COUNT(*) FROM marketplace_categories", Integer.class));
 
             jdbc.update("UPDATE okx_fund_safety_state SET reason = ? WHERE account_scope = 'live'",
                     "Reviewed by operator");
@@ -64,7 +63,6 @@ class DatabaseSchemaInitializationTest {
             assertEquals("Reviewed by operator", jdbc.queryForObject(
                     "SELECT reason FROM okx_fund_safety_state WHERE account_scope = 'live'", String.class));
             assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM okx_fund_safety_state", Integer.class));
-            assertEquals(7, jdbc.queryForObject("SELECT COUNT(*) FROM marketplace_categories", Integer.class));
             assertEquals(42L, jdbc.queryForObject(
                     "SELECT pending_decision_id FROM polymarket_execution_guard WHERE guard_name = 'primary'", Long.class));
             assertEquals("operator-selected", jdbc.queryForObject(

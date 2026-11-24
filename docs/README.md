@@ -21,7 +21,6 @@
 | 内容生成、审核与发布 | [X 工作流](publishing/X_WORKFLOW.md) · [微博工作流](publishing/WEIBO_WORKFLOW.md) |
 | 平台客户端 | [X API 与 OAuth](publishing/X_API.md) · [Telegram Bot API](publishing/TELEGRAM_API.md) |
 | Polymarket | [Python 桥接、输入输出与调试](../tools/polymarket/README.md) |
-| 文字游戏 | [内置剧情、导入与版本发布](../backend/src/main/resources/textgame/stories/README.md) |
 
 ## 前端组件
 
@@ -30,8 +29,6 @@
 | 交易驾驶舱 | 行情、策略、模拟资金和回测 | [trading-cockpit](../frontend/trading-cockpit/README.md) |
 | X 控制台 | 查看草稿、审核与发布状态 | [x-console](../frontend/x-console/README.md) |
 | 功能控制台 | 管理各模块开关、查看任务状态 | [control-console](../frontend/control-console/README.md) |
-| 文字游戏 | 剧情选择和会话 | [text-game](../frontend/text-game/package.json) |
-| 二手集市 | 账号、商品浏览与发布、买卖双方聊天 | [页面入口](../frontend/market/src/MarketplaceApp.tsx) · [运行命令](../frontend/market/package.json) |
 
 ## 维护规则
 

@@ -4,7 +4,6 @@ import com.trade.automation.application.task.ModuleControl;
 import com.trade.client.telegram.TelegramClientProperties;
 import com.trade.client.weibo.WeiboClientProperties;
 import com.trade.polymarket.infrastructure.config.AiPolymarketProperties;
-import com.trade.story.infrastructure.config.AiStoryProperties;
 import com.trade.trading.infrastructure.config.TradingAiProperties;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.weibo.infrastructure.config.WeiboTelegramReviewProperties;
@@ -45,13 +44,6 @@ public class ModuleControlConfiguration {
         return new ModuleControl("polymarket", "Polymarket AI", "收集候选市场，执行 AI 分析并记录决策。",
                 properties::isEnabled, properties::setEnabled, () -> {},
                 () -> List.of(properties.getExecution().isEnabled() ? "真实执行已配置；仍受市场、地域和未决订单门禁限制。" : "真实执行未授权，仅分析。"));
-    }
-
-    @Bean
-    public ModuleControl storyControl(AiStoryProperties properties) {
-        return new ModuleControl("story", "AI 故事生成", "按计划生成故事，并保存到配置的输出目录。",
-                properties::isEnabled, properties::setEnabled, () -> {},
-                () -> List.of("开启后按既有计划调用 AI，可能产生供应商费用。"));
     }
 
     @Bean

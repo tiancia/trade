@@ -14,7 +14,7 @@ import org.springframework.context.annotation.Configuration;
  *
  * <p>Shared AI-provider beans are configured separately under
  * {@code com.trade.client.ai.config}; keeping them out of this class prevents
- * story and Polymarket workflows from depending on trading configuration.</p>
+ * other AI workflows from depending on trading configuration.</p>
  */
 @Configuration
 @EnableConfigurationProperties({

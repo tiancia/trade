@@ -5,8 +5,6 @@ import com.trade.automation.domain.model.AutomationTaskDefinition;
 import com.trade.automation.infrastructure.config.AutomationProperties;
 import com.trade.polymarket.infrastructure.config.AiPolymarketProperties;
 import com.trade.polymarket.interfaces.scheduler.AiPolymarketScheduler;
-import com.trade.story.infrastructure.config.AiStoryProperties;
-import com.trade.story.interfaces.scheduler.AiStoryScheduler;
 import com.trade.trading.application.runtime.TradingMarketDataRuntime;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import com.trade.trading.infrastructure.config.TradingAiProperties;
@@ -27,8 +25,7 @@ import java.util.List;
  * Registers domain-owned background loops with the shared automation manager.
  *
  * <p>This class is the quickest map from {@code trade.automation.*} startup
- * switches to the concrete loops that run OKX trading, Polymarket decisions,
- * story generation, and reviewed Weibo/X publishing.</p>
+ * switches to the concrete loops that run OKX trading, Polymarket decisions, and reviewed Weibo/X publishing.</p>
  */
 @Component
 public class AutomationTaskRegistrar {
@@ -43,8 +40,6 @@ public class AutomationTaskRegistrar {
             TradingAiProperties tradingAiProperties,
             AiPolymarketScheduler polymarketScheduler,
             AiPolymarketProperties polymarketProperties,
-            AiStoryScheduler storyScheduler,
-            AiStoryProperties storyProperties,
             WeiboScheduler weiboScheduler,
             WeiboWorkflowProperties weiboProperties,
             WeiboTelegramReviewProperties weiboReviewProperties,
@@ -98,20 +93,6 @@ public class AutomationTaskRegistrar {
                         millis(polymarketProperties.getInitialDelayMs()),
                         millis(polymarketProperties.getDecisionFixedDelayMs()),
                         polymarketScheduler::runScheduledDecision
-                ))
-        ));
-
-        manager.register(new AutomationTaskDefinition(
-                "story",
-                "AI story generation",
-                automationProperties.getStory().shouldAutoStart(storyProperties.isEnabled()),
-                null,
-                null,
-                List.of(new AutomationLoopDefinition(
-                        "generation",
-                        millis(storyProperties.getInitialDelayMs()),
-                        millis(storyProperties.getGenerationFixedDelayMs()),
-                        storyScheduler::runScheduledGeneration
                 ))
         ));
 

@@ -9,8 +9,6 @@
 3. 从仓库根目录进入 `backend/`，按 [安全启动](../docs/backend/OPERATIONS.md#安全启动) 设置模块开关并运行 `.\mvnw.cmd spring-boot:run`。首次使用新库可按该节关闭后台任务。复用已有库时，功能控制台保存的选择优先于环境默认值。
 4. 检查 `GET /actuator/health` 和实际模块状态。管理 API 使用操作员 Basic 认证，管理写入还需要 `X-Trade-CSRF: 1`。凭据文件由 `TRADE_MANAGEMENT_AUTH_CREDENTIALS_FILE` 指定。[后台任务操作](../docs/backend/OPERATIONS.md#后台任务操作)
 
-后端使用当前工作目录解析相对路径。从 `backend/` 启动时，小说生成器读写 `../../story`，即仓库旁的 `story/`。从其他位置启动时，可以给 `TRADE_STORY_OUTPUT_DIR` 设置绝对路径。
-
 ## 数据库与交易配置
 
 启动时先由 Flyway 校验版本并应用待执行迁移，完成后再恢复模块和启动任务。接入 Flyway 前的旧库须通过结构核验，历史手工补丁按适用条件查阅。[数据库结构与迁移](src/main/resources/db/README.md) · [旧库接入说明](src/main/resources/db/upgrade/README.md)

@@ -27,13 +27,11 @@
 ### 自增主键升级
 
 所有模块的完整 schema 使用 `id BIGINT AUTO_INCREMENT PRIMARY KEY`。AI 和 Polymarket 的表已符合这一约定，无需升级。
-以下五个脚本将旧结构中剩余 24 张表的主键切换为自增 `id`，保留旧标识及其唯一约束，不删除或重写业务数据：
+以下三个脚本将相应旧结构中 22 张表的主键切换为自增 `id`，保留旧标识及其唯一约束，不删除或重写业务数据：
 
 | 模块 | 升级脚本 | 受影响表数 |
 | --- | --- | --- |
 | Trading | [trading/migration_add_auto_increment_primary_keys.sql](trading/migration_add_auto_increment_primary_keys.sql) | 8 |
-| Textgame | [textgame/migration_add_auto_increment_primary_keys.sql](textgame/migration_add_auto_increment_primary_keys.sql) | 1 |
-| Marketplace | [marketplace/migration_add_auto_increment_primary_keys.sql](marketplace/migration_add_auto_increment_primary_keys.sql) | 1 |
 | Weibo | [weibo/migration_add_auto_increment_primary_keys.sql](weibo/migration_add_auto_increment_primary_keys.sql) | 8 |
 | X | [x/migration_add_auto_increment_primary_keys.sql](x/migration_add_auto_increment_primary_keys.sql) | 6 |
 
@@ -76,12 +74,10 @@ MySQL DDL 会隐式提交，无法用事务回滚；脚本不能重复执行。�
 | [polymarket/migration_add_polymarket_decision_audits.sql](polymarket/migration_add_polymarket_decision_audits.sql) | Polymarket 决策、AI 请求与执行审计 |
 | [polymarket/migration_add_polymarket_execution_guard.sql](polymarket/migration_add_polymarket_execution_guard.sql) | 单账户持久执行预留；含糊结果保留阻断，不随重启或超时自动释放。升级前停掉 Polymarket 任务并核对旧的未决执行 |
 | [ai/migration_add_ai_response_parse_errors.sql](ai/migration_add_ai_response_parse_errors.sql) | 跨业务 AI 解析失败审计 |
-| [textgame/migration_add_text_game_story_engine.sql](textgame/migration_add_text_game_story_engine.sql) | 文字游戏剧情、版本、会话和事件 |
 | [weibo/migration_add_weibo_oauth.sql](weibo/migration_add_weibo_oauth.sql) | 微博 OAuth state 与账号 token |
 | [weibo/migration_add_weibo_workflow.sql](weibo/migration_add_weibo_workflow.sql) | 微博事件草稿、审核版本历史、发布尝试及账号配额锁；先有 OAuth 表 |
 | [weibo/migration_add_weibo_review_delivery.sql](weibo/migration_add_weibo_review_delivery.sql) | Telegram 审核投递身份、首个回调决定与单 bot 持久轮询 cursor/数据库租约；先有 workflow 表 |
 | [x/migration_add_x_workflow.sql](x/migration_add_x_workflow.sql) | 独立 X 草稿、内容规则快照、审核版本历史、发布尝试、账号配额锁与 Telegram 审核投递/轮询租约 |
-| [marketplace/migration_add_marketplace.sql](marketplace/migration_add_marketplace.sql) | 集市用户、商品、会话和消息 |
 | [legacy/migration_normalize_bigint_decision_schema.sql](legacy/migration_normalize_bigint_decision_schema.sql) | 跨模块历史决策主键/外键类型归一化 |
 
 现有文件是不同历史阶段留下的补丁，并非每个文件都带完整头注释。新增或修改升级脚本时，应在脚本头部补充适用的旧结构、前置条件、验证 SQL 和不可逆操作，同时更新本表。

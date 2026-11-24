@@ -1,6 +1,6 @@
 # 功能控制台
 
-独立的 React + TypeScript + Vite 前端项目，统一管理 OKX 策略交易、Trading AI、Polymarket、AI 故事、微博和 X 工作流。入口是本站根路径 `/`，与交易驾驶舱分别安装、启动、构建和部署。
+独立的 React + TypeScript + Vite 前端项目，统一管理 OKX 策略交易、Trading AI、Polymarket、微博和 X 工作流。入口是本站根路径 `/`，与交易驾驶舱分别安装、启动、构建和部署。
 
 ## 本地运行
 

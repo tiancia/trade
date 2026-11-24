@@ -29,7 +29,7 @@ class PackageArchitectureTest {
             "(?m)^\\s*import\\s+(?:static\\s+)?(com\\.trade\\.[\\w.*]+);"
     );
     private static final List<String> BUSINESS_DOMAINS = List.of(
-            "trading", "polymarket", "story", "textgame", "marketplace", "weibo", "x"
+            "trading", "polymarket", "weibo", "x"
     );
     private static final List<String> SHARED_PACKAGES = List.of("client", "ai", "common");
     private static final List<String> LAYERED_TOP_LEVEL_PACKAGES = Stream.concat(
@@ -318,29 +318,7 @@ class PackageArchitectureTest {
     }
 
     @Test
-    void marketplaceUseCasesAndPortsDoNotDependOnPersistence() throws IOException {
-        Path marketplace = mainJava.resolve("com/trade/marketplace");
-        Pattern persistenceImport = Pattern.compile("(?m)^\\s*import\\s+(?:static\\s+)?(?:"
-                + "com\\.trade\\.marketplace\\.infrastructure\\.persistence|org\\.apache\\.ibatis|"
-                + "org\\.mybatis|org\\.springframework\\.(?:dao|jdbc)|java\\.sql)\\.");
-        for (String layer : List.of("application", "port")) {
-            for (Path source : javaSources(marketplace.resolve(layer))) {
-                assertFalse(persistenceImport.matcher(Files.readString(source)).find(),
-                        () -> "marketplace persistence belongs behind a store: " + source);
-            }
-        }
-    }
-
-    @Test
-    void sessionUseCaseDoesNotHandlePersistenceRowsOrStoredJson() throws IOException {
-        for (String name : List.of("TextGameSessionService.java", "TextGameSessionViews.java")) {
-            Path source = mainJava.resolve("com/trade/textgame/application/service").resolve(name);
-            for (String type : imports(source)) {
-                assertFalse(type.contains(".persistence.") || type.startsWith("java.sql."));
-            }
-            String text = Files.readString(source);
-            assertFalse(text.contains("readValue(") || text.contains("writeValueAsString("));
-        }
+    void backtestUseCaseDoesNotOwnTheExecutorLifecycle() throws IOException {
         String backtest = Files.readString(mainJava.resolve("com/trade/trading/application/backtest/BacktestService.java"));
         assertFalse(backtest.contains("ThreadPoolExecutor") || backtest.contains("@PreDestroy"));
     }

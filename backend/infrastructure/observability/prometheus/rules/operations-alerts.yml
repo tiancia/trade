@@ -2,11 +2,11 @@ groups:
   - name: operations
     rules:
       - alert: NonTradingAutomationFailure
-        expr: increase(trade_automation_runs_total{outcome="failure",task=~"story|weibo|x"}[15m]) > 0
+        expr: increase(trade_automation_runs_total{outcome="failure",task=~"weibo|x"}[15m]) > 0
         labels:
           severity: warning
         annotations:
-          summary: A story, Weibo or X automation loop failed
+          summary: A Weibo or X automation loop failed
           description: Inspect task status and provider credentials/quota; a later empty loop does not erase this failure window.
       - alert: AlertmanagerUnavailable
         expr: up{job="alertmanager"} == 0
