@@ -74,7 +74,7 @@ public final class TradingPositionState {
 
     private TradingPositionState withPosition(PositionAccounting.Position position) {
         return new TradingPositionState(accountScope, instId, positionSide, position.quantity(), position.averageCost(),
-                exchangeQuantity, lastReconciledAt, version + 1);
+                exchangeQuantity, null, version + 1);
     }
 
     private static BigDecimal zero(BigDecimal value) { return value == null ? BigDecimal.ZERO : value; }

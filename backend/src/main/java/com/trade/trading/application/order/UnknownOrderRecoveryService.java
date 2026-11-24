@@ -6,7 +6,8 @@ import com.trade.client.okx.dto.OrderQueryReq;
 import com.trade.client.okx.dto.PendingOrdersReq;
 import com.trade.trading.port.TradingOrderRepository;
 import com.trade.trading.port.TradingStateStore;
-import com.trade.trading.application.risk.FundSafetyService;
+import com.trade.trading.port.FundSafetyRepository;
+import com.trade.trading.port.LiveAccountLock;
 import com.trade.trading.application.runtime.TradingLeadershipService;
 import com.trade.trading.domain.order.OrderChange;
 import com.trade.trading.domain.order.OrderStatus;
@@ -28,18 +29,20 @@ public class UnknownOrderRecoveryService {
     private static final Duration MINIMUM_AGE = Duration.ofMinutes(30);
     private final TradingOrderRepository orders;
     private final TradingStateStore state;
-    private final FundSafetyService safety;
+    private final FundSafetyRepository safety;
+    private final LiveAccountLock accountLock;
     private final TradingLeadershipService leadership;
     private final TradingProperties properties;
     private final OkxApi okx;
     private final MeterRegistry meters;
 
     public UnknownOrderRecoveryService(TradingOrderRepository orders, TradingStateStore state,
-            FundSafetyService safety, TradingLeadershipService leadership, TradingProperties properties,
-            OkxApi okx, MeterRegistry meters) {
+            FundSafetyRepository safety, TradingLeadershipService leadership, TradingProperties properties,
+            OkxApi okx, MeterRegistry meters, LiveAccountLock accountLock) {
         this.orders = orders;
         this.state = state;
         this.safety = safety;
+        this.accountLock = accountLock;
         this.leadership = leadership;
         this.properties = properties;
         this.okx = okx;
@@ -63,23 +66,30 @@ public class UnknownOrderRecoveryService {
         if (!properties.isLiveAccountSelected()) {
             throw new IllegalStateException("Unknown order recovery requires the original LIVE account configuration");
         }
+        // The same database guard covers a submitting worker from reservation to acknowledgement.
+        return accountLock.withLock(() -> abandonLocked(key, expectedVersion, expectedSafetyVersion, clientOrderId, audit));
+    }
+
+    private TradingOrder abandonLocked(String key, long expectedVersion, long expectedSafetyVersion,
+                                       String clientOrderId, String audit) {
+        String scope = properties.financialAccountScope();
         leadership.requireLiveLeadership();
-        FundSafetyPolicy.requireResumeState(safety.state(), expectedSafetyVersion);
+        FundSafetyPolicy.requireResumeState(safety.getOrCreate(scope), expectedSafetyVersion);
         TradingOrder current = orders.findByIdempotencyKey(key)
                 .orElseThrow(() -> new IllegalArgumentException("Order not found"));
         if (current.getVersion() != expectedVersion) {
             throw new ConcurrentModificationException("Order version changed; inspect it again");
         }
         if (!properties.getInstId().equals(current.getInstId())
-                || current.getStatus() != OrderStatus.SUBMIT_UNKNOWN
+                || (current.getStatus() != OrderStatus.SUBMIT_UNKNOWN && current.getStatus() != OrderStatus.SUBMITTING)
                 || current.getClientOrderId() == null || !current.getClientOrderId().equals(clientOrderId)
                 || hasText(current.getExchangeOrderId())
                 || current.getFilledBaseAmount() != null && current.getFilledBaseAmount().signum() != 0) {
             throw new IllegalStateException("Only the matching unknown order without an exchange ID or fills can be abandoned");
         }
-        Instant now = Instant.now();
-        if (current.getSubmittedAt() == null || current.getSubmittedAt().plus(MINIMUM_AGE).isAfter(now)
-                || current.getUpdatedAt() == null || current.getUpdatedAt().plus(MINIMUM_AGE).isAfter(now)) {
+        Instant checkedAt = Instant.now();
+        if (current.getSubmittedAt() == null || current.getSubmittedAt().plus(MINIMUM_AGE).isAfter(checkedAt)
+                || current.getUpdatedAt() == null || current.getUpdatedAt().plus(MINIMUM_AGE).isAfter(checkedAt)) {
             throw new IllegalStateException("Wait at least 30 minutes after submission and the last order change; stop the submitting worker first");
         }
         var lookup = okx.getOrder(new OrderQueryReq().setInstId(current.getInstId())
@@ -98,13 +108,15 @@ public class UnknownOrderRecoveryService {
         // evidence above remain necessary. Keep HALTED and force a fresh full
         // order/position reconciliation before the separate resume operation.
         leadership.requireLiveLeadership();
-        FundSafetyPolicy.requireResumeState(safety.state(), expectedSafetyVersion);
-        state.recordReconciliationFailure(now, "Unknown order manually abandoned; fresh full reconciliation required");
+        Instant now = Instant.now();
         OrderChange change = OrderChange.abandonUnknown(audit, now);
         TradingOrder next = change.apply(current, now);
-        if (!orders.compareAndSet(current, next, audit)) {
-            throw new ConcurrentModificationException("Order changed during recovery; no abandonment was committed");
-        }
+        safety.recordOrderRecovery(scope, expectedSafetyVersion, () -> {
+            if (!orders.compareAndSet(current, next, audit)) {
+                throw new ConcurrentModificationException("Order changed during recovery; no abandonment was committed");
+            }
+            state.recordReconciliationFailure(now, "Unknown order manually abandoned; fresh full reconciliation required");
+        });
         meters.counter("trade.trading.orders.manual_recovery", "outcome", "abandoned").increment();
         return next;
     }

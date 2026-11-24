@@ -47,6 +47,11 @@ public class InMemoryTradingOrderRepository implements TradingOrderRepository {
     }
 
     @Override
+    public synchronized boolean hasUnresolvedLiveOrders() {
+        return orders.values().stream().anyMatch(order -> !order.getStatus().isTerminal());
+    }
+
+    @Override
     public synchronized boolean compareAndSet(TradingOrder current, TradingOrder next, String reason) {
         TradingOrder stored = orders.get(current.getIdempotencyKey());
         if (stored == null

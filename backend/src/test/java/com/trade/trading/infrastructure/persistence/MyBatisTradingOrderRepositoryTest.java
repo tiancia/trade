@@ -88,6 +88,17 @@ class MyBatisTradingOrderRepositoryTest {
     private TradingOrderRepository orderRepository;
 
     @Test
+    void unresolvedAccountOrdersIncludeOtherInstrumentsUntilTheirStatusIsTerminal() {
+        var submission = new OrderSubmission("eth-order", "eth-client", "decision", "strategy",
+                "ETH-USDT", "BUY", "buy", "cash", "market", "quote_ccy", BigDecimal.TEN);
+        lifecycleService.reserve(submission);
+        assertTrue(orderRepository.findReconciliationCandidates("BTC-USDT", 1).isEmpty());
+        assertTrue(orderRepository.hasUnresolvedLiveOrders());
+        lifecycleService.markRejected("eth-order", "fixture rejection");
+        assertFalse(orderRepository.hasUnresolvedLiveOrders());
+    }
+
+    @Test
     void uniqueKeyAndOptimisticStateTransitionsArePersistedWithHistory() {
         OrderSubmission submission = new OrderSubmission(
                 "database-idempotency-key",

@@ -8,6 +8,7 @@ import com.trade.client.okx.dto.CancelOrderReq;
 import com.trade.client.okx.dto.CancelAllAfterReq;
 import com.trade.client.okx.dto.CancelAllAfterResp;
 import com.trade.trading.port.FundSafetyRepository;
+import com.trade.trading.application.LocalLiveAccountLock;
 import com.trade.trading.port.TradingOrderRepository;
 import com.trade.trading.domain.model.ExecutionMode;
 import com.trade.trading.domain.model.TradingRiskState;
@@ -24,11 +25,18 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.ConcurrentModificationException;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -41,6 +49,83 @@ import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.argThat;
 
 class FundSafetyServiceTest {
+    @Test
+    void enforcerThatReadAnOldHaltSkipsEveryExchangeActionAfterResume() {
+        var f = haltedFixture();
+        var halted = f.repository().getOrCreate("live");
+        when(f.repository().getOrCreate("live")).thenReturn(halted,
+                new FundSafetyState().setStatus(FundSafetyStatus.ACTIVE).setVersion(5));
+        assertFalse(f.service().enforceIfHalted());
+        verify(f.okx(), never()).cancelAllAfter(any());
+        verify(f.okx(), never()).getPendingOrders(any());
+        verify(f.okx(), never()).cancelOrder(any());
+    }
+
+    @Test
+    void otherInstrumentsPendingOrdersOrUnverifiedPositionsBlockAccountResume() {
+        var f = haltedFixture();
+        OrderInfoResp pending = new OrderInfoResp();
+        pending.setInstId("ETH-USDT");
+        when(f.okx().getPendingOrders(argThat(request -> request != null && request.getInstId() == null
+                && request.getInstType() == null))).thenReturn(OkxResponse.success(List.of(pending)));
+        assertTrue(assertThrows(IllegalStateException.class, () -> f.service().resume(4, "checked", "RESUME_LIVE_TRADING"))
+                .getMessage().contains("OKX"));
+        when(f.okx().getPendingOrders(any())).thenReturn(OkxResponse.success(List.of()));
+        when(f.orders().hasUnresolvedLiveOrders()).thenReturn(true, false);
+        assertTrue(assertThrows(IllegalStateException.class, () -> f.service().resume(4, "checked", "RESUME_LIVE_TRADING"))
+                .getMessage().contains("local orders"));
+        when(f.repository().firstUnverifiedPosition(eq("live"), any(), any(), anyBoolean()))
+                .thenReturn("ETH-USDT");
+        assertTrue(assertThrows(IllegalStateException.class, () -> f.service().resume(4, "checked", "RESUME_LIVE_TRADING"))
+                .getMessage().contains("ETH-USDT"));
+        verify(f.okx(), never()).cancelAllAfter(any());
+    }
+
+    @Test
+    void resumeWaitsForAnInFlightHaltActionBeforeDisarming() throws Exception {
+        var f = haltedFixture();
+        var arming = new CountDownLatch(1);
+        var resumeStarted = new CountDownLatch(1);
+        var finishArming = new CountDownLatch(1);
+        var timeouts = new CopyOnWriteArrayList<String>();
+        when(f.okx().cancelAllAfter(any())).thenAnswer(call -> {
+            String timeout = call.getArgument(0, CancelAllAfterReq.class).getTimeOut();
+            timeouts.add(timeout);
+            if ("0".equals(timeout)) return timerResponse("0", "100");
+            arming.countDown();
+            assertTrue(finishArming.await(5, TimeUnit.SECONDS));
+            return timerResponse("110", "100");
+        });
+        when(f.repository().resume(eq("live"), eq(4L), anyString(), any()))
+                .thenReturn(new FundSafetyState().setStatus(FundSafetyStatus.ACTIVE).setVersion(5));
+        try (var workers = Executors.newFixedThreadPool(2)) {
+            var enforcer = workers.submit(f.service()::enforceIfHalted);
+            try {
+                assertTrue(arming.await(5, TimeUnit.SECONDS));
+                var resume = workers.submit(() -> {
+                    resumeStarted.countDown();
+                    return f.service().resume(4, "checked", "RESUME_LIVE_TRADING");
+                });
+                assertTrue(resumeStarted.await(5, TimeUnit.SECONDS));
+                assertThrows(TimeoutException.class, () -> resume.get(150, TimeUnit.MILLISECONDS));
+                finishArming.countDown();
+                assertTrue(enforcer.get(5, TimeUnit.SECONDS));
+                assertEquals(FundSafetyStatus.ACTIVE, resume.get(5, TimeUnit.SECONDS).getStatus());
+                assertEquals(List.of("10", "0"), timeouts);
+            } finally {
+                finishArming.countDown();
+            }
+        }
+    }
+
+    @Test
+    void missingHaltTimestampCannotProveThatReconciliationIsFresh() {
+        var f = haltedFixture();
+        when(f.repository().getOrCreate("live")).thenReturn(new FundSafetyState().setStatus(FundSafetyStatus.HALTED).setVersion(4));
+        assertThrows(IllegalStateException.class, () -> f.service().resume(4, "checked", "RESUME_LIVE_TRADING"));
+        verify(f.okx(), never()).cancelAllAfter(any());
+    }
+
     @Test
     void aNewHaltDuringPendingOrderChecksPreventsTimerDisarm() {
         var fixture = haltedFixture();
@@ -234,11 +319,11 @@ class FundSafetyServiceTest {
         when(state.getState()).thenReturn(new TradingState().setPositionLastReconciledAt(now.toString())
                 .setRiskState(new TradingRiskState().setLastReconciliationAt(now.toString())));
         return new HaltedFixture(new FundSafetyService(repository, orders, state, okx,
-                properties, new SimpleMeterRegistry()), repository, state, okx);
+                properties, new SimpleMeterRegistry(), new LocalLiveAccountLock()), repository, state, okx, orders);
     }
 
     private record HaltedFixture(FundSafetyService service, FundSafetyRepository repository,
-                                 TradingStateRepository state, OkxApi okx) { }
+                                 TradingStateRepository state, OkxApi okx, TradingOrderRepository orders) { }
 
     @Test
     void missingPendingOrderDataCannotAuthorizeLiveResume() {
@@ -259,7 +344,7 @@ class FundSafetyServiceTest {
                 .setRiskState(new TradingRiskState().setLastReconciliationAt(reconciledAt.toString())));
         when(okx.cancelAllAfter(any())).thenReturn(OkxResponse.success(List.of()));
         FundSafetyService service = new FundSafetyService(repository, orders, state, okx,
-                properties, new SimpleMeterRegistry());
+                properties, new SimpleMeterRegistry(), new LocalLiveAccountLock());
 
         IllegalStateException error = assertThrows(IllegalStateException.class,
                 () -> service.resume(4, "operator checked", "RESUME_LIVE_TRADING"));
@@ -292,7 +377,7 @@ class FundSafetyServiceTest {
         when(okx.cancelOrder(any(CancelOrderReq.class))).thenReturn(
                 OkxResponse.success(List.of(rejected)), OkxResponse.success(List.of()));
         FundSafetyService service = new FundSafetyService(repository, orders, state, okx,
-                properties, new SimpleMeterRegistry());
+                properties, new SimpleMeterRegistry(), new LocalLiveAccountLock());
 
         service.halt("operator-api", "stop");
 
@@ -331,7 +416,7 @@ class FundSafetyServiceTest {
                 stateRepository,
                 okxApi,
                 properties,
-                meterRegistry
+                meterRegistry, new LocalLiveAccountLock()
         );
 
         service.halt("operator-api", "operator stop");
@@ -377,7 +462,7 @@ class FundSafetyServiceTest {
                 stateRepository,
                 okxApi,
                 properties,
-                new SimpleMeterRegistry()
+                new SimpleMeterRegistry(), new LocalLiveAccountLock()
         );
 
         assertThrows(

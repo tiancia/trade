@@ -9,6 +9,7 @@ import com.trade.client.okx.dto.OkxResponse;
 import com.trade.trading.application.order.OrderReconciliationService;
 import com.trade.trading.application.order.OrderSettlementService;
 import com.trade.trading.application.risk.FundSafetyService;
+import com.trade.trading.application.LocalLiveAccountLock;
 import com.trade.trading.port.FundSafetyRepository;
 import com.trade.trading.port.TradingFinancialStateStore;
 import com.trade.trading.port.TradingOrderRepository;
@@ -54,6 +55,7 @@ import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -150,7 +152,7 @@ class MyBatisTradingFinancialStateStoreTest {
             return OkxResponse.success(List.of(acknowledgement));
         });
         var service = new FundSafetyService(fundSafetyRepository, mock(TradingOrderRepository.class), state, okx,
-                properties, new SimpleMeterRegistry());
+                properties, new SimpleMeterRegistry(), new LocalLiveAccountLock());
         assertThrows(ConcurrentModificationException.class,
                 () -> service.resume(firstStop.getVersion(), "reconciled", "RESUME_LIVE_TRADING"));
 
@@ -184,7 +186,7 @@ class MyBatisTradingFinancialStateStoreTest {
         timer.setTs("100");
         timer.setTriggerTime("110");
         when(okx.cancelAllAfter(any())).thenReturn(OkxResponse.success(List.of(timer)));
-        var safety = new FundSafetyService(fundSafetyRepository, orders, state, okx, properties, new SimpleMeterRegistry());
+        var safety = new FundSafetyService(fundSafetyRepository, orders, state, okx, properties, new SimpleMeterRegistry(), new LocalLiveAccountLock());
         var reconciliation = new OrderReconciliationService(okx, orders, mock(OrderSettlementService.class),
                 state, safety, properties, new SimpleMeterRegistry());
 
@@ -192,7 +194,7 @@ class MyBatisTradingFinancialStateStoreTest {
 
         var restoredState = new TradingStateRepository(tempDir.resolve("restored.json"), store, "live", "BTC-USDT");
         var restoredSafety = new FundSafetyService(fundSafetyRepository, orders, restoredState, okx,
-                properties, new SimpleMeterRegistry());
+                properties, new SimpleMeterRegistry(), new LocalLiveAccountLock());
         var halted = restoredSafety.state();
         assertEquals(FundSafetyStatus.HALTED, halted.getStatus());
         assertEquals("position-reconciliation", halted.getSource());
@@ -308,6 +310,47 @@ class MyBatisTradingFinancialStateStoreTest {
         assertEquals(2, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_risk_state", Integer.class));
         assertTrue(jdbcTemplate.queryForObject(
                 "SELECT id FROM okx_order_fill_ledger WHERE order_id = 1", Long.class) > 0);
+    }
+
+    @Test
+    void accountResumeRequiresCurrentEvidenceForEveryExposedManagedPosition() {
+        Instant halted = Instant.parse("2026-10-01T00:00:00Z");
+        var tolerance = new BigDecimal("0.01");
+        store.recordBuy("live", "ETH-USDT", BigDecimal.ONE, BigDecimal.TEN);
+        store.recordBuy("paper", "SOL-USDT", BigDecimal.ONE, BigDecimal.TEN);
+        store.recordExchangePosition("live", "BTC-USDT", BigDecimal.ZERO, null, null, halted.plusSeconds(1));
+        store.recordExchangePosition("live", "ETH-USDT", BigDecimal.ONE, null, null, halted);
+        assertEquals("ETH-USDT", fundSafetyRepository.firstUnverifiedPosition("live", halted, tolerance, false));
+        store.recordExchangePosition("live", "ETH-USDT", new BigDecimal("0.9"), null, null, halted.plusSeconds(1));
+        assertEquals("ETH-USDT", fundSafetyRepository.firstUnverifiedPosition("live", halted, tolerance, false));
+        assertEquals("ETH-USDT", fundSafetyRepository.firstUnverifiedPosition("live", halted, null, false));
+        store.recordExchangePosition("live", "ETH-USDT", BigDecimal.TEN, null, null, halted.plusSeconds(2));
+        assertNull(fundSafetyRepository.firstUnverifiedPosition("live", halted, tolerance, false));
+        assertEquals("ETH-USDT", fundSafetyRepository.firstUnverifiedPosition("live", halted, tolerance, true));
+        store.recordBuy("live", "ETH-USDT", BigDecimal.ONE, BigDecimal.TEN);
+        assertEquals("ETH-USDT", fundSafetyRepository.firstUnverifiedPosition("live", halted, tolerance, false));
+        store.recordExchangePosition("live", "ETH-USDT", new BigDecimal("2"), null, null, halted.plusSeconds(3));
+        assertNull(fundSafetyRepository.firstUnverifiedPosition("live", halted, tolerance, true));
+    }
+
+    @Test
+    void manualRecoveryAndItsNewReconciliationBoundaryCommitTogether() {
+        var stop = fundSafetyRepository.halt("live", "operator", "incident", Instant.now().minusSeconds(60));
+        fundSafetyRepository.recordActionError("live", "timer acknowledgement missing");
+        assertThrows(ConcurrentModificationException.class, () -> fundSafetyRepository.recordOrderRecovery("live", stop.getVersion(), () -> {
+            jdbcTemplate.update("INSERT INTO okx_orders(id) VALUES (2)");
+            throw new ConcurrentModificationException("order changed");
+        }));
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM okx_orders WHERE id=2", Integer.class));
+        assertEquals(stop.getVersion(), fundSafetyRepository.getOrCreate("live").getVersion());
+        fundSafetyRepository.recordOrderRecovery("live", stop.getVersion(), () -> jdbcTemplate.update("INSERT INTO okx_orders(id) VALUES (2)"));
+        var recovered = fundSafetyRepository.getOrCreate("live");
+        assertEquals(FundSafetyStatus.HALTED, recovered.getStatus());
+        assertEquals(stop.getVersion() + 1, recovered.getVersion());
+        assertTrue(recovered.getHaltedAt().isAfter(stop.getHaltedAt()));
+        assertEquals("timer acknowledgement missing", recovered.getLastActionError());
+        assertThrows(ConcurrentModificationException.class, () -> fundSafetyRepository.recordOrderRecovery("live", stop.getVersion(),
+                () -> { throw new AssertionError("stale recovery must not write"); }));
     }
 
     @Test

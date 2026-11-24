@@ -16,6 +16,7 @@ import com.trade.trading.application.execution.OrderSizingService;
 import com.trade.trading.application.order.InMemoryTradingOrderRepository;
 import com.trade.trading.application.order.OrderIdempotencyKeyFactory;
 import com.trade.trading.application.order.OrderLifecycleService;
+import com.trade.trading.application.LocalLiveAccountLock;
 import com.trade.trading.application.order.OrderSettlementService;
 import com.trade.trading.application.risk.FundSafetyService;
 import com.trade.trading.application.risk.RiskControlService;
@@ -621,6 +622,26 @@ class LiveOrderExecutionServiceTest {
     }
 
     @Test
+    void aDecisionAlreadyRunningBeforeStopCannotUseLeadershipFromTheRestart() {
+        TradingProperties properties = liveProperties();
+        TradingLeadershipService leadership = runningLeadership(properties);
+        FakeOkxApi api = new FakeOkxApi(filledOrder("buy", "0.002", "50000"));
+        TradingDecisionRecord record = new TradingDecisionRecord();
+        var execution = broker(properties, api, new InMemoryTradingOrderRepository(), mock(FundSafetyService.class), leadership);
+
+        assertTrue(leadership.runIfRunningLeader("decision", () -> {
+            leadership.stop();
+            leadership.start();
+            execution.execute(buyDecision(), context("0", "1000"), record);
+        }));
+
+        assertNull(api.orderReq);
+        assertEquals("SKIPPED", record.getExecutionStatus());
+        assertTrue(record.getSkipReason().contains("restarted"));
+        leadership.requireLiveSubmissionReady();
+    }
+
+    @Test
     void restartedRuntimeCanSubmitWithFreshLeadership() {
         TradingProperties properties = liveProperties();
         TradingLeadershipService leadership = runningLeadership(properties);
@@ -1016,7 +1037,7 @@ class LiveOrderExecutionServiceTest {
                         properties
                 ),
                 new OrderIdempotencyKeyFactory(),
-                stateRepository
+                stateRepository, new LocalLiveAccountLock()
         );
     }
 

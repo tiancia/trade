@@ -132,8 +132,8 @@
             o.submitted_at,
             o.completed_at
         FROM okx_orders o
-        WHERE o.inst_id = #{instId}
-          AND o.status IN (
+        WHERE <if test="instId != null">o.inst_id = #{instId} AND</if>
+          o.status IN (
               'SUBMITTING',
               'SUBMIT_UNKNOWN',
               'ACCEPTED',

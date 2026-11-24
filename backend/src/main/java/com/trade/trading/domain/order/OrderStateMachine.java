@@ -34,7 +34,8 @@ public final class OrderStateMachine {
                 OrderStatus.FILLED,
                 OrderStatus.CANCELED,
                 OrderStatus.REJECTED,
-                OrderStatus.SUBMIT_UNKNOWN
+                OrderStatus.SUBMIT_UNKNOWN,
+                OrderStatus.ABANDONED
         ));
         result.put(OrderStatus.SUBMIT_UNKNOWN, EnumSet.of(
                 OrderStatus.ACCEPTED,

@@ -25,8 +25,8 @@ public final class FundSafetyPolicy {
         Instant riskAt = parseOrNull(riskState == null ? null : riskState.getLastReconciliationAt());
         Instant haltedAt = safetyState.getHaltedAt();
         // Equality cannot prove ordering when database timestamps have millisecond precision.
-        boolean stalePosition = positionAt == null || (haltedAt != null && !positionAt.isAfter(haltedAt));
-        boolean staleRisk = riskAt == null || (haltedAt != null && !riskAt.isAfter(haltedAt));
+        boolean stalePosition = haltedAt == null || positionAt == null || !positionAt.isAfter(haltedAt);
+        boolean staleRisk = haltedAt == null || riskAt == null || !riskAt.isAfter(haltedAt);
         boolean failed = riskState == null
                 || riskState.getConsecutiveReconciliationFailures() != 0
                 || riskState.getLastReconciliationError() != null;

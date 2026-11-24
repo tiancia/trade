@@ -11,6 +11,7 @@ import com.trade.client.okx.dto.OrderActionResp;
 import com.trade.client.okx.dto.OrderInfoResp;
 import com.trade.client.okx.dto.PendingOrdersReq;
 import com.trade.trading.port.FundSafetyRepository;
+import com.trade.trading.port.LiveAccountLock;
 import com.trade.trading.port.TradingOrderRepository;
 import com.trade.trading.domain.risk.FundSafetyState;
 import com.trade.trading.infrastructure.config.TradingProperties;
@@ -42,6 +43,7 @@ public class FundSafetyService {
     private static final Logger log = LoggerFactory.getLogger(FundSafetyService.class);
 
     private final FundSafetyRepository repository;
+    private final LiveAccountLock accountLock;
     private final TradingOrderRepository orderRepository;
     private final TradingStateStore stateRepository;
     private final OkxApi okxApi;
@@ -56,9 +58,11 @@ public class FundSafetyService {
             TradingStateStore stateRepository,
             OkxApi okxApi,
             TradingProperties properties,
-            MeterRegistry meterRegistry
+            MeterRegistry meterRegistry,
+            LiveAccountLock accountLock
     ) {
         this.repository = repository;
+        this.accountLock = accountLock;
         this.orderRepository = orderRepository;
         this.stateRepository = stateRepository;
         this.okxApi = okxApi;
@@ -76,10 +80,7 @@ public class FundSafetyService {
     @EventListener(ApplicationReadyEvent.class)
     public void initializeStatusGauge() {
         try {
-            FundSafetyState current = state();
-            if (current.isHalted() && properties.isLiveAccountSelected()) {
-                cancelOutstandingOrders();
-            }
+            enforceIfHalted();
         } catch (RuntimeException e) {
             // Keep -1 so monitoring distinguishes an unreadable safety row
             // from an ACTIVE state. Live submissions still fail closed because
@@ -99,7 +100,11 @@ public class FundSafetyService {
             return false;
         }
         if (properties.isLiveAccountSelected()) {
-            cancelOutstandingOrders();
+            return accountLock.withLock(() -> {
+                if (!state().isHalted()) return false;
+                cancelOutstandingOrders();
+                return true;
+            });
         }
         return true;
     }
@@ -126,7 +131,7 @@ public class FundSafetyService {
         observe(state);
         counter("halted").increment();
         if (properties.isLiveAccountSelected()) {
-            cancelOutstandingOrders();
+            enforceIfHalted();
         }
         return state();
     }
@@ -138,35 +143,45 @@ public class FundSafetyService {
         if (reason == null || reason.isBlank()) {
             throw new IllegalArgumentException("Resume reason is required");
         }
+        if (properties.isLiveAccountSelected()) {
+            return accountLock.withLock(() -> resumeLive(expectedVersion, reason));
+        }
+        FundSafetyPolicy.requireResumeState(state(), expectedVersion);
+        return commitResume(expectedVersion, reason);
+    }
+
+    private FundSafetyState resumeLive(long expectedVersion, String reason) {
         FundSafetyState current = state();
         FundSafetyPolicy.requireResumeState(current, expectedVersion);
-        if (properties.isLiveAccountSelected()) {
-            List<OrderInfoResp> pending = pendingOrders();
-            FundSafetyPolicy.requireNoPendingOrders(!pending.isEmpty(), false);
-            FundSafetyPolicy.requireNoPendingOrders(false, !orderRepository.findReconciliationCandidates(
-                    properties.getInstId(),
-                    properties.getReconciliation().getBatchSize()
-            ).isEmpty());
-            FundSafetyPolicy.requireFreshSuccessfulReconciliation(current, stateRepository.getState());
-            // The pending-order query can outlive the stop this operator inspected.
-            FundSafetyPolicy.requireResumeState(state(), expectedVersion);
+        FundSafetyPolicy.requireNoPendingOrders(!pendingOrders(new PendingOrdersReq().setLimit("1")).isEmpty(), false);
+        requireReconciledAccount(current);
+        FundSafetyPolicy.requireResumeState(state(), expectedVersion);
+        try {
+            requireTimerAcknowledgement(okxApi.cancelAllAfter(new CancelAllAfterReq().setTimeOut("0")), false);
+            requireReconciledAccount(current);
+            return commitResume(expectedVersion, reason);
+        } catch (RuntimeException failure) {
+            // The exchange may have disarmed even if its reply or the local commit was lost.
             try {
-                requireTimerAcknowledgement(okxApi.cancelAllAfter(new CancelAllAfterReq().setTimeOut("0")), false);
-                FundSafetyPolicy.requireFreshSuccessfulReconciliation(current, stateRepository.getState());
-                return commitResume(expectedVersion, reason);
-            } catch (RuntimeException failure) {
-                // The exchange may have disarmed even if its reply or the local commit was lost.
-                try {
-                    if (state().isHalted()) armExchangeTimer();
-                } catch (RuntimeException recoveryFailure) {
-                    counter("timer_rearm_failed").increment();
-                    log.error("Could not verify or restore the OKX cancel-all-after timer after failed resume", recoveryFailure);
-                    if (recoveryFailure != failure) failure.addSuppressed(recoveryFailure);
-                }
-                throw failure;
+                if (state().isHalted()) armExchangeTimer();
+            } catch (RuntimeException recoveryFailure) {
+                counter("timer_rearm_failed").increment();
+                log.error("Could not verify or restore the OKX cancel-all-after timer after failed resume", recoveryFailure);
+                if (recoveryFailure != failure) failure.addSuppressed(recoveryFailure);
             }
+            throw failure;
         }
-        return commitResume(expectedVersion, reason);
+    }
+
+    private void requireReconciledAccount(FundSafetyState current) {
+        FundSafetyPolicy.requireNoPendingOrders(false, orderRepository.hasUnresolvedLiveOrders());
+        FundSafetyPolicy.requireFreshSuccessfulReconciliation(current, stateRepository.getState());
+        var policy = properties.getReconciliation();
+        String instrument = repository.firstUnverifiedPosition(properties.financialAccountScope(), current.getHaltedAt(),
+                policy.getPositionMismatchTolerance(), policy.getPositionOwnership() == TradingProperties.PositionOwnership.DEDICATED_ACCOUNT);
+        if (instrument != null) {
+            throw new IllegalStateException("Reconcile the managed position for " + instrument + " after the fund stop");
+        }
     }
 
     private FundSafetyState commitResume(long expectedVersion, String reason) {
@@ -190,7 +205,9 @@ public class FundSafetyService {
             log.error("Fund stop persisted but exchange cancel-all-after failed", e);
         }
         try {
-            for (OrderInfoResp order : pendingOrders()) {
+            var request = new PendingOrdersReq().setInstType(properties.getInstType()).setInstId(properties.getInstId())
+                    .setLimit(String.valueOf(properties.getReconciliation().getBatchSize()));
+            for (OrderInfoResp order : pendingOrders(request)) {
                 try {
                     if (!hasText(order.getOrdId()) && !hasText(order.getClOrdId())) {
                         throw new IllegalStateException("Pending order has no identity for cancellation");
@@ -219,11 +236,8 @@ public class FundSafetyService {
         }
     }
 
-    private List<OrderInfoResp> pendingOrders() {
-        OkxResponse<OrderInfoResp> response = okxApi.getPendingOrders(new PendingOrdersReq()
-                .setInstType(properties.getInstType())
-                .setInstId(properties.getInstId())
-                .setLimit(String.valueOf(properties.getReconciliation().getBatchSize())));
+    private List<OrderInfoResp> pendingOrders(PendingOrdersReq request) {
+        OkxResponse<OrderInfoResp> response = okxApi.getPendingOrders(request);
         OkxResponses.requireOk(response, "pending order query");
         if (response.getData() == null) {
             throw new IllegalStateException("OKX pending order response has no data; absence of pending orders is unverified");

@@ -46,6 +46,12 @@
         WHERE account_scope = #{accountScope}
     </update>
 
+    <update id="invalidateReconciliation">
+        UPDATE okx_fund_safety_state
+        SET halted_at = #{now}, updated_at = #{now}, version = version + 1
+        WHERE account_scope = #{accountScope} AND status = 'HALTED'
+    </update>
+
     <update id="resume">
         UPDATE okx_fund_safety_state
         SET status = 'ACTIVE',
@@ -65,4 +71,13 @@
             updated_at = #{updatedAt}
         WHERE account_scope = #{accountScope}
     </update>
+    <select id="firstUnverifiedPosition" resultType="string">
+        SELECT inst_id FROM okx_position_state
+        WHERE account_scope = #{accountScope}
+          AND (quantity &lt;&gt; 0 <if test="dedicated">OR exchange_quantity &lt;&gt; 0</if>)
+          AND (last_reconciled_at IS NULL OR last_reconciled_at &lt;= #{haltedAt}
+               OR exchange_quantity IS NULL OR quantity - exchange_quantity &gt; #{tolerance}
+               <if test="dedicated">OR exchange_quantity - quantity &gt; #{tolerance}</if>)
+        ORDER BY inst_id LIMIT 1
+    </select>
 </mapper>

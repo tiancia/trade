@@ -13,5 +13,7 @@ public interface TradingOrderRepository {
 
     List<TradingOrder> findReconciliationCandidates(String instId, int limit);
 
+    boolean hasUnresolvedLiveOrders();
+
     boolean compareAndSet(TradingOrder current, TradingOrder next, String reason);
 }

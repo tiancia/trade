@@ -41,7 +41,8 @@ public class TradingLeadershipService {
     private final String ownerId;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean leader = new AtomicBoolean(false);
-    private long generation;
+    private volatile long generation;
+    private final ThreadLocal<Long> admittedGeneration = new ThreadLocal<>();
     private volatile ScheduledFuture<?> heartbeat;
     private volatile TradingLeaderLease currentLease;
     private volatile Instant lastAttemptAt;
@@ -141,12 +142,26 @@ public class TradingLeadershipService {
 
     /** Rejects delayed trading task callbacks once the runtime has stopped. */
     public boolean runIfRunningLeader(String operation, Runnable action) {
-        if (!mayRun(operation, true)) {
-            return false;
+        long admitted;
+        synchronized (this) {
+            if (!mayRun(operation, true)) return false;
+            admitted = generation;
         }
-        // Do not hold the lifecycle monitor across market or exchange calls.
-        action.run();
-        return true;
+        // Event scans, market collection and the broker run synchronously on this callback.
+        Long previous = admittedGeneration.get();
+        admittedGeneration.set(admitted);
+        try {
+            action.run();
+            return true;
+        } finally {
+            if (previous == null) admittedGeneration.remove();
+            else admittedGeneration.set(previous);
+        }
+    }
+
+    public long submissionGeneration() {
+        Long admitted = admittedGeneration.get();
+        return admitted == null ? generation : admitted;
     }
 
     private synchronized boolean mayRun(String operation, boolean requireRunning) {
@@ -175,9 +190,16 @@ public class TradingLeadershipService {
         requireLiveLeadership();
     }
 
-    /** Final local check; atomic/volatile state avoids waiting on a heartbeat or stop's database I/O. */
     public void requireLiveSubmissionReady() {
+        requireLiveSubmissionReadyFor(submissionGeneration());
+    }
+
+    /** Final local check avoids waiting on a heartbeat or stop's database I/O. */
+    public void requireLiveSubmissionReadyFor(long expectedGeneration) {
         requireRunningTrading();
+        if (generation != expectedGeneration) {
+            throw new TradingLeadershipUnavailableException("Live OKX order blocked: trading runtime restarted during decision");
+        }
         if (properties.getLeadership().isRequiredForLive() && (!isEnabled() || !isLeader())) {
             throw new TradingLeadershipUnavailableException("Live OKX order blocked: trading lease no longer valid after preflight");
         }

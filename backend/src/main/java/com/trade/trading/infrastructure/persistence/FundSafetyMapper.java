@@ -4,9 +4,13 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
 import java.time.Instant;
+import java.math.BigDecimal;
 
 @Mapper
 public interface FundSafetyMapper {
+    String firstUnverifiedPosition(@Param("accountScope") String accountScope, @Param("haltedAt") Instant haltedAt,
+                                   @Param("tolerance") BigDecimal tolerance, @Param("dedicated") boolean dedicated);
+
     int insertIfAbsent(FundSafetyStateRow row);
 
     FundSafetyStateRow find(@Param("accountScope") String accountScope);
@@ -20,6 +24,8 @@ public interface FundSafetyMapper {
             @Param("haltedAt") Instant haltedAt,
             @Param("updatedAt") Instant updatedAt
     );
+
+    int invalidateReconciliation(@Param("accountScope") String accountScope, @Param("now") Instant now);
 
     int resume(
             @Param("accountScope") String accountScope,

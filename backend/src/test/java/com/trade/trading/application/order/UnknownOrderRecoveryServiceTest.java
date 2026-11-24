@@ -5,7 +5,9 @@ import com.trade.client.okx.dto.OkxResponse;
 import com.trade.client.okx.dto.OrderInfoResp;
 import com.trade.trading.port.TradingOrderRepository;
 import com.trade.trading.port.TradingStateStore;
-import com.trade.trading.application.risk.FundSafetyService;
+import com.trade.trading.port.FundSafetyRepository;
+import com.trade.trading.domain.risk.FundSafetyPolicy;
+import com.trade.trading.application.LocalLiveAccountLock;
 import com.trade.trading.application.runtime.TradingLeadershipService;
 import com.trade.trading.domain.model.ExecutionMode;
 import com.trade.trading.domain.order.OrderStatus;
@@ -42,11 +44,23 @@ class UnknownOrderRecoveryServiceTest {
         assertEquals("OPERATOR_CONFIRMED_NOT_ACCEPTED", abandoned.getFailureCode());
         verify(f.orders).compareAndSet(eq(f.order), eq(abandoned), contains("operator-7"));
         var sequence = inOrder(f.state, f.orders);
-        sequence.verify(f.state).recordReconciliationFailure(any(), contains("fresh full reconciliation"));
         sequence.verify(f.orders).compareAndSet(any(), any(), anyString());
-        verify(f.safety, never()).resume(anyLong(), anyString(), anyString());
+        sequence.verify(f.state).recordReconciliationFailure(any(), contains("fresh full reconciliation"));
+        verify(f.safety, never()).resume(anyString(), anyLong(), anyString(), any());
         verify(f.okx, never()).placeOrder(any());
         assertEquals(1, f.meters.get("trade.trading.orders.manual_recovery").counter().count());
+    }
+
+    @Test
+    void aCrashedSubmitUsesTheSameOperatorEvidenceAndRetainsItsOriginalIdentity() {
+        Fixture f = fixture();
+        TradingOrder interrupted = TradingOrder.restore(f.order.snapshot().toBuilder().status(OrderStatus.SUBMITTING).build());
+        when(f.orders.findByIdempotencyKey("key")).thenReturn(Optional.of(interrupted));
+        TradingOrder result = recover(f);
+        assertEquals(OrderStatus.ABANDONED, result.getStatus());
+        assertEquals(interrupted.getClientOrderId(), result.getClientOrderId());
+        verify(f.orders).compareAndSet(eq(interrupted), eq(result), contains("exchange-support-ticket-123"));
+        verify(f.okx, never()).placeOrder(any());
     }
 
     @Test
@@ -86,26 +100,26 @@ class UnknownOrderRecoveryServiceTest {
     @Test
     void activeOrRevisedFundStateCannotBeRecovered() {
         Fixture f = fixture();
-        when(f.safety.state()).thenReturn(new FundSafetyState().setStatus(FundSafetyStatus.ACTIVE).setVersion(8));
+        when(f.safety.getOrCreate("live")).thenReturn(new FundSafetyState().setStatus(FundSafetyStatus.ACTIVE).setVersion(8));
         assertThrows(IllegalStateException.class, () -> recover(f));
         verify(f.okx, never()).getOrder(any());
-        when(f.safety.state()).thenReturn(new FundSafetyState().setStatus(FundSafetyStatus.HALTED).setVersion(9));
+        when(f.safety.getOrCreate("live")).thenReturn(new FundSafetyState().setStatus(FundSafetyStatus.HALTED).setVersion(9));
         assertThrows(ConcurrentModificationException.class, () -> recover(f));
     }
 
     @Test
     void fundStateIsRecheckedAfterExchangeQueries() {
         Fixture f = fixture();
-        when(f.safety.state()).thenReturn(new FundSafetyState().setStatus(FundSafetyStatus.HALTED).setVersion(8),
+        when(f.safety.getOrCreate("live")).thenReturn(new FundSafetyState().setStatus(FundSafetyStatus.HALTED).setVersion(8),
                 new FundSafetyState().setStatus(FundSafetyStatus.HALTED).setVersion(9));
         assertThrows(ConcurrentModificationException.class, () -> recover(f));
         verify(f.orders, never()).compareAndSet(any(), any(), any());
     }
 
     @Test
-    void recentUnknownOrInFlightSubmitCannotBeAbandoned() {
+    void recentUnknownOrRecentSubmitCannotBeAbandoned() {
         Fixture f = fixture();
-        for (var snapshot : List.of(f.order.snapshot().toBuilder().status(OrderStatus.SUBMITTING).build(),
+        for (var snapshot : List.of(f.order.snapshot().toBuilder().status(OrderStatus.SUBMITTING).submittedAt(Instant.now()).build(),
                 f.order.snapshot().toBuilder().updatedAt(Instant.now()).build())) {
             when(f.orders.findByIdempotencyKey("key")).thenReturn(Optional.of(TradingOrder.restore(snapshot)));
             assertThrows(IllegalStateException.class, () -> recover(f));
@@ -157,7 +171,7 @@ class UnknownOrderRecoveryServiceTest {
         properties.setExecutionMode(ExecutionMode.LIVE);
         var orders = mock(TradingOrderRepository.class);
         var state = mock(TradingStateStore.class);
-        var safety = mock(FundSafetyService.class);
+        var safety = mock(FundSafetyRepository.class);
         var leadership = mock(TradingLeadershipService.class);
         var okx = mock(OkxApi.class);
         var meters = new SimpleMeterRegistry();
@@ -167,13 +181,18 @@ class UnknownOrderRecoveryServiceTest {
                 .submittedAt(old).updatedAt(old).createdAt(old).build());
         when(orders.findByIdempotencyKey("key")).thenReturn(Optional.of(order));
         when(orders.compareAndSet(any(), any(), any())).thenReturn(true);
-        when(safety.state()).thenReturn(new FundSafetyState().setStatus(FundSafetyStatus.HALTED).setVersion(8));
+        doAnswer(call -> {
+            FundSafetyPolicy.requireResumeState(safety.getOrCreate("live"), call.getArgument(1));
+            call.getArgument(2, Runnable.class).run();
+            return null;
+        }).when(safety).recordOrderRecovery(eq("live"), anyLong(), any());
+        when(safety.getOrCreate("live")).thenReturn(new FundSafetyState().setStatus(FundSafetyStatus.HALTED).setVersion(8));
         when(okx.getOrder(any())).thenReturn(OkxResponse.fail("51603", "Order does not exist"));
         when(okx.getPendingOrders(any())).thenReturn(OkxResponse.success(List.of()));
-        return new Fixture(new UnknownOrderRecoveryService(orders, state, safety, leadership, properties, okx, meters),
+        return new Fixture(new UnknownOrderRecoveryService(orders, state, safety, leadership, properties, okx, meters, new LocalLiveAccountLock()),
                 order, orders, state, safety, okx, meters);
     }
 
     private record Fixture(UnknownOrderRecoveryService service, TradingOrder order, TradingOrderRepository orders,
-            TradingStateStore state, FundSafetyService safety, OkxApi okx, SimpleMeterRegistry meters) {}
+            TradingStateStore state, FundSafetyRepository safety, OkxApi okx, SimpleMeterRegistry meters) {}
 }

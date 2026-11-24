@@ -7,10 +7,12 @@ import org.springframework.cache.transaction.TransactionAwareCacheDecorator;
 import com.trade.trading.port.FundSafetyRepository;
 import com.trade.trading.domain.risk.FundSafetyState;
 import com.trade.trading.domain.risk.FundSafetyStatus;
+import com.trade.trading.domain.risk.FundSafetyPolicy;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.math.BigDecimal;
 import java.util.ConcurrentModificationException;
 
 @Component
@@ -94,6 +96,22 @@ public class MyBatisFundSafetyRepository implements FundSafetyRepository {
                 .setUpdatedAt(row.getUpdatedAt())
                 .setVersion(row.getVersion());
     }
+
+    @Override
+    public String firstUnverifiedPosition(String accountScope, Instant haltedAt, BigDecimal tolerance, boolean dedicated) {
+        return mapper.firstUnverifiedPosition(accountScope, haltedAt, tolerance == null ? BigDecimal.ZERO : tolerance, dedicated);
+    }
+
+    @Override
+    @Transactional
+    public void recordOrderRecovery(String accountScope, long expectedVersion, Runnable recordRecovery) {
+        FundSafetyState stopped = required(accountScope);
+        FundSafetyPolicy.requireResumeState(stopped, expectedVersion);
+        recordRecovery.run();
+        // A reconciliation already in flight cannot qualify this new stop revision for resume.
+        mapper.invalidateReconciliation(accountScope, Instant.now());
+    }
+
     /** Memoize only committed existence; values and transactional locks remain in MySQL. */
     private void initializeOnce(Object key, Runnable insert, java.util.function.BooleanSupplier exists) {
         if (initializedRows.get(key) != null) {

@@ -9,6 +9,7 @@ import com.trade.trading.application.order.OrderIdempotencyKeyFactory;
 import com.trade.trading.application.order.OrderLifecycleService;
 import com.trade.trading.application.order.OrderSettlementService;
 import com.trade.trading.port.ExchangeOrderGateway;
+import com.trade.trading.port.LiveAccountLock;
 import com.trade.trading.port.ExchangeOrderGateway.OrderRejectedException;
 import com.trade.trading.port.TradingStateStore;
 import com.trade.trading.application.risk.FundSafetyService;
@@ -50,6 +51,7 @@ public class LiveOrderExecutionService {
     private final OrderIdempotencyKeyFactory idempotencyKeyFactory;
     private final TradingStateStore stateRepository;
     private final TradingStrategyMaintenance maintenance;
+    private final LiveAccountLock accountLock;
 
     public LiveOrderExecutionService(
             ExchangeOrderGateway orderGateway,
@@ -61,10 +63,10 @@ public class LiveOrderExecutionService {
             OrderLifecycleService orderLifecycleService,
             OrderSettlementService orderSettlementService,
             OrderIdempotencyKeyFactory idempotencyKeyFactory,
-            TradingStateStore stateRepository
+            TradingStateStore stateRepository, LiveAccountLock accountLock
     ) {
         this(orderGateway, orderSizingService, properties, riskControlService, fundSafetyService, leadershipService,
-                orderLifecycleService, orderSettlementService, idempotencyKeyFactory, stateRepository, null);
+                orderLifecycleService, orderSettlementService, idempotencyKeyFactory, stateRepository, null, accountLock);
     }
 
     @Autowired
@@ -72,7 +74,7 @@ public class LiveOrderExecutionService {
             TradingProperties properties, RiskControlService riskControlService, FundSafetyService fundSafetyService,
             TradingLeadershipService leadershipService, OrderLifecycleService orderLifecycleService,
             OrderSettlementService orderSettlementService, OrderIdempotencyKeyFactory idempotencyKeyFactory,
-            TradingStateStore stateRepository, TradingStrategyMaintenance maintenance) {
+            TradingStateStore stateRepository, TradingStrategyMaintenance maintenance, LiveAccountLock accountLock) {
         this.orderGateway = orderGateway;
         this.orderSizingService = orderSizingService;
         this.properties = properties;
@@ -84,6 +86,7 @@ public class LiveOrderExecutionService {
         this.idempotencyKeyFactory = idempotencyKeyFactory;
         this.stateRepository = stateRepository;
         this.maintenance = maintenance;
+        this.accountLock = accountLock;
     }
 
     public void execute(
@@ -91,6 +94,7 @@ public class LiveOrderExecutionService {
             TradingDecisionContext context,
             TradingDecisionRecord decisionRecord
     ) {
+        long generation = leadershipService.submissionGeneration();
         if (!properties.isLiveExecutionAllowed()) {
             decisionRecord.setExecutionStatus("SKIPPED")
                     .setSkipReason("Live OKX order blocked: execution-mode=live and live-enabled=true are both required");
@@ -130,11 +134,11 @@ public class LiveOrderExecutionService {
         }
 
         if (decision.getAction() == TradingAction.BUY) {
-            executeBuy(decision, context, decisionRecord);
+            executeBuy(decision, context, decisionRecord, generation);
         } else if (decision.getAction() == TradingAction.SELL) {
-            executeSell(decision, context, decisionRecord);
+            executeSell(decision, context, decisionRecord, generation);
         } else if (decision.getAction() != null && decision.getAction().isDerivativeAction()) {
-            executeDerivative(decision, context, decisionRecord);
+            executeDerivative(decision, context, decisionRecord, generation);
         } else {
             decisionRecord.setExecutionStatus("HELD");
             log.info("Strategy decision HOLD, no order placed. reason={}", decision.getReason());
@@ -144,7 +148,7 @@ public class LiveOrderExecutionService {
     private void executeBuy(
             StrategyDecision decision,
             TradingDecisionContext context,
-            TradingDecisionRecord decisionRecord
+            TradingDecisionRecord decisionRecord, long generation
     ) {
         String skipReason = ExecutionEligibility.skipReason(decision.getAction(),
                 properties.isSpotInstrument(), properties.isShortEnabled());
@@ -168,13 +172,13 @@ public class LiveOrderExecutionService {
                 .setSz(sizing.getSize())
                 .setTag("strategyTrade");
         decisionRecord.setOrderSize(sizing.getSize());
-        executeOrder(decision, context, decisionRecord, req);
+        executeOrder(decision, context, decisionRecord, req, generation);
     }
 
     private void executeDerivative(
             StrategyDecision decision,
             TradingDecisionContext context,
-            TradingDecisionRecord decisionRecord
+            TradingDecisionRecord decisionRecord, long generation
     ) {
         String skipReason = ExecutionEligibility.skipReason(decision.getAction(),
                 properties.isSpotInstrument(), properties.isShortEnabled());
@@ -204,13 +208,13 @@ public class LiveOrderExecutionService {
             req.setReduceOnly("true");
         }
         decisionRecord.setOrderSize(sizing.getSize());
-        executeOrder(decision, context, decisionRecord, req);
+        executeOrder(decision, context, decisionRecord, req, generation);
     }
 
     private void executeSell(
             StrategyDecision decision,
             TradingDecisionContext context,
-            TradingDecisionRecord decisionRecord
+            TradingDecisionRecord decisionRecord, long generation
     ) {
         String skipReason = ExecutionEligibility.skipReason(decision.getAction(),
                 properties.isSpotInstrument(), properties.isShortEnabled());
@@ -235,14 +239,14 @@ public class LiveOrderExecutionService {
                 .setSz(sizing.getSize())
                 .setTag("strategyTrade");
         decisionRecord.setOrderSize(sizing.getSize());
-        executeOrder(decision, context, decisionRecord, req);
+        executeOrder(decision, context, decisionRecord, req, generation);
     }
 
     private void executeOrder(
             StrategyDecision decision,
             TradingDecisionContext context,
             TradingDecisionRecord record,
-            PlaceOrderReq request
+            PlaceOrderReq request, long generation
     ) {
         String idempotencyKey = idempotencyKeyFactory.create(
                 properties,
@@ -281,18 +285,29 @@ public class LiveOrderExecutionService {
                 new BigDecimal(request.getSz())
         );
 
+        TradingOrder order = accountLock.withLock(() -> reserveAndSubmit(decision, record, request, submission, generation));
+        if (order == null) return;
+        if (record.isIdempotentReplay()) {
+            reconcileReplay(record, order);
+        } else {
+            reconcileAccepted(record, order);
+        }
+    }
+
+    private TradingOrder reserveAndSubmit(StrategyDecision decision, TradingDecisionRecord record, PlaceOrderReq request,
+                                  OrderSubmission submission, long generation) {
+        String idempotencyKey = submission.idempotencyKey();
         OrderReservation reservation;
         try {
             reservation = maintenance == null ? orderLifecycleService.reserve(submission)
                     : maintenance.execute(record, () -> orderLifecycleService.reserve(submission));
         } catch (java.util.ConcurrentModificationException e) {
             record.setExecutionStatus("SKIPPED").setSkipReason(e.getMessage());
-            return;
+            return null;
         }
         applyOrder(record, reservation.order(), !reservation.acquired());
         if (!reservation.acquired()) {
-            reconcileReplay(record, reservation.order());
-            return;
+            return reservation.order();
         }
 
         try {
@@ -308,7 +323,7 @@ public class LiveOrderExecutionService {
             // Order/position reads can block while an operator stops trading.
             // Read the persistent stop last, then check runtime/lease state without further I/O.
             fundSafetyService.requireActive();
-            leadershipService.requireLiveSubmissionReady();
+            leadershipService.requireLiveSubmissionReadyFor(generation);
             if (!properties.isLiveExecutionAllowed() || !properties.isSpotInstrument()) {
                 throw new TradingLeadershipService.TradingLeadershipUnavailableException(
                         "Live OKX order blocked: execution authorization changed during preflight");
@@ -318,13 +333,13 @@ public class LiveOrderExecutionService {
                     idempotencyKey, "OUTSTANDING_ORDER_UNAVAILABLE", e.getMessage()).order();
             applyOrder(record, rejected, false);
             record.setExecutionStatus("SKIPPED").setSkipReason(e.getMessage());
-            return;
+            return null;
         } catch (ManagedPositionUnavailableException e) {
             TradingOrder rejected = orderLifecycleService.markSubmissionBlocked(
                     idempotencyKey, "MANAGED_POSITION_UNAVAILABLE", e.getMessage()).order();
             applyOrder(record, rejected, false);
             record.setExecutionStatus("SKIPPED").setSkipReason(e.getMessage());
-            return;
+            return null;
         } catch (TradingLeadershipService.TradingLeadershipUnavailableException e) {
             TradingOrder rejected = orderLifecycleService.markSubmissionBlocked(
                     idempotencyKey,
@@ -333,7 +348,7 @@ public class LiveOrderExecutionService {
             ).order();
             applyOrder(record, rejected, false);
             record.setExecutionStatus("SKIPPED").setSkipReason(e.getMessage());
-            return;
+            return null;
         } catch (FundSafetyService.TradingFundsHaltedException e) {
             TradingOrder rejected = orderLifecycleService.markSubmissionBlocked(
                     idempotencyKey,
@@ -342,7 +357,7 @@ public class LiveOrderExecutionService {
             ).order();
             applyOrder(record, rejected, false);
             record.setExecutionStatus("SKIPPED").setSkipReason(e.getMessage());
-            return;
+            return null;
         } catch (RuntimeException e) {
             // No exchange call has occurred: an unreadable safety gate is not an unknown submit.
             String message = "Live order blocked: preflight verification failed before exchange submission";
@@ -370,9 +385,12 @@ public class LiveOrderExecutionService {
 
         TradingOrder accepted = orderLifecycleService.markAccepted(idempotencyKey, actionResp.getOrdId()).order();
         applyOrder(record, accepted, false);
+        return accepted;
+    }
 
+    private void reconcileAccepted(TradingDecisionRecord record, TradingOrder accepted) {
         try {
-            Optional<OrderInfoResp> orderInfo = orderGateway.queryOrder(actionResp.getOrdId(), actionResp.getClOrdId());
+            Optional<OrderInfoResp> orderInfo = orderGateway.queryOrder(accepted.getExchangeOrderId(), accepted.getClientOrderId());
             if (orderInfo.isEmpty()) {
                 record.setExecutionStatus("FILL_UNCONFIRMED");
                 return;
@@ -383,7 +401,7 @@ public class LiveOrderExecutionService {
             // into another submit attempt; a replay reconciles by deterministic clOrdId.
             record.setExecutionStatus("FILL_UNCONFIRMED").setError(e.getMessage());
             log.warn("OKX order accepted but fill reconciliation failed: clOrdId={}, err={}",
-                    actionResp.getClOrdId(), e.getMessage(), e);
+                    accepted.getClientOrderId(), e.getMessage(), e);
         }
     }
 

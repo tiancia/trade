@@ -52,6 +52,11 @@ public class MyBatisTradingOrderRepository implements TradingOrderRepository {
     }
 
     @Override
+    public boolean hasUnresolvedLiveOrders() {
+        return !mapper.findReconciliationCandidates(null, 1).isEmpty();
+    }
+
+    @Override
     @Transactional
     public boolean compareAndSet(TradingOrder current, TradingOrder next, String reason) {
         int updated = mapper.compareAndSet(TradingOrderRow.fromDomain(current), TradingOrderRow.fromDomain(next));

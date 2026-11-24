@@ -4,7 +4,7 @@ SQL 区分运行时版本迁移、按模块维护的完整结构和接入前的�
 
 ```text
 db/
-├─ migration/                 # Flyway 不可变版本 SQL，空库快照 B5，增量 SQL 为 V1、V3 至 V5
+├─ migration/                 # Flyway 不可变版本 SQL，空库快照 B5，增量 SQL 为 V1、V3 至 V6
 ├─ migration-support/         # Java V2 使用并校验的不可变 SQL
 ├─ schema/
 │  ├─ automation/schema.sql
@@ -43,6 +43,8 @@ db/
 后端启动先完成 Flyway，再进入应用就绪及后台任务启动阶段。`flyway_schema_history` 记录已应用版本、校验值和结果；重复启动只执行新增版本。当前 V1 是冻结的接入前完整结构，Java V2 添加 Trading 连亏会计字段、共享策略选择及 SELL 检查点回填。V2 支持核验并接入已经手工应用过同一变更的库。V3 新增模块开关表，V4 为 Trading AI 评估增加应用审计字段。
 
 空库使用[冻结的 B5 快照](migration/B5__trade_schema.sql)创建 47 张业务和基础表。已有 Flyway 历史的库按版本升级。[V5 迁移](migration/V5__retire_extracted_modules.sql)会永久删除文字游戏的四张表以及小说任务开关，保留原库六张 `marketplace_*` 表的数据，供独立集市导出。发布前停掉旧实例并验证备份。
+
+V6 新增表 `okx_account_action_guard` 并初始化 `live` 账户锁。使用同一数据库的后端通过这行锁协调实盘下单、撤单与人工恢复。升级时先停止所有旧版写入实例，再启动带数据库版本标签 `6` 的后端。
 
 旧库首次接入时先核验已存在业务表的列类型、必填约束、自增主键和业务唯一键；只接纳冻结结构及已知 V2 表，不会把任意非空库直接标记为已升级。通过后建立版本 0 基线，再执行 V1 到当前版本的历史升级。更早的主键或字段结构须先按 [历史升级说明](upgrade/README.md) 补齐前置条件；无法确认的结构直接阻止启动。数据库用户需要本库的建表、改表、索引、读写及备份权限。
 
