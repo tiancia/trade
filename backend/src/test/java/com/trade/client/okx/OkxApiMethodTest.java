@@ -32,6 +32,15 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 class OkxApiMethodTest {
+    @Test
+    void readsTheSpecificIndexTickerWithoutAuthentication() {
+        OkxRestClient client = mock(OkxRestClient.class);
+        var request = new TickerReq().setInstId("USDT-USD");
+        new OkxApi(client, null).getIndexTicker(request);
+        verify(client).get(eq(OkxEndpoints.MARKET_INDEX_TICKERS), same(request), eq(false),
+                eq(com.trade.client.okx.dto.IndexTickerResp.class));
+    }
+
 
     @Test
     void cancelAllAfterDeserializesTheTimerAcknowledgement() {

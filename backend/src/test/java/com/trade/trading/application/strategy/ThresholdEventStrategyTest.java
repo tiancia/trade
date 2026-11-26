@@ -6,6 +6,8 @@ import com.trade.client.okx.dto.TickerResp;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.application.market.TradingDecisionContext;
+import com.trade.trading.application.order.OrderIdempotencyKeyFactory;
+import com.trade.trading.domain.model.TradingDecisionRecord;
 import com.trade.trading.domain.model.TradingState;
 import com.trade.trading.infrastructure.config.TradingProperties;
 import org.junit.jupiter.api.Test;
@@ -21,6 +23,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 class ThresholdEventStrategyTest {
     private static final Instant BAR_OPEN = Instant.parse("2026-05-17T12:00:00Z");
@@ -33,6 +36,34 @@ class ThresholdEventStrategyTest {
 
         assertEquals(TradingAction.BUY, decision.getAction());
         assertEquals("threshold", decision.getStrategyId());
+    }
+
+    @Test
+    void confirmedFifteenMinuteSignalKeepsItsOrderIdentityAcrossQuotesUntilTheNextBar() {
+        var rows = candles("110", "100", "3000");
+        long bar = 15 * MINUTE;
+        for (int i = 0; i < rows.size(); i++) {
+            rows.get(i).setTs(Long.toString(BAR_OPEN.toEpochMilli() - (i + 1L) * bar));
+        }
+        var ctx = context(List.of(), null).setBar("15m");
+        var market = ctx.getMarketContext().setFifteenMinuteCandles(rows);
+        var keys = new OrderIdempotencyKeyFactory();
+        market.getTicker().setTs(Long.toString(BAR_OPEN.toEpochMilli()));
+        var first = strategy.evaluate(ctx, config());
+        assertEquals(TradingAction.BUY, first.getAction());
+        String key = keys.create(ctx.getProperties(), first, market, new TradingDecisionRecord().setDecisionId("first"), "10");
+
+        ctx.setEvaluatedAt(BAR_OPEN.plusSeconds(660));
+        market.getTicker().setTs(Long.toString(ctx.getEvaluatedAt().toEpochMilli()));
+        var replay = strategy.evaluate(ctx, config());
+        assertEquals(TradingAction.BUY, replay.getAction());
+        assertEquals(key, keys.create(ctx.getProperties(), replay, market, new TradingDecisionRecord().setDecisionId("next"), "8"));
+
+        rows.forEach(row -> row.setTs(Long.toString(Long.parseLong(row.getTs()) + bar)));
+        ctx.setEvaluatedAt(BAR_OPEN.plusMillis(bar));
+        var next = strategy.evaluate(ctx, config());
+        assertEquals(TradingAction.BUY, next.getAction());
+        assertNotEquals(key, keys.create(ctx.getProperties(), next, market, new TradingDecisionRecord().setDecisionId("third"), "10"));
     }
 
     @Test

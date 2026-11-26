@@ -300,6 +300,8 @@ class LiveOrderExecutionServiceTest {
         responses.add(new OkxResponse<>());
         responses.add(OkxResponse.fail("50004", "endpoint timeout"));
         responses.add(OkxResponse.fail("50026", "system error"));
+        responses.add(OkxResponse.fail("50071", "client order ID already exists"));
+        responses.add(OkxResponse.fail("51149", "order timed out"));
         OrderActionResp missingOrderId = new OrderActionResp();
         missingOrderId.setSCode("0");
         responses.add(OkxResponse.success(List.of(missingOrderId)));
@@ -1024,7 +1026,7 @@ class LiveOrderExecutionServiceTest {
         OrderLifecycleService lifecycleService = new OrderLifecycleService(orders, new SimpleMeterRegistry());
         return new LiveOrderExecutionService(
                 new OkxOrderGateway(okxApi, properties),
-                new OrderSizingService(properties),
+                new OrderSizingService(properties, currency -> BigDecimal.ONE),
                 properties,
                 riskControlService,
                 fundSafetyService,
@@ -1083,8 +1085,8 @@ class LiveOrderExecutionServiceTest {
         InstrumentInfoResp instrument = new InstrumentInfoResp();
         instrument.setMinSz("0.00001");
         instrument.setLotSz("0.0001");
-        instrument.setMaxMktAmt("1000");
-        instrument.setMaxMktSz("10");
+        instrument.setMaxMktAmt("1000000");
+        instrument.setMaxMktSz("1000000");
 
         return new TradingDecisionContext()
                 .setTicker(ticker)

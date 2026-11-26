@@ -98,7 +98,11 @@ public class IntradayTechnicalStrategy implements TradingStrategy<IntradayTechni
                 .filter(c -> c != null && "1".equals(c.getConfirm()))
                 .sorted(Comparator.comparingLong(c -> Long.parseLong(c.getTs())))
                 .toList();
-        confirmed = confirmed.subList(Math.max(0, confirmed.size() - limit), confirmed.size());
+        int first = Math.max(0, confirmed.size() - limit);
+        if (first > 0 && Long.parseLong(confirmed.get(first - 1).getTs()) == Long.parseLong(confirmed.get(first).getTs())) {
+            throw new IllegalArgumentException("duplicate confirmed timestamp at the window boundary");
+        }
+        confirmed = confirmed.subList(first, confirmed.size());
         long previous = 0;
         for (CandleResp c : confirmed) {
             long timestamp = Long.parseLong(c.getTs());

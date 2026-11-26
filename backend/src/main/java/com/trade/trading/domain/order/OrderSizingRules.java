@@ -19,8 +19,8 @@ public final class OrderSizingRules {
                          BigDecimal maxSellPositionRatio, BigDecimal maxDerivativeOrderSize,
                          BigDecimal maxSingleOpenQuoteAmount) {}
 
-    public record InstrumentLimits(BigDecimal maxMarketAmount, BigDecimal minSize,
-                                   BigDecimal lotSize, BigDecimal maxMarketSize) {}
+    public record InstrumentLimits(BigDecimal maxSpotQuoteAmount, BigDecimal minSize,
+                                   BigDecimal lotSize, BigDecimal maxDerivativeSize) {}
 
     public record SizingFacts(BigDecimal availableQuote, BigDecimal availableBase,
                               BigDecimal lastPrice, InstrumentLimits instrument) {}
@@ -52,8 +52,7 @@ public final class OrderSizingRules {
         amount = amount.setScale(limits.quoteAmountScale(), RoundingMode.DOWN);
 
         InstrumentLimits instrument = context.instrument();
-        BigDecimal maxMarketAmount = instrument.maxMarketAmount();
-        amount = TradingMath.clamp(amount, maxMarketAmount).setScale(limits.quoteAmountScale(), RoundingMode.DOWN);
+        amount = TradingMath.clamp(amount, instrument.maxSpotQuoteAmount()).setScale(limits.quoteAmountScale(), RoundingMode.DOWN);
 
         if (amount.signum() <= 0) {
             return OrderSizing.skipped("BUY skipped: amount is zero after caps");
@@ -88,10 +87,12 @@ public final class OrderSizingRules {
 
         InstrumentLimits instrument = context.instrument();
         BigDecimal lotSize = instrument.lotSize();
-        amount = TradingMath.roundDownToStep(amount, lotSize);
-
-        BigDecimal maxMarketSize = instrument.maxMarketSize();
-        amount = TradingMath.clamp(amount, maxMarketSize);
+        BigDecimal quoteLimit = instrument.maxSpotQuoteAmount();
+        if (quoteLimit != null && quoteLimit.signum() > 0) {
+            if (context.lastPrice().signum() <= 0) return OrderSizing.skipped("SELL skipped: missing price for market order limit");
+            int scale = Math.max(18, lotSize == null ? 0 : lotSize.scale());
+            amount = amount.min(quoteLimit.divide(context.lastPrice(), scale, RoundingMode.DOWN));
+        }
         amount = TradingMath.roundDownToStep(amount, lotSize);
 
         BigDecimal minSize = instrument.minSize();
@@ -112,7 +113,7 @@ public final class OrderSizingRules {
         BigDecimal lotSize = instrument.lotSize();
         amount = TradingMath.roundDownToStep(amount, lotSize);
 
-        BigDecimal maxMarketSize = instrument.maxMarketSize();
+        BigDecimal maxMarketSize = instrument.maxDerivativeSize();
         amount = TradingMath.clamp(amount, maxMarketSize);
         amount = TradingMath.roundDownToStep(amount, lotSize);
 

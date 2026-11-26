@@ -12,6 +12,7 @@ public final class OkxEndpoints {
     public static final String ACCOUNT_BALANCE = "/api/v5/account/balance";
     public static final String ACCOUNT_POSITIONS = "/api/v5/account/positions";
     public static final String MARKET_TICKER = "/api/v5/market/ticker";
+    public static final String MARKET_INDEX_TICKERS = "/api/v5/market/index-tickers";
     public static final String MARKET_BOOKS = "/api/v5/market/books";
     public static final String MARKET_CANDLES = "/api/v5/market/candles";
     public static final String MARKET_HISTORY_CANDLES = "/api/v5/market/history-candles";

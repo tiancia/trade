@@ -50,6 +50,20 @@ class IntradayTechnicalStrategyTest {
         assertEquals(START + 79 * BAR, decision.getMetadata().get("signalCandleTs"));
     }
 
+    @Test void conflictingLatestClosesCannotTriggerAStopInEitherFeedOrder() {
+        var context = context();
+        var market = context.getMarketContext().setTradingState(new TradingState()
+                .setAverageCost(new BigDecimal("100")).setTrackedBaseAmount(new BigDecimal("0.25")));
+        var stop = candle(79, "98", "1");
+        var neutral = candle(79, "100", "1");
+        for (var rows : List.of(List.of(stop, neutral), List.of(neutral, stop))) {
+            market.setFifteenMinuteCandles(rows);
+            var decision = strategy.evaluate(context, new IntradayTechnicalStrategyConfig());
+            assertEquals(TradingAction.HOLD, decision.getAction());
+            assertTrue(decision.getReason().contains("duplicate"));
+        }
+    }
+
     @Test void priceExitsSurviveMissingWarmupAndOldCorruptIndicatorData() {
         var config = new IntradayTechnicalStrategyConfig();
         for (boolean stop : List.of(true, false)) {

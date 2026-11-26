@@ -6,6 +6,8 @@ import com.trade.polymarket.application.decision.AiPolymarketDecisionParser;
 import com.trade.polymarket.application.decision.AiPolymarketPromptBuilder;
 import com.trade.polymarket.application.execution.PolymarketOrderExecutor;
 import com.trade.polymarket.port.PolymarketDecisionAuditSink;
+import com.trade.polymarket.port.PolymarketExecutionGuard;
+import com.trade.polymarket.port.PolymarketOrderRunner;
 import com.trade.polymarket.domain.model.AiPolymarketDecision;
 import com.trade.polymarket.domain.model.PolymarketDecisionAuditRecord;
 import com.trade.polymarket.domain.model.PolymarketDecisionContext;
@@ -13,8 +15,11 @@ import com.trade.polymarket.domain.model.PolymarketMarketSnapshot;
 import com.trade.polymarket.domain.model.PolymarketOrderResult;
 import com.trade.polymarket.domain.model.PolymarketOutcomeSnapshot;
 import com.trade.polymarket.infrastructure.config.AiPolymarketProperties;
+import com.trade.polymarket.infrastructure.broker.PolymarketGeoblockService;
 import com.trade.polymarket.infrastructure.market.PolymarketMarketContextCollector;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -28,8 +33,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
 
 class AiPolymarketServiceTest {
-    @Test
-    void disablingModuleDuringAiCallAuditsSkipWithoutReservingOrExecuting() {
+    @ParameterizedTest
+    @ValueSource(strings = {"disable", "restart-module", "restart-execution", "stop-task"})
+    void invalidatedAiCallAuditsSkipWithoutReservingOrExecuting(String transition) {
         var properties = new AiPolymarketProperties();
         properties.setEnabled(true);
         properties.getExecution().setEnabled(true);
@@ -37,7 +43,13 @@ class AiPolymarketServiceTest {
         var guard = mock(com.trade.polymarket.port.PolymarketExecutionGuard.class);
         var audit = new CapturingAuditSink();
         var service = new AiPolymarketService(prompt -> {
-            properties.setEnabled(false);
+            switch (transition) {
+                case "disable" -> properties.setEnabled(false);
+                case "restart-module" -> { properties.setEnabled(false); properties.setEnabled(true); }
+                case "restart-execution" -> { properties.getExecution().setEnabled(false); properties.getExecution().setEnabled(true); }
+                case "stop-task" -> properties.invalidateDecisions();
+                default -> throw new AssertionError(transition);
+            }
             return """
                     {"action":"BUY","reason":"fixture","tokenId":"token-1","outcome":"Yes","limitPrice":0.42,
                      "maxSpendUsdc":5,"winProbability":0.6,"confidence":0.9,"estimatedEdge":0.18}
@@ -50,6 +62,41 @@ class AiPolymarketServiceTest {
         assertEquals("BUY", audit.record.getAiDecision().getAction().name());
         assertNotNull(audit.record.getCompletedAt());
         verifyNoInteractions(guard, executor);
+    }
+
+    @Test
+    void restartDuringReservationReleasesTheSkippedRunAfterAuditAndAdmitsAFreshBuy() {
+        var properties = new AiPolymarketProperties();
+        properties.setEnabled(true);
+        properties.getExecution().setEnabled(true);
+        var guard = mock(PolymarketExecutionGuard.class);
+        var runner = mock(PolymarketOrderRunner.class);
+        var geoblock = mock(PolymarketGeoblockService.class);
+        var audit = new CapturingAuditSink();
+        when(guard.reserve(1L)).thenAnswer(call -> {
+            properties.setEnabled(false);
+            properties.setEnabled(true);
+            return true;
+        });
+        doAnswer(call -> {
+            assertEquals("SKIPPED", audit.record.getOrderResult().getStatus());
+            return null;
+        }).when(guard).release(1L);
+        when(guard.reserve(2L)).thenReturn(true);
+        when(runner.placeOrder(any())).thenReturn("simulated");
+        var service = new AiPolymarketService(prompt -> """
+                {"action":"BUY","reason":"fixture","tokenId":"token-1","outcome":"Yes","limitPrice":0.42,
+                 "maxSpendUsdc":5,"winProbability":0.6,"confidence":0.9,"estimatedEdge":0.18}
+                """, new FakeContextCollector(context()), new AiPolymarketPromptBuilder(), new AiPolymarketDecisionParser(),
+                new PolymarketOrderExecutor(properties, runner, geoblock), properties, audit, AiResponseParseErrorSink.NOOP, guard);
+
+        service.runDecision();
+        verify(guard).release(1L);
+        verifyNoInteractions(geoblock, runner);
+        service.runDecision();
+        assertEquals("PLACED", audit.record.getOrderResult().getStatus());
+        verify(runner).placeOrder(any());
+        verify(guard).release(2L);
     }
 
     @Test
@@ -80,7 +127,7 @@ class AiPolymarketServiceTest {
         var properties = new AiPolymarketProperties();
         properties.setEnabled(true);
         var executor = mock(PolymarketOrderExecutor.class);
-        when(executor.execute(any(), any())).thenThrow(new IllegalStateException("order rejected"));
+        when(executor.execute(any(), any(), any())).thenThrow(new IllegalStateException("order rejected"));
         var audit = new CapturingAuditSink();
         var service = new AiPolymarketService(prompt -> "{\"action\":\"HOLD\",\"reason\":\"fixture\"}",
                 new FakeContextCollector(context()), new AiPolymarketPromptBuilder(),
@@ -221,7 +268,8 @@ class AiPolymarketServiceTest {
         }
 
         @Override
-        public PolymarketOrderResult execute(AiPolymarketDecision decision, PolymarketDecisionContext context) {
+        public PolymarketOrderResult execute(AiPolymarketDecision decision, PolymarketDecisionContext context,
+                                             AiPolymarketProperties.DecisionRun run) {
             return result;
         }
     }

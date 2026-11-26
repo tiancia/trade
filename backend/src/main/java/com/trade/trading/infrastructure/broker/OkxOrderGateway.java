@@ -63,10 +63,10 @@ public class OkxOrderGateway implements ExchangeOrderGateway {
 
     private static boolean ambiguousCode(String code) {
         String baseCode = code == null ? "" : code.split("_", 2)[0];
-        // 51016 means an order with this clOrdId already exists. Reconcile that
-        // identity; marking it REJECTED could leave real exposure untracked.
+        // Duplicate identities and exchange timeouts require reconciliation.
         return "50004".equals(baseCode) || "50026".equals(baseCode)
-                || "50001".equals(baseCode) || "50013".equals(baseCode) || "51016".equals(baseCode);
+                || "50001".equals(baseCode) || "50013".equals(baseCode) || "50071".equals(baseCode)
+                || "51016".equals(baseCode) || "51149".equals(baseCode);
     }
 
     private static boolean isErrorCode(String code) {

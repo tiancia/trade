@@ -30,7 +30,7 @@ class PaperOrderExecutionServiceTest {
         var record = new TradingDecisionRecord().setDecisionId("once").setMetadata(Map.of("paperSessionId", "session"));
         var decision = new StrategyDecision().setAction(TradingAction.BUY);
         when(risk.evaluate(decision, context)).thenReturn(new RiskAssessment().setAllowed(true));
-        when(sizing.buySize(decision, context)).thenReturn(OrderSizing.executable("10"));
+        when(sizing.spotSize(decision, context, null)).thenReturn(OrderSizing.executable("10"));
         var fill = new PaperFill(1L, "session", "once", "threshold", 1L, "{}", "BUY", BigDecimal.TEN,
                 BigDecimal.ONE, new BigDecimal("0.999"), BigDecimal.TEN, BigDecimal.TEN.negate(),
                 new BigDecimal("0.01"), BigDecimal.ZERO, new BigDecimal("90"), new BigDecimal("0.999"),
@@ -73,7 +73,7 @@ class PaperOrderExecutionServiceTest {
         var record = new TradingDecisionRecord().setDecisionId("signal");
         var decision = new StrategyDecision().setAction(TradingAction.BUY);
         when(risk.evaluate(decision, context)).thenReturn(new RiskAssessment().setAllowed(true));
-        when(sizing.buySize(decision, context)).thenReturn(OrderSizing.executable("20"));
+        when(sizing.spotSize(decision, context, null)).thenReturn(OrderSizing.executable("20"));
         var original = new PaperFill(1L, "session", "signal", "intraday", 1L, "{}", "BUY", BigDecimal.TEN,
                 BigDecimal.ONE, BigDecimal.ONE, BigDecimal.TEN, BigDecimal.TEN.negate(), BigDecimal.ZERO,
                 BigDecimal.ZERO, new BigDecimal("90"), BigDecimal.ONE, new BigDecimal("100"), 1, Instant.now());

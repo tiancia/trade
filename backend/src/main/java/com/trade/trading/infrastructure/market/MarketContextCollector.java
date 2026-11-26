@@ -1,6 +1,7 @@
 package com.trade.trading.infrastructure.market;
 
 import com.trade.trading.port.TradingMarketSource;
+import com.trade.trading.port.UsdIndexPriceSource;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trade.client.okx.OkxApi;
@@ -37,6 +38,7 @@ import com.trade.trading.infrastructure.persistence.TradingStateRepository;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -48,7 +50,8 @@ import java.util.UUID;
  * context. The same context is later reused by risk checks and execution.
  */
 @Component
-public class MarketContextCollector implements TradingMarketSource {
+public class MarketContextCollector implements TradingMarketSource, UsdIndexPriceSource {
+    private static final long MAX_INDEX_AGE_MS = Duration.ofMinutes(2).toMillis();
     private final OkxApi okxApi;
     private final TradingProperties properties;
     private final TradingStateRepository stateRepository;
@@ -175,6 +178,25 @@ public class MarketContextCollector implements TradingMarketSource {
                 context.getAccountBalance(), context.getBaseBalance(), context.getQuoteBalance(),
                 pendingOrders, recentOrders, recentFills, positions, instrument, context.getTradingState());
         return context.setAiParameters(parameters).setAiParametersJson(toJson(parameters));
+    }
+
+    @Override
+    public BigDecimal usdPrice(String currency) {
+        String indexId = currency + "-USD";
+        var index = OkxResponses.requireSingleSnapshot(okxApi.getIndexTicker(new TickerReq().setInstId(indexId)), "USD index ticker");
+        long now = System.currentTimeMillis();
+        long timestamp;
+        try {
+            timestamp = Long.parseLong(index.ts());
+        } catch (NumberFormatException invalid) {
+            throw new IllegalStateException("Invalid OKX index timestamp for " + indexId);
+        }
+        BigDecimal price = TradingMath.decimalOrNull(index.idxPx());
+        if (!indexId.equals(index.instId()) || price == null || price.signum() <= 0 || timestamp > now
+                || timestamp < now - MAX_INDEX_AGE_MS) {
+            throw new IllegalStateException("Invalid or stale OKX index price for " + indexId);
+        }
+        return price;
     }
 
     public List<CandleResp> getOneMinuteCandles() {

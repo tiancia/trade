@@ -15,8 +15,7 @@ import {
   buildPaperSessionPayload,
   filterConfigurationEvents,
   formatReturnFraction,
-  mergeContiguousHistory,
-  refreshSessionPage,
+  refreshCursorPage,
   marketDataIsFresh,
   backtestSelectionForStrategy,
   decisionIndicatorEntries,
@@ -355,9 +354,41 @@ test("paper session refresh preserves loaded pages and a pinned selection never 
   assert.ok(selector().props.children.flat().some((item) => item.props.value === "s35"));
 });
 
+test("refresh preserves exhausted fill and equity cursors independently until the first page no longer overlaps", async () => {
+  const { render, load, pending, flush } = await mountPaperPanel();
+  const account = { id: 1, sessionId: "s1", status: "ACTIVE", quoteCcy: "USDT" };
+  const rows = (top, count) => Array.from({ length: count }, (_, i) => ({ id: top - i }));
+  const button = (label) => findElement(render(), (node) => node.type === "button" && node.props.children === label);
+  const refresh = async (top) => {
+    render(); load();
+    pending.shift().resolve(Response.json(account));
+    pending.shift().resolve(Response.json([account]));
+    await flush();
+    pending.shift().resolve(Response.json(rows(top, 100)));
+    pending.shift().resolve(Response.json(rows(top, 100)));
+    await flush();
+  };
+  const more = async (label, tail) => {
+    button(label).props.onClick();
+    pending.shift().resolve(Response.json(tail));
+    await flush();
+  };
+  await refresh(105);
+  await more("加载更早成交", rows(5, 5));
+  await refresh(106);
+  assert.ok(!button("加载更早成交"));
+  assert.ok(button("加载更早资金记录"));
+  await more("加载更早资金记录", rows(6, 6));
+  await refresh(107);
+  assert.ok(!button("加载更早资金记录"));
+  await refresh(300);
+  assert.ok(button("加载更早成交"));
+  assert.ok(button("加载更早资金记录"));
+});
+
 test("a partial first page removes deleted sessions and closes pagination", () => {
   const previous = { items: [{ id: 4 }, { id: 3 }, { id: 2 }], hasMore: true };
-  assert.deepEqual(refreshSessionPage([{ id: 4 }], previous, 2), { items: [{ id: 4 }], hasMore: false });
+  assert.deepEqual(refreshCursorPage([{ id: 4 }], previous, 2), { items: [{ id: 4 }], hasMore: false });
 });
 
 test("paper deletion requires confirmation, sends the selected revision, and clears its cached history", async () => {
@@ -833,7 +864,7 @@ test("version filters do not attribute inherited cumulative equity to the versio
 test("disjoint full history refreshes retain a cursor that can recover the interior gap", () => {
   const cached = Array.from({ length: 100 }, (_, index) => ({ id: 200 - index }));
   const fresh = Array.from({ length: 100 }, (_, index) => ({ id: 400 - index }));
-  const refreshed = mergeContiguousHistory(fresh, cached);
+  const refreshed = refreshCursorPage(fresh, { items: cached, hasMore: false }, 100).items;
   assert.equal(refreshed.length, 100);
   assert.equal(Math.min(...refreshed.map((item) => item.id)), 301);
   // Paging before 301 retrieves the previously unseen 300..201, rather than skipping it.
@@ -844,7 +875,7 @@ test("disjoint full history refreshes retain a cursor that can recover the inter
 test("overlapping history refreshes preserve previously loaded older rows without duplicate IDs", () => {
   const cached = Array.from({ length: 150 }, (_, index) => ({ id: 200 - index, label: "cached" }));
   const fresh = Array.from({ length: 100 }, (_, index) => ({ id: 250 - index, label: "fresh" }));
-  const refreshed = mergeContiguousHistory(fresh, cached);
+  const refreshed = refreshCursorPage(fresh, { items: cached, hasMore: false }, 100).items;
   assert.equal(refreshed.length, 200);
   assert.deepEqual(refreshed.map((item) => item.id), Array.from({ length: 200 }, (_, index) => 250 - index));
   assert.equal(refreshed.find((item) => item.id === 200).label, "fresh");

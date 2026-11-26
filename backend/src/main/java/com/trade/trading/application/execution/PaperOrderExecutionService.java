@@ -5,6 +5,7 @@ import com.trade.trading.application.paper.PaperAccountService;
 import com.trade.trading.port.PaperAccountStore;
 import com.trade.trading.application.risk.RiskControlService;
 import com.trade.trading.domain.model.OrderSizing;
+import com.trade.trading.domain.order.OrderSizingRules;
 import com.trade.trading.domain.model.StrategyDecision;
 import com.trade.trading.domain.model.TradingAction;
 import com.trade.trading.domain.model.TradingDecisionRecord;
@@ -40,13 +41,6 @@ public class PaperOrderExecutionService {
     }
 
     public void execute(StrategyDecision decision, TradingDecisionContext context, TradingDecisionRecord record) {
-        try {
-            if (maintenance == null) executeGuarded(decision, context, record);
-            else maintenance.execute(record, () -> { executeGuarded(decision, context, record); return null; });
-        } catch (ConcurrentModificationException | IllegalArgumentException e) { skip(record, e.getMessage()); }
-    }
-
-    private void executeGuarded(StrategyDecision decision, TradingDecisionContext context, TradingDecisionRecord record) {
         if (decision == null || decision.isHold()) { record.setExecutionStatus("HELD"); return; }
         if (!properties.isSpotInstrument() || (decision.getAction() != TradingAction.BUY && decision.getAction() != TradingAction.SELL)) {
             skip(record, "Funded simulation currently supports spot BUY/SELL only"); return;
@@ -54,10 +48,19 @@ public class PaperOrderExecutionService {
         if (context == null || context.getPaperSessionId() == null) {
             skip(record, "Initialize simulated funds before trading"); return;
         }
+        try {
+            // Resolve exchange FX before taking the strategy maintenance lock.
+            var facts = sizing.spotFacts(context);
+            if (maintenance == null) executeGuarded(decision, context, record, facts);
+            else maintenance.execute(record, () -> { executeGuarded(decision, context, record, facts); return null; });
+        } catch (ConcurrentModificationException | IllegalArgumentException e) { skip(record, e.getMessage()); }
+    }
+
+    private void executeGuarded(StrategyDecision decision, TradingDecisionContext context, TradingDecisionRecord record,
+                                OrderSizingRules.SizingFacts facts) {
         var assessment = risk.evaluate(decision, context);
         if (!assessment.isAllowed()) { skip(record, assessment.skipReason()); return; }
-        OrderSizing order = decision.getAction() == TradingAction.BUY
-                ? sizing.buySize(decision, context) : sizing.sellSize(decision, context);
+        OrderSizing order = sizing.spotSize(decision, context, facts);
         if (!order.isExecutable()) { skip(record, order.getSkipReason()); return; }
         // Let a rejected fill leave the outer transaction before converting it
         // to a normal skip. Catching here would leave a rollback-only transaction

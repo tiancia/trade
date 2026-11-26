@@ -87,7 +87,7 @@ public class AutomationTaskRegistrar {
                 "Polymarket AI trading",
                 automationProperties.getPolymarket().shouldAutoStart(polymarketProperties.isEnabled()),
                 null,
-                null,
+                polymarketProperties::invalidateDecisions,
                 List.of(new AutomationLoopDefinition(
                         "decision",
                         millis(polymarketProperties.getInitialDelayMs()),

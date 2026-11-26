@@ -1,7 +1,11 @@
 package com.trade.client.okx;
 
 import com.trade.client.okx.dto.CandleResp;
+import com.trade.client.okx.dto.OrderActionResp;
+import com.trade.client.okx.dto.PlaceOrderReq;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -15,6 +19,35 @@ import static org.mockito.Mockito.*;
 
 class OkxClientSafetyTest {
     private static final String SENSITIVE = "synthetic-private-account-content";
+
+    @ParameterizedTest
+    @CsvSource({"400,51000", "400,50014", "401,50113"})
+    void explicitOrderRefusalRetainsOnlyTheProviderCode(int httpStatus, String code) throws Exception {
+        var request = new PlaceOrderReq().setClOrdId("this-order");
+        for (String body : java.util.List.of(
+                "{\"code\":\"" + code + "\",\"msg\":\"" + SENSITIVE + "\",\"data\":[]}",
+                "{\"code\":\"1\",\"data\":[{\"clOrdId\":\"this-order\",\"sCode\":\"" + code + "\",\"sMsg\":\"" + SENSITIVE + "\"}]}")) {
+            var response = clientReturning(httpStatus, body).post(OkxEndpoints.TRADE_ORDER, request, false, OrderActionResp.class);
+            assertEquals(code, response.getCode());
+            assertEquals("Request rejected (HTTP " + httpStatus + ")", response.getMsg());
+            assertNull(response.getData());
+        }
+    }
+
+    @Test
+    void ambiguousAndMismatchedHttpFailuresNeverBecomeOrderRefusals() throws Exception {
+        var request = new PlaceOrderReq().setClOrdId("this-order");
+        for (String body : java.util.List.of("not json", "{\"code\":\"0\"}", "{\"code\":\"51016\"}", "{\"code\":\"51149\"}",
+                "{\"code\":\"50071\"}", "{\"code\":\"51000\",\"code\":\"0\"}",
+                "{\"code\":\"51000\"} {\"code\":\"0\"}",
+                "{\"code\":\"51000\",\"data\":[{\"sCode\":\"51000\",\"clOrdId\":\"another-order\"}]}",
+                "{\"code\":\"51000\",\"data\":[{\"sCode\":\"0\",\"clOrdId\":\"this-order\"}]}")) {
+            var client = clientReturning(400, body);
+            assertThrows(RuntimeException.class, () -> client.post(OkxEndpoints.TRADE_ORDER, request, false, OrderActionResp.class));
+        }
+        var serverError = clientReturning(500, "{\"code\":\"51000\"}");
+        assertThrows(RuntimeException.class, () -> serverError.post(OkxEndpoints.TRADE_ORDER, request, false, OrderActionResp.class));
+    }
 
     @Test
     void httpErrorBodyCannotLeakThroughTheExceptionChain() throws Exception {

@@ -162,7 +162,7 @@ class TradingMarketInputsTest {
         instrument.setMinSz("0.01");
         instrument.setLotSz("0.001");
         var facts = TradingMarketInputs.sizingFacts(new TradingDecisionContext()
-                .setQuoteBalance(balance).setTicker(ticker).setInstrument(instrument));
+                .setQuoteBalance(balance).setTicker(ticker).setInstrument(instrument), null);
         balance.setAvailBal("0");
         ticker.setLast("200");
         instrument.setMinSz("10");

@@ -1,6 +1,9 @@
 package com.trade.polymarket.infrastructure.config;
 
 import lombok.Data;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.math.BigDecimal;
@@ -11,6 +14,8 @@ import java.util.List;
 @ConfigurationProperties(prefix = "trade.polymarket")
 public class AiPolymarketProperties {
     private volatile boolean enabled = false;
+    @Getter(AccessLevel.NONE) @Setter(AccessLevel.NONE)
+    private long moduleRevision;
     private long decisionFixedDelayMs = 1_800_000L;
     private long initialDelayMs = 60_000L;
     private int marketLimit = 5;
@@ -35,7 +40,35 @@ public class AiPolymarketProperties {
     private BigDecimal minLimitPrice = new BigDecimal("0.01");
     private BigDecimal maxLimitPrice = new BigDecimal("0.95");
     private BigDecimal minOrderSize = new BigDecimal("5");
-    private ExecutionProperties execution = new ExecutionProperties();
+    private volatile ExecutionProperties execution = new ExecutionProperties();
+
+    public record DecisionRun(long moduleRevision, long executionRevision, boolean live) {}
+
+    public synchronized void setEnabled(boolean enabled) {
+        if (this.enabled != enabled) {
+            this.enabled = enabled;
+            moduleRevision++;
+        }
+    }
+
+    public synchronized void invalidateDecisions() {
+        moduleRevision++;
+    }
+
+    public synchronized void setExecution(ExecutionProperties execution) {
+        if (this.execution != execution) {
+            this.execution = java.util.Objects.requireNonNull(execution);
+            moduleRevision++;
+        }
+    }
+
+    public synchronized DecisionRun decisionRun() {
+        return execution.snapshot(moduleRevision);
+    }
+
+    public synchronized boolean isCurrent(DecisionRun run) {
+        return enabled && run.equals(execution.snapshot(moduleRevision));
+    }
 
     public enum MarketDiscoverySource {
         GAMMA_VOLUME,
@@ -44,7 +77,21 @@ public class AiPolymarketProperties {
 
     @Data
     public static class ExecutionProperties {
-        private boolean enabled = false;
+        private volatile boolean enabled = false;
+        @Getter(AccessLevel.NONE) @Setter(AccessLevel.NONE)
+        private long revision;
+
+        public synchronized void setEnabled(boolean enabled) {
+            if (this.enabled != enabled) {
+                this.enabled = enabled;
+                revision++;
+            }
+        }
+
+        private synchronized DecisionRun snapshot(long moduleRevision) {
+            return new DecisionRun(moduleRevision, revision, enabled);
+        }
+
         private String pythonCommand = "python";
         private String scriptPath = "../tools/polymarket/polymarket_place_order.py";
         private long timeoutMs = 60_000L;

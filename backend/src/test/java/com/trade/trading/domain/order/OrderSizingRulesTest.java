@@ -26,8 +26,8 @@ class OrderSizingRulesTest {
     @Test
     void roundsAgainAfterExchangeCapAndRejectsBelowMinimum() {
         var facts = new OrderSizingRules.SizingFacts(BigDecimal.ZERO, new BigDecimal("10"), BigDecimal.ONE,
-                new OrderSizingRules.InstrumentLimits(BigDecimal.ZERO, new BigDecimal("0.4"),
-                        new BigDecimal("0.3"), new BigDecimal("0.5")));
+                new OrderSizingRules.InstrumentLimits(new BigDecimal("0.5"), new BigDecimal("0.4"),
+                        new BigDecimal("0.3"), BigDecimal.ZERO));
         var decision = new StrategyDecision().setAction(TradingAction.SELL).setSellBaseAmount(new BigDecimal("2"));
         var result = rules.sellSize(decision, facts);
         assertFalse(result.isExecutable());

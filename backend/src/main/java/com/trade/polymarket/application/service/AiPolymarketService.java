@@ -104,7 +104,8 @@ public class AiPolymarketService {
     }
 
     public boolean runDecision() {
-        if (!properties.isEnabled()) {
+        var run = properties.decisionRun();
+        if (!properties.isCurrent(run)) {
             log.info(
                     "AI Polymarket module is disabled: enabled={}, executionEnabled={}, fixedDelayMs={}, initialDelayMs={}",
                     properties.isEnabled(),
@@ -130,8 +131,8 @@ public class AiPolymarketService {
         boolean executionReserved = false;
         String error = null;
         try {
-            decisionId = persistAuditStart(startedAt);
-            if (properties.getExecution().isEnabled() && decisionId == null) {
+            decisionId = persistAuditStart(startedAt, run.live());
+            if (run.live() && decisionId == null) {
                 throw new IllegalStateException("Polymarket live execution requires a persisted decision audit");
             }
             log.info(
@@ -212,17 +213,17 @@ public class AiPolymarketService {
 
             // AI responses may arrive after a module stop. Audit the decision without
             // acquiring live execution ownership or starting another external call.
-            if (!properties.isEnabled()) {
-                result = PolymarketOrderResult.skipped("Polymarket module is disabled");
+            if (!properties.isCurrent(run)) {
+                result = PolymarketOrderResult.skipped("Polymarket decision was stopped or its execution settings changed");
                 return false;
             }
-            if (properties.getExecution().isEnabled() && decision.getAction() == PolymarketAction.BUY) {
+            if (run.live() && decision.getAction() == PolymarketAction.BUY) {
                 if (!executionGuard.reserve(decisionId)) {
                     throw new IllegalStateException("Polymarket has an unresolved live execution; verify it before placing another order");
                 }
                 executionReserved = true;
             }
-            result = orderExecutor.execute(decision, context);
+            result = orderExecutor.execute(decision, context, run);
             log.info(
                     "AI Polymarket decision finished: decisionId={}, result={}, elapsedMs={}",
                     decisionId,
@@ -246,7 +247,7 @@ public class AiPolymarketService {
                     .setDecisionId(decisionId)
                     .setStartedAt(startedAt)
                     .setCompletedAt(Instant.now())
-                    .setExecutionEnabled(properties.getExecution().isEnabled())
+                    .setExecutionEnabled(run.live())
                     .setContext(context)
                     .setPrompt(prompt)
                     .setRawAiResponse(rawAiResponse)
@@ -277,11 +278,11 @@ public class AiPolymarketService {
         }
     }
 
-    private Long persistAuditStart(Instant startedAt) {
+    private Long persistAuditStart(Instant startedAt, boolean live) {
         try {
             return auditSink.start(new PolymarketDecisionAuditRecord()
                     .setStartedAt(startedAt)
-                    .setExecutionEnabled(properties.getExecution().isEnabled()));
+                    .setExecutionEnabled(live));
         } catch (Exception e) {
             log.warn("Start Polymarket AI decision audit record failed: {}", e.getMessage(), e);
             return null;

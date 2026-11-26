@@ -31,7 +31,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { aiReviewScheduleLabel, apiTimestampMillis, backtestSelectionForStrategy, buildBacktestPayload, buildPaperSessionPayload, buildStrategyParametersPayload, createJsonRequestHeaders, decisionIndicatorEntries, filterConfigurationEvents, formatDateTimeLocal, formatReturnFraction, formatTradingTimestamp, intradayModes, marketDataIsFresh, mergeContiguousHistory, refreshSessionPage, parameterFieldsForStrategy, reconcileCockpitRefresh } from "./lib/trading-api.mjs";
+import { aiReviewScheduleLabel, apiTimestampMillis, backtestSelectionForStrategy, buildBacktestPayload, buildPaperSessionPayload, buildStrategyParametersPayload, createJsonRequestHeaders, decisionIndicatorEntries, filterConfigurationEvents, formatDateTimeLocal, formatReturnFraction, formatTradingTimestamp, intradayModes, marketDataIsFresh, appendCursorPage, refreshCursorPage, parameterFieldsForStrategy, reconcileCockpitRefresh } from "./lib/trading-api.mjs";
 
 type View = "overview" | "strategies" | "events" | "backtests";
 type ApiTimestamp = string | number;
@@ -1341,14 +1341,18 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
   const sessions = sessionPage.items;
   const sessionOptions = account && selection === account.sessionId && !sessions.some((item) => item.id === account.id)
     ? [...sessions, account] : sessions;
-  const [equity, setEquity] = useState<PaperEquityPoint[]>([]);
-  const [fills, setFills] = useState<PaperFill[]>([]);
+  const [history, setHistory] = useState<{
+    sessionId: string;
+    equity: { items: PaperEquityPoint[]; hasMore: boolean };
+    fills: { items: PaperFill[]; hasMore: boolean };
+  } | null>(null);
+  const equity = history?.equity.items ?? [];
+  const fills = history?.fills.items ?? [];
   const [versionFilter, setVersionFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [blockingLoad, setBlockingLoad] = useState(true);
   const [pending, setPending] = useState(false);
   const [morePending, setMorePending] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState({ equity: false, fills: false });
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -1359,7 +1363,6 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
   const visibleSession = useRef<string | null>(null);
   const loadGeneration = useRef(0);
   const loadedSelection = useRef<string | null>(null);
-  const historyCache = useRef<{ sessionId: string; equity: PaperEquityPoint[]; fills: PaperFill[] } | null>(null);
   const available = dataMode === "live" && executionMode === "PAPER";
 
   useEffect(() => {
@@ -1371,14 +1374,14 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
       loadGeneration.current += 1;
       if (!available) {
         loadedSelection.current = null;
-        setCurrent(null); setAccount(null); setSessionPage({ items: [], hasMore: false }); setEquity([]); setFills([]); setLoading(false); setBlockingLoad(false); onCurrentChange(null);
+        setCurrent(null); setAccount(null); setSessionPage({ items: [], hasMore: false }); setHistory(null); setLoading(false); setBlockingLoad(false); onCurrentChange(null);
         return;
       }
       // A refresh of the same selection keeps the existing panel in place.
       // Switching sessions must not present the previous session as the new one.
       const keepVisible = loadedSelection.current === selection;
       setLoading(true); setBlockingLoad(!keepVisible); setError(null);
-      if (!keepVisible) { loadedSelection.current = null; setAccount(null); setEquity([]); setFills([]); visibleSession.current = null; }
+      if (!keepVisible) { loadedSelection.current = null; setAccount(null); setHistory(null); visibleSession.current = null; }
       const load = async () => {
         const [active, list] = await Promise.all([
           request<PaperAccount | null>("/api/trading/paper/account", { signal: abort.signal }),
@@ -1391,13 +1394,17 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
         ]) : [[], []];
         if (abort.signal.aborted) return;
         setCurrent(active); onCurrentChange(active); setAccount(selected);
-        setSessionPage((previous) => refreshSessionPage(list, previous));
-        const cached = historyCache.current?.sessionId === selected?.sessionId ? historyCache.current : null;
-        const mergedEquity = mergeContiguousHistory(points, cached?.equity ?? []) as PaperEquityPoint[];
-        const mergedFills = mergeContiguousHistory(trades, cached?.fills ?? []) as PaperFill[];
-        setEquity(mergedEquity); setFills(mergedFills); visibleSession.current = selected?.sessionId ?? null;
-        historyCache.current = selected ? { sessionId: selected.sessionId, equity: mergedEquity, fills: mergedFills } : null;
-        setHasMore({ equity: points.length === 100, fills: trades.length === 100 });
+        setSessionPage((previous) => refreshCursorPage(list, previous, 20));
+        visibleSession.current = selected?.sessionId ?? null;
+        setHistory((previous) => {
+          if (!selected) return null;
+          const cached = previous?.sessionId === selected.sessionId ? previous : null;
+          return {
+            sessionId: selected.sessionId,
+            equity: refreshCursorPage(points, cached?.equity, 100),
+            fills: refreshCursorPage(trades, cached?.fills, 100),
+          };
+        });
         loadedSelection.current = selection;
       };
       load().catch((failure) => {
@@ -1421,7 +1428,7 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
     setPending(true); setError(null); setNotice(null); setDeleteTarget(null);
     try {
       const created = await request<PaperAccount>("/api/trading/paper/sessions", { method: "POST", body: JSON.stringify(payload) });
-      setCurrent(created); onCurrentChange(created); setAccount(created); setFills([]); setEquity([]); setVersionFilter(""); setSelection("");
+      setCurrent(created); onCurrentChange(created); setAccount(created); setHistory(null); setVersionFilter(""); setSelection("");
       setNotice(`新模拟会话已创建，初始资金 ${number(created.initialCash, 2)} ${created.quoteCcy}。此前会话保留在历史中。`);
       setReload((value) => value + 1);
     } catch (failure) {
@@ -1437,9 +1444,9 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
     try {
       await request<void>(`/api/trading/paper/sessions/${encodeURIComponent(target.sessionId)}?expectedVersion=${target.version}`, { method: "DELETE" });
       if (current?.sessionId === target.sessionId) { setCurrent(null); onCurrentChange(null); }
-      setAccount(null); setEquity([]); setFills([]); setSelection(""); setVersionFilter("");
+      setAccount(null); setHistory(null); setSelection(""); setVersionFilter("");
       setSessionPage((page) => ({ ...page, items: page.items.filter((item) => item.sessionId !== target.sessionId) }));
-      historyCache.current = null; loadedSelection.current = null; visibleSession.current = null;
+      loadedSelection.current = null; visibleSession.current = null;
       setNotice(`模拟会话 ${target.sessionId} 及其成交、资金记录已删除。`);
       setReload((value) => value + 1);
     } catch (failure) {
@@ -1461,17 +1468,15 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
       if (kind === "sessions") {
         const older = await request<PaperAccount[]>(`/api/trading/paper/sessions?limit=20&beforeId=${beforeId}`);
         if (visibleSession.current !== capturedSession || loadGeneration.current !== capturedGeneration) return;
-        setSessionPage((page) => ({ items: [...page.items, ...older.filter((item) => !page.items.some((existing) => existing.id === item.id))], hasMore: older.length === 20 }));
+        setSessionPage((page) => appendCursorPage(page, older, 20));
       } else if (capturedSession && kind === "equity") {
         const older = await request<PaperEquityPoint[]>(`/api/trading/paper/sessions/${encodeURIComponent(capturedSession)}/equity?limit=100&beforeId=${beforeId}`);
         if (visibleSession.current !== capturedSession || loadGeneration.current !== capturedGeneration) return;
-        setEquity((items) => { const merged = [...items, ...older.filter((item) => !items.some((existing) => existing.id === item.id))]; if (historyCache.current?.sessionId === capturedSession) historyCache.current.equity = merged; return merged; });
-        setHasMore((value) => ({ ...value, equity: older.length === 100 }));
+        setHistory((page) => page?.sessionId === capturedSession ? { ...page, equity: appendCursorPage(page.equity, older, 100) } : page);
       } else if (capturedSession) {
         const older = await request<PaperFill[]>(`/api/trading/paper/sessions/${encodeURIComponent(capturedSession)}/fills?limit=100&beforeId=${beforeId}`);
         if (visibleSession.current !== capturedSession || loadGeneration.current !== capturedGeneration) return;
-        setFills((items) => { const merged = [...items, ...older.filter((item) => !items.some((existing) => existing.id === item.id))]; if (historyCache.current?.sessionId === capturedSession) historyCache.current.fills = merged; return merged; });
-        setHasMore((value) => ({ ...value, fills: older.length === 100 }));
+        setHistory((page) => page?.sessionId === capturedSession ? { ...page, fills: appendCursorPage(page.fills, older, 100) } : page);
       }
     } catch (failure) { setError(`历史记录读取失败：${errorMessage(failure)}`); }
     finally { setMorePending(null); }
@@ -1513,8 +1518,8 @@ function PaperSimulationPanel({ dataMode, executionMode, refreshToken, onCurrent
         <div className="version-filter"><label><span>按成交 / 估值所属配置筛选</span><select aria-label="按配置版本筛选记录" value={versionFilter} onChange={(event) => setVersionFilter(event.target.value)}><option value="">全部配置版本</option>{versions.map((version) => <option key={version} value={version}>{version.replace(/@(\d+)$/, " · v$1")}</option>)}</select></label><p>版本筛选仅定位记录。净值包含延续持仓与行情变化，不代表该版本独立收益；需要独立比较时创建新模拟。</p></div>
         <PaperEquityChart points={equity} initialCash={Number(account.initialCash)} versionFilter={versionFilter} quoteCcy={account.quoteCcy} />
         <div className="ledger-grid">
-          <section className="ledger-section"><h3>模拟成交 <small>{shownFills.length} 条已加载记录</small></h3><div className="ledger-table-wrap"><table className="ledger-table"><thead><tr><th>时间 / 配置</th><th>方向 / 数量</th><th>成交价</th><th>现金变化</th><th>手续费 / 实现盈亏</th></tr></thead><tbody>{shownFills.map((fill) => <tr key={fill.id}><td>{displayTimestamp(fill.createdAt)}<small>{fill.strategyId} · v{fill.strategyConfigVersion}</small></td><td>{fill.side}<small>{number(fill.filledBase, 8)}</small></td><td>{number(fill.price, 2)}</td><td className={fill.cashDelta < 0 ? "danger-text" : "positive-text"}>{number(fill.cashDelta, 2)}</td><td>{number(fill.feeQuote, 4)}<small>{number(fill.realizedPnl, 2)}</small></td></tr>)}</tbody></table>{!shownFills.length && <p className="empty-message">{versionFilter ? "已加载记录中，此配置暂无成交。" : "暂无模拟成交。等待策略产生并通过风控的买卖决策。"}</p>}</div>{hasMore.fills && <button className="secondary-button" disabled={Boolean(morePending)} onClick={() => void loadMore("fills")}>{morePending === "fills" ? "正在加载…" : "加载更早成交"}</button>}</section>
-          <section className="ledger-section"><h3>资金变化记录 <small>{shownEquity.length} 条已加载记录</small></h3><div className="equity-record-list">{shownEquity.map((point) => <div key={point.id}><span>{displayTimestamp(point.timestamp)}<small>{point.kind === "INITIAL" ? "初始资金" : point.kind === "FILL" ? "模拟成交后" : "行情估值"}{point.strategyId && ` · ${point.strategyId} v${point.strategyConfigVersion}`}</small></span><strong>{number(point.equity, 2)}<small>现金 {number(point.cash, 2)}</small></strong></div>)}{!shownEquity.length && <p className="empty-message">{versionFilter ? "已加载记录中，此配置暂无估值。" : "等待首条资金记录。"}</p>}</div>{hasMore.equity && <button className="secondary-button" disabled={Boolean(morePending)} onClick={() => void loadMore("equity")}>{morePending === "equity" ? "正在加载…" : "加载更早资金记录"}</button>}</section>
+          <section className="ledger-section"><h3>模拟成交 <small>{shownFills.length} 条已加载记录</small></h3><div className="ledger-table-wrap"><table className="ledger-table"><thead><tr><th>时间 / 配置</th><th>方向 / 数量</th><th>成交价</th><th>现金变化</th><th>手续费 / 实现盈亏</th></tr></thead><tbody>{shownFills.map((fill) => <tr key={fill.id}><td>{displayTimestamp(fill.createdAt)}<small>{fill.strategyId} · v{fill.strategyConfigVersion}</small></td><td>{fill.side}<small>{number(fill.filledBase, 8)}</small></td><td>{number(fill.price, 2)}</td><td className={fill.cashDelta < 0 ? "danger-text" : "positive-text"}>{number(fill.cashDelta, 2)}</td><td>{number(fill.feeQuote, 4)}<small>{number(fill.realizedPnl, 2)}</small></td></tr>)}</tbody></table>{!shownFills.length && <p className="empty-message">{versionFilter ? "已加载记录中，此配置暂无成交。" : "暂无模拟成交。等待策略产生并通过风控的买卖决策。"}</p>}</div>{history?.fills.hasMore && <button className="secondary-button" disabled={Boolean(morePending)} onClick={() => void loadMore("fills")}>{morePending === "fills" ? "正在加载…" : "加载更早成交"}</button>}</section>
+          <section className="ledger-section"><h3>资金变化记录 <small>{shownEquity.length} 条已加载记录</small></h3><div className="equity-record-list">{shownEquity.map((point) => <div key={point.id}><span>{displayTimestamp(point.timestamp)}<small>{point.kind === "INITIAL" ? "初始资金" : point.kind === "FILL" ? "模拟成交后" : "行情估值"}{point.strategyId && ` · ${point.strategyId} v${point.strategyConfigVersion}`}</small></span><strong>{number(point.equity, 2)}<small>现金 {number(point.cash, 2)}</small></strong></div>)}{!shownEquity.length && <p className="empty-message">{versionFilter ? "已加载记录中，此配置暂无估值。" : "等待首条资金记录。"}</p>}</div>{history?.equity.hasMore && <button className="secondary-button" disabled={Boolean(morePending)} onClick={() => void loadMore("equity")}>{morePending === "equity" ? "正在加载…" : "加载更早资金记录"}</button>}</section>
         </div>
       </>}
     </>}

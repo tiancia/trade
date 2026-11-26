@@ -26,7 +26,7 @@ class OrderSizingServiceTest {
     void zeroSellRatioCannotAuthorizeEvenASmallSale() {
         TradingProperties properties = new TradingProperties();
         properties.setMaxSellPositionRatio(BigDecimal.ZERO);
-        var sizing = new OrderSizingService(properties);
+        var sizing = new OrderSizingService(properties, currency -> BigDecimal.ONE);
         var context = context("50000", "1", "0", "0.0001", "0.0001");
         var sell = StrategyDecision.sell("test", new BigDecimal("0.01"), "exit");
 
@@ -39,7 +39,7 @@ class OrderSizingServiceTest {
         TradingProperties properties = new TradingProperties();
         properties.getRisk().setEnabled(false);
         properties.setMaxBuyQuoteAmount(new BigDecimal("100"));
-        OrderSizingService sizingService = new OrderSizingService(properties);
+        OrderSizingService sizingService = new OrderSizingService(properties, currency -> BigDecimal.ONE);
 
         StrategyDecision decision = new StrategyDecision()
                 .setAction(TradingAction.BUY)
@@ -59,7 +59,7 @@ class OrderSizingServiceTest {
         TradingDecisionContext context = context("50000", "0", "0", "0.00001", "0.00000001");
         context.getQuoteBalance().setCashBal("100");
 
-        OrderSizing sizing = new OrderSizingService(properties).buySize(
+        OrderSizing sizing = new OrderSizingService(properties, currency -> BigDecimal.ONE).buySize(
                 StrategyDecision.buy("test", new BigDecimal("10"), "entry"), context);
 
         assertFalse(sizing.isExecutable());
@@ -73,7 +73,7 @@ class OrderSizingServiceTest {
         properties.getRisk().setMaxSingleOpenEquityRatio(new BigDecimal("0.10"));
         TradingDecisionContext context = context("50000", "0", "200", "0.00001", "0.00000001");
         context.getQuoteBalance().setCashBal("1000");
-        OrderSizingService sizing = new OrderSizingService(properties);
+        OrderSizingService sizing = new OrderSizingService(properties, currency -> BigDecimal.ONE);
         StrategyDecision decision = StrategyDecision.buy("test", new BigDecimal("500"), "entry");
 
         assertEquals("100", sizing.buySize(decision, context).getSize());
@@ -87,7 +87,7 @@ class OrderSizingServiceTest {
     void buySizeSkipsWhenEstimatedBaseIsBelowMinSize() {
         TradingProperties properties = new TradingProperties();
         properties.getRisk().setEnabled(false);
-        OrderSizingService sizingService = new OrderSizingService(properties);
+        OrderSizingService sizingService = new OrderSizingService(properties, currency -> BigDecimal.ONE);
 
         StrategyDecision decision = new StrategyDecision()
                 .setAction(TradingAction.BUY)
@@ -104,7 +104,7 @@ class OrderSizingServiceTest {
     void sellSizeIsCappedByAvailableBaseAndRoundedToLotSize() {
         TradingProperties properties = new TradingProperties();
         properties.getRisk().setEnabled(false);
-        OrderSizingService sizingService = new OrderSizingService(properties);
+        OrderSizingService sizingService = new OrderSizingService(properties, currency -> BigDecimal.ONE);
 
         StrategyDecision decision = new StrategyDecision()
                 .setAction(TradingAction.SELL)
@@ -118,11 +118,39 @@ class OrderSizingServiceTest {
     }
 
     @Test
+    void spotMarketLimitsUseTheirCurrencyAndRoundDownInBaseLots() {
+        TradingProperties properties = new TradingProperties();
+        properties.getRisk().setEnabled(false);
+        properties.setMaxBuyQuoteAmount(new BigDecimal("10000"));
+        var sizing = new OrderSizingService(properties, currency -> switch (currency) {
+            case "USDT" -> new BigDecimal("1.01");
+            case "EUR" -> new BigDecimal("1.25");
+            default -> throw new AssertionError(currency);
+        });
+        var context = context("50000", "1", "10000", "0.0001", "0.0001");
+        var sell = StrategyDecision.sell("test", BigDecimal.ONE, "exit");
+        var buy = StrategyDecision.buy("test", new BigDecimal("5000"), "entry");
+        context.getInstrument().setMaxMktAmt("");
+        context.getInstrument().setMaxMktSz("1000");
+        assertEquals("0.02", sizing.sellSize(sell, context, BigDecimal.ONE).getSize());
+        context.getInstrument().setMaxMktAmt("1000");
+        assertEquals("0.0198", sizing.sellSize(sell, context).getSize());
+        context.getInstrument().setQuoteCcy("EUR");
+        assertEquals("0.016", sizing.sellSize(sell, context).getSize());
+        assertEquals("800", sizing.buySize(buy, context).getSize());
+        context.getInstrument().setMaxMktSz("500");
+        assertEquals("0.008", sizing.sellSize(sell, context).getSize());
+        assertEquals("404", sizing.buySize(buy, context).getSize());
+        context.getTicker().setLast("0");
+        assertFalse(sizing.sellSize(sell, context).isExecutable());
+    }
+
+    @Test
     void derivativeSizeIsCappedAndRoundedToLotSize() {
         TradingProperties properties = new TradingProperties();
         properties.getRisk().setEnabled(false);
         properties.setMaxDerivativeOrderSize(new BigDecimal("3.7"));
-        OrderSizingService sizingService = new OrderSizingService(properties);
+        OrderSizingService sizingService = new OrderSizingService(properties, currency -> BigDecimal.ONE);
 
         StrategyDecision decision = new StrategyDecision()
                 .setAction(TradingAction.OPEN_LONG)
@@ -140,7 +168,7 @@ class OrderSizingServiceTest {
         TradingProperties properties = new TradingProperties();
         properties.setMaxBuyQuoteAmount(new BigDecimal("1000"));
         properties.getRisk().setMaxSingleOpenEquityRatio(new BigDecimal("0.10"));
-        OrderSizingService sizingService = new OrderSizingService(properties);
+        OrderSizingService sizingService = new OrderSizingService(properties, currency -> BigDecimal.ONE);
 
         StrategyDecision decision = new StrategyDecision()
                 .setAction(TradingAction.BUY)
@@ -162,7 +190,7 @@ class OrderSizingServiceTest {
         AccountBalanceResp account = new AccountBalanceResp();
         account.setTotalEq(equity);
         context.setAccountBalance(account);
-        OrderSizingService sizingService = new OrderSizingService(properties);
+        OrderSizingService sizingService = new OrderSizingService(properties, currency -> BigDecimal.ONE);
 
         OrderSizing buy = sizingService.buySize(StrategyDecision.buy("test", new BigDecimal("100"), "entry"), context);
         OrderSizing sell = sizingService.sellSize(StrategyDecision.sell("test", new BigDecimal("0.01"), "exit"), context);
@@ -181,7 +209,7 @@ class OrderSizingServiceTest {
         properties.setMaxBuyQuoteAmount(absoluteCap == null ? null : new BigDecimal(absoluteCap));
         properties.getRisk().setMaxSingleOpenEquityRatio(new BigDecimal("0.10"));
 
-        OrderSizing sizing = new OrderSizingService(properties).buySize(
+        OrderSizing sizing = new OrderSizingService(properties, currency -> BigDecimal.ONE).buySize(
                 StrategyDecision.buy("test", new BigDecimal("500"), "entry"),
                 context("50000", "0", "800", "0.00001", "0.00000001"));
 
@@ -197,7 +225,7 @@ class OrderSizingServiceTest {
         properties.setMaxBuyQuoteAmount(new BigDecimal("100"));
         properties.getRisk().setMaxSingleOpenEquityRatio(ratio == null ? null : new BigDecimal(ratio));
 
-        OrderSizing sizing = new OrderSizingService(properties).buySize(
+        OrderSizing sizing = new OrderSizingService(properties, currency -> BigDecimal.ONE).buySize(
                 StrategyDecision.buy("test", new BigDecimal("500"), "entry"),
                 context("50000", "0", "800", "0.00001", "0.00000001"));
 
@@ -226,8 +254,8 @@ class OrderSizingServiceTest {
         InstrumentInfoResp instrument = new InstrumentInfoResp();
         instrument.setMinSz(minSize);
         instrument.setLotSz(lotSize);
-        instrument.setMaxMktAmt("1000");
-        instrument.setMaxMktSz("10");
+        instrument.setMaxMktAmt("1000000");
+        instrument.setMaxMktSz("1000000");
 
         return new TradingDecisionContext()
                 .setTicker(ticker)

@@ -28,6 +28,22 @@ import static org.mockito.Mockito.*;
 
 class MarketContextCollectorTest {
     @Test
+    void usdConversionRequiresOneFreshPositiveQuoteForTheRequestedIndex() {
+        OkxApi api = mock(OkxApi.class);
+        var collector = new MarketContextCollector(api, new TradingProperties(), null, null, null);
+        String now = Long.toString(System.currentTimeMillis());
+        when(api.getIndexTicker(any())).thenReturn(OkxResponse.success(List.of(new IndexTickerResp("EUR-USD", "1.25", now))));
+        assertEquals(new BigDecimal("1.25"), collector.usdPrice("EUR"));
+        verify(api).getIndexTicker(argThat(req -> "EUR-USD".equals(req.getInstId())));
+        for (var invalid : List.of(new IndexTickerResp("BTC-USD", "1.25", now),
+                new IndexTickerResp("EUR-USD", "1.25", "1000"), new IndexTickerResp("EUR-USD", "0", now),
+                new IndexTickerResp("EUR-USD", null, now), new IndexTickerResp("EUR-USD", "1.25", null))) {
+            when(api.getIndexTicker(any())).thenReturn(OkxResponse.success(List.of(invalid)));
+            assertThrows(IllegalStateException.class, () -> collector.usdPrice("EUR"));
+        }
+    }
+
+    @Test
     void deterministicExitContextNeverCallsUnrelatedIntervalsBookOrPrivateHistory() {
         TradingProperties properties = new TradingProperties();
         properties.setExecutionMode(ExecutionMode.LIVE);

@@ -43,12 +43,17 @@ class PolymarketOrderExecutorTest {
         verifyNoInteractions(geoblock);
     }
 
-    @Test
-    void moduleDisabledDuringGeoblockCheckNeverSubmits() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void moduleDisabledDuringGeoblockCheckNeverSubmits(boolean restart) {
         var properties = liveProperties();
         var runner = new RecordingRunner();
         var geoblock = mock(PolymarketGeoblockService.class);
-        doAnswer(invocation -> { properties.setEnabled(false); return null; }).when(geoblock).assertAllowed();
+        doAnswer(invocation -> {
+            properties.setEnabled(false);
+            if (restart) properties.setEnabled(true);
+            return null;
+        }).when(geoblock).assertAllowed();
 
         var result = new PolymarketOrderExecutor(properties, runner, geoblock).execute(buyDecision(), context());
 

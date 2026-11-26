@@ -11,6 +11,7 @@ import com.trade.client.okx.dto.CandlesReq;
 import com.trade.client.okx.dto.FillResp;
 import com.trade.client.okx.dto.FillsReq;
 import com.trade.client.okx.dto.InstrumentInfoReq;
+import com.trade.client.okx.dto.IndexTickerResp;
 import com.trade.client.okx.dto.InstrumentInfoResp;
 import com.trade.client.okx.dto.OrderActionResp;
 import com.trade.client.okx.dto.OrderBookReq;
@@ -119,6 +120,10 @@ public class OkxApi {
                 false,
                 TickerResp.class
         );
+    }
+
+    public OkxResponse<IndexTickerResp> getIndexTicker(TickerReq req) {
+        return okxClient.get(OkxEndpoints.MARKET_INDEX_TICKERS, req, false, IndexTickerResp.class);
     }
 
     /**

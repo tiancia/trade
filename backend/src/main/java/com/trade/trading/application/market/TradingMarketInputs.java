@@ -40,11 +40,11 @@ public final class TradingMarketInputs {
                 balanceAmount(context.getQuoteBalance()), balanceAmount(context.getBaseBalance()), lastPrice(context));
     }
 
-    public static OrderSizingRules.SizingFacts sizingFacts(TradingDecisionContext context) {
+    public static OrderSizingRules.SizingFacts sizingFacts(TradingDecisionContext context, BigDecimal maxSpotQuoteAmount) {
         var instrument = context.getInstrument();
         return new OrderSizingRules.SizingFacts(
                 availableBalance(context.getQuoteBalance()), availableBalance(context.getBaseBalance()), lastPrice(context),
-                new OrderSizingRules.InstrumentLimits(TradingMath.decimal(instrument.getMaxMktAmt()),
+                new OrderSizingRules.InstrumentLimits(maxSpotQuoteAmount,
                         TradingMath.decimal(instrument.getMinSz()), TradingMath.decimal(instrument.getLotSz()),
                         TradingMath.decimal(instrument.getMaxMktSz())));
     }

@@ -331,7 +331,7 @@ class MyBatisPaperAccountStoreTest {
         TradingDecisionContext context = service.enrichContext(context());
         RiskControlService risk = mock(RiskControlService.class);
         when(risk.evaluate(any(), eq(context))).thenReturn(new RiskAssessment().setAllowed(true));
-        PaperOrderExecutionService executor = new PaperOrderExecutionService(new OrderSizingService(props), props, risk, service);
+        PaperOrderExecutionService executor = new PaperOrderExecutionService(new OrderSizingService(props, currency -> BigDecimal.ONE), props, risk, service);
         var record = new TradingDecisionRecord().setDecisionId("committed-before-risk-error").setStrategyId("threshold")
                 .setStrategyConfigVersion(1).setStrategyConfigSnapshot(Map.of());
         executor.execute(StrategyDecision.buy("threshold", BigDecimal.TEN, "test"), context, record);
@@ -516,7 +516,7 @@ class MyBatisPaperAccountStoreTest {
         TradingStateStore legacy = mock(TradingStateStore.class);
         RiskControlService risk = new RiskControlService(props, legacy, Clock.fixed(NOW, ZoneOffset.UTC),
                 new TradingRiskConfiguration().tradingRiskRules(), service);
-        PaperOrderExecutionService executor = new PaperOrderExecutionService(new OrderSizingService(props), props, risk, service);
+        PaperOrderExecutionService executor = new PaperOrderExecutionService(new OrderSizingService(props, currency -> BigDecimal.ONE), props, risk, service);
         TradingDecisionRecord record = new TradingDecisionRecord().setDecisionId("real-paper-buy").setStrategyId("threshold")
                 .setStrategyConfigVersion(4).setStrategyConfigSnapshot(Map.of("params", Map.of("lookback", 10)));
         service.markDecision(context, record);

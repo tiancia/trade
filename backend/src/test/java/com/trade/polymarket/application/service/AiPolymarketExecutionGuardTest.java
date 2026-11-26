@@ -63,7 +63,7 @@ class AiPolymarketExecutionGuardTest {
     void uncertainAcknowledgementRetainsReservationAndBlocksAFreshServiceInstance() {
         Fixture fixture = new Fixture(true, BUY);
         doThrow(new IllegalStateException("synthetic acknowledgement missing"))
-                .when(fixture.executor).execute(any(), any());
+                .when(fixture.executor).execute(any(), any(), any());
 
         assertThrows(IllegalStateException.class, fixture.newService()::runDecision);
         assertEquals(1L, fixture.pending.get());
@@ -73,7 +73,7 @@ class AiPolymarketExecutionGuardTest {
         verify(fixture.guard).reserve(1L);
         verify(fixture.guard).reserve(2L);
         verify(fixture.guard, never()).release(anyLong());
-        verify(fixture.executor, times(1)).execute(any(), any());
+        verify(fixture.executor, times(1)).execute(any(), any(), any());
         assertEquals(1L, fixture.pending.get());
     }
 
@@ -87,7 +87,7 @@ class AiPolymarketExecutionGuardTest {
         assertNull(fixture.pending.get());
         assertTrue(fixture.newService().runDecision());
         verify(fixture.guard).release(2L);
-        verify(fixture.executor, times(2)).execute(any(), any());
+        verify(fixture.executor, times(2)).execute(any(), any(), any());
     }
 
     @Test
@@ -111,7 +111,7 @@ class AiPolymarketExecutionGuardTest {
         assertThrows(IllegalStateException.class, fixture.newService()::runDecision);
 
         verify(fixture.guard, never()).release(anyLong());
-        verify(fixture.executor, times(1)).execute(any(), any());
+        verify(fixture.executor, times(1)).execute(any(), any(), any());
         assertEquals(1L, fixture.pending.get());
     }
 
@@ -159,7 +159,7 @@ class AiPolymarketExecutionGuardTest {
         }
 
         verify(fixture.guard).reserve(2L);
-        verify(fixture.executor, times(1)).execute(any(), any());
+        verify(fixture.executor, times(1)).execute(any(), any(), any());
         assertEquals(1L, fixture.pending.get());
     }
 
@@ -200,7 +200,7 @@ class AiPolymarketExecutionGuardTest {
                 pending.updateAndGet(current -> Objects.equals(current, id) ? null : current);
                 return null;
             }).when(guard).release(anyLong());
-            when(executor.execute(any(), any())).thenAnswer(invocation -> {
+            when(executor.execute(any(), any(), any())).thenAnswer(invocation -> {
                 events.add("execute");
                 return result;
             });

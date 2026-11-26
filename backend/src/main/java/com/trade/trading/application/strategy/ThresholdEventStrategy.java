@@ -43,11 +43,17 @@ public class ThresholdEventStrategy implements TradingStrategy<ThresholdEventStr
                 properties != null && properties.isDerivativeInstrument(),
                 properties == null ? BigDecimal.ZERO : properties.getMaxBuyQuoteAmount(),
                 properties == null ? BigDecimal.ZERO : properties.getMaxDerivativeOrderSize());
-        return policy.evaluate(facts, new ThresholdDecisionPolicy.Settings(
+        StrategyDecision decision = policy.evaluate(facts, new ThresholdDecisionPolicy.Settings(
                 settings.getPriceMoveTriggerPercent(), settings.getVolumeSpikeMultiplier(),
                 settings.getFloatingLossTriggerPercent(), settings.getBuyQuoteAmount(),
                 settings.getSellBaseAmount(), settings.getOrderSize(), settings.getPriceMoveWindowCandles(),
                 settings.getVolumeLookbackCandles(), settings.isRequireConfirmedCandle()));
+        CandleResp signal = window.getFirst();
+        if (!decision.isHold() && "15m".equalsIgnoreCase(context.getBar().trim()) && "1".equals(signal.getConfirm())) {
+            decision.getMetadata().put("signalBar", "15m");
+            decision.getMetadata().put("signalCandleTs", CandleFreshness.timestampMillis(signal));
+        }
+        return decision;
     }
 
     /** Only the consecutive prefix ending at the signal bar can support a price or volume comparison. */

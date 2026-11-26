@@ -307,24 +307,27 @@ export function filterConfigurationEvents(items, selectedVersion) {
   return items.filter((item) => `${item.strategyId}@${item.strategyConfigVersion}` === selectedVersion);
 }
 
-/** Keep a contiguous cursor window; disjoint full refreshes must be paged back from their own oldest row. */
-export function mergeContiguousHistory(fresh, cached, pageSize = 100) {
-  const freshIds = new Set(fresh.map((item) => item.id));
-  const overlaps = cached.some((item) => freshIds.has(item.id));
-  const previous = fresh.length >= pageSize && !overlaps ? [] : cached;
-  return [...fresh, ...previous.filter((item) => !freshIds.has(item.id))].sort((left, right) => right.id - left.id);
-}
-
-/** Refresh the first page while preserving only the continuously paged older sessions.
+/** Refresh a descending ID cursor while retaining the known end of overlapping pages.
  * @template {{id: number}} T
  * @param {T[]} fresh
- * @param {{items: T[], hasMore: boolean}} previous
+ * @param {{items: T[], hasMore: boolean} | undefined} previous
+ * @param {number} pageSize
  */
-export function refreshSessionPage(fresh, previous, pageSize = 20) {
+export function refreshCursorPage(fresh, previous, pageSize) {
   if (fresh.length < pageSize) return { items: fresh, hasMore: false };
   const freshIds = new Set(fresh.map((item) => item.id));
-  if (!previous.items.some((item) => freshIds.has(item.id))) return { items: fresh, hasMore: true };
+  if (!previous?.items.some((item) => freshIds.has(item.id))) return { items: fresh, hasMore: true };
   const oldest = fresh[fresh.length - 1].id;
   const older = previous.items.filter((item) => item.id < oldest);
   return { items: [...fresh, ...older], hasMore: previous.hasMore };
+}
+
+/** @template {{id: number}} T
+ * @param {{items: T[], hasMore: boolean}} page
+ * @param {T[]} older
+ * @param {number} pageSize
+ */
+export function appendCursorPage(page, older, pageSize) {
+  const loaded = new Set(page.items.map((row) => row.id));
+  return { items: [...page.items, ...older.filter((row) => !loaded.has(row.id))], hasMore: older.length === pageSize };
 }

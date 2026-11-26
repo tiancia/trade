@@ -37,8 +37,13 @@ public class PolymarketOrderExecutor {
     }
 
     public PolymarketOrderResult execute(AiPolymarketDecision decision, PolymarketDecisionContext context) {
-        if (!properties.isEnabled()) {
-            return PolymarketOrderResult.skipped("Polymarket module is disabled");
+        return execute(decision, context, properties.decisionRun());
+    }
+
+    public PolymarketOrderResult execute(AiPolymarketDecision decision, PolymarketDecisionContext context,
+                                         AiPolymarketProperties.DecisionRun run) {
+        if (!properties.isCurrent(run)) {
+            return PolymarketOrderResult.skipped("Polymarket decision was stopped or its execution settings changed");
         }
         log.info(
                 "Evaluate Polymarket AI decision for execution: action={}, marketSlug={}, outcome={}, tokenId={}, price={}, spendUsdc={}, winProbability={}, confidence={}, winConfidenceScore={}, estimatedEdge={}, executionEnabled={}",
@@ -52,7 +57,7 @@ public class PolymarketOrderExecutor {
                 decision.getConfidence(),
                 PolymarketOrderPolicy.winConfidenceScore(decision),
                 decision.getEstimatedEdge(),
-                properties.getExecution().isEnabled()
+                run.live()
         );
         var policy = new PolymarketOrderPolicy(new PolymarketOrderPolicy.Limits(
                 properties.getMinLimitPrice(), properties.getMaxLimitPrice(), properties.getMinWinConfidenceScore(),
@@ -64,7 +69,7 @@ public class PolymarketOrderExecutor {
             return PolymarketOrderResult.skipped(prepared.skipReason());
         }
         PolymarketOrderRequest request = prepared.request();
-        if (!properties.getExecution().isEnabled()) {
+        if (!run.live()) {
             log.info("Polymarket execution dry-run: {}", request);
             return PolymarketOrderResult.dryRun(request.toString());
         }
@@ -73,10 +78,10 @@ public class PolymarketOrderExecutor {
         geoblockService.assertAllowed();
         // The preflight can block while the operator disables the module. A completed
         // read is not permission to start a new external order after that stop.
-        if (!properties.isEnabled() || !properties.getExecution().isEnabled()) {
-            return PolymarketOrderResult.skipped("Polymarket execution was disabled before submission");
+        log.info("Polymarket geoblock check passed");
+        if (!properties.isCurrent(run)) {
+            return PolymarketOrderResult.skipped("Polymarket decision was stopped before submission");
         }
-        log.info("Polymarket geoblock check passed, invoking order runner");
         String response = orderRunner.placeOrder(request);
         log.info("Polymarket order placed: marketSlug={}, outcome={}, tokenId={}, price={}, size={}, response={}",
                 request.getMarketSlug(),
