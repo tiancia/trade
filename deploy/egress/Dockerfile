@@ -1,4 +1,5 @@
-FROM alpine:3.22
+ARG ALPINE_IMAGE=alpine:3.22
+FROM ${ALPINE_IMAGE}
 
 RUN apk add --no-cache openssh-client netcat-openbsd \
     && addgroup -S -g 10001 egress \
